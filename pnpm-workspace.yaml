@@ -1,0 +1,14 @@
+packages:
+  - .
+
+allowBuilds:
+  '@parcel/watcher': true
+  argon2: true
+  esbuild: true
+  vue-demi: true
+
+onlyBuiltDependencies:
+  - '@parcel/watcher'
+  - argon2
+  - esbuild
+  - vue-demi

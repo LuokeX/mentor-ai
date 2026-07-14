@@ -1,0 +1,48 @@
+{
+  "name": "mentor-ai",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "preview": "nuxt preview",
+    "typecheck": "nuxt typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "env:init": "tsx scripts/init-env.ts",
+    "db:up": "docker compose up -d postgres migrate",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed.ts",
+    "knowledge:import": "tsx scripts/import-knowledge.ts",
+    "worker": "tsx workers/notification.ts"
+  },
+  "dependencies": {
+    "@nuxt/ui": "latest",
+    "argon2": "latest",
+    "drizzle-orm": "latest",
+    "nuxt": "^4.4.0",
+    "otpauth": "latest",
+    "pg": "latest",
+    "vue": "latest",
+    "vue-router": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@iconify-json/lucide": "^1.2.116",
+    "@nuxt/test-utils": "latest",
+    "@playwright/test": "latest",
+    "@types/node": "latest",
+    "@types/pg": "latest",
+    "drizzle-kit": "latest",
+    "tsx": "latest",
+    "typescript": "^5.9.3",
+    "vitest": "latest",
+    "vue-tsc": "latest"
+  }
+}

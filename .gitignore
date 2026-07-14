@@ -1,0 +1,15 @@
+node_modules
+.pnpm-store
+.nuxt
+.output
+.data
+coverage
+playwright-report
+test-results
+.env
+*.log
+.DS_Store
+backups/*.sql*
+infra/certs/*.pem
+infra/certs/*.key
+infra/certs/*.crt

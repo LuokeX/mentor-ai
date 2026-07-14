@@ -1,0 +1,15 @@
+import { defineConfig } from 'drizzle-kit'
+import { loadLocalEnv } from './scripts/load-env'
+
+loadLocalEnv()
+
+export default defineConfig({
+  dialect: 'postgresql',
+  schema: './server/db/schema.ts',
+  out: './drizzle',
+  dbCredentials: {
+    url: process.env.MIGRATION_DATABASE_URL || process.env.DATABASE_URL || 'postgres://mentor:mentor@localhost:5432/mentor_ai'
+  },
+  strict: true,
+  verbose: true
+})
