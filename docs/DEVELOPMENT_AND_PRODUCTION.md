@@ -22,11 +22,12 @@
 | 命令 | 作用 | 使用环境 |
 |---|---|---|
 | `pnpm env:init` | 为本地 `.env` 替换占位值并生成随机密钥 | 仅本地首次初始化 |
-| `pnpm db:up` | 启动 PostgreSQL，并运行尚未执行的 migration | 本地 |
+| `pnpm db:up` | 启动 pgvector/PostgreSQL、Ollama，拉取 Embedding 模型，执行 migration 和旧知识补向量 | 本地 |
 | `pnpm db:generate` | 根据 Drizzle Schema 生成新 migration | 本地开发 |
 | `pnpm db:migrate` | 执行尚未执行的 migration | 本地或受控发布流程 |
 | `pnpm db:seed` | 创建演示学校、账号和种子内容 | 仅本地/专用测试环境 |
 | `pnpm knowledge:import` | 受控导入并分块 Markdown/TXT/JSON 业务知识 | 本地或经审批的正式发布流程 |
+| `pnpm knowledge:reindex` | 为缺失向量或模型版本不一致的知识片段重新生成向量 | 本地或受控发布流程 |
 | `pnpm dev` | 启动 Nuxt 开发服务器 | 仅本地 |
 | `pnpm worker` | 启动本地通知 Worker | 仅本地，另开终端 |
 | `pnpm typecheck` | TypeScript/Nuxt 类型检查 | 开发与 CI |
@@ -67,11 +68,12 @@ pnpm db:up
 pnpm dev
 ```
 
-若 PostgreSQL 已在运行，可只执行 `pnpm dev`。查看数据库容器：
+若 PostgreSQL 和 Ollama 已在运行，可只执行 `pnpm dev`。查看基础服务和首次模型下载进度：
 
 ```bash
 docker compose ps
 docker compose logs --tail=100 postgres
+docker compose logs --tail=100 ollama-pull embedding-index
 ```
 
 停止开发应用使用终端中的 `Ctrl+C`。停止数据库但保留数据卷：

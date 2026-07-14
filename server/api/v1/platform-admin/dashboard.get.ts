@@ -23,5 +23,5 @@ export default defineEventHandler(async (event) => {
     db.select().from(schema.adminAccessGrants).where(eq(schema.adminAccessGrants.userId, admin.id)).orderBy(desc(schema.adminAccessGrants.createdAt)),
     db.select().from(schema.auditLogs).where(eq(schema.auditLogs.actorId, admin.id)).orderBy(desc(schema.auditLogs.createdAt)).limit(50)
   ])
-  return { schools: schoolRows, contentPackages: packages, knowledgeBases, knowledgeDocuments, accessRequests: requests, accessGrants: grants, auditLogs: audits, health: { database: 'healthy', modelConfigured: Boolean(useRuntimeConfig(event).deepseekApiKey), smsProvider: useRuntimeConfig(event).smsProvider } }
+  return { schools: schoolRows, contentPackages: packages, knowledgeBases, knowledgeDocuments, accessRequests: requests, accessGrants: grants, auditLogs: audits, health: { database: 'healthy', modelConfigured: Boolean(useRuntimeConfig(event).deepseekApiKey), embeddingEnabled: Boolean(useRuntimeConfig(event).embeddingEnabled), embeddingModel: useRuntimeConfig(event).embeddingModel, smsProvider: useRuntimeConfig(event).smsProvider } }
 })

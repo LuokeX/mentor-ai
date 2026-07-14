@@ -1,8 +1,12 @@
 import type { H3Event } from 'h3'
 import { z } from 'zod'
 import { routeDecisionSchema, type RouteDecision } from '../../shared/contracts'
+import type { ModuleId } from '../../shared/contracts'
+import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
+import { assessmentDefinitions, moduleMeta } from '../../shared/assessments'
 import type { RuleOutput } from '../domain/rules'
 import type { KnowledgeCitation } from '../domain/knowledge'
+import { createTemplateAssessmentReport, validateAssessmentReport } from '../domain/reports'
 import { schema, useDb } from '../utils/db'
 
 const keywordRoutes: Array<[RouteDecision['primaryModule'], RegExp]> = [
@@ -41,11 +45,11 @@ export type AssistantResponse = z.infer<typeof assistantResponseSchema> & { mode
 function localAssistantResponse(text: string, citations: KnowledgeCitation[]): AssistantResponse {
   const route = localRoute(text)
   const sourceText = citations.length
-    ? `我从已发布的业务知识中找到了相关内容：${citations.slice(0, 2).map(item => `《${item.documentTitle}》${item.heading ? `“${item.heading}”` : ''}提到：${item.excerpt.slice(0, 150)}`).join('；')}。`
-    : '当前没有检索到足够相关的已发布知识，我先帮您确认问题方向，不会凭空补充业务结论。'
+    ? `我参考了已发布的业务知识：${citations.slice(0, 2).map(item => `《${item.documentTitle}》${item.heading ? `“${item.heading}”` : ''}中与这个场景相关的片段`).join('；')}。`
+    : '当前没有检索到足够相关的已发布知识，我会先基于通用班主任工作方法帮您梳理方向，不下业务分级或制度性结论。'
   const clarification = route.needsClarification && route.clarification ? ` ${route.clarification}` : ''
   return {
-    answer: `${sourceText} ${route.rationale}${clarification}`,
+    answer: `${sourceText} ${route.rationale}${clarification} 您可以先记录事实、区分情绪与诉求，再选择一个最小动作推进；如果需要等级、量表或 SOP 结论，请进入对应模块完成规则评估。`,
     route,
     suggestedActions: [{ label: '进入建议模块继续评估', type: 'open_module', module: route.primaryModule }],
     citationIds: citations.map(item => item.chunkId),
@@ -67,20 +71,22 @@ export async function generateAssistantResponse(event: H3Event, input: {
   const allowedCitationIds = new Set(input.citations.map(item => item.chunkId))
   const knowledgeContext = input.citations.length
     ? input.citations.map(item => `[${item.chunkId}] 来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`).join('\n\n')
-    : '没有检索到已发布知识。此时只能澄清问题、说明信息不足或建议进入确定性评估，不得编造业务规则。'
+    : '没有检索到已发布知识。此时可以基于通用班主任工作方法进行共情、澄清、问题拆解和非制度性行动建议；不得编造平台手册、量表、SOP、等级、制度或来源。'
   const redactedMessage = redactPii(input.message)
   const messages = [
     {
       role: 'system',
       content: `你是“教师赋能智能平台”的统一 AI 助手，服务班主任。业务模块只有 self_growth、class_system、home_school、student_case。
-你的职责：理解教师自然语言、进行多轮澄清、基于已审核知识给出当下可执行建议，并建议进入合适模块。
+你的职责：理解教师自然语言、进行多轮澄清、结合已审核知识和通用班主任工作方法给出当下可执行建议，并建议进入合适模块。
 硬约束：
 1. 不做精神、医学、法律诊断，不承诺效果，不替代心理专员、医生、警方或校方制度。
 2. 不计算量表分数，不确定六色预警、四阶、P×A、L1-L3，不决定熔断；这些由代码规则执行。
-3. 只能引用下方提供的知识片段；知识不足时明确说不足，不能杜撰手册、SOP、数据或来源。
-4. 回答温和、简洁，优先给 1–3 个今天或明天能执行的动作；需要追问时每轮最多问一个关键问题。
-5. 不复述姓名、电话、邮箱等个人信息，不扩大到其他教师或学生数据。
-6. citationIds 只能从提供的方括号 UUID 中选择。输出严格 json。
+3. 知识片段是业务依据，不是逐字答案。可以根据教师问题自主组织回答、做场景分析、提出澄清问题和通用建议。
+4. 涉及平台规则、量表、分级、SOP、红线、校内制度、工具卡原文或“平台要求”时，必须基于下方知识片段或建议进入模块评估；知识不足时明确说明“需要进入模块或补充业务知识后确认”。
+5. 不能杜撰手册、SOP、等级、数据、来源或校方制度。引用来源时只能引用下方知识片段。
+6. 回答温和、简洁，优先给 1–3 个今天或明天能执行的动作；需要追问时每轮最多问一个关键问题。
+7. 不复述姓名、电话、邮箱等个人信息，不扩大到其他教师或学生数据。
+8. citationIds 只能从提供的方括号 UUID 中选择；没有真正使用对应知识片段时不要填 citationIds。输出严格 json。
 
 已审核知识：
 ${knowledgeContext}
@@ -233,6 +239,91 @@ export async function expressRuleResult(event: H3Event, module: string, result: 
     }
   }
   return fallback
+}
+
+export async function generateAssessmentReport(event: H3Event, input: {
+  schoolId: string
+  ownerUserId: string
+  module: ModuleId
+  result: RuleOutput
+}): Promise<AssessmentReport> {
+  const fallback = createTemplateAssessmentReport({ module: input.module, result: input.result })
+  const config = useRuntimeConfig(event)
+  if (!config.deepseekApiKey || input.result.blocked) return fallback
+  const definition = assessmentDefinitions[input.module]
+  const facts = {
+    module: input.module,
+    moduleTitle: moduleMeta[input.module].title,
+    assessmentVersion: `${definition.code}@${definition.version}`,
+    level: input.result.level,
+    reasons: input.result.reasons,
+    dimensions: input.result.dimensions,
+    actions: input.result.actions,
+    tools: input.result.tools,
+    matchedRuleIds: input.result.matchedRuleIds
+  }
+  const format = JSON.stringify(assessmentReportSchema.parse({ ...fallback, printMeta: { ...fallback.printMeta, source: 'ai' } }))
+  const startedAt = Date.now()
+  try {
+    const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
+      body: JSON.stringify({
+        model: config.deepseekGeneratorModel,
+        messages: [
+          {
+            role: 'system',
+            content: `你是教师赋能平台的报告撰写助手。只根据用户提供的规则事实生成正式评估报告 JSON。
+硬约束：
+1. 不得改变 module、level、matchedRuleIds、assessmentVersion。
+2. 不做精神、医学、法律诊断，不承诺效果，不写“确诊、治疗、治愈、一定、保证、医学诊断”等表述。
+3. 可优化表达和行动安排，但不得新增规则事实、风险等级或制度结论。
+4. 三天行动方案每天 1-3 个动作；七天跟进必须包含观察点、复盘问题和升级信号。
+5. 输出必须是严格 JSON，字段结构与示例完全一致。`
+          },
+          { role: 'user', content: `规则事实：${JSON.stringify(facts)}\n\nJSON结构示例：${format}` }
+        ],
+        response_format: { type: 'json_object' },
+        thinking: { type: 'disabled' },
+        temperature: 0.35,
+        max_tokens: 2200
+      }),
+      signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
+    })
+    if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
+    const json = await response.json() as {
+      choices?: Array<{ message?: { content?: string } }>
+      usage?: { prompt_tokens?: number, completion_tokens?: number }
+    }
+    const content = json.choices?.[0]?.message?.content
+    if (!content) throw new Error('Empty model output')
+    const report = validateAssessmentReport(JSON.parse(content), input.module, input.result)
+    report.printMeta.source = 'ai'
+    await useDb(event).insert(schema.aiModelCalls).values({
+      schoolId: input.schoolId,
+      ownerUserId: input.ownerUserId,
+      provider: 'deepseek',
+      model: config.deepseekGeneratorModel,
+      purpose: 'assessment_report',
+      status: 'success',
+      latencyMs: Date.now() - startedAt,
+      promptTokens: json.usage?.prompt_tokens,
+      completionTokens: json.usage?.completion_tokens
+    }).catch(() => undefined)
+    return report
+  } catch (error) {
+    await useDb(event).insert(schema.aiModelCalls).values({
+      schoolId: input.schoolId,
+      ownerUserId: input.ownerUserId,
+      provider: 'deepseek',
+      model: config.deepseekGeneratorModel,
+      purpose: 'assessment_report',
+      status: 'failed',
+      latencyMs: Date.now() - startedAt,
+      errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown'
+    }).catch(() => undefined)
+    return fallback
+  }
 }
 
 export async function routeWithDeepSeek(event: H3Event, text: string): Promise<RouteDecision> {

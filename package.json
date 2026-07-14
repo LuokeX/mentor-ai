@@ -15,11 +15,12 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "env:init": "tsx scripts/init-env.ts",
-    "db:up": "docker compose up -d postgres migrate",
+    "db:up": "docker compose up -d postgres ollama ollama-pull migrate embedding-index",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "knowledge:import": "tsx scripts/import-knowledge.ts",
+    "knowledge:reindex": "tsx scripts/reindex-embeddings.ts",
     "worker": "tsx workers/notification.ts"
   },
   "dependencies": {

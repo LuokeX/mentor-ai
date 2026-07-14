@@ -7,7 +7,20 @@ if (!existsSync(template)) throw new Error('.env.example is missing')
 
 let source = existsSync(target) ? readFileSync(target, 'utf8') : readFileSync(template, 'utf8')
 if (!source.includes('replace-with')) {
-  process.stdout.write('.env is already initialized; no changes made\n')
+  const templateSource = readFileSync(template, 'utf8')
+  const existingKeys = new Set([...source.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)].map(match => match[1]))
+  const missingLines = templateSource.split('\n').filter(line => {
+    const key = line.match(/^([A-Z][A-Z0-9_]*)=/)?.[1]
+    return Boolean(key && !existingKeys.has(key))
+  })
+  if (missingLines.length) {
+    source = `${source.trimEnd()}\n${missingLines.join('\n')}\n`
+    writeFileSync(target, source, { mode: 0o600 })
+    chmodSync(target, 0o600)
+    process.stdout.write(`.env is initialized; added ${missingLines.length} newly supported settings\n`)
+  } else {
+    process.stdout.write('.env is already initialized; no changes made\n')
+  }
 } else {
   const get = (key: string) => source.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1] || ''
   const set = (key: string, value: string) => {

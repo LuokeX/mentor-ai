@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { knowledgeDocumentImportSchema } from '../../../../../../shared/contracts'
 import { chunkKnowledgeDocument, checksumKnowledgeContent, normalizeKnowledgeContent } from '../../../../../domain/knowledge'
+import { embedKnowledgeChunks } from '../../../../../integrations/ollama'
 import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
 import { schema, useDb } from '../../../../../utils/db'
@@ -22,6 +23,15 @@ export default defineEventHandler(async (event) => {
   const chunks = chunkKnowledgeDocument(content)
   if (!chunks.length) throw createError({ statusCode: 400, message: '文档没有可导入内容' })
 
+  let embeddings: number[][] | null = null
+  let embeddingError: string | null = null
+  try {
+    embeddings = await embedKnowledgeChunks(event, chunks.map(chunk => `${chunk.heading ? `${chunk.heading}\n` : ''}${chunk.content}`))
+  } catch (error) {
+    embeddingError = error instanceof Error ? error.message.slice(0, 160) : 'embedding_failed'
+  }
+  const config = useRuntimeConfig(event)
+
   try {
     const document = await db.transaction(async (tx) => {
       const [created] = await tx.insert(schema.knowledgeDocuments).values({
@@ -33,14 +43,23 @@ export default defineEventHandler(async (event) => {
         checksum: checksumKnowledgeContent(content),
         status: 'draft',
         content,
-        metadata: { characterCount: content.length, chunkCount: chunks.length },
+        metadata: {
+          characterCount: content.length,
+          chunkCount: chunks.length,
+          embeddedChunkCount: embeddings?.length || 0,
+          embeddingStatus: embeddings ? 'ready' : config.embeddingEnabled ? 'pending' : 'disabled',
+          ...(embeddingError ? { embeddingError } : {})
+        },
         createdBy: admin.id
       }).returning()
       if (!created) throw new Error('文档创建失败')
-      await tx.insert(schema.knowledgeChunks).values(chunks.map(chunk => ({
+      await tx.insert(schema.knowledgeChunks).values(chunks.map((chunk, index) => ({
         knowledgeBaseId: knowledgeBase.id,
         documentId: created.id,
-        ...chunk
+        ...chunk,
+        embedding: embeddings?.[index],
+        embeddingModel: embeddings ? String(config.embeddingModel) : null,
+        embeddedAt: embeddings ? new Date() : null
       })))
       return created
     })
@@ -50,9 +69,9 @@ export default defineEventHandler(async (event) => {
       action: 'platform_admin.knowledge_document.import',
       targetType: 'knowledge_document',
       targetId: document.id,
-      metadata: { knowledgeBaseId: knowledgeBase.id, chunks: chunks.length, sourceType: body.sourceType }
+      metadata: { knowledgeBaseId: knowledgeBase.id, chunks: chunks.length, embeddedChunks: embeddings?.length || 0, sourceType: body.sourceType }
     })
-    return { ...document, chunkCount: chunks.length }
+    return { ...document, chunkCount: chunks.length, embeddedChunkCount: embeddings?.length || 0, embeddingStatus: embeddings ? 'ready' : 'pending' }
   } catch (error: any) {
     if (error?.code === '23505') throw createError({ statusCode: 409, message: '该知识库中已经存在内容相同的文档' })
     throw error

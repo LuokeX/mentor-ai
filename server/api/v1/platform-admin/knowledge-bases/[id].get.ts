@@ -32,7 +32,9 @@ export default defineEventHandler(async (event) => {
       chunkIndex: schema.knowledgeChunks.chunkIndex,
       heading: schema.knowledgeChunks.heading,
       content: schema.knowledgeChunks.content,
-      tokenEstimate: schema.knowledgeChunks.tokenEstimate
+      tokenEstimate: schema.knowledgeChunks.tokenEstimate,
+      embeddingModel: schema.knowledgeChunks.embeddingModel,
+      embeddedAt: schema.knowledgeChunks.embeddedAt
     }).from(schema.knowledgeChunks)
       .where(eq(schema.knowledgeChunks.knowledgeBaseId, id))
       .orderBy(asc(schema.knowledgeChunks.documentId), asc(schema.knowledgeChunks.chunkIndex))

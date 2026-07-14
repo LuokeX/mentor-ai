@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { H3Event } from 'h3'
 import { usePool } from '../utils/db'
+import { embedKnowledgeQuery } from '../integrations/ollama'
 
 export interface KnowledgeChunkInput {
   chunkIndex: number
@@ -18,6 +19,9 @@ export interface KnowledgeCitation {
   heading: string | null
   excerpt: string
   score: number
+  lexicalScore?: number
+  semanticScore?: number
+  retrievalMode?: 'hybrid' | 'lexical'
 }
 
 export function normalizeKnowledgeContent(value: string) {
@@ -26,6 +30,18 @@ export function normalizeKnowledgeContent(value: string) {
 
 export function checksumKnowledgeContent(value: string) {
   return createHash('sha256').update(value).digest('hex')
+}
+
+export function buildKnowledgeRetrievalQuery(message: string, history: Array<{ role: 'user' | 'assistant', content: string }>) {
+  const recentUserContext = history
+    .filter(item => item.role === 'user')
+    .slice(-3)
+    .map(item => item.content.trim())
+    .filter(Boolean)
+  return [...recentUserContext, message.trim()]
+    .filter(Boolean)
+    .join('\n')
+    .slice(-3000)
 }
 
 export function chunkKnowledgeDocument(raw: string, maxChars = 1200): KnowledgeChunkInput[] {
@@ -82,7 +98,7 @@ export async function retrieveKnowledge(event: H3Event, schoolId: string, query:
   const pool = usePool(event)
   const sanitizedQuery = query.replace(/1[3-9]\d{9}/g, '[PHONE]').replace(/[\w.-]+@[\w.-]+\.\w+/g, '[EMAIL]').slice(0, 2000)
   const terms = queryTerms(sanitizedQuery)
-  const result = await pool.query<{
+  type RetrievalRow = {
     chunk_id: string
     document_id: string
     knowledge_base_id: string
@@ -90,9 +106,11 @@ export async function retrieveKnowledge(event: H3Event, schoolId: string, query:
     document_title: string
     heading: string | null
     content: string
-    lexical_score: number
-    term_hits: number
-  }>(`
+    lexical_score?: number
+    semantic_score?: number
+    term_hits?: number
+  }
+  const lexicalPromise = pool.query<RetrievalRow>(`
     select
       kc.id as chunk_id,
       kd.id as document_id,
@@ -117,12 +135,21 @@ export async function retrieveKnowledge(event: H3Event, schoolId: string, query:
     limit 30
   `, [sanitizedQuery, schoolId, terms])
 
-  return result.rows
-    .map(row => {
-      const haystack = `${row.document_title} ${row.heading || ''} ${row.content}`.toLowerCase()
-      const overlap = terms.length ? terms.filter(term => haystack.includes(term)).length / terms.length : 0
-      const score = Number(row.lexical_score || 0) * 0.65 + overlap * 0.35
-      return {
+  const embeddingPromise = embedKnowledgeQuery(event, sanitizedQuery).catch(() => null)
+  const [lexicalResult, queryEmbedding] = await Promise.all([lexicalPromise, embeddingPromise])
+
+  const lexicalItems = lexicalResult.rows.map(row => {
+    const haystack = `${row.document_title} ${row.heading || ''} ${row.content}`.toLowerCase()
+    const overlap = terms.length ? terms.filter(term => haystack.includes(term)).length / terms.length : 0
+    const lexicalScore = Number(row.lexical_score || 0) * 0.65 + overlap * 0.35
+    return { row, lexicalScore }
+  }).filter(item => item.lexicalScore >= 0.025)
+
+  if (!queryEmbedding) {
+    return lexicalItems
+      .sort((a, b) => b.lexicalScore - a.lexicalScore)
+      .slice(0, limit)
+      .map(({ row, lexicalScore }) => ({
         chunkId: row.chunk_id,
         documentId: row.document_id,
         knowledgeBaseId: row.knowledge_base_id,
@@ -130,10 +157,76 @@ export async function retrieveKnowledge(event: H3Event, schoolId: string, query:
         documentTitle: row.document_title,
         heading: row.heading,
         excerpt: row.content.slice(0, 420),
-        score
-      }
-    })
-    .filter(item => item.score >= 0.025)
+        score: lexicalScore,
+        lexicalScore,
+        retrievalMode: 'lexical'
+      }))
+  }
+
+  const semanticResult = await pool.query<RetrievalRow>(`
+    select
+      kc.id as chunk_id,
+      kd.id as document_id,
+      kb.id as knowledge_base_id,
+      kb.name as knowledge_base,
+      kd.title as document_title,
+      kc.heading,
+      kc.content,
+      1 - (kc.embedding <=> $3::vector) as semantic_score
+    from knowledge_chunks kc
+    join knowledge_documents kd on kd.id = kc.document_id
+    join knowledge_bases kb on kb.id = kc.knowledge_base_id
+    where kb.status = 'published'
+      and kd.status = 'ready'
+      and kc.embedding is not null
+      and (kb.scope = 'global' or (kb.scope = 'school' and kb.school_id = $2))
+    order by kc.embedding <=> $3::vector
+    limit 30
+  `, [sanitizedQuery, schoolId, `[${queryEmbedding.join(',')}]`])
+
+  const candidates = new Map<string, {
+    row: RetrievalRow
+    lexicalScore: number
+    semanticScore: number
+    lexicalRank?: number
+    semanticRank?: number
+  }>()
+  lexicalItems.forEach((item, index) => candidates.set(item.row.chunk_id, {
+    row: item.row,
+    lexicalScore: item.lexicalScore,
+    semanticScore: 0,
+    lexicalRank: index + 1
+  }))
+  semanticResult.rows.forEach((row, index) => {
+    const semanticScore = Math.max(0, Number(row.semantic_score || 0))
+    const existing = candidates.get(row.chunk_id)
+    candidates.set(row.chunk_id, existing
+      ? { ...existing, semanticScore, semanticRank: index + 1 }
+      : { row, lexicalScore: 0, semanticScore, semanticRank: index + 1 })
+  })
+
+  const bestRankScore = 1 / 61
+  return [...candidates.values()].map(item => {
+    const reciprocalRank = (
+      (item.lexicalRank ? 0.45 / (60 + item.lexicalRank) : 0) +
+      (item.semanticRank ? 0.55 / (60 + item.semanticRank) : 0)
+    ) / bestRankScore
+    const rawScore = item.lexicalScore * 0.45 + item.semanticScore * 0.55
+    const score = reciprocalRank * 0.6 + rawScore * 0.4
+    return {
+      chunkId: item.row.chunk_id,
+      documentId: item.row.document_id,
+      knowledgeBaseId: item.row.knowledge_base_id,
+      knowledgeBase: item.row.knowledge_base,
+      documentTitle: item.row.document_title,
+      heading: item.row.heading,
+      excerpt: item.row.content.slice(0, 420),
+      score,
+      lexicalScore: item.lexicalScore,
+      semanticScore: item.semanticScore,
+      retrievalMode: 'hybrid' as const
+    }
+  }).filter(item => item.semanticScore >= 0.18 || item.lexicalScore >= 0.025)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
 }

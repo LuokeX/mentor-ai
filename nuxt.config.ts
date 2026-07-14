@@ -17,6 +17,10 @@ export default defineNuxtConfig({
     deepseekRouterModel: process.env.DEEPSEEK_ROUTER_MODEL || 'deepseek-v4-flash',
     deepseekGeneratorModel: process.env.DEEPSEEK_GENERATOR_MODEL || 'deepseek-v4-pro',
     deepseekTimeoutMs: Number(process.env.DEEPSEEK_TIMEOUT_MS || 8000),
+    embeddingEnabled: process.env.EMBEDDING_ENABLED === 'true',
+    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+    embeddingModel: process.env.EMBEDDING_MODEL || 'qwen3-embedding:0.6b',
+    embeddingTimeoutMs: Number(process.env.EMBEDDING_TIMEOUT_MS || 8000),
     smsProvider: process.env.SMS_PROVIDER || 'mock',
     smsWebhookUrl: process.env.SMS_WEBHOOK_URL || '',
     public: {

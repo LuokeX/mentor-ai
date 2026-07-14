@@ -28,12 +28,39 @@ const route = ref<(RouteDecision & { id: string }) | null>(null)
 const fuse = ref<{ message: string, guide: string } | null>(null)
 const timeline = ref<TimelineItem[]>([])
 const assistantMode = ref<'deepseek' | 'local_fallback'>(assistantStatus.value?.mode || 'local_fallback')
+const messageViewport = ref<HTMLElement | null>(null)
+const copiedMessage = ref<number | null>(null)
+const confirmingModule = ref<ModuleId | null>(null)
+const routeConfirmError = ref('')
+const quickPrompts = [
+  '最近工作压力很大，总觉得精力不够用',
+  '班级纪律反复，想梳理一下问题出在哪里',
+  '家长在群里公开质疑我，我该怎么沟通？',
+  '有位学生最近明显沉默，我应该先做什么？'
+]
+
+async function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
+  await nextTick()
+  messageViewport.value?.scrollTo({ top: messageViewport.value.scrollHeight, behavior })
+}
+
+function usePrompt(prompt: string) {
+  input.value = prompt
+}
+
+async function copyMessage(text: string, index: number) {
+  await navigator.clipboard.writeText(text)
+  copiedMessage.value = index
+  window.setTimeout(() => { if (copiedMessage.value === index) copiedMessage.value = null }, 1600)
+}
 
 function newConversation() {
   sessionId.value = undefined
   timeline.value = []
   route.value = null
   fuse.value = null
+  routeConfirmError.value = ''
+  nextTick(() => scrollToLatest('auto'))
 }
 
 async function loadSession(id: string) {
@@ -44,6 +71,7 @@ async function loadSession(id: string) {
     sessionId.value = id
     route.value = null
     fuse.value = null
+    routeConfirmError.value = ''
     timeline.value = result.messages.map((item: any) => ({
       role: item.role,
       text: item.text,
@@ -52,6 +80,7 @@ async function loadSession(id: string) {
     }))
     const lastAssistant = [...result.messages].reverse().find((item: any) => item.role === 'assistant')
     if (lastAssistant?.metadata?.mode) assistantMode.value = lastAssistant.metadata.mode
+    await scrollToLatest('auto')
   } finally { loadingSession.value = false }
 }
 
@@ -62,7 +91,9 @@ async function ask() {
   pending.value = true
   route.value = null
   fuse.value = null
+  routeConfirmError.value = ''
   timeline.value.push({ role: 'user', text })
+  await scrollToLatest()
   let assistantIndex = -1
   try {
     const response = await fetch('/api/v1/chat/messages', {
@@ -89,6 +120,7 @@ async function ask() {
           assistantMode.value = data.mode
           timeline.value.push({ role: 'assistant', text: data.text, mode: data.mode, sources: [] })
           assistantIndex = timeline.value.length - 1
+          await scrollToLatest()
         }
         if (event === 'sources' && assistantIndex >= 0) timeline.value[assistantIndex]!.sources = data
         if (event === 'route') route.value = data
@@ -99,12 +131,23 @@ async function ask() {
     await refreshSessions()
   } catch (error: any) {
     timeline.value.push({ role: 'assistant', text: error?.message || '处理失败，请稍后重试。' })
-  } finally { pending.value = false }
+  } finally {
+    pending.value = false
+    await scrollToLatest()
+  }
 }
 
 async function confirmModule(module: ModuleId) {
-  if (!route.value) return
-  await $fetch(`/api/v1/chat/routes/${route.value.id}/confirm`, { method: 'POST', body: { module } })
+  if (!route.value || confirmingModule.value) return
+  confirmingModule.value = module
+  routeConfirmError.value = ''
+  try {
+    await $fetch(`/api/v1/chat/routes/${route.value.id}/confirm`, { method: 'POST', body: { module } })
+  } catch (error: any) {
+    routeConfirmError.value = error?.data?.message || error?.message || '处理方向确认记录保存失败，已继续进入模块。'
+  } finally {
+    confirmingModule.value = null
+  }
   await navigateTo(`/module/${module}`)
 }
 </script>
@@ -123,31 +166,77 @@ async function confirmModule(module: ModuleId) {
       </div>
     </section>
 
-    <section class="mt-10 grid gap-5 lg:grid-cols-[15rem_1fr]">
-      <aside class="panel h-fit overflow-hidden">
-        <div class="border-b border-slate-100 p-4"><UButton block icon="i-lucide-message-square-plus" @click="newConversation">新对话</UButton></div>
-        <div class="max-h-[34rem] space-y-1 overflow-y-auto p-2">
-          <button v-for="item in sessions" :key="item.id" class="w-full rounded-xl px-3 py-3 text-left text-sm transition" :class="sessionId===item.id?'bg-emerald-50 text-emerald-900':'text-slate-600 hover:bg-slate-50'" @click="loadSession(item.id)"><span class="line-clamp-2 block">{{ item.title }}</span><span class="mt-1 block text-[11px] text-slate-400">{{ new Date(item.updatedAt).toLocaleString('zh-CN') }}</span></button>
-          <p v-if="!sessions?.length" class="px-3 py-8 text-center text-xs text-slate-400">暂无历史对话</p>
+    <section class="mt-10 grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
+      <aside class="panel flex h-[18rem] flex-col overflow-hidden lg:h-[46rem] lg:min-h-[42rem]">
+        <div class="border-b border-slate-100 p-4">
+          <UButton block icon="i-lucide-message-square-plus" size="lg" @click="newConversation">新对话</UButton>
         </div>
+        <div class="flex items-center justify-between px-4 pb-2 pt-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">最近对话</p>
+          <span class="text-xs text-slate-400">{{ sessions?.length || 0 }}</span>
+        </div>
+        <div class="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
+          <button v-for="item in sessions" :key="item.id" class="group w-full rounded-xl px-3 py-3 text-left text-sm transition" :class="sessionId===item.id?'bg-emerald-50 text-emerald-950 ring-1 ring-inset ring-emerald-100':'text-slate-600 hover:bg-slate-50'" @click="loadSession(item.id)">
+            <span class="flex items-start gap-2"><UIcon name="i-lucide-message-circle" class="mt-0.5 size-4 shrink-0" :class="sessionId===item.id?'text-emerald-600':'text-slate-300 group-hover:text-slate-500'" /><span class="line-clamp-2 block leading-5">{{ item.title }}</span></span>
+            <span class="mt-1.5 block pl-6 text-[11px] text-slate-400">{{ new Date(item.updatedAt).toLocaleString('zh-CN') }}</span>
+          </button>
+          <div v-if="!sessions?.length" class="grid place-items-center px-3 py-16 text-center"><UIcon name="i-lucide-messages-square" class="size-7 text-slate-300" /><p class="mt-2 text-xs text-slate-400">暂无历史对话</p></div>
+        </div>
+        <div class="border-t border-slate-100 px-4 py-3 text-xs leading-5 text-slate-400"><UIcon name="i-lucide-lock-keyhole" class="mr-1 inline size-3.5" />对话仅您本人可见</div>
       </aside>
 
-      <div class="panel min-w-0 overflow-hidden">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-7"><div class="flex items-center gap-2"><span class="size-2 rounded-full bg-emerald-500" /><strong>AI 赋能助手</strong><span class="text-xs text-slate-400">知识增强 · 多轮对话 · {{ assistantStatus?.publishedKnowledgeBases || 0 }} 个已发布知识库</span></div><UBadge :color="assistantMode==='deepseek'?'success':'warning'" variant="soft">{{ assistantMode==='deepseek'?'DeepSeek 已接入':'本地降级模式' }}</UBadge></div>
-        <div v-if="timeline.length" class="max-h-[32rem] space-y-5 overflow-y-auto px-5 py-6 sm:px-7" :class="{'opacity-60':loadingSession}">
-          <div v-for="(item, index) in timeline" :key="index" class="flex" :class="item.role === 'user' ? 'justify-end' : 'justify-start'">
-            <div class="max-w-[88%]">
-              <div class="whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-7" :class="item.role === 'user' ? 'bg-emerald-800 text-white' : 'bg-slate-100 text-slate-700'">{{ item.text }}</div>
-              <div v-if="item.sources?.length" class="mt-2 space-y-2">
-                <div v-for="(source, sourceIndex) in item.sources" :key="source.chunkId" class="rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-950"><p class="font-medium">[{{ sourceIndex + 1 }}] {{ source.documentTitle }}<span v-if="source.heading"> · {{ source.heading }}</span></p><p class="mt-1 text-emerald-700/70">知识库：{{ source.knowledgeBase }}</p><p v-if="source.excerpt" class="mt-1 line-clamp-3 leading-5 text-slate-600">{{ source.excerpt }}</p></div>
+      <div class="panel flex h-[44rem] min-w-0 flex-col overflow-hidden lg:h-[46rem] lg:min-h-[42rem]">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white/90 px-5 py-3.5 sm:px-6">
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-4.5" /></div>
+            <div class="min-w-0"><div class="flex items-center gap-2"><strong class="text-sm">AI 赋能助手</strong><span class="size-1.5 rounded-full bg-emerald-500" /></div><p class="truncate text-xs text-slate-400">基于 {{ assistantStatus?.publishedKnowledgeBases || 0 }} 个已发布知识库 · 支持连续追问</p></div>
+          </div>
+          <UBadge :color="assistantMode==='deepseek'?'success':'warning'" variant="soft"><span class="mr-1.5 size-1.5 rounded-full" :class="assistantMode==='deepseek'?'bg-emerald-500':'bg-amber-500'" />{{ assistantMode==='deepseek'?'DeepSeek 已接入':'本地降级模式' }}</UBadge>
+        </div>
+
+        <div ref="messageViewport" class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/70 to-white px-4 py-6 sm:px-6" :class="{'opacity-60':loadingSession}">
+          <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-7">
+            <div v-for="(item, index) in timeline" :key="index" class="flex items-start gap-3" :class="item.role === 'user' ? 'flex-row-reverse' : ''">
+              <div class="grid size-8 shrink-0 place-items-center rounded-xl text-xs font-semibold" :class="item.role === 'user' ? 'bg-emerald-800 text-white' : 'border border-emerald-100 bg-white text-emerald-700 shadow-sm'">
+                <UIcon v-if="item.role === 'assistant'" name="i-lucide-sparkles" class="size-4" /><span v-else>{{ user?.name?.slice(0, 1) }}</span>
+              </div>
+              <div class="min-w-0 max-w-[88%] sm:max-w-[82%]">
+                <div class="mb-1.5 flex items-center gap-2 text-[11px] text-slate-400" :class="item.role === 'user' ? 'justify-end' : ''"><span>{{ item.role === 'user' ? '我' : '赋能助手' }}</span><span v-if="item.role === 'assistant' && item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
+                <div class="group relative whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-7 shadow-sm" :class="item.role === 'user' ? 'rounded-tr-md bg-emerald-800 text-white' : 'rounded-tl-md border border-slate-100 bg-white text-slate-700'">
+                  {{ item.text }}
+                  <button v-if="item.role === 'assistant'" type="button" class="absolute -bottom-7 left-0 flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
+                </div>
+                <details v-if="item.sources?.length" class="group mt-3 overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/50 text-xs text-slate-600">
+                  <summary class="flex cursor-pointer list-none items-center justify-between px-3.5 py-2.5 font-medium text-emerald-800"><span class="flex items-center gap-2"><UIcon name="i-lucide-book-open-check" class="size-4" />参考了 {{ item.sources.length }} 条知识内容</span><UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" /></summary>
+                  <div class="space-y-2 border-t border-emerald-100 px-3 py-3">
+                    <div v-for="(source, sourceIndex) in item.sources" :key="source.chunkId" class="rounded-lg bg-white/80 p-3">
+                      <p class="font-medium text-slate-700"><span class="mr-1 text-emerald-600">{{ sourceIndex + 1 }}.</span>{{ source.documentTitle }}<span v-if="source.heading" class="font-normal text-slate-400"> · {{ source.heading }}</span></p>
+                      <p class="mt-1 text-[11px] text-emerald-700/70">{{ source.knowledgeBase }}</p><p v-if="source.excerpt" class="mt-1.5 line-clamp-3 leading-5 text-slate-500">{{ source.excerpt }}</p>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
+
+            <div v-if="pending" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div><div><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="flex items-center gap-1.5 rounded-2xl rounded-tl-md border border-slate-100 bg-white px-4 py-4 shadow-sm"><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.3s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.15s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400" /><span class="ml-2 text-xs text-slate-400">正在检索并整理建议</span></div></div></div>
+
+            <div v-if="fuse" class="rounded-2xl border-2 border-red-200 bg-red-50 p-5"><div class="flex gap-3"><UIcon name="i-lucide-siren" class="mt-1 size-6 shrink-0 text-red-600" /><div><h3 class="font-semibold text-red-900">常规建议已暂停</h3><p class="mt-2 text-sm text-red-800">{{ fuse.message }}</p><p class="mt-3 rounded-xl bg-white/70 p-3 text-sm text-red-900">{{ fuse.guide }}</p></div></div></div>
+            <div v-if="route && !fuse" class="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-5"><div class="flex items-center gap-2 text-xs font-semibold text-emerald-700"><UIcon name="i-lucide-route" class="size-4" />建议处理方向</div><p class="mt-2 text-sm leading-6 text-slate-600">{{ route.rationale }}</p><UAlert v-if="routeConfirmError" class="mt-3" color="warning" variant="soft" :description="routeConfirmError" /><div class="mt-4 flex flex-wrap items-center gap-2"><UButton color="primary" :loading="confirmingModule === route.primaryModule" :disabled="Boolean(confirmingModule)" @click="confirmModule(route.primaryModule)">{{ moduleMeta[route.primaryModule].title }} · {{ Math.round(route.confidence * 100) }}%</UButton><UButton v-for="item in route.secondaryModules" :key="item.module" color="neutral" variant="soft" :loading="confirmingModule === item.module" :disabled="Boolean(confirmingModule)" @click="confirmModule(item.module)">{{ moduleMeta[item.module].title }} · {{ Math.round(item.confidence * 100) }}%</UButton></div><p class="mt-3 text-xs text-slate-500">由您确认处理方向；进入模块后再由规则引擎完成评估与分级。</p></div>
+          </div>
+
+          <div v-else class="mx-auto flex h-full max-w-2xl flex-col items-center justify-center py-8 text-center">
+            <div class="grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-6" /></div><h2 class="mt-4 text-lg font-semibold">今天想先聊聊什么？</h2><p class="mt-2 text-sm leading-6 text-slate-500">自然描述真实情况即可，助手会结合已审核知识梳理问题并给出可执行建议。</p>
+            <div class="mt-6 grid w-full gap-2 sm:grid-cols-2"><button v-for="prompt in quickPrompts" :key="prompt" type="button" class="rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm leading-5 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800" @click="usePrompt(prompt)">{{ prompt }}<UIcon name="i-lucide-arrow-up-right" class="ml-1 inline size-3.5 text-slate-300" /></button></div>
           </div>
         </div>
-        <div v-else class="grid min-h-64 place-items-center px-6 text-center"><div><UIcon name="i-lucide-sparkles" class="mx-auto size-9 text-emerald-600" /><p class="mt-3 font-medium">从一个真实问题开始</p><p class="mt-2 text-sm text-slate-400">助手会检索已发布手册，并标出回答依据。</p></div></div>
-        <div v-if="fuse" class="m-5 rounded-2xl border-2 border-red-200 bg-red-50 p-5 sm:m-7"><div class="flex gap-3"><UIcon name="i-lucide-siren" class="mt-1 size-6 shrink-0 text-red-600" /><div><h3 class="font-semibold text-red-900">常规建议已暂停</h3><p class="mt-2 text-sm text-red-800">{{ fuse.message }}</p><p class="mt-3 rounded-xl bg-white/70 p-3 text-sm text-red-900">{{ fuse.guide }}</p></div></div></div>
-        <div v-if="route && !fuse" class="m-5 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5 sm:m-7"><p class="text-xs font-semibold uppercase tracking-wider text-emerald-700">建议处理方向</p><p class="mt-2 text-sm text-slate-600">{{ route.rationale }}</p><div class="mt-3 flex flex-wrap items-center gap-3"><UButton color="primary" @click="confirmModule(route.primaryModule)">{{ moduleMeta[route.primaryModule].title }} · {{ Math.round(route.confidence * 100) }}%</UButton><UButton v-for="item in route.secondaryModules" :key="item.module" color="neutral" variant="soft" @click="confirmModule(item.module)">{{ moduleMeta[item.module].title }} · {{ Math.round(item.confidence * 100) }}%</UButton></div><p class="mt-3 text-xs text-slate-500">AI 只提出方向，最终由您确认；进入模块后由规则引擎完成评估和分级。</p></div>
-        <form class="flex gap-3 border-t border-slate-100 p-4 sm:p-6" @submit.prevent="ask"><UTextarea v-model="input" :rows="2" autoresize class="flex-1" placeholder="例如：最近有位家长总在群里质疑我，沟通完我也很难受……" @keydown.enter.exact.prevent="ask" /><UButton type="submit" icon="i-lucide-send" size="xl" :loading="pending">发送</UButton></form>
+
+        <form class="border-t border-slate-100 bg-white px-4 py-3.5 sm:px-6" @submit.prevent="ask">
+          <div class="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100">
+            <UTextarea v-model="input" :rows="1" :maxrows="5" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="描述您遇到的情况，Shift + Enter 换行……" aria-label="向 AI 赋能助手提问" @keydown.enter.exact.prevent="ask" />
+            <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
+          </div>
+          <div class="mt-2 flex items-center justify-between px-1 text-[11px] text-slate-400"><span>Enter 发送 · Shift + Enter 换行</span><span>{{ input.length }}/4000</span></div>
+        </form>
       </div>
     </section>
 

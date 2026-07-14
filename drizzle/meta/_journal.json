@@ -15,6 +15,27 @@
       "when": 1784008293626,
       "tag": "0001_nebulous_jocasta",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784010539229,
+      "tag": "0002_classy_cyclops",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784014642179,
+      "tag": "0003_ambitious_imperial_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784019334278,
+      "tag": "0004_crazy_thor_girl",
+      "breakpoints": true
     }
   ]
 }

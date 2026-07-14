@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 import { knowledgeBases, knowledgeChunks, knowledgeDocuments, auditLogs, schools, users } from '../server/db/schema'
 import { chunkKnowledgeDocument, checksumKnowledgeContent, normalizeKnowledgeContent } from '../server/domain/knowledge'
+import { DEFAULT_EMBEDDING_MODEL, requestOllamaEmbeddings } from '../server/integrations/ollama'
 import { loadLocalEnv } from './load-env'
 
 loadLocalEnv()
@@ -34,6 +35,19 @@ let content = normalizeKnowledgeContent(await readFile(file, 'utf8'))
 if (sourceType === 'json') content = JSON.stringify(JSON.parse(content), null, 2)
 if (content.length > 1_000_000) throw new Error('Document exceeds the 1 MB limit')
 const chunks = chunkKnowledgeDocument(content)
+const embeddingModel = process.env.EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL
+let embeddings: number[][] | null = null
+if (process.env.EMBEDDING_ENABLED === 'true') {
+  try {
+    embeddings = await requestOllamaEmbeddings({
+      baseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+      model: embeddingModel,
+      timeoutMs: Number(process.env.EMBEDDING_TIMEOUT_MS || 30_000)
+    }, chunks.map(chunk => `${chunk.heading ? `${chunk.heading}\n` : ''}${chunk.content}`))
+  } catch (error) {
+    process.stderr.write(`Embedding unavailable; imported chunks will be reindexed later: ${error instanceof Error ? error.message : 'unknown'}\n`)
+  }
+}
 const name = option('name') || basename(file, extension)
 const scope = school ? 'school' : 'global'
 
@@ -64,11 +78,18 @@ if (!existingDocument) {
       checksum,
       status: args.includes('--publish') ? 'ready' : 'draft',
       content,
-      metadata: { characterCount: content.length, chunkCount: chunks.length, importedBy: 'cli' },
+      metadata: { characterCount: content.length, chunkCount: chunks.length, embeddedChunkCount: embeddings?.length || 0, embeddingStatus: embeddings ? 'ready' : 'pending', importedBy: 'cli' },
       createdBy: actor.id
     }).returning()
     if (!document) throw new Error('Document creation failed')
-    await tx.insert(knowledgeChunks).values(chunks.map(chunk => ({ knowledgeBaseId: knowledgeBase.id, documentId: document.id, ...chunk })))
+    await tx.insert(knowledgeChunks).values(chunks.map((chunk, index) => ({
+      knowledgeBaseId: knowledgeBase.id,
+      documentId: document.id,
+      ...chunk,
+      embedding: embeddings?.[index],
+      embeddingModel: embeddings ? embeddingModel : null,
+      embeddedAt: embeddings ? new Date() : null
+    })))
   })
 }
 

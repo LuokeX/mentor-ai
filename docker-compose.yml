@@ -16,6 +16,14 @@ x-app-environment: &app-environment
   DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-pro}
   NUXT_DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-pro}
   NUXT_DEEPSEEK_TIMEOUT_MS: ${DEEPSEEK_TIMEOUT_MS:-8000}
+  EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-true}
+  NUXT_EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-true}
+  OLLAMA_BASE_URL: http://ollama:11434
+  NUXT_OLLAMA_BASE_URL: http://ollama:11434
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+  NUXT_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+  EMBEDDING_TIMEOUT_MS: ${EMBEDDING_TIMEOUT_MS:-8000}
+  NUXT_EMBEDDING_TIMEOUT_MS: ${EMBEDDING_TIMEOUT_MS:-8000}
   SMS_PROVIDER: ${SMS_PROVIDER:-mock}
   NUXT_SMS_PROVIDER: ${SMS_PROVIDER:-mock}
   SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
@@ -24,7 +32,7 @@ x-app-environment: &app-environment
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: pgvector/pgvector:0.8.5-pg18-trixie
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mentor_admin}
@@ -46,6 +54,31 @@ services:
       retries: 20
     security_opt:
       - no-new-privileges:true
+
+  ollama:
+    image: ollama/ollama:0.31.2
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+
+  ollama-pull:
+    image: ollama/ollama:0.31.2
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    command: ["pull", "${EMBEDDING_MODEL:-qwen3-embedding:0.6b}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
 
   migrate:
     build: .
@@ -76,6 +109,17 @@ services:
       retries: 12
     security_opt:
       - no-new-privileges:true
+
+  embedding-index:
+    build: .
+    environment: *app-environment
+    command: ["./node_modules/.bin/tsx", "scripts/reindex-embeddings.ts"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      ollama-pull:
+        condition: service_completed_successfully
+    restart: "no"
 
   worker:
     build: .
@@ -108,3 +152,4 @@ services:
 
 volumes:
   postgres-data:
+  ollama-data:

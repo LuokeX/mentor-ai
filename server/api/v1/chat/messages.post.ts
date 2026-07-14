@@ -4,7 +4,7 @@ import { useDb, schema } from '../../../utils/db'
 import { decryptSensitive, encryptSensitive } from '../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../domain/safety'
 import { generateAssistantResponse, semanticSafetySignals } from '../../../integrations/deepseek'
-import { retrieveKnowledge } from '../../../domain/knowledge'
+import { buildKnowledgeRetrievalQuery, retrieveKnowledge } from '../../../domain/knowledge'
 import { sendStream } from 'h3'
 import { and, desc, eq } from 'drizzle-orm'
 
@@ -70,7 +70,8 @@ export default defineEventHandler(async (event) => {
           controller.close()
           return
         }
-        const citations = await retrieveKnowledge(event, user.schoolId!, body.message)
+        const knowledgeQuery = buildKnowledgeRetrievalQuery(body.message, history)
+        const citations = await retrieveKnowledge(event, user.schoolId!, knowledgeQuery)
         const assistant = await generateAssistantResponse(event, {
           schoolId: user.schoolId!,
           ownerUserId: user.id,

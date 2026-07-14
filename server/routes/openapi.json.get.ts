@@ -11,6 +11,7 @@ import {
   routeDecisionSchema,
   targetTypeSchema
 } from '../../shared/contracts'
+import { assessmentReportSchema, planReviewCreateSchema } from '../../shared/reports'
 
 const jsonSchema = (schema: z.ZodType) => {
   const value = z.toJSONSchema(schema, { target: 'draft-7' }) as Record<string, unknown>
@@ -37,7 +38,9 @@ export default defineEventHandler(() => ({
       KnowledgeBaseCreate: jsonSchema(knowledgeBaseCreateSchema),
       KnowledgeBaseAction: jsonSchema(knowledgeBaseActionSchema),
       KnowledgeDocumentImport: jsonSchema(knowledgeDocumentImportSchema),
-      RouteDecision: jsonSchema(routeDecisionSchema)
+      RouteDecision: jsonSchema(routeDecisionSchema),
+      AssessmentReport: jsonSchema(assessmentReportSchema),
+      PlanReviewCreate: jsonSchema(planReviewCreateSchema)
     }
   },
   security: [{ sessionCookie: [] }],
@@ -61,8 +64,12 @@ export default defineEventHandler(() => ({
       get: { summary: '恢复当前教师的服务端草稿', responses: { 200: { description: 'Draft or null' } } },
       patch: { summary: '自动保存当前教师的部分答卷', responses: { 200: { description: 'Saved' } } }
     },
-    '/api/v1/assessments/{module}/submit': { post: { summary: '确定性计分、方案或安全熔断', responses: { 200: { description: 'Assessment result' } } } },
-    '/api/v1/information/export': { get: { summary: '教师导出仅属于自己的完整数据；管理员角色无权调用', responses: { 200: { description: 'JSON attachment' }, 403: { description: 'Teacher only' } } } },
+    '/api/v1/assessments/{module}/submit': { post: { summary: '确定性计分、正式方案报告或安全熔断', responses: { 200: { description: 'Assessment result with planId and report when not fused' } } } },
+    '/api/v1/plans/{id}': { get: { summary: '读取当前由该教师负责的正式方案报告和完整复盘时间线', responses: { 200: { description: 'Plan detail with reviews' }, 404: { description: 'Not found or not responsible' } } } },
+    '/api/v1/plans/{id}/reviews': { post: { summary: '为当前由该教师负责的方案新增复盘记录', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/PlanReviewCreate' } } } }, responses: { 200: { description: 'Review created' }, 404: { description: 'Plan not found or not responsible' } } } },
+    '/api/v1/school-admin/information': { get: { summary: '学校管理员查看本校班级、学生、家长、沟通、方案和移交历史，用于负责教师分配', responses: { 200: { description: 'School-owned records with current responsible teacher' } } } },
+    '/api/v1/school-admin/information/assign': { post: { summary: '学校管理员调整学校业务档案的当前负责教师，并记录移交历史', responses: { 200: { description: 'Assigned' }, 404: { description: 'Target not found' } } } },
+    '/api/v1/information/export': { get: { summary: '教师导出当前由自己负责或参与的业务档案；管理员角色无权调用', responses: { 200: { description: 'JSON attachment' }, 403: { description: 'Teacher only' } } } },
     '/api/v1/admin-access/requests': { post: { summary: '创建学校管理员短时授权或平台 Break-glass 申请', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/AdminAccessRequest' } } } }, responses: { 200: { description: 'Request and optional grant' } } } },
     '/api/v1/admin-access/records/{targetType}/{targetId}': { get: { summary: '在有效目标级授权内只读查看', parameters: [{ name: 'X-Admin-Access-Grant', in: 'header', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { 200: { description: 'No-store sensitive record' }, 403: { description: 'Missing, mismatched or expired grant' } } } }
   }

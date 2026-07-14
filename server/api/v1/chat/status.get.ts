@@ -15,6 +15,11 @@ export default defineEventHandler(async (event) => {
     provider: 'deepseek',
     modelConfigured: Boolean(useRuntimeConfig(event).deepseekApiKey),
     mode: useRuntimeConfig(event).deepseekApiKey ? 'deepseek' : 'local_fallback',
-    publishedKnowledgeBases: knowledge?.count || 0
+    publishedKnowledgeBases: knowledge?.count || 0,
+    retrieval: {
+      mode: useRuntimeConfig(event).embeddingEnabled ? 'hybrid' : 'lexical',
+      embeddingProvider: useRuntimeConfig(event).embeddingEnabled ? 'ollama' : null,
+      embeddingModel: useRuntimeConfig(event).embeddingEnabled ? useRuntimeConfig(event).embeddingModel : null
+    }
   }
 })

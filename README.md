@@ -5,7 +5,7 @@
 ## 已实现范围
 
 - 完整 AI 助手：本地危机规则先行、PII 脱敏、DeepSeek 多轮回答、知识检索与来源引用、Zod 校验、失败自动降级、会话历史和教师确认主模块。
-- AI 业务知识库：平台管理员导入 Markdown/TXT/JSON，自动分块、草稿发布、全局/校级范围、重复校验和模型调用审计。
+- AI 业务知识库：平台管理员导入 Markdown/TXT/JSON，自动分块、Ollama `qwen3-embedding:0.6b` 向量化、pgvector + `pg_trgm` 混合检索、草稿发布、全局/校级范围、重复校验和模型调用审计。
 - 四个业务模块：动态问卷、确定性计分/分级、行动和工具生成、方案存档；自我成长的连续四次低意义感紫色规则由历史记录计算。
 - 问卷草稿同时保存在浏览器和服务端，可跨会话恢复；共享 Zod 契约生成 `/openapi.json`。
 - 信息中心：状态、班级、学生、家长、沟通记录和方案记录；个人字段使用 AES-256-GCM 加密，教师可导出自己的完整 JSON 数据，管理员不能调用该导出。
@@ -29,7 +29,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-`pnpm env:init` 仅替换模板占位值，生成互不相同的随机本地密钥，不会打印密钥，也不会覆盖已经初始化的 `.env`。`pnpm db:up` 会启动 PostgreSQL 18、创建低权限 `mentor_app` 账号，并以 `mentor_admin` 执行迁移。`pnpm db:migrate`、`pnpm db:seed` 和 `pnpm worker` 也会自动读取 `.env`；Shell 或 CI 中已设置的环境变量优先。
+`pnpm env:init` 会替换模板占位值、生成互不相同的随机本地密钥，并为已有 `.env` 补充新配置，不会打印密钥或覆盖已有值。`pnpm db:up` 会启动带 pgvector 的 PostgreSQL 18、Ollama、模型拉取、数据库迁移和已有知识补向量任务；首次启动需下载 Ollama 镜像和约 639 MB 的 Embedding 模型。`pnpm db:migrate`、`pnpm db:seed` 和 `pnpm worker` 也会自动读取 `.env`；Shell 或 CI 中已设置的环境变量优先。
 
 日常开发通常只需：
 
@@ -51,7 +51,7 @@ pnpm dev
 
 心理专员演示 TOTP secret 为 `JBSWY3DPEHPK3PXP`。它只用于本地演示，部署时必须删除演示账号或重新绑定。
 
-若没有配置 `DEEPSEEK_API_KEY`，系统自动使用本地路由降级规则；`SMS_PROVIDER=mock` 时短信仅写入 Worker 日志。
+若没有配置 `DEEPSEEK_API_KEY`，系统自动使用本地路由降级规则；Ollama 不可用时知识检索自动降级为关键词模式；`SMS_PROVIDER=mock` 时短信仅写入 Worker 日志。
 
 ## 校内服务器部署
 

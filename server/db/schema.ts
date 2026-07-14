@@ -1,5 +1,6 @@
 import {
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -10,6 +11,12 @@ import {
   uuid,
   varchar
 } from 'drizzle-orm/pg-core'
+
+const vector1024 = customType<{ data: number[], driverData: string }>({
+  dataType: () => 'vector(1024)',
+  toDriver: value => `[${value.join(',')}]`,
+  fromDriver: value => String(value).slice(1, -1).split(',').map(Number)
+})
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -115,9 +122,26 @@ export const adminAccessEvents = pgTable('admin_access_events', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [index('access_events_school_created_idx').on(table.schoolId, table.createdAt)])
 
+export const recordAssignments = pgTable('record_assignments', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  targetType: varchar('target_type', { length: 40 }).notNull(),
+  targetId: uuid('target_id').notNull(),
+  fromUserId: uuid('from_user_id').references(() => users.id),
+  toUserId: uuid('to_user_id').notNull().references(() => users.id),
+  assignedBy: uuid('assigned_by').references(() => users.id),
+  reason: text('reason'),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  index('record_assignments_school_created_idx').on(table.schoolId, table.createdAt),
+  index('record_assignments_target_idx').on(table.targetType, table.targetId, table.createdAt)
+])
+
 export const classes = pgTable('classes', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
+  // 语义：当前负责教师。保留 owner_user_id 列名是为了兼容既有迁移和接口。
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   name: varchar('name', { length: 120 }).notNull(),
   grade: integer('grade').notNull(),
@@ -130,6 +154,7 @@ export const classes = pgTable('classes', {
 export const students = pgTable('students', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
+  // 语义：当前负责教师。学生档案归属学校，可由学校管理员移交。
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   classId: uuid('class_id').references(() => classes.id, { onDelete: 'set null' }),
   nameEnc: text('name_enc').notNull(),
@@ -143,6 +168,7 @@ export const students = pgTable('students', {
 export const guardians = pgTable('guardians', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
+  // 语义：当前负责教师。家长档案归属学校，可随学生/班级移交。
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   nameEnc: text('name_enc').notNull(),
   nameSearch: varchar('name_search', { length: 64 }).notNull(),
@@ -225,6 +251,7 @@ export const moduleCases = pgTable('module_cases', {
 export const plans = pgTable('plans', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
+  // 语义：当前负责教师。方案报告归属学校业务档案，可移交给后续负责教师。
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   caseId: uuid('case_id').references(() => moduleCases.id, { onDelete: 'set null' }),
   module: varchar('module', { length: 40 }).notNull(),
@@ -232,11 +259,28 @@ export const plans = pgTable('plans', {
   summaryEnc: text('summary_enc').notNull(),
   actions: jsonb('actions').$type<Array<{ title: string, detail: string, status: string }>>().default([]).notNull(),
   tools: jsonb('tools').$type<Array<{ title: string, content: string }>>().default([]).notNull(),
+  report: jsonb('report').$type<Record<string, unknown>>().default({}).notNull(),
   sourceVersions: jsonb('source_versions').$type<string[]>().default([]).notNull(),
   status: varchar('status', { length: 30 }).default('in_progress').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
 }, table => [index('plans_owner_idx').on(table.ownerUserId, table.module)])
+
+export const planReviews = pgTable('plan_reviews', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  reviewAt: timestamp('review_at', { withTimezone: true }).defaultNow().notNull(),
+  effectScore: integer('effect_score').notNull(),
+  progressNote: text('progress_note').notNull(),
+  nextAction: text('next_action').notNull(),
+  dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  index('plan_reviews_plan_created_idx').on(table.planId, table.createdAt),
+  index('plan_reviews_owner_idx').on(table.ownerUserId, table.reviewAt)
+])
 
 export const communications = pgTable('communications', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -311,6 +355,9 @@ export const knowledgeChunks = pgTable('knowledge_chunks', {
   heading: varchar('heading', { length: 300 }),
   content: text('content').notNull(),
   tokenEstimate: integer('token_estimate').notNull(),
+  embedding: vector1024('embedding'),
+  embeddingModel: varchar('embedding_model', { length: 120 }),
+  embeddedAt: timestamp('embedded_at', { withTimezone: true }),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [
