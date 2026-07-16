@@ -59,9 +59,15 @@ export default defineEventHandler(async (event) => {
       summaryEnc: undefined
     }
   })
+  const classesWithStudents = classes.map(row => ({
+    ...row,
+    ownerName: teacherById.get(row.ownerUserId)?.name || '未分配教师',
+    students: students.filter(student => student.classId === row.id)
+  }))
   return {
     teachers: teachers.filter(teacher => teacher.status === 'active'),
-    classes: classes.map(row => ({ ...row, ownerName: teacherById.get(row.ownerUserId)?.name || '未分配教师' })),
+    classes: classesWithStudents,
+    unassignedStudents: students.filter(student => !student.classId),
     students,
     guardians,
     communications,

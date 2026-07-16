@@ -160,6 +160,7 @@ export const students = pgTable('students', {
   nameEnc: text('name_enc').notNull(),
   nameSearch: varchar('name_search', { length: 64 }).notNull(),
   gender: varchar('gender', { length: 20 }),
+  profileEnc: text('profile_enc'),
   notesEnc: text('notes_enc'),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
@@ -189,9 +190,14 @@ export const chatSessions = pgTable('chat_sessions', {
   schoolId: uuid('school_id').notNull().references(() => schools.id),
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   title: varchar('title', { length: 200 }).default('新对话').notNull(),
+  contextType: varchar('context_type', { length: 30 }).default('none').notNull(),
+  contextId: uuid('context_id'),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   ...timestamps
-}, table => [index('chat_sessions_owner_idx').on(table.ownerUserId)])
+}, table => [
+  index('chat_sessions_owner_idx').on(table.ownerUserId),
+  index('chat_sessions_context_idx').on(table.contextType, table.contextId)
+])
 
 export const chatMessages = pgTable('chat_messages', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -254,6 +260,11 @@ export const plans = pgTable('plans', {
   // 语义：当前负责教师。方案报告归属学校业务档案，可移交给后续负责教师。
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   caseId: uuid('case_id').references(() => moduleCases.id, { onDelete: 'set null' }),
+  studentId: uuid('student_id').references(() => students.id, { onDelete: 'set null' }),
+  classId: uuid('class_id').references(() => classes.id, { onDelete: 'set null' }),
+  guardianId: uuid('guardian_id').references(() => guardians.id, { onDelete: 'set null' }),
+  sourceChatSessionId: uuid('source_chat_session_id').references(() => chatSessions.id, { onDelete: 'set null' }),
+  sourceAssessmentAttemptId: uuid('source_assessment_attempt_id').references(() => assessmentAttempts.id, { onDelete: 'set null' }),
   module: varchar('module', { length: 40 }).notNull(),
   title: varchar('title', { length: 200 }).notNull(),
   summaryEnc: text('summary_enc').notNull(),
@@ -264,7 +275,13 @@ export const plans = pgTable('plans', {
   status: varchar('status', { length: 30 }).default('in_progress').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
-}, table => [index('plans_owner_idx').on(table.ownerUserId, table.module)])
+}, table => [
+  index('plans_owner_idx').on(table.ownerUserId, table.module),
+  index('plans_student_idx').on(table.studentId),
+  index('plans_class_idx').on(table.classId),
+  index('plans_guardian_idx').on(table.guardianId),
+  index('plans_source_chat_idx').on(table.sourceChatSessionId)
+])
 
 export const planReviews = pgTable('plan_reviews', {
   id: uuid('id').defaultRandom().primaryKey(),

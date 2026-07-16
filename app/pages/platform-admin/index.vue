@@ -19,6 +19,58 @@ const createKnowledgeOpen = ref(false)
 const importKnowledgeOpen = ref(false)
 const previewDocument = ref<any>(null)
 const confirmKnowledgeAction = ref<{ id: string, action: 'publish' | 'archive' | 'restore', name: string } | null>(null)
+// ---- 内容编辑 ----
+const editContentOpen = ref(false)
+const editingContent = ref<any>(null)
+const editingPayload = ref<any>({})
+const editingCode = ref('')
+const editingName = ref('')
+const editingVersion = ref('')
+const diffContentOpen = ref(false)
+const diffSourceId = ref('')
+const diffTargetId = ref('')
+const diffSource = ref<any>(null)
+const diffTarget = ref<any>(null)
+
+function openEditor(item: any) {
+  editingContent.value = item
+  editingPayload.value = JSON.parse(JSON.stringify(item.payload || {}))
+  editingCode.value = item.code
+  editingName.value = item.name
+  editingVersion.value = item.version
+  editContentOpen.value = true
+}
+
+function openDiff(sourceItem: any) {
+  const sameCode = (data.value?.contentPackages || []).filter((x: any) => x.code === sourceItem.code && x.id !== sourceItem.id)
+  if (sameCode.length === 0) { alert('没有可对比的版本'); return }
+  diffSourceId.value = sourceItem.id
+  diffTargetId.value = sameCode[0].id
+  diffSource.value = sourceItem
+  diffTarget.value = sameCode[0]
+  diffContentOpen.value = true
+}
+
+function loadDiffVersions() {
+  const items = data.value?.contentPackages || []
+  if (diffSourceId.value) diffSource.value = items.find((x: any) => x.id === diffSourceId.value) || null
+  if (diffTargetId.value) diffTarget.value = items.find((x: any) => x.id === diffTargetId.value) || null
+}
+
+const diffResult = computed(() => {
+  if (!diffSource.value?.payload || !diffTarget.value?.payload) return []
+  const src = diffSource.value.payload
+  const tgt = diffTarget.value.payload
+  const allKeys = new Set([...Object.keys(src), ...Object.keys(tgt)])
+  const rows: Array<{ key: string, source: any, target: any, changed: boolean }> = []
+  for (const key of allKeys) {
+    const sv = src[key], tv = tgt[key]
+    const changed = JSON.stringify(sv) !== JSON.stringify(tv)
+    rows.push({ key, source: sv, target: tv, changed })
+  }
+  return rows
+})
+
 const importStage = ref<'idle' | 'reading' | 'uploading' | 'done'>('idle')
 const accessForm = reactive({ schoolId: '', targetType: 'teacher_profile', targetId: '', reasonCategory: 'data_correction_verification', reasonText: '' })
 const sensitive = ref<any>(null)
@@ -203,7 +255,7 @@ onBeforeUnmount(()=>window.removeEventListener('beforeprint',recordPrintAttempt)
       <section class="min-w-0">
         <template v-if="active==='overview'"><div class="grid gap-4 sm:grid-cols-3"><div class="panel p-6"><p class="text-sm text-slate-500">学校租户</p><strong class="mt-2 block text-3xl">{{ data?.schools?.length||0 }}</strong></div><div class="panel p-6"><p class="text-sm text-slate-500">已发布内容</p><strong class="mt-2 block text-3xl">{{ data?.contentPackages?.filter((x:any)=>x.status==='published').length||0 }}</strong></div><div class="panel p-6"><p class="text-sm text-slate-500">应急访问申请</p><strong class="mt-2 block text-3xl">{{ data?.accessRequests?.length||0 }}</strong></div></div><div class="panel mt-5 p-6"><h2 class="font-semibold">服务状态</h2><div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div class="rounded-2xl bg-emerald-50 p-4 text-sm">数据库 · {{ data?.health.database }}</div><div class="rounded-2xl p-4 text-sm" :class="data?.health.modelConfigured?'bg-emerald-50':'bg-amber-50'">DeepSeek · {{ data?.health.modelConfigured?'已配置':'降级模式' }}</div><div class="rounded-2xl p-4 text-sm" :class="data?.health.embeddingEnabled?'bg-emerald-50':'bg-amber-50'">向量检索 · {{ data?.health.embeddingEnabled ? data?.health.embeddingModel : '关键词模式' }}</div><div class="rounded-2xl bg-slate-50 p-4 text-sm">短信 · {{ data?.health.smsProvider }}</div></div></div></template>
         <template v-if="active==='schools'"><div class="grid gap-5 xl:grid-cols-[1fr_.8fr]"><div class="panel p-6"><h2 class="text-xl font-semibold">学校列表</h2><div class="mt-5 divide-y divide-slate-100"><div v-for="item in data?.schools" :key="item.id" class="flex justify-between gap-3 py-4"><div><strong>{{ item.name }}</strong><p class="mt-1 text-xs text-slate-400">{{ item.code }} · {{ item.id }}</p></div><div class="flex items-center gap-2"><UBadge :color="item.status==='active'?'success':'neutral'" variant="soft">{{ item.status }}</UBadge><UButton size="xs" color="neutral" variant="ghost" @click="toggleSchool(item)">{{ item.status==='active'?'停用':'启用' }}</UButton></div></div></div></div><form class="panel h-fit space-y-4 p-6" @submit.prevent="createSchool"><h2 class="text-xl font-semibold">创建学校及管理员</h2><UFormField label="学校名称"><UInput v-model="schoolForm.name" class="w-full" /></UFormField><UFormField label="学校代码"><UInput v-model="schoolForm.code" class="w-full" placeholder="school-code" /></UFormField><UFormField label="管理员姓名"><UInput v-model="schoolForm.adminName" class="w-full" /></UFormField><UFormField label="管理员邮箱"><UInput v-model="schoolForm.adminEmail" class="w-full" /></UFormField><UFormField label="临时密码"><UInput v-model="schoolForm.temporaryPassword" class="w-full" /></UFormField><UButton type="submit" block :loading="pending">创建租户</UButton></form></div></template>
-        <template v-if="active==='content'"><div class="grid gap-5 xl:grid-cols-[1.2fr_.8fr]"><div class="panel p-6"><h2 class="text-xl font-semibold">内容版本</h2><div class="mt-5 space-y-3"><div v-for="item in data?.contentPackages" :key="item.id" class="rounded-2xl border border-slate-100 p-4"><div class="flex items-start justify-between gap-3"><div><strong>{{ item.name }}</strong><p class="mt-1 text-xs text-slate-400">{{ item.code }}@{{ item.version }} · {{ item.type }}</p></div><UBadge :color="item.status==='published'?'success':'neutral'" variant="soft">{{ item.status }}</UBadge></div><div class="mt-3 flex gap-2"><UButton v-if="item.status==='draft'" size="xs" @click="contentAction(item.id,'publish')">发布</UButton><UButton v-if="item.status==='retired'" size="xs" variant="soft" @click="contentAction(item.id,'rollback')">回滚到此版</UButton><UButton v-if="item.status==='published'" size="xs" color="neutral" variant="soft" @click="contentAction(item.id,'retire')">停用</UButton></div></div></div></div><form class="panel h-fit space-y-4 p-6" @submit.prevent="createContent"><h2 class="text-xl font-semibold">新增内容包</h2><UFormField label="代码"><UInput v-model="contentForm.code" class="w-full" /></UFormField><UFormField label="名称"><UInput v-model="contentForm.name" class="w-full" /></UFormField><div class="grid grid-cols-2 gap-3"><UFormField label="版本"><UInput v-model="contentForm.version" /></UFormField><UFormField label="类型"><USelect v-model="contentForm.type" :items="['assessment','tool','sop','prompt']" /></UFormField></div><UFormField label="JSON 内容"><UTextarea v-model="contentForm.payloadText" :rows="6" class="w-full font-mono text-xs" /></UFormField><UButton type="submit" block :loading="pending">保存草稿</UButton></form></div></template>
+        <template v-if="active==='content'"><div class="grid gap-5 xl:grid-cols-[1.2fr_.8fr]"><div class="panel p-6"><h2 class="text-xl font-semibold">内容版本</h2><div class="mt-5 space-y-3"><div v-for="item in data?.contentPackages" :key="item.id" class="rounded-2xl border border-slate-100 p-4 hover:border-indigo-200 cursor-pointer transition-colors" @click="openEditor(item)"><div class="flex items-start justify-between gap-3"><div><strong>{{ item.name }}</strong><p class="mt-1 text-xs text-slate-400">{{ item.code }}@{{ item.version }} · {{ item.type }}</p></div><UBadge :color="item.status==='published'?'success':'neutral'" variant="soft">{{ item.status }}</UBadge></div><div class="mt-3 flex gap-2" @click.stop><UButton v-if="item.status==='draft'" size="xs" @click="contentAction(item.id,'publish')">发布</UButton><UButton v-if="item.status==='retired'" size="xs" variant="soft" @click="contentAction(item.id,'rollback')">回滚到此版</UButton><UButton v-if="item.status==='published'" size="xs" color="neutral" variant="soft" @click="contentAction(item.id,'retire')">停用</UButton><UButton size="xs" color="neutral" variant="ghost" @click.stop="openDiff(item)">对比</UButton></div></div></div></div><form class="panel h-fit space-y-4 p-6" @submit.prevent="createContent"><h2 class="text-xl font-semibold">新增内容包</h2><UFormField label="代码"><UInput v-model="contentForm.code" class="w-full" /></UFormField><UFormField label="名称"><UInput v-model="contentForm.name" class="w-full" /></UFormField><div class="grid grid-cols-2 gap-3"><UFormField label="版本"><UInput v-model="contentForm.version" /></UFormField><UFormField label="类型"><USelect v-model="contentForm.type" :items="['assessment','rules','tool','sop','prompt']" /></UFormField></div><UFormField label="JSON 内容"><UTextarea v-model="contentForm.payloadText" :rows="6" class="w-full font-mono text-xs" /></UFormField><UButton type="submit" block :loading="pending">保存草稿</UButton></form></div></template>
         <template v-if="active==='knowledge'">
           <div class="space-y-5">
             <div class="flex flex-wrap items-start justify-between gap-4">
@@ -264,4 +316,60 @@ onBeforeUnmount(()=>window.removeEventListener('beforeprint',recordPrintAttempt)
     <UModal :open="Boolean(previewDocument)" :title="previewDocument?.title || '文档预览'" description="以下为教师助手实际检索的分块内容预览。" @update:open="value=>{if(!value)previewDocument=null}"><template #body><div v-if="previewDocument" class="space-y-4"><div class="grid grid-cols-4 gap-3"><div class="rounded-xl bg-slate-50 p-3"><span class="text-xs text-slate-400">格式</span><strong class="mt-1 block text-sm uppercase">{{ previewDocument.sourceType }}</strong></div><div class="rounded-xl bg-slate-50 p-3"><span class="text-xs text-slate-400">字符数</span><strong class="mt-1 block text-sm">{{ previewDocument.metadata?.characterCount || 0 }}</strong></div><div class="rounded-xl bg-slate-50 p-3"><span class="text-xs text-slate-400">知识片段</span><strong class="mt-1 block text-sm">{{ previewDocument.metadata?.chunkCount || 0 }}</strong></div><div class="rounded-xl bg-slate-50 p-3"><span class="text-xs text-slate-400">已向量化</span><strong class="mt-1 block text-sm">{{ previewDocument.metadata?.embeddedChunkCount || 0 }}</strong></div></div><div class="max-h-[50vh] space-y-3 overflow-y-auto pr-1"><div v-for="chunk in previewDocument.chunks" :key="chunk.id" class="rounded-2xl border border-slate-100 p-4"><div class="flex items-center justify-between gap-3"><strong class="text-sm">{{ chunk.heading || `片段 ${chunk.chunkIndex+1}` }}</strong><span class="text-xs text-slate-400">约 {{ chunk.tokenEstimate }} tokens · {{ chunk.embeddingModel || '待向量化' }}</span></div><p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{{ chunk.content }}</p></div></div><div class="flex items-center justify-between border-t border-slate-100 pt-4"><span class="text-xs text-slate-400">导入于 {{ formatKnowledgeDate(previewDocument.createdAt) }}</span><UButton color="error" variant="soft" icon="i-lucide-trash-2" :disabled="selectedKnowledgeBase?.status==='published'" :loading="pending" @click="deleteKnowledgeDocument(previewDocument)">删除文档</UButton></div></div></template></UModal>
     <UModal :open="Boolean(confirmKnowledgeAction)" :title="confirmKnowledgeAction?.action==='publish'?'确认发布知识库':confirmKnowledgeAction?.action==='archive'?'确认停用知识库':'恢复为草稿'" @update:open="value=>{if(!value)confirmKnowledgeAction=null}"><template #body><div v-if="confirmKnowledgeAction" class="space-y-5"><UAlert :color="confirmKnowledgeAction.action==='publish'?'warning':'info'" variant="soft" :description="confirmKnowledgeAction.action==='publish'?'发布后，教师助手将立即检索该知识库中的全部文档。请确认内容已经过业务和隐私审核。':confirmKnowledgeAction.action==='archive'?'停用后，教师助手将立即停止检索该知识库，但历史引用仍保留。':'恢复后知识库保持离线，可修改文档并重新发布。'" /><p class="text-sm text-slate-600">知识库：<strong>{{ confirmKnowledgeAction.name }}</strong></p><div class="flex justify-end gap-2"><UButton color="neutral" variant="ghost" @click="() => { confirmKnowledgeAction=null }">取消</UButton><UButton :color="confirmKnowledgeAction.action==='archive'?'error':'primary'" :loading="pending" @click="knowledgeAction(confirmKnowledgeAction.id,confirmKnowledgeAction.action)">{{ confirmKnowledgeAction.action==='publish'?'确认发布':confirmKnowledgeAction.action==='archive'?'确认停用':'恢复草稿' }}</UButton></div></div></template></UModal>
   </div>
+    <!-- 内容编辑器模态框 -->
+    <UModal :open="editContentOpen" :title="`编辑 ${editingContent?.name || ''}`" description="修改内容包定义，更改不会自动保存为版本。" @update:open="v => { if(!v) editContentOpen = false }" class="w-full max-w-6xl">
+      <template #body>
+        <div v-if="editingContent" class="max-h-[75vh] overflow-y-auto pr-1">
+          <PlatformAdminAssessmentEditor
+            v-if="editingContent.type === 'assessment'"
+            :payload="editingPayload"
+            :code="editingCode"
+            :name="editingName"
+            :version="editingVersion"
+            @update:payload="v => editingPayload = v"
+            @update:code="v => editingCode = v"
+            @update:name="v => editingName = v"
+            @update:version="v => editingVersion = v"
+          />
+          <PlatformAdminRulesEditor
+            v-else-if="editingContent.type === 'rules'"
+            :payload="editingPayload"
+            @update:payload="v => editingPayload = v"
+          />
+          <div v-else class="py-8 text-center text-sm text-slate-400">
+            暂不支持 {{ editingContent.type }} 类型的可视化编辑。请使用 JSON 编辑。
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-4 border-t border-slate-100 mt-4">
+          <UButton color="neutral" variant="ghost" @click="() => { editContentOpen = false }">关闭</UButton>
+        </div>
+      </template>
+    </UModal>
+    <!-- 版本对比模态框 -->
+    <UModal :open="diffContentOpen" title="版本对比" description="对比两个版本的 payload 差异" @update:open="v => { if(!v) diffContentOpen = false }">
+      <template #body>
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <UFormField label="源版本">
+            <USelect v-model="diffSourceId" :items="(data?.contentPackages || []).filter((x:any) => x.code === diffSource?.code).map((x:any) => ({ label: `${x.version} (${x.status})`, value: x.id }))" class="w-full" @update:model-value="loadDiffVersions()" />
+          </UFormField>
+          <UFormField label="目标版本">
+            <USelect v-model="diffTargetId" :items="(data?.contentPackages || []).filter((x:any) => x.code === diffSource?.code && x.id !== diffSourceId).map((x:any) => ({ label: `${x.version} (${x.status})`, value: x.id }))" class="w-full" @update:model-value="loadDiffVersions()" />
+          </UFormField>
+        </div>
+        <div v-if="diffResult.length" class="max-h-[50vh] overflow-y-auto rounded-2xl border border-slate-200">
+          <div v-for="row in diffResult" :key="row.key" class="border-b border-slate-100 p-3 last:border-0" :class="row.changed ? 'bg-amber-50' : ''">
+            <div class="flex items-center justify-between">
+              <code class="text-xs font-mono font-semibold">{{ row.key }}</code>
+              <UBadge v-if="row.changed" color="warning" variant="soft" size="sm">已变更</UBadge>
+              <UBadge v-else color="neutral" variant="soft" size="sm">未变更</UBadge>
+            </div>
+            <div v-if="row.changed" class="mt-2 grid grid-cols-2 gap-3 text-xs">
+              <div class="rounded-xl bg-red-50 p-2 font-mono text-red-700 overflow-x-auto">{{ JSON.stringify(row.source) }}</div>
+              <div class="rounded-xl bg-emerald-50 p-2 font-mono text-emerald-700 overflow-x-auto">{{ JSON.stringify(row.target) }}</div>
+            </div>
+          </div>
+        </div>
+        <div v-else class="py-8 text-center text-sm text-slate-400">选择两个版本后显示差异</div>
+      </template>
+    </UModal>
 </template>

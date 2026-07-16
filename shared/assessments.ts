@@ -113,3 +113,24 @@ export const moduleMeta: Record<ModuleId, { title: string, short: string, color:
   home_school: { title: '家校沟通合作', short: '理解关系，准备沟通', color: 'amber', icon: 'i-lucide-messages-square' },
   student_case: { title: '学生个体问题', short: '快速编码，分级支持', color: 'violet', icon: 'i-lucide-user-round-search' }
 }
+
+// level → { label, color } 映射，用于评估结果徽章展示
+const LEVEL_COLORS: Record<string, string> = {
+  green: 'success', blue: 'info', yellow: 'warning', orange: 'warning', red: 'error', purple: 'error',
+  survival: 'error', norming: 'warning', operating: 'info', mature: 'success',
+  L1: 'info', L2: 'warning', L3: 'error'
+}
+
+const LEVEL_LABELS: Record<string, string> = {
+  green: '状态良好', blue: '轻微波动', yellow: '关注', orange: '需支持',
+  red: '需关注', purple: '需转介',
+  survival: '生存期', norming: '规范期', operating: '运行期', mature: '成熟期',
+  L1: '教师支持', L2: '年级协同', L3: '专业会商'
+}
+
+export function assessmentBadge(level?: string): { label: string, color: string } | null {
+  if (!level) return null
+  // 家校模块的复合值如 P3-C 直接原样展示
+  if (level in LEVEL_LABELS) return { label: LEVEL_LABELS[level]!, color: LEVEL_COLORS[level] || 'neutral' }
+  return { label: level, color: 'neutral' }
+}

@@ -20,13 +20,13 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "knowledge:import": "tsx scripts/import-knowledge.ts",
-    "knowledge:reindex": "tsx scripts/reindex-embeddings.ts",
-    "worker": "tsx workers/notification.ts"
+    "knowledge:reindex": "tsx scripts/reindex-embeddings.ts"
   },
   "dependencies": {
     "@nuxt/ui": "latest",
     "argon2": "latest",
     "drizzle-orm": "latest",
+    "marked": "^18.0.6",
     "nuxt": "^4.4.0",
     "otpauth": "latest",
     "pg": "latest",

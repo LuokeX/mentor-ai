@@ -28,7 +28,13 @@ export const adminAccessRequestSchema = z.object({
 
 export const chatMessageSchema = z.object({
   sessionId: z.string().uuid().optional(),
-  message: z.string().trim().min(1).max(4000)
+  message: z.string().trim().min(1).max(4000),
+  contextType: z.enum(['student', 'class', 'guardian']).optional(),
+  contextId: z.string().uuid().optional()
+}).superRefine((value, context) => {
+  if (Boolean(value.contextType) !== Boolean(value.contextId)) {
+    context.addIssue({ code: 'custom', path: ['contextId'], message: 'contextType 和 contextId 必须同时提供' })
+  }
 })
 
 export const knowledgeBaseCreateSchema = z.object({
@@ -67,3 +73,57 @@ export const routeDecisionSchema = z.object({
 
 export type ModuleId = z.infer<typeof moduleIdSchema>
 export type RouteDecision = z.infer<typeof routeDecisionSchema>
+
+// ---- 评估系统可配置化 ----
+// 题库 payload 存入 content_packages (type='assessment')
+export interface AssessmentPayload {
+  code: string
+  version: string
+  module: ModuleId
+  title: string
+  description: string
+  estimatedMinutes: number
+  questions: Array<{
+    id: string
+    text: string
+    dimension: string
+    help?: string
+    reverse?: boolean
+    options: Array<{ label: string, value: number }>
+  }>
+}
+
+// 受限表达式语言 —— 规则 DSL 的 when 条件
+// 支持: 变量引用、比较运算(>/</>=/<=/==/!=)、逻辑运算(&&/||)、括号分组
+// 不支持: 函数调用、循环、赋值
+export interface RuleConfig {
+  module: ModuleId
+  version: string
+  // 中间变量: 从 answers 计算得出
+  computed: Record<string, string>  // 变量名 -> 表达式 (SUM/MAX/MIN/SCORE/RAW)
+  // 条件分支（按 priority 优先级排序）
+  branches: Array<{
+    pri: number
+    when?: string           // 若省略则总是匹配（默认分支）
+    level: string
+    blocked: boolean
+    ruleId: string
+    reasons: string[]
+  }>
+  // 输出模板
+  actions: Array<{ title: string, detail: string, status: 'pending' }>
+  tools: Array<{ title: string, content: string }>
+  // 安全红线（可选）
+  crisis?: { when: string, blocked: boolean }
+}
+
+// 规则执行结果（与现有 RuleOutput 一致）
+export interface RuleExecResult {
+  level: string
+  reasons: string[]
+  blocked: boolean
+  matchedRuleIds: string[]
+  dimensions: Record<string, number>
+  actions: Array<{ title: string, detail: string, status: 'pending' }>
+  tools: Array<{ title: string, content: string }>
+}

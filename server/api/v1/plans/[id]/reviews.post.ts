@@ -11,11 +11,16 @@ export default defineEventHandler(async (event) => {
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = planReviewCreateSchema.parse(await readBody(event))
   const db = useDb(event)
-  const [plan] = await db.select({ id: schema.plans.id, schoolId: schema.plans.schoolId }).from(schema.plans).where(and(
-    eq(schema.plans.id, id),
-    eq(schema.plans.ownerUserId, user.id)
-  )).limit(1)
+
+  const [plan] = await db.select({ id: schema.plans.id, schoolId: schema.plans.schoolId, actions: schema.plans.actions })
+    .from(schema.plans)
+    .where(and(
+      eq(schema.plans.id, id),
+      eq(schema.plans.ownerUserId, user.id)
+    ))
+    .limit(1)
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
+
   const [review] = await db.insert(schema.planReviews).values({
     schoolId: plan.schoolId,
     ownerUserId: user.id,
@@ -25,7 +30,23 @@ export default defineEventHandler(async (event) => {
     progressNote: body.progressNote,
     nextAction: body.nextAction
   }).returning()
-  await db.update(schema.plans).set({ updatedAt: new Date() }).where(eq(schema.plans.id, plan.id))
+
+  // 联动完成动作
+  if (body.completedActionIndices?.length) {
+    const actions = (plan.actions as Array<{ title: string; detail: string; status: string }>) || []
+    for (const idx of body.completedActionIndices) {
+      if (idx >= 0 && idx < actions.length) {
+        const a = actions[idx]!
+        actions[idx] = { title: a.title, detail: a.detail, status: 'completed' }
+      }
+    }
+    await db.update(schema.plans)
+      .set({ actions: actions as any, updatedAt: new Date() })
+      .where(eq(schema.plans.id, plan.id))
+  } else {
+    await db.update(schema.plans).set({ updatedAt: new Date() }).where(eq(schema.plans.id, plan.id))
+  }
+
   await writeAudit(event, {
     schoolId: plan.schoolId,
     actorId: user.id,

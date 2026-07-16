@@ -6,6 +6,21 @@ const pending = ref(false)
 const errorMessage = ref('')
 const needOtp = ref(false)
 
+const demoAccounts = [
+  { label: '李老师（教师）', value: 'teacher@demo.local' },
+  { label: '张老师（教师）', value: 'teacher.zhang@demo.local' },
+  { label: '王心理专员', value: 'psychologist@demo.local' },
+  { label: '学校管理员', value: 'school.admin@demo.local' },
+  { label: '平台管理员', value: 'platform.admin@demo.local' },
+]
+const selectedDemo = ref(demoAccounts[0]!.value)
+
+function onDemoSelect(email: string) {
+  form.email = email
+  form.password = 'Mentor@2026'
+}
+
+
 async function login() {
   pending.value = true
   errorMessage.value = ''
@@ -58,6 +73,9 @@ async function login() {
         <h2 class="mt-2 text-3xl font-semibold">登录您的工作空间</h2>
         <p class="mt-2 text-sm text-slate-500">封闭试用环境 · 所有敏感操作均会留痕</p>
         <form class="mt-8 space-y-5" @submit.prevent="login">
+          <UFormField v-if="isDev" label="演示账号">
+            <USelect v-model="selectedDemo" :items="demoAccounts" class="w-full" @update:model-value="onDemoSelect" />
+          </UFormField>
           <UFormField label="邮箱"><UInput v-model="form.email" size="xl" icon="i-lucide-mail" class="w-full" /></UFormField>
           <UFormField label="密码"><UInput v-model="form.password" type="password" size="xl" icon="i-lucide-lock-keyhole" class="w-full" /></UFormField>
           <UFormField v-if="needOtp" label="心理专员动态验证码" help="请输入身份验证器中的 6 位验证码"><UInput v-model="form.otp" maxlength="6" size="xl" icon="i-lucide-shield-check" class="w-full" /></UFormField>

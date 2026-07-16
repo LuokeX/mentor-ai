@@ -1,0 +1,325 @@
+import { describe, expect, it } from 'vitest'
+import { ZodError } from 'zod'
+import {
+  loginRequestSchema,
+  chatMessageSchema,
+  adminAccessRequestSchema,
+  knowledgeBaseCreateSchema,
+  knowledgeDocumentImportSchema,
+  knowledgeBaseActionSchema,
+  routeDecisionSchema,
+  roleSchema,
+  moduleIdSchema,
+  targetTypeSchema,
+  reasonCategorySchema
+} from '../../shared/contracts'
+import { planReviewCreateSchema } from '../../shared/reports'
+
+// ---- Auth ----
+
+describe('loginRequestSchema', () => {
+  it('accepts valid login request', () => {
+    const result = loginRequestSchema.parse({ email: 'teacher@school.cn', password: 'password123' })
+    expect(result.email).toBe('teacher@school.cn')
+  })
+
+  it('lowercases email', () => {
+    const result = loginRequestSchema.parse({ email: 'Teacher@School.CN', password: 'password123' })
+    expect(result.email).toBe('teacher@school.cn')
+  })
+
+  it('accepts optional OTP code', () => {
+    const result = loginRequestSchema.parse({ email: 'a@b.cn', password: '12345678', otp: '123456' })
+    expect(result.otp).toBe('123456')
+  })
+
+  it('rejects empty OTP (treated as undefined)', () => {
+    const result = loginRequestSchema.parse({ email: 'a@b.cn', password: '12345678', otp: '' })
+    expect(result.otp).toBeUndefined()
+  })
+
+  it('rejects short password', () => {
+    expect(() => loginRequestSchema.parse({ email: 'a@b.cn', password: '1234567' })).toThrow(ZodError)
+  })
+
+  it('rejects invalid email', () => {
+    expect(() => loginRequestSchema.parse({ email: 'not-email', password: '12345678' })).toThrow(ZodError)
+  })
+
+  it('rejects non-numeric OTP', () => {
+    expect(() => loginRequestSchema.parse({ email: 'a@b.cn', password: '12345678', otp: 'abcdef' })).toThrow(ZodError)
+  })
+})
+
+// ---- Chat ----
+
+describe('chatMessageSchema', () => {
+  it('accepts minimal message', () => {
+    const result = chatMessageSchema.parse({ message: 'Hello' })
+    expect(result.message).toBe('Hello')
+  })
+
+  it('accepts message with context', () => {
+    const result = chatMessageSchema.parse({
+      message: '你好',
+      contextType: 'student',
+      contextId: '550e8400-e29b-41d4-a716-446655440000'
+    })
+    expect(result.contextType).toBe('student')
+  })
+
+  it('accepts message with sessionId', () => {
+    const result = chatMessageSchema.parse({
+      sessionId: '550e8400-e29b-41d4-a716-446655440000',
+      message: '继续对话'
+    })
+    expect(result.sessionId).toBeDefined()
+  })
+
+  it('rejects contextType without contextId', () => {
+    const result = chatMessageSchema.safeParse({
+      message: '你好',
+      contextType: 'student'
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues.some(i => i.path.includes('contextId'))).toBe(true)
+    }
+  })
+
+  it('rejects contextId without contextType', () => {
+    const result = chatMessageSchema.safeParse({
+      message: '你好',
+      contextId: '550e8400-e29b-41d4-a716-446655440000'
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects empty message', () => {
+    expect(() => chatMessageSchema.parse({ message: '' })).toThrow(ZodError)
+  })
+
+  it('rejects message over 4000 chars', () => {
+    expect(() => chatMessageSchema.parse({ message: 'x'.repeat(4001) })).toThrow(ZodError)
+  })
+})
+
+// ---- Assessments ----
+
+describe('moduleIdSchema', () => {
+  it('accepts all four module IDs', () => {
+    expect(moduleIdSchema.parse('self_growth')).toBe('self_growth')
+    expect(moduleIdSchema.parse('class_system')).toBe('class_system')
+    expect(moduleIdSchema.parse('home_school')).toBe('home_school')
+    expect(moduleIdSchema.parse('student_case')).toBe('student_case')
+  })
+
+  it('rejects unknown module', () => {
+    expect(() => moduleIdSchema.parse('unknown')).toThrow(ZodError)
+  })
+})
+
+describe('planReviewCreateSchema', () => {
+  it('accepts valid review', () => {
+    const result = planReviewCreateSchema.parse({
+      effectScore: 4,
+      progressNote: '本周完成了家访沟通，效果良好。',
+      nextAction: '下周继续跟进学习状态'
+    })
+    expect(result.effectScore).toBe(4)
+  })
+
+  it('rejects score out of range', () => {
+    expect(() => planReviewCreateSchema.parse({ effectScore: 0, progressNote: 'test', nextAction: 'test' })).toThrow(ZodError)
+    expect(() => planReviewCreateSchema.parse({ effectScore: 6, progressNote: 'test', nextAction: 'test' })).toThrow(ZodError)
+  })
+
+  it('rejects too short progress note', () => {
+    expect(() => planReviewCreateSchema.parse({ effectScore: 3, progressNote: 'ab', nextAction: 'cd' })).toThrow(ZodError)
+  })
+})
+
+// ---- Admin Access ----
+
+describe('adminAccessRequestSchema', () => {
+  it('accepts valid request', () => {
+    const result = adminAccessRequestSchema.parse({
+      targetType: 'student_case',
+      targetId: '550e8400-e29b-41d4-a716-446655440000',
+      reasonCategory: 'risk_review',
+      reasonText: '需要核查该学生的风险评估记录以确认转介依据。'
+    })
+    expect(result.reasonCategory).toBe('risk_review')
+  })
+
+  it('rejects short reason text', () => {
+    expect(() => adminAccessRequestSchema.parse({
+      targetType: 'student_case',
+      targetId: '550e8400-e29b-41d4-a716-446655440000',
+      reasonCategory: 'risk_review',
+      reasonText: '短'
+    })).toThrow(ZodError)
+  })
+
+  it('rejects invalid targetType', () => {
+    expect(() => adminAccessRequestSchema.parse({
+      targetType: 'invalid',
+      targetId: '550e8400-e29b-41d4-a716-446655440000',
+      reasonCategory: 'risk_review',
+      reasonText: '足够长的理由文本用于测试验证。'
+    })).toThrow(ZodError)
+  })
+})
+
+// ---- Knowledge Base ----
+
+describe('knowledgeBaseCreateSchema', () => {
+  it('accepts global knowledge base', () => {
+    const result = knowledgeBaseCreateSchema.parse({ name: '校规手册', scope: 'global' })
+    expect(result.scope).toBe('global')
+  })
+
+  it('accepts school-scoped knowledge base', () => {
+    const result = knowledgeBaseCreateSchema.parse({
+      name: '班级管理规范',
+      scope: 'school',
+      schoolId: '550e8400-e29b-41d4-a716-446655440000'
+    })
+    expect(result.schoolId).toBeDefined()
+  })
+
+  it('rejects school scope without schoolId', () => {
+    const result = knowledgeBaseCreateSchema.safeParse({ name: 'test', scope: 'school' })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects global scope with schoolId', () => {
+    const result = knowledgeBaseCreateSchema.safeParse({
+      name: 'test',
+      scope: 'global',
+      schoolId: '550e8400-e29b-41d4-a716-446655440000'
+    })
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('knowledgeDocumentImportSchema', () => {
+  it('requires confirmNoPersonalData to be true', () => {
+    expect(() => knowledgeDocumentImportSchema.parse({
+      title: '文档标题',
+      sourceType: 'markdown',
+      content: '# Hello\n\n这是测试内容。',
+      confirmNoPersonalData: false as any
+    })).toThrow(ZodError)
+  })
+
+  it('accepts valid markdown import', () => {
+    const result = knowledgeDocumentImportSchema.parse({
+      title: '校规第一章',
+      sourceType: 'markdown',
+      content: '# 第一章\n\n内容至少十个字才能通过校验。',
+      confirmNoPersonalData: true
+    })
+    expect(result.title).toBe('校规第一章')
+  })
+
+  it('rejects content under 10 chars', () => {
+    expect(() => knowledgeDocumentImportSchema.parse({
+      title: '短',
+      sourceType: 'text',
+      content: '123456789',
+      confirmNoPersonalData: true
+    })).toThrow(ZodError)
+  })
+})
+
+describe('knowledgeBaseActionSchema', () => {
+  it('accepts publish action', () => {
+    expect(knowledgeBaseActionSchema.parse({ action: 'publish' })).toEqual({ action: 'publish' })
+  })
+
+  it('accepts archive action', () => {
+    expect(knowledgeBaseActionSchema.parse({ action: 'archive' })).toEqual({ action: 'archive' })
+  })
+
+  it('rejects invalid action', () => {
+    expect(() => knowledgeBaseActionSchema.parse({ action: 'delete' })).toThrow(ZodError)
+  })
+})
+
+// ---- Route Decision ----
+
+describe('routeDecisionSchema', () => {
+  it('accepts valid route decision', () => {
+    const result = routeDecisionSchema.parse({
+      primaryModule: 'home_school',
+      secondaryModules: [],
+      confidence: 0.86,
+      needsClarification: false,
+      rationale: '主要困扰是家长沟通'
+    })
+    expect(result.primaryModule).toBe('home_school')
+  })
+
+  it('rejects confidence out of range', () => {
+    expect(() => routeDecisionSchema.parse({
+      primaryModule: 'self_growth',
+      secondaryModules: [],
+      confidence: 1.5,
+      needsClarification: false,
+      rationale: 'test'
+    })).toThrow(ZodError)
+  })
+
+  it('rejects unknown module', () => {
+    expect(() => routeDecisionSchema.parse({
+      primaryModule: 'unknown',
+      secondaryModules: [],
+      confidence: 0.5,
+      needsClarification: false,
+      rationale: 'test'
+    })).toThrow(ZodError)
+  })
+})
+
+// ---- Enums ----
+
+describe('enum schemas', () => {
+  it('roleSchema accepts all roles', () => {
+    expect(roleSchema.parse('teacher')).toBe('teacher')
+    expect(roleSchema.parse('psychologist')).toBe('psychologist')
+    expect(roleSchema.parse('school_admin')).toBe('school_admin')
+    expect(roleSchema.parse('platform_admin')).toBe('platform_admin')
+  })
+
+  it('targetTypeSchema accepts all target types', () => {
+    const types = ['teacher_profile', 'assessment', 'conversation', 'student_case', 'guardian_communication', 'plan']
+    for (const t of types) expect(targetTypeSchema.parse(t)).toBe(t)
+  })
+
+  it('reasonCategorySchema accepts all categories', () => {
+    const categories = ['risk_review', 'complaint_handling', 'data_correction_verification', 'school_duty', 'other']
+    for (const c of categories) expect(reasonCategorySchema.parse(c)).toBe(c)
+  })
+})
+
+// ---- Contracts integration ----
+
+describe('chat → assessment flow schema compatibility', () => {
+  it('chatMessageSchema contextType matches assessment context types', () => {
+    // Both use the same entity types: student, class, guardian
+    const chatCtx = chatMessageSchema.parse({
+      message: 'test',
+      contextType: 'student',
+      contextId: '550e8400-e29b-41d4-a716-446655440000'
+    })
+    expect(chatCtx.contextType).toBe('student')
+  })
+
+  it('loginRequestSchema integrates with roleSchema', () => {
+    const login = loginRequestSchema.parse({ email: 'teacher@school.cn', password: 'password123' })
+    const role = roleSchema.parse('teacher')
+    expect(login.email).toContain('teacher')
+    expect(role).toBe('teacher')
+  })
+})

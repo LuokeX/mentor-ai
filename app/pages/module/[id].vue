@@ -5,6 +5,9 @@ import type { AssessmentReport } from '#shared/reports'
 
 const route = useRoute()
 const moduleId = moduleIdSchema.parse(route.params.id)
+const contextType = computed(() => typeof route.query.contextType === 'string' ? route.query.contextType : undefined)
+const contextId = computed(() => typeof route.query.contextId === 'string' ? route.query.contextId : undefined)
+const sourceChatSessionId = computed(() => typeof route.query.sourceChatSessionId === 'string' ? route.query.sourceChatSessionId : undefined)
 const { data: definition } = await useFetch<AssessmentDefinition>(`/api/v1/assessments/${moduleId}`)
 const answers = reactive<Record<string, number>>({})
 const current = ref(0)
@@ -57,7 +60,17 @@ async function submit() {
   try {
     if (saveTimer) clearTimeout(saveTimer)
     if (saveInFlight) await saveInFlight
-    output.value = await $fetch(`/api/v1/assessments/${moduleId}/submit`, { method: 'POST', body: { attemptId: attemptId.value, answers } })
+    output.value = await $fetch(`/api/v1/assessments/${moduleId}/submit`, {
+      method: 'POST',
+      body: {
+        attemptId: attemptId.value,
+        answers,
+        studentId: contextType.value === 'student' ? contextId.value : undefined,
+        classId: contextType.value === 'class' ? contextId.value : undefined,
+        guardianId: contextType.value === 'guardian' ? contextId.value : undefined,
+        sourceChatSessionId: sourceChatSessionId.value
+      }
+    })
     localStorage.removeItem(`assessment-draft:${moduleId}`)
   } finally { pending.value = false }
 }
@@ -66,6 +79,7 @@ async function submit() {
 <template>
   <div class="mx-auto max-w-5xl px-5 py-10">
     <UButton to="/" variant="ghost" color="neutral" icon="i-lucide-arrow-left">返回工作台</UButton>
+    <UAlert v-if="contextType && contextId && !output" class="mt-4" color="primary" variant="soft" title="本次评估已绑定咨询对象" description="提交后生成的方案会自动关联到对应学生、班级或家长档案。" />
     <div v-if="definition && !output" class="mt-6 grid gap-6 lg:grid-cols-[.36fr_.64fr]">
       <aside class="panel h-fit p-6">
         <div class="grid size-12 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon :name="moduleMeta[moduleId].icon" class="size-6" /></div>

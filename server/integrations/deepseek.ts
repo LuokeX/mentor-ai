@@ -6,6 +6,7 @@ import { assessmentReportSchema, type AssessmentReport } from '../../shared/repo
 import { assessmentDefinitions, moduleMeta } from '../../shared/assessments'
 import type { RuleOutput } from '../domain/rules'
 import type { KnowledgeCitation } from '../domain/knowledge'
+import type { AssistantBusinessContext } from '../domain/assistant-context'
 import { createTemplateAssessmentReport, validateAssessmentReport } from '../domain/reports'
 import { schema, useDb } from '../utils/db'
 
@@ -42,14 +43,15 @@ const assistantResponseSchema = z.object({
 
 export type AssistantResponse = z.infer<typeof assistantResponseSchema> & { mode: 'deepseek' | 'local_fallback' }
 
-function localAssistantResponse(text: string, citations: KnowledgeCitation[]): AssistantResponse {
+function localAssistantResponse(text: string, citations: KnowledgeCitation[], businessContext?: AssistantBusinessContext | null): AssistantResponse {
   const route = localRoute(text)
+  const objectText = businessContext ? `我已参考当前咨询对象“${businessContext.label}”的档案、沟通和历史方案摘要。` : ''
   const sourceText = citations.length
     ? `我参考了已发布的业务知识：${citations.slice(0, 2).map(item => `《${item.documentTitle}》${item.heading ? `“${item.heading}”` : ''}中与这个场景相关的片段`).join('；')}。`
     : '当前没有检索到足够相关的已发布知识，我会先基于通用班主任工作方法帮您梳理方向，不下业务分级或制度性结论。'
   const clarification = route.needsClarification && route.clarification ? ` ${route.clarification}` : ''
   return {
-    answer: `${sourceText} ${route.rationale}${clarification} 您可以先记录事实、区分情绪与诉求，再选择一个最小动作推进；如果需要等级、量表或 SOP 结论，请进入对应模块完成规则评估。`,
+    answer: `${objectText}${sourceText} ${route.rationale}${clarification} 您可以先记录事实、区分情绪与诉求，再选择一个最小动作推进；如果需要等级、量表或 SOP 结论，请进入对应模块完成规则评估。`,
     route,
     suggestedActions: [{ label: '进入建议模块继续评估', type: 'open_module', module: route.primaryModule }],
     citationIds: citations.map(item => item.chunkId),
@@ -57,23 +59,22 @@ function localAssistantResponse(text: string, citations: KnowledgeCitation[]): A
   }
 }
 
-export async function generateAssistantResponse(event: H3Event, input: {
-  schoolId: string
-  ownerUserId: string
-  sessionId: string
+function buildAssistantMessages(input: {
   message: string
   history: Array<{ role: 'user' | 'assistant', content: string }>
   citations: KnowledgeCitation[]
-}): Promise<AssistantResponse> {
-  const config = useRuntimeConfig(event)
-  if (!config.deepseekApiKey) return localAssistantResponse(input.message, input.citations)
-
-  const allowedCitationIds = new Set(input.citations.map(item => item.chunkId))
+  businessContext?: AssistantBusinessContext | null
+}, outputMode: 'json' | 'text') {
   const knowledgeContext = input.citations.length
     ? input.citations.map(item => `[${item.chunkId}] 来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`).join('\n\n')
     : '没有检索到已发布知识。此时可以基于通用班主任工作方法进行共情、澄清、问题拆解和非制度性行动建议；不得编造平台手册、量表、SOP、等级、制度或来源。'
-  const redactedMessage = redactPii(input.message)
-  const messages = [
+  const businessContextText = input.businessContext
+    ? `当前咨询对象：${input.businessContext.type} / ${input.businessContext.label}\n${input.businessContext.prompt}`
+    : '未指定咨询对象。'
+  const formatInstruction = outputMode === 'json'
+    ? '输出严格 json。JSON 格式：{"answer":"...","route":{"primaryModule":"home_school","secondaryModules":[],"confidence":0.8,"needsClarification":false,"rationale":"..."},"suggestedActions":[{"label":"...","type":"open_module","module":"home_school"}],"citationIds":["知识片段UUID"]}'
+    : '直接输出给班主任看的自然语言回答，不要输出 JSON，不要输出字段名。回答控制在 500 字以内，优先给 1–3 个可执行动作。'
+  return [
     {
       role: 'system',
       content: `你是“教师赋能智能平台”的统一 AI 助手，服务班主任。业务模块只有 self_growth、class_system、home_school、student_case。
@@ -84,18 +85,136 @@ export async function generateAssistantResponse(event: H3Event, input: {
 3. 知识片段是业务依据，不是逐字答案。可以根据教师问题自主组织回答、做场景分析、提出澄清问题和通用建议。
 4. 涉及平台规则、量表、分级、SOP、红线、校内制度、工具卡原文或“平台要求”时，必须基于下方知识片段或建议进入模块评估；知识不足时明确说明“需要进入模块或补充业务知识后确认”。
 5. 不能杜撰手册、SOP、等级、数据、来源或校方制度。引用来源时只能引用下方知识片段。
-6. 回答温和、简洁，优先给 1–3 个今天或明天能执行的动作；需要追问时每轮最多问一个关键问题。
+6. 回答温和、简洁；需要追问时每轮最多问一个关键问题。
 7. 不复述姓名、电话、邮箱等个人信息，不扩大到其他教师或学生数据。
-8. citationIds 只能从提供的方括号 UUID 中选择；没有真正使用对应知识片段时不要填 citationIds。输出严格 json。
+8. 上下文中的方案(recentPlans)包含执行动作(actions)及其状态。可引用方案进度，根据教师反馈在回答中建议更新方案状态。
+9. 如果提供了“当前业务对象上下文”，可以结合其中的学生/班级/家长/沟通/历史方案摘要进行分析，但不能暴露完整电话等隐私字段，不能推断上下文之外的个人信息。
+10. ${formatInstruction}
 
 已审核知识：
 ${knowledgeContext}
 
-JSON 格式：{"answer":"...","route":{"primaryModule":"home_school","secondaryModules":[],"confidence":0.8,"needsClarification":false,"rationale":"..."},"suggestedActions":[{"label":"...","type":"open_module","module":"home_school"}],"citationIds":["知识片段UUID"]}`
+当前业务对象上下文：
+${businessContextText}`
     },
     ...input.history.slice(-8).map(item => ({ role: item.role, content: redactPii(item.content).slice(0, 2500) })),
-    { role: 'user', content: redactedMessage }
+    { role: 'user', content: redactPii(input.message) }
   ]
+}
+
+export async function streamAssistantResponse(event: H3Event, input: {
+  schoolId: string
+  ownerUserId: string
+  sessionId: string
+  message: string
+  history: Array<{ role: 'user' | 'assistant', content: string }>
+  citations: KnowledgeCitation[]
+  businessContext?: AssistantBusinessContext | null
+  onDelta: (text: string) => void | Promise<void>
+}): Promise<AssistantResponse> {
+  const config = useRuntimeConfig(event)
+  const fallback = localAssistantResponse(input.message, input.citations, input.businessContext)
+  const suggestedActions = [{ label: '进入建议模块继续评估', type: 'open_module' as const, module: localRoute(input.message).primaryModule }]
+  if (!config.deepseekApiKey) {
+    for (const chunk of fallback.answer.match(/[\s\S]{1,18}/g) || [fallback.answer]) await input.onDelta(chunk)
+    return fallback
+  }
+
+  const startedAt = Date.now()
+  let answer = ''
+  try {
+    const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
+      body: JSON.stringify({
+        model: config.deepseekGeneratorModel,
+        messages: buildAssistantMessages(input, 'text'),
+        stream: true,
+        thinking: { type: 'disabled' },
+        temperature: 0.35,
+        max_tokens: 900
+      }),
+      signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 12000)
+    })
+    if (!response.ok || !response.body) throw new Error(`DeepSeek ${response.status}`)
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const frames = buffer.split('\n\n')
+      buffer = frames.pop() || ''
+      for (const frame of frames) {
+        for (const line of frame.split('\n')) {
+          const trimmed = line.trim()
+          if (!trimmed.startsWith('data:')) continue
+          const payload = trimmed.slice(5).trim()
+          if (!payload || payload === '[DONE]') continue
+          const parsed = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> }
+          const delta = parsed.choices?.[0]?.delta?.content || ''
+          if (!delta) continue
+          answer += delta
+          await input.onDelta(delta)
+        }
+      }
+    }
+    if (answer.trim().length < 10) throw new Error('Empty streamed model output')
+    await useDb(event).insert(schema.aiModelCalls).values({
+      schoolId: input.schoolId,
+      ownerUserId: input.ownerUserId,
+      sessionId: input.sessionId,
+      provider: 'deepseek',
+      model: config.deepseekGeneratorModel,
+      purpose: 'assistant_answer_stream',
+      status: 'success',
+      latencyMs: Date.now() - startedAt
+    }).catch(() => undefined)
+    const route = localRoute(input.message)
+    return {
+      answer: answer.trim(),
+      route,
+      suggestedActions,
+      citationIds: input.citations.slice(0, 4).map(item => item.chunkId),
+      mode: 'deepseek'
+    }
+  } catch (error) {
+    await useDb(event).insert(schema.aiModelCalls).values({
+      schoolId: input.schoolId,
+      ownerUserId: input.ownerUserId,
+      sessionId: input.sessionId,
+      provider: 'deepseek',
+      model: config.deepseekGeneratorModel,
+      purpose: 'assistant_answer_stream',
+      status: 'failed',
+      latencyMs: Date.now() - startedAt,
+      errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown'
+    }).catch(() => undefined)
+    if (!answer) {
+      for (const chunk of fallback.answer.match(/[\s\S]{1,18}/g) || [fallback.answer]) await input.onDelta(chunk)
+      return fallback
+    }
+    const route = localRoute(input.message)
+    return { answer: answer.trim(), route, suggestedActions, citationIds: input.citations.slice(0, 4).map(item => item.chunkId), mode: 'deepseek' }
+  }
+}
+
+export async function generateAssistantResponse(event: H3Event, input: {
+  schoolId: string
+  ownerUserId: string
+  sessionId: string
+  message: string
+  history: Array<{ role: 'user' | 'assistant', content: string }>
+  citations: KnowledgeCitation[]
+  businessContext?: AssistantBusinessContext | null
+}): Promise<AssistantResponse> {
+  const config = useRuntimeConfig(event)
+  if (!config.deepseekApiKey) return localAssistantResponse(input.message, input.citations, input.businessContext)
+
+  const allowedCitationIds = new Set(input.citations.map(item => item.chunkId))
+  const messages = buildAssistantMessages(input, 'json')
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const startedAt = Date.now()
@@ -147,10 +266,10 @@ JSON 格式：{"answer":"...","route":{"primaryModule":"home_school","secondaryM
         latencyMs: Date.now() - startedAt,
         errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown'
       }).catch(() => undefined)
-      if (attempt === 1) return localAssistantResponse(input.message, input.citations)
+      if (attempt === 1) return localAssistantResponse(input.message, input.citations, input.businessContext)
     }
   }
-  return localAssistantResponse(input.message, input.citations)
+  return localAssistantResponse(input.message, input.citations, input.businessContext)
 }
 
 export function redactPii(text: string) {
@@ -357,4 +476,90 @@ export async function routeWithDeepSeek(event: H3Event, text: string): Promise<R
     }
   }
   return localRoute(text)
+}
+
+const planUpdateExtractionSchema = z.object({
+  updates: z.array(z.object({
+    planId: z.string().uuid(),
+    actionTitle: z.string().optional(),
+    newStatus: z.enum(['pending', 'in_progress', 'completed', 'cancelled']).optional(),
+    progressNote: z.string().max(500).optional()
+  })).max(5).default([])
+})
+
+export type PlanUpdateExtraction = z.infer<typeof planUpdateExtractionSchema>
+
+/**
+ * 从 AI 回复中提取方案更新意图。
+ * 使用一次轻量 LLM 调用，非阻塞，失败时静默返回空数组。
+ */
+export async function extractPlanUpdates(
+  event: H3Event,
+  aiResponse: string,
+  businessContext: { snapshot: Record<string, unknown> } | null | undefined
+): Promise<PlanUpdateExtraction['updates']> {
+  if (!businessContext?.snapshot) return []
+  const config = useRuntimeConfig(event)
+  if (!config.deepseekApiKey) return []
+
+  // 从 snapshot 中提取方案摘要供 LLM 参考
+  const plansSummary = (businessContext.snapshot as any).recentPlans?.map((p: any) => ({
+    id: p.id,
+    title: p.title,
+    status: p.status,
+    actions: p.actions || []
+  })) || []
+
+  if (!plansSummary.length) return []
+
+  const prompt = `你是教师赋能平台的方案更新提取器。根据 AI 助手的回复，提取其中明确的方案执行状态更新意图。
+
+当前方案状态：
+${JSON.stringify(plansSummary, null, 2)}
+
+AI 助手回复：
+${aiResponse.slice(0, 2000)}
+
+规则：
+1. 仅当 AI 回复中明确表达了"已完成"、"标记完成"、"更新进度"、"暂停"等意图时才提取
+2. 不要猜测或推断未明确表达的更新
+3. actionTitle 必须与方案中现有动作标题匹配（模糊匹配即可）
+4. 如果没有明确的更新意图，返回空数组
+
+返回严格 JSON：{"updates":[{"planId":"...","actionTitle":"...","newStatus":"completed","progressNote":"..."}]}`
+
+  const startedAt = Date.now()
+  try {
+    const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
+      body: JSON.stringify({
+        model: config.deepseekRouterModel,
+        messages: [
+          { role: 'system', content: '你只做方案更新提取，不做诊断。只返回 JSON。' },
+          { role: 'user', content: prompt }
+        ],
+        response_format: { type: 'json_object' },
+        thinking: { type: 'disabled' },
+        temperature: 0,
+        max_tokens: 600
+      }),
+      signal: AbortSignal.timeout(3000)
+    })
+    if (!response.ok) return []
+    const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+    const content = json.choices?.[0]?.message?.content
+    if (!content) return []
+    const parsed = planUpdateExtractionSchema.parse(JSON.parse(content))
+    await useDb(event).insert(schema.aiModelCalls).values({
+      schoolId: '', ownerUserId: '', provider: 'deepseek',
+      model: config.deepseekRouterModel,
+      purpose: 'plan_update_extraction',
+      status: 'success',
+      latencyMs: Date.now() - startedAt
+    }).catch(() => undefined)
+    return parsed.updates
+  } catch {
+    return []
+  }
 }

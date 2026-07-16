@@ -121,17 +121,6 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
-  worker:
-    build: .
-    restart: unless-stopped
-    environment: *app-environment
-    command: ["./node_modules/.bin/tsx", "workers/notification.ts"]
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    security_opt:
-      - no-new-privileges:true
-
   nginx:
     image: nginx:1.29-alpine
     restart: unless-stopped

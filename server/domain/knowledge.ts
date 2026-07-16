@@ -163,6 +163,8 @@ export async function retrieveKnowledge(event: H3Event, schoolId: string, query:
       }))
   }
 
+  const queryVector = `'[${queryEmbedding.join(',')}]'::vector`
+
   const semanticResult = await pool.query<RetrievalRow>(`
     select
       kc.id as chunk_id,
@@ -172,17 +174,17 @@ export async function retrieveKnowledge(event: H3Event, schoolId: string, query:
       kd.title as document_title,
       kc.heading,
       kc.content,
-      1 - (kc.embedding <=> $3::vector) as semantic_score
+      1 - (kc.embedding <=> ${queryVector}) as semantic_score
     from knowledge_chunks kc
     join knowledge_documents kd on kd.id = kc.document_id
     join knowledge_bases kb on kb.id = kc.knowledge_base_id
     where kb.status = 'published'
       and kd.status = 'ready'
       and kc.embedding is not null
-      and (kb.scope = 'global' or (kb.scope = 'school' and kb.school_id = $2))
-    order by kc.embedding <=> $3::vector
+      and (kb.scope = 'global' or (kb.scope = 'school' and kb.school_id = $1))
+    order by kc.embedding <=> ${queryVector}
     limit 30
-  `, [sanitizedQuery, schoolId, `[${queryEmbedding.join(',')}]`])
+  `, [schoolId])
 
   const candidates = new Map<string, {
     row: RetrievalRow

@@ -1,0 +1,21 @@
+import { and, eq } from 'drizzle-orm'
+import { z } from 'zod'
+import { requireUser } from '../../../../../utils/auth'
+import { schema, useDb } from '../../../../../utils/db'
+import { writeAudit } from '../../../../../utils/audit'
+
+const bodySchema = z.object({ studentId: z.string().uuid() })
+
+export default defineEventHandler(async (event) => {
+  const user = await requireUser(event, ['teacher'])
+  const id = z.string().uuid().parse(getRouterParam(event, 'id'))
+  const body = bodySchema.parse(await readBody(event))
+  const db = useDb(event)
+  const [guardian] = await db.select({ id: schema.guardians.id }).from(schema.guardians).where(and(eq(schema.guardians.id, id), eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId!))).limit(1)
+  if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
+  const [student] = await db.select({ id: schema.students.id }).from(schema.students).where(and(eq(schema.students.id, body.studentId), eq(schema.students.ownerUserId, user.id), eq(schema.students.schoolId, user.schoolId!))).limit(1)
+  if (!student) throw createError({ statusCode: 422, message: '学生不存在或不属于当前教师' })
+  await db.insert(schema.studentGuardians).values({ studentId: body.studentId, guardianId: id }).onConflictDoNothing()
+  await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.guardian.student.link', targetType: 'guardian', targetId: id, metadata: { studentId: body.studentId } })
+  return { ok: true }
+})

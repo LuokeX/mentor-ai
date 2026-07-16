@@ -7,6 +7,8 @@ export default defineEventHandler(async (event) => {
   return useDb(event).select({
     id: schema.chatSessions.id,
     title: schema.chatSessions.title,
+    contextType: schema.chatSessions.contextType,
+    contextId: schema.chatSessions.contextId,
     status: schema.chatSessions.status,
     updatedAt: schema.chatSessions.updatedAt,
     createdAt: schema.chatSessions.createdAt
