@@ -15,7 +15,6 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/server ./server
 COPY --from=build --chown=node:node /app/shared ./shared
 COPY --from=build --chown=node:node /app/scripts ./scripts
-COPY --from=build --chown=node:node /app/workers ./workers
 COPY --from=build --chown=node:node /app/drizzle ./drizzle
 USER node
 EXPOSE 3000

@@ -6,6 +6,9 @@ import { detectSafetySignals, createSafetyReferral } from '../../../domain/safet
 import { semanticSafetySignals, streamAssistantResponse, extractPlanUpdates } from '../../../integrations/deepseek'
 import { buildKnowledgeRetrievalQuery, retrieveKnowledge } from '../../../domain/knowledge'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
+import { governBusinessContext, resolveAiGovernance } from '../../../domain/ai-governance'
+import { ensurePlanActions } from '../../../domain/plan-actions'
+import { trackProductEvent } from '../../../domain/product-events'
 import { sendStream } from 'h3'
 import { and, desc, eq } from 'drizzle-orm'
 
@@ -15,6 +18,7 @@ export default defineEventHandler(async (event) => {
   const body = chatMessageSchema.parse(await readBody(event))
   const config = useRuntimeConfig(event)
   const db = useDb(event)
+  const governance = await resolveAiGovernance(event, user.schoolId, user.id)
   let sessionId = body.sessionId
   let businessContext = await buildAssistantBusinessContext(event, user, body.contextType, body.contextId)
   if (sessionId) {
@@ -63,6 +67,18 @@ export default defineEventHandler(async (event) => {
     schoolId: user.schoolId, ownerUserId: user.id, sessionId,
     role: 'user', contentEnc: encryptSensitive(body.message, config.encryptionKey)
   })
+  await trackProductEvent(event, {
+    schoolId: user.schoolId, userId: user.id, eventName: 'assistant_question_submitted',
+    targetType: 'chat_session', targetId: sessionId,
+    metadata: { contextType: businessContext?.type || 'none', recordIncluded: Boolean(businessContext && !body.withoutRecord) }
+  })
+  if (businessContext) {
+    await trackProductEvent(event, {
+      schoolId: user.schoolId, userId: user.id, eventName: 'assistant_context_selected',
+      targetType: businessContext.type, targetId: businessContext.id,
+      metadata: { contextType: businessContext.type, recordIncluded: !body.withoutRecord }
+    })
+  }
 
   setResponseHeaders(event, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -80,10 +96,12 @@ export default defineEventHandler(async (event) => {
       try {
         emit(controller, 'ack', {
           sessionId: ownedSessionId,
-          context: businessContext ? { type: businessContext.type, id: businessContext.id, label: businessContext.label } : undefined
+          context: businessContext ? { type: businessContext.type, id: businessContext.id, label: businessContext.label } : undefined,
+          dataGovernance: governance,
+          recordIncluded: Boolean(businessContext && !body.withoutRecord)
         })
         const localRules = detectSafetySignals(body.message)
-        const matchedRules = localRules.length ? localRules : await semanticSafetySignals(event, body.message)
+        const matchedRules = localRules.length ? localRules : await semanticSafetySignals(event, body.message, governance.effectiveMode === 'local')
         if (matchedRules.length) {
           const referral = await createSafetyReferral(event, {
             schoolId: user.schoolId!, ownerUserId: user.id, sourceType: 'chat', sourceId: ownedSessionId,
@@ -99,7 +117,8 @@ export default defineEventHandler(async (event) => {
         }
         const knowledgeQuery = buildKnowledgeRetrievalQuery(body.message, history)
         const citations = await retrieveKnowledge(event, user.schoolId!, knowledgeQuery)
-        emit(controller, 'answer_start', { mode: useRuntimeConfig(event).deepseekApiKey ? 'deepseek' : 'local_fallback', suggestedActions: [] })
+        const modelContext = body.withoutRecord ? null : governBusinessContext(businessContext, governance.effectiveMode)
+        emit(controller, 'answer_start', { mode: governance.effectiveMode === 'local' || !useRuntimeConfig(event).deepseekApiKey ? 'local_fallback' : 'deepseek', suggestedActions: [] })
         const assistant = await streamAssistantResponse(event, {
           schoolId: user.schoolId!,
           ownerUserId: user.id,
@@ -107,7 +126,11 @@ export default defineEventHandler(async (event) => {
           message: body.message,
           history: [...entityMemory, ...history],
           citations,
-          businessContext,
+          businessContext: modelContext,
+          dataMode: governance.effectiveMode === 'full_context' ? 'full_context' : 'redacted',
+          contextType: businessContext?.type,
+          noticeVersion: governance.noticeVersion,
+          forceLocal: governance.effectiveMode === 'local',
           onDelta: text => emit(controller, 'answer_delta', { text })
         })
         const route = assistant.route
@@ -118,69 +141,81 @@ export default defineEventHandler(async (event) => {
         }).returning()
         if (!decision) throw new Error('路由结果保存失败')
         const selectedSources = citations.filter(item => assistant.citationIds.includes(item.chunkId))
-        await db.insert(schema.chatMessages).values({
+        const baseMetadata = {
+          type: 'assistant_answer', decisionId: decision.id, mode: assistant.mode,
+          dataMode: governance.effectiveMode,
+          noticeVersion: governance.noticeVersion,
+          recordIncluded: Boolean(businessContext && !body.withoutRecord),
+          context: businessContext ? { type: businessContext.type, id: businessContext.id, label: businessContext.label } : undefined,
+          contextSnapshot: businessContext?.snapshot,
+          studentId: businessContext?.type === 'student' ? businessContext.id : undefined,
+          classId: businessContext?.type === 'class' ? businessContext.id : undefined,
+          guardianId: businessContext?.type === 'guardian' ? businessContext.id : undefined,
+          citationIds: assistant.citationIds, suggestedActions: assistant.suggestedActions,
+          sources: selectedSources.map(item => ({
+            chunkId: item.chunkId, documentTitle: item.documentTitle,
+            heading: item.heading, knowledgeBase: item.knowledgeBase
+          })),
+          route: { primaryModule: route.primaryModule, secondaryModules: route.secondaryModules, confidence: route.confidence, rationale: route.rationale, decisionId: decision.id }
+        }
+        const [assistantMessage] = await db.insert(schema.chatMessages).values({
           schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
           role: 'assistant', contentEnc: encryptSensitive(assistant.answer, config.encryptionKey),
-          metadata: {
-            type: 'assistant_answer', decisionId: decision.id, mode: assistant.mode,
-            context: businessContext ? { type: businessContext.type, id: businessContext.id, label: businessContext.label } : undefined,
-            contextSnapshot: businessContext?.snapshot,
-            studentId: businessContext?.type === 'student' ? businessContext.id : undefined,
-            classId: businessContext?.type === 'class' ? businessContext.id : undefined,
-            guardianId: businessContext?.type === 'guardian' ? businessContext.id : undefined,
-            citationIds: assistant.citationIds, suggestedActions: assistant.suggestedActions,
-            sources: selectedSources.map(item => ({
-              chunkId: item.chunkId, documentTitle: item.documentTitle,
-              heading: item.heading, knowledgeBase: item.knowledgeBase
-            })),
-            route: { primaryModule: route.primaryModule, secondaryModules: route.secondaryModules, confidence: route.confidence, rationale: route.rationale, decisionId: decision.id }
-          }
-        })
+          metadata: baseMetadata
+        }).returning({ id: schema.chatMessages.id })
+        if (!assistantMessage) throw new Error('回答保存失败')
         await db.update(schema.chatSessions).set({ updatedAt: new Date() }).where(eq(schema.chatSessions.id, ownedSessionId))
 
-        // 非阻塞：从 AI 回复中提取方案更新意图并执行
+        // 模型只能提出方案更新建议；必须由教师调用确认接口后才会写入。
+        const planUpdateSuggestions: Array<Record<string, unknown>> = []
         if (businessContext && assistant.mode === 'deepseek') {
-          Promise.resolve().then(async () => {
-            try {
-              const planUpdates = await extractPlanUpdates(event, assistant.answer, businessContext)
-              for (const update of planUpdates) {
-                const [plan] = await db.select({ id: schema.plans.id, actions: schema.plans.actions })
-                  .from(schema.plans)
-                  .where(and(eq(schema.plans.id, update.planId), eq(schema.plans.ownerUserId, user.id)))
-                  .limit(1)
-                if (!plan) continue
-                const actions = (plan.actions as Array<{ title: string; detail: string; status: string }>) || []
-                const actionIdx = update.actionTitle
-                  ? actions.findIndex(a => a.title.includes(update.actionTitle!) || update.actionTitle!.includes(a.title))
-                  : -1
-                if (actionIdx >= 0 && update.newStatus && actions[actionIdx]) {
-                  const current = actions[actionIdx]!
-                  actions[actionIdx] = { title: current.title, detail: current.detail, status: update.newStatus }
-                }
-                await db.update(schema.plans)
-                  .set({ actions: actions as any, updatedAt: new Date() })
-                  .where(eq(schema.plans.id, update.planId))
-                if (update.progressNote) {
-                  await db.insert(schema.planReviews).values({
-                    schoolId: user.schoolId!,
-                    planId: update.planId,
-                    ownerUserId: user.id,
-                    reviewAt: new Date(),
-                    effectScore: 3,
-                    progressNote: update.progressNote,
-                    nextAction: '继续跟进'
-                  })
-                }
-              }
-            } catch { /* 写回失败不影响主流程 */ }
-          })
+          try {
+            const extracted = await extractPlanUpdates(event, assistant.answer, modelContext, {
+              schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
+              dataMode: governance.effectiveMode, contextType: businessContext.type, noticeVersion: governance.noticeVersion
+            })
+            for (const update of extracted) {
+              const recentPlans = Array.isArray(businessContext.snapshot.recentPlans)
+                ? businessContext.snapshot.recentPlans as Array<{ id?: string, title?: string }> : []
+              const referencedPlan = recentPlans.find(item => item.id && item.title && (
+                item.title.includes(update.planTitle) || update.planTitle.includes(item.title)
+              ))
+              if (!referencedPlan?.id) continue
+              const actions = await ensurePlanActions(event, referencedPlan.id, user.id)
+              const action = update.actionTitle
+                ? actions.find(item => item.title.includes(update.actionTitle!) || update.actionTitle!.includes(item.title))
+                : undefined
+              if (!action && !update.progressNote) continue
+              planUpdateSuggestions.push({ ...update, planId: referencedPlan.id, actionId: action?.id, actionTitle: action?.title || update.actionTitle })
+            }
+            if (planUpdateSuggestions.length) {
+              await db.update(schema.chatMessages).set({
+                metadata: { ...baseMetadata, planUpdateSuggestions }
+              }).where(eq(schema.chatMessages.id, assistantMessage.id))
+              emit(controller, 'plan_update_suggestions', { messageId: assistantMessage.id, suggestions: planUpdateSuggestions })
+            }
+          } catch {
+            // 建议提取失败不影响主要回答，也绝不能回退为自动写回。
+          }
         }
 
-        emit(controller, 'answer', { text: assistant.answer, mode: assistant.mode, suggestedActions: assistant.suggestedActions })
+        await trackProductEvent(event, {
+          schoolId: user.schoolId, userId: user.id, eventName: 'assistant_answered',
+          targetType: 'chat_message', targetId: assistantMessage.id,
+          metadata: { mode: assistant.mode, dataMode: governance.effectiveMode, hasSources: selectedSources.length > 0 }
+        })
+        emit(controller, 'answer', { messageId: assistantMessage.id, text: assistant.answer, mode: assistant.mode, suggestedActions: assistant.suggestedActions })
         if (selectedSources.length) emit(controller, 'sources', selectedSources)
         emit(controller, 'route', { id: decision.id, ...route })
         emit(controller, 'done', { sessionId: ownedSessionId })
       } catch (error) {
+        const errorName = error instanceof Error ? error.name.toLowerCase() : ''
+        const errorText = error instanceof Error ? error.message.toLowerCase() : ''
+        await trackProductEvent(event, {
+          schoolId: user.schoolId, userId: user.id, eventName: 'assistant_answer_failed',
+          targetType: 'chat_session', targetId: ownedSessionId,
+          metadata: { category: errorName.includes('abort') || errorText.includes('timeout') ? 'timeout' : 'other' }
+        })
         emit(controller, 'error', { message: error instanceof Error ? error.message : '处理失败' })
       } finally {
         try { controller.close() } catch { /* already closed */ }

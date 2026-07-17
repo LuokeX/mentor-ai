@@ -9,7 +9,8 @@ const moduleRiskLabels: Record<ModuleId, Record<string, string>> = {
   self_growth: { green: '绿色稳定', blue: '蓝色轻微波动', yellow: '黄色需要支持', orange: '橙色主动支持', red: '红色转介关注', purple: '紫色持续关爱' },
   class_system: { survival: '生存期', norming: '规范期', operating: '运行期', mature: '成熟期' },
   home_school: { E: 'E 级保护通道' },
-  student_case: { L1: 'L1 教师支持', L2: 'L2 年级协同', L3: 'L3 专业会商' }
+  student_case: { L1: 'L1 教师支持', L2: 'L2 年级协同', L3: 'L3 专业会商' },
+  learning_problem: { LP1: 'LP1 教师自主支持', LP2: 'LP2 深入诊断', LP3: 'LP3 系统干预' }
 }
 
 function riskLabel(module: ModuleId, level: string) {
@@ -45,6 +46,10 @@ function moduleScript(module: ModuleId, result: RuleOutput) {
     student_case: [
       { scenario: '低压力谈话', text: '我注意到你最近有些变化，我想先了解你的感受。你可以只说一点点，不需要马上解释清楚。' },
       { scenario: '协同沟通', text: '目前我们先基于观察事实协同支持，不做标签判断，重点是看哪些支持对学生有效。' }
+    ],
+    learning_problem: [
+      { scenario: '与学生谈学习困难', text: '我注意到你在[具体任务]上花了比平时更多的时间。能不能跟我聊聊你是怎么做的？我们一起找找哪里卡住了。' },
+      { scenario: '与家长沟通学习', text: '我们关注的不只是分数，而是孩子在学习过程中遇到了什么困难。请您也观察一下他在家做作业时的状态，我们一起看看哪些支持有效。' }
     ]
   }[module]
   return result.tools.length ? [...scripts, ...result.tools.slice(0, 1).map(tool => ({ scenario: tool.title, text: tool.content }))] : scripts
@@ -55,22 +60,27 @@ function moduleProfile(module: ModuleId, result: RuleOutput, weak: string, stron
     self_growth: {
       title: '班主任个人状态画像',
       primaryConcern: weak,
-      summary: `本次结果重点落在“${weak}”。这说明当前最需要处理的不是再增加任务，而是先识别消耗来源、恢复可控感，并保护班主任的角色边界。相对稳定的“${strong}”可以作为接下来补能和求助的抓手。`
+      summary: `本次结果重点落在"${weak}"。这说明当前最需要处理的不是再增加任务，而是先识别消耗来源、恢复可控感，并保护班主任的角色边界。相对稳定的"${strong}"可以作为接下来补能和求助的抓手。`
     },
     class_system: {
       title: '班级系统运行画像',
       primaryConcern: weak,
-      summary: `本次结果显示班级运行的优先建设点是“${weak}”。这类问题通常不只靠一次提醒解决，需要把目标、岗位、流程、活动、环境或关系中的薄弱环节转化为可观察的班级机制。相对较好的“${strong}”可以作为带动全班调整的支点。`
+      summary: `本次结果显示班级运行的优先建设点是"${weak}"。这类问题通常不只靠一次提醒解决，需要把目标、岗位、流程、活动、环境或关系中的薄弱环节转化为可观察的班级机制。相对较好的"${strong}"可以作为带动全班调整的支点。`
     },
     home_school: {
       title: '家校沟通关系画像',
       primaryConcern: weak,
-      summary: `本次结果提示当前家校沟通的核心变量是“${weak}”。处理重点不是先说服家长，而是判断关系容器能承受多少信息、先稳住情绪和事实边界，再决定沟通节奏。相对较好的“${strong}”可以作为恢复合作的入口。`
+      summary: `本次结果提示当前家校沟通的核心变量是"${weak}"。处理重点不是先说服家长，而是判断关系容器能承受多少信息、先稳住情绪和事实边界，再决定沟通节奏。相对较好的"${strong}"可以作为恢复合作的入口。`
     },
     student_case: {
       title: '学生个体支持画像',
       primaryConcern: strong,
-      summary: `本次结果显示学生当前最突出的表现集中在“${strong}”。处理重点是先做教育场景下的结构化观察，区分表现、诱因和已尝试支持，再根据等级决定由教师支持、年级协同或专业会商。`
+      summary: `本次结果显示学生当前最突出的表现集中在"${strong}"。处理重点是先做教育场景下的结构化观察，区分表现、诱因和已尝试支持，再根据等级决定由教师支持、年级协同或专业会商。`
+    },
+    learning_problem: {
+      title: '学生学习问题诊断画像',
+      primaryConcern: strong,
+      summary: `本次结果显示学生学习困难的主导因素集中在"${strong}"。处理重点不是简单地增加练习或补习，而是先定位学习困难到底发生在行为、认知还是关系层面，再匹配教学支架、元认知策略或关系支持。相对较好的"${weak}"可以作为撬动改变的支点。`
     }
   }
   if (result.blocked) profiles[module].summary += ' 当前命中高风险规则，应优先执行安全流程。'
@@ -80,10 +90,11 @@ function moduleProfile(module: ModuleId, result: RuleOutput, weak: string, stron
 function moduleRiskDescription(module: ModuleId, result: RuleOutput) {
   const label = riskLabel(module, result.level)
   const descriptions: Record<ModuleId, string> = {
-    self_growth: `规则判断为“${label}”。该等级用于提示班主任当前消耗和支持优先级，重点是恢复节奏、减少独自承接和及时求助。`,
-    class_system: `规则判断班级更接近“${label}”。该等级用于判断班级系统成熟度，重点是把薄弱系统补成可重复执行的班级机制。`,
-    home_school: `规则判断为“${label}”。该等级用于安排家校沟通策略，重点是控制沟通风险、维护事实边界和选择合适沟通容器。`,
-    student_case: `规则判断为“${label}”。该等级用于安排学生支持层级，重点是从观察、低压力谈话、协同材料到专业会商逐级推进。`
+    self_growth: `规则判断为"${label}"。该等级用于提示班主任当前消耗和支持优先级，重点是恢复节奏、减少独自承接和及时求助。`,
+    class_system: `规则判断班级更接近"${label}"。该等级用于判断班级系统成熟度，重点是把薄弱系统补成可重复执行的班级机制。`,
+    home_school: `规则判断为"${label}"。该等级用于安排家校沟通策略，重点是控制沟通风险、维护事实边界和选择合适沟通容器。`,
+    student_case: `规则判断为"${label}"。该等级用于安排学生支持层级，重点是从观察、低压力谈话、协同材料到专业会商逐级推进。`,
+    learning_problem: `规则判断为"${label}"。该等级用于安排学习支持强度，重点是从行为、认知和关系三个层面定位卡点，匹配教学支架、策略训练或系统干预。`
   }
   return descriptions[module]
 }
@@ -97,22 +108,27 @@ function moduleThreeDayPlan(module: ModuleId, result: RuleOutput, weak: string, 
     self_growth: [
       { day: 1, title: '止损与补能', actions: [action(0, '完成一次三分钟补能', '暂停处理非紧急事务，先恢复身体节奏并记录最消耗的一件事。')] },
       { day: 2, title: '边界拆分', actions: [action(1, '拆解可控事项', '把当前压力拆成可控制、可影响、暂时不可控三类，只推进一项可控动作。')] },
-      { day: 3, title: '建立支持点', actions: [{ title: '找一个同伴复盘', detail: `围绕“${weak}”说清事实、感受和需要的支持，不独自承接全部问题。` }] }
+      { day: 3, title: '建立支持点', actions: [{ title: '找一个同伴复盘', detail: `围绕"${weak}"说清事实、感受和需要的支持，不独自承接全部问题。` }] }
     ],
     class_system: [
-      { day: 1, title: '定位薄弱系统', actions: [action(0, `聚焦“${weak}”系统`, '选一个最影响秩序或学习的具体节点，写清目标状态和观察标准。')] },
+      { day: 1, title: '定位薄弱系统', actions: [action(0, `聚焦"${weak}"系统`, '选一个最影响秩序或学习的具体节点，写清目标状态和观察标准。')] },
       { day: 2, title: '补一个班级机制', actions: [action(2, '补齐一项日常 SOP', '明确学生责任人、执行步骤、异常处理和复盘时间。')] },
-      { day: 3, title: '班级微复盘', actions: [action(1, '召开十分钟班级微复盘', `借助“${strong}”中的积极经验，让学生说出一个保留动作和一个调整动作。`)] }
+      { day: 3, title: '班级微复盘', actions: [action(1, '召开十分钟班级微复盘', `借助"${strong}"中的积极经验，让学生说出一个保留动作和一个调整动作。`)] }
     ],
     home_school: [
       { day: 1, title: '稳住情绪与事实', actions: [action(0, '先确认情绪与事实', '不在情绪高点解释责任，先记录家长诉求、事实依据和待核实点。')] },
-      { day: 2, title: '设计沟通容器', actions: [{ title: '选择沟通方式', detail: `围绕“${weak}”决定用文字、电话还是线下面谈，并提前设置沟通时间和边界。` }] },
+      { day: 2, title: '设计沟通容器', actions: [{ title: '选择沟通方式', detail: `围绕"${weak}"决定用文字、电话还是线下面谈，并提前设置沟通时间和边界。` }] },
       { day: 3, title: '形成下一步约定', actions: [action(1, '提出一个可确认的下一步', '把双方要做的事、反馈时间和升级条件写清楚，避免无限来回解释。')] }
     ],
     student_case: [
-      { day: 1, title: '结构化观察', actions: [action(0, '完成一周结构化观察', `先围绕“${strong}”记录发生前、行为本身和行为后的结果。`)] },
+      { day: 1, title: '结构化观察', actions: [action(0, '完成一周结构化观察', `先围绕"${strong}"记录发生前、行为本身和行为后的结果。`)] },
       { day: 2, title: '低压力接触', actions: [action(1, '与学生进行一次低压力谈话', '从可观察事实开始，不贴标签，询问学生感受、需要和愿意尝试的小支持。')] },
       { day: 3, title: '决定支持层级', actions: [{ title: '整理协同材料', detail: '根据等级整理时间线、已尝试措施和效果，决定教师支持、年级协同或专业会商。' }] }
+    ],
+    learning_problem: [
+      { day: 1, title: '三层定位', actions: [action(0, '完成一周学习行为观察', `围绕"${strong}"记录学生在课堂参与、作业完成和测验中的表现模式。`)] },
+      { day: 2, title: '教学支架调整', actions: [action(1, '试用一项教学支架', `针对"${strong}"中的具体卡点，从示范、提示、提问、同伴互助中选择一项支架并记录效果。`)] },
+      { day: 3, title: '制定干预计划', actions: [{ title: '确定接下来两周的支持重点', detail: '根据三层诊断结果，聚焦一个可改善的维度，设定目标、支架策略和效果检查节点。' }] }
     ]
   }
   return plans[module]
@@ -121,24 +137,29 @@ function moduleThreeDayPlan(module: ModuleId, result: RuleOutput, weak: string, 
 function moduleSevenDayFollowUp(module: ModuleId, weak: string, strong: string): AssessmentReport['sevenDayFollowUp'] {
   return {
     self_growth: {
-      observationPoints: ['疲惫恢复速度是否改善', `“${weak}”相关压力是否下降`, '是否减少了非必要的即时回应'],
+      observationPoints: ['疲惫恢复速度是否改善', `"${weak}"相关压力是否下降`, '是否减少了非必要的即时回应'],
       reviewQuestions: ['哪一个边界动作最有效？', '哪些任务仍在持续消耗？', '是否需要同伴、年级或校方支持？'],
       escalationSignals: ['连续多日无法恢复精力', '出现明显无助或安全风险表达', '工作消耗已经影响睡眠、饮食或基本功能']
     },
     class_system: {
-      observationPoints: [`“${weak}”系统的具体节点是否更稳定`, '学生是否知道自己要做什么', `能否借助“${strong}”带动班级执行`],
+      observationPoints: [`"${weak}"系统的具体节点是否更稳定`, '学生是否知道自己要做什么', `能否借助"${strong}"带动班级执行`],
       reviewQuestions: ['哪个班级流程需要保留？', '哪个岗位或规则仍不清楚？', '是否需要班干部或任课教师共同调整？'],
       escalationSignals: ['班级秩序持续失控', '冲突或违规频率明显上升', '单靠班主任无法维持基本运行']
     },
     home_school: {
-      observationPoints: ['家长回应是否从情绪转向事实', `“${weak}”是否出现缓和`, '双方是否按约定完成下一步'],
+      observationPoints: ['家长回应是否从情绪转向事实', `"${weak}"是否出现缓和`, '双方是否按约定完成下一步'],
       reviewQuestions: ['哪句话降低了对抗？', '哪些事实仍未核清？', '是否需要年级组或学校统一口径？'],
       escalationSignals: ['威胁、公开抹黑或恶意维权升级', '家长拒绝基本沟通边界', '沟通影响学生安全或学校秩序']
     },
     student_case: {
-      observationPoints: [`“${strong}”表现的频率和强度是否变化`, '支持措施后学生功能是否改善', '诱因是否逐渐清晰'],
+      observationPoints: [`"${strong}"表现的频率和强度是否变化`, '支持措施后学生功能是否改善', '诱因是否逐渐清晰'],
       reviewQuestions: ['哪个场景最容易触发问题？', '哪种支持对学生有效？', '是否需要家校、年级或心理专员协同？'],
       escalationSignals: ['表现持续加重或扩展到更多场景', '常规支持连续无效', '出现自伤、暴力、虐待等安全信号']
+    },
+    learning_problem: {
+      observationPoints: [`"${strong}"层面的表现是否出现改善迹象`, '教学支架调整后学生的参与度或正确率是否变化', '学习困难是否集中在特定学科或任务类型'],
+      reviewQuestions: ['哪一种支架或策略对学生的帮助最明显？', '学生的困难是属于"不会"还是"不愿"？', '是否需要家长、年级或学科教师协同？'],
+      escalationSignals: ['学习困难持续加重且常规支架无效', '学生出现明显厌学、拒学或躯体化表现', '出现自伤、暴力或重大创伤等安全信号']
     }
   }[module]
 }

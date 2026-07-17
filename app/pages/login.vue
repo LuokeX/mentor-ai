@@ -1,10 +1,12 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
 const isDev = import.meta.dev
-const form = reactive({ email: isDev ? 'teacher@demo.local' : '', password: isDev ? 'Mentor@2026' : '', otp: '' })
+const form = reactive({ email: isDev ? 'teacher@demo.local' : '', password: isDev ? 'Mentor@2026' : '', otp: '', recoveryCode: '' })
 const pending = ref(false)
+const hydrated = ref(false)
 const errorMessage = ref('')
 const needOtp = ref(false)
+const useRecoveryCode = ref(false)
 
 const demoAccounts = [
   { label: '李老师（教师）', value: 'teacher@demo.local' },
@@ -20,6 +22,8 @@ function onDemoSelect(email: string) {
   form.password = 'Mentor@2026'
 }
 
+onMounted(() => { hydrated.value = true })
+
 
 async function login() {
   pending.value = true
@@ -30,7 +34,8 @@ async function login() {
       body: {
         email: form.email,
         password: form.password,
-        ...(form.otp.trim() ? { otp: form.otp.trim() } : {})
+        ...(useRecoveryCode.value && form.recoveryCode.trim() ? { recoveryCode: form.recoveryCode.trim().toUpperCase() } : {}),
+        ...(!useRecoveryCode.value && form.otp.trim() ? { otp: form.otp.trim() } : {})
       }
     })
     const { refresh } = useAuth()
@@ -78,10 +83,13 @@ async function login() {
           </UFormField>
           <UFormField label="邮箱"><UInput v-model="form.email" size="xl" icon="i-lucide-mail" class="w-full" /></UFormField>
           <UFormField label="密码"><UInput v-model="form.password" type="password" size="xl" icon="i-lucide-lock-keyhole" class="w-full" /></UFormField>
-          <UFormField v-if="needOtp" label="心理专员动态验证码" help="请输入身份验证器中的 6 位验证码"><UInput v-model="form.otp" maxlength="6" size="xl" icon="i-lucide-shield-check" class="w-full" /></UFormField>
+          <UFormField v-if="needOtp && !useRecoveryCode" label="心理专员动态验证码" help="请输入身份验证器中的 6 位验证码"><UInput v-model="form.otp" inputmode="numeric" maxlength="6" size="xl" icon="i-lucide-shield-check" class="w-full" /></UFormField>
+          <UFormField v-if="needOtp && useRecoveryCode" label="一次性恢复码" help="恢复码使用后立即失效"><UInput v-model="form.recoveryCode" maxlength="13" size="xl" icon="i-lucide-key-round" class="w-full" placeholder="XXXXXX-XXXXXX" /></UFormField>
+          <button v-if="needOtp" type="button" class="text-sm text-emerald-700 hover:underline" @click="useRecoveryCode = !useRecoveryCode">{{ useRecoveryCode ? '使用动态验证码' : '无法使用验证器？改用恢复码' }}</button>
           <UAlert v-if="errorMessage" color="error" variant="soft" :description="errorMessage" />
-          <UButton type="submit" block size="xl" color="primary" :loading="pending">安全登录</UButton>
+          <UButton type="submit" block size="xl" color="primary" :loading="pending" :disabled="!hydrated">安全登录</UButton>
         </form>
+        <p class="mt-5 text-center text-sm text-slate-500">收到学校邀请？<NuxtLink class="font-medium text-emerald-700 hover:underline" to="/activate">激活账号</NuxtLink></p>
         <div v-if="isDev" class="mt-8 rounded-2xl bg-slate-100/80 p-4 text-xs leading-6 text-slate-500">
           演示账号：teacher@demo.local、school.admin@demo.local、platform.admin@demo.local；统一密码 Mentor@2026。
         </div>

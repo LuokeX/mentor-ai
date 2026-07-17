@@ -5,13 +5,13 @@ const route = useRoute()
 const id = String(route.params.id)
 const { data, refresh } = await useFetch<any>(`/api/v1/plans/${id}`)
 const pending = ref(false)
-const actionPendingIdx = ref<number | null>(null)
+const actionPendingId = ref<string | null>(null)
 const sourceExpanded = ref(false)
 const reviewForm = reactive({
   effectScore: 3,
   progressNote: '',
   nextAction: '',
-  completedActionIndices: [] as number[],
+  completedActionIds: [] as string[],
 })
 
 function moduleTitle(module: string) {
@@ -38,25 +38,25 @@ function statusVariant(status: string): 'info' | 'success' | 'neutral' {
 }
 
 const activeActions = computed(() => {
-  const actions: Array<{ index: number; title: string; detail: string; status: string }> = data.value?.actions || []
-  return actions.map((a, i) => ({ ...a, index: i }))
+  const actions: Array<{ id: string; sequence: number; title: string; detail: string; status: string }> = data.value?.actions || []
+  return actions
 })
 
 const completedActionCount = computed(() =>
   activeActions.value.filter(a => a.status === 'completed').length
 )
 
-async function toggleAction(index: number, currentStatus: string) {
+async function toggleAction(actionId: string, currentStatus: string) {
   const next = currentStatus === 'completed' ? 'pending' : 'completed'
-  actionPendingIdx.value = index
+  actionPendingId.value = actionId
   try {
     await $fetch(`/api/v1/plans/${data.value!.id}/actions`, {
       method: 'PATCH',
-      body: { actionIndex: index, status: next },
+      body: { actionId, status: next },
     })
     await refresh()
   } finally {
-    actionPendingIdx.value = null
+    actionPendingId.value = null
   }
 }
 
@@ -70,12 +70,12 @@ async function createReview() {
         effectScore: Number(reviewForm.effectScore),
         progressNote: reviewForm.progressNote,
         nextAction: reviewForm.nextAction,
-        completedActionIndices:
-          reviewForm.completedActionIndices.length ? reviewForm.completedActionIndices : undefined,
+        completedActionIds:
+          reviewForm.completedActionIds.length ? reviewForm.completedActionIds : undefined,
       },
     })
     Object.assign(reviewForm, {
-      effectScore: 3, progressNote: '', nextAction: '', completedActionIndices: [],
+      effectScore: 3, progressNote: '', nextAction: '', completedActionIds: [],
     })
     await refresh()
   } finally {
@@ -202,19 +202,19 @@ useHead({ title: () => data.value?.title || '方案详情' })
         <div class="mt-4 space-y-2">
           <label
             v-for="action in activeActions"
-            :key="action.index"
+            :key="action.id"
             class="flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition"
             :class="[
               action.status === 'completed'
                 ? 'border-emerald-100 bg-emerald-50/50'
                 : 'border-slate-100 bg-white hover:border-slate-200',
-              actionPendingIdx === action.index ? 'pointer-events-none opacity-60' : '',
+              actionPendingId === action.id ? 'pointer-events-none opacity-60' : '',
             ]"
           >
             <UCheckbox
               :model-value="action.status === 'completed'"
-              :disabled="actionPendingIdx === action.index"
-              @update:model-value="toggleAction(action.index, action.status)"
+              :disabled="actionPendingId === action.id"
+              @update:model-value="toggleAction(action.id, action.status)"
             />
             <div class="min-w-0 flex-1">
               <p
@@ -226,7 +226,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
               <p class="mt-1 text-xs leading-5 text-slate-500">{{ action.detail }}</p>
             </div>
             <UIcon
-              v-if="actionPendingIdx === action.index"
+              v-if="actionPendingId === action.id"
               name="i-lucide-loader"
               class="mt-0.5 size-4 animate-spin text-slate-400"
             />
@@ -358,16 +358,16 @@ useHead({ title: () => data.value?.title || '方案详情' })
           <div class="space-y-1 rounded-xl border border-slate-100 p-3">
             <label
               v-for="action in activeActions.filter(a => a.status !== 'completed')"
-              :key="action.index"
+              :key="action.id"
               class="flex cursor-pointer items-center gap-2.5 py-1 text-sm"
             >
               <UCheckbox
-                :model-value="reviewForm.completedActionIndices.includes(action.index)"
+                :model-value="reviewForm.completedActionIds.includes(action.id)"
                 @update:model-value="(checked: boolean | string) => {
                   if (checked) {
-                    reviewForm.completedActionIndices.push(action.index)
+                    reviewForm.completedActionIds.push(action.id)
                   } else {
-                    reviewForm.completedActionIndices = reviewForm.completedActionIndices.filter(i => i !== action.index)
+                    reviewForm.completedActionIds = reviewForm.completedActionIds.filter(id => id !== action.id)
                   }
                 }"
               />

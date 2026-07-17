@@ -28,8 +28,7 @@
 | `pnpm db:seed` | 创建演示学校、账号和种子内容 | 仅本地/专用测试环境 |
 | `pnpm knowledge:import` | 受控导入并分块 Markdown/TXT/JSON 业务知识 | 本地或经审批的正式发布流程 |
 | `pnpm knowledge:reindex` | 为缺失向量或模型版本不一致的知识片段重新生成向量 | 本地或受控发布流程 |
-| `pnpm dev` | 启动 Nuxt 开发服务器 | 仅本地 |
-| `pnpm worker` | 启动本地通知 Worker | 仅本地，另开终端 |
+| `pnpm dev` | 启动 Nuxt App 及内置通知消费者 | 仅本地 |
 | `pnpm typecheck` | TypeScript/Nuxt 类型检查 | 开发与 CI |
 | `pnpm test` | 单元及规则测试 | 开发与 CI |
 | `pnpm build` | 构建生产产物 | 开发验证与 CI |
@@ -53,11 +52,7 @@ pnpm dev
 
 `cp .env.example .env`、`pnpm env:init` 和 `pnpm db:seed` 通常只执行一次。已有 `.env` 时禁止再次复制模板覆盖它。
 
-如需测试危机短信 Outbox，另开终端运行：
-
-```bash
-pnpm worker
-```
+危机短信 Outbox 消费者由 `server/plugins/notification-worker.ts` 随 App 启动，不需要独立进程。
 
 ### 3.2 日常启动与停止
 
@@ -150,12 +145,12 @@ pnpm build
 涉及以下范围时增加专项验证：
 
 - 权限或管理员访问：验证四角色越权、授权过期、只读限制和审计日志。
-- 危机规则：验证风险事件、转介、Outbox 和审计在同一事务中生成，并启动 Worker 验证通知。
+- 危机规则：验证风险事件、转介、Outbox 和审计在同一事务中生成，并通过 App 日志验证通知。
 - 数据库：从空库执行全部 migration，再从现有备份副本执行增量 migration。
 - AI：验证 DeepSeek 正常、超时、非法 JSON 和无密钥降级场景。
 - 敏感页面：验证 `Cache-Control: no-store`、水印和禁止导出。
 
-App 和通知 Worker 使用同一份代码与数据库契约，正式发布时必须同步构建、同步部署，不能只更新其中一个。
+通知消费者是 Nitro 插件，与 App 使用同一进程和数据库契约；正式发布只部署一个 App 镜像，禁止再配置重复的独立 Worker。
 
 ## 6. 正式环境首次部署
 
@@ -184,11 +179,11 @@ docker compose ps -a
 docker compose logs --tail=100 migrate
 ```
 
-只有 `migrate` 显示退出码 `0` 后，App 和 Worker 才应进入运行状态。随后验证：
+只有 `migrate` 显示退出码 `0` 后，App 才应进入运行状态；通知消费者随 App 启动。随后验证：
 
 ```bash
 docker compose exec app node -e "fetch('http://127.0.0.1:3000/health/ready').then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })"
-docker compose logs --tail=100 app worker nginx
+docker compose logs --tail=100 app nginx
 ```
 
 最后通过校内域名验证 HTTPS、登录、四角色权限、心理专员 TOTP、DeepSeek 降级和真实短信。正式环境禁止执行 `pnpm db:seed`。
@@ -217,13 +212,13 @@ gzip -t backups/mentor-ai-YYYYMMDD-HHMMSS.sql.gz
 docker compose --profile tls build
 docker compose --profile tls up -d
 docker compose ps -a
-docker compose logs --tail=100 migrate app worker
+docker compose logs --tail=100 migrate app
 ```
 
 6. 检查内部和外部健康接口，执行登录、权限、核心业务和通知冒烟测试。
 7. 观察错误日志、数据库连接、短信失败和 Outbox 积压，确认稳定后结束变更窗口。
 
-迁移由 Compose 的 `migrate` 服务使用管理员账号执行；App 和 Worker 使用低权限账号。不得为了迁移方便把 App 的 `DATABASE_URL` 改成管理员连接。
+迁移由 Compose 的 `migrate` 服务使用管理员账号执行；App 及其内置通知消费者使用低权限账号。不得为了迁移方便把 App 的 `DATABASE_URL` 改成管理员连接。
 
 ## 8. 备份、恢复与回滚
 
@@ -244,7 +239,7 @@ BACKUP_DIR=./backups BACKUP_RETENTION_DAYS=14 ./scripts/backup.sh
 恢复会覆盖现有对象，只用于已批准的事故恢复或演练：
 
 ```bash
-docker compose stop app worker nginx
+docker compose stop app nginx
 CONFIRM_RESTORE=RESTORE_MENTOR_AI ./scripts/restore.sh backups/mentor-ai-YYYYMMDD-HHMMSS.sql.gz
 docker compose --profile tls up -d
 ```
@@ -255,7 +250,7 @@ docker compose --profile tls up -d
 
 ```bash
 docker compose ps
-docker compose logs --since=30m app worker nginx postgres
+docker compose logs --since=30m app nginx postgres
 docker compose exec app node -e "fetch('http://127.0.0.1:3000/health/ready').then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })"
 ```
 
@@ -263,17 +258,16 @@ docker compose exec app node -e "fetch('http://127.0.0.1:3000/health/ready').the
 
 ```bash
 docker compose restart app
-docker compose restart worker
 ```
 
-数据库不得因一般应用故障随意重启。Worker 重启后会继续处理未发送 Outbox；应检查是否存在 `failed` 或长期 `pending` 的通知。
+数据库不得因一般应用故障随意重启。App 重启后内置消费者会继续处理未发送 Outbox；应检查是否存在 `failed` 或长期 `pending` 的通知。
 
 ## 10. 明确禁止事项
 
 - 禁止在正式环境执行 `pnpm db:seed`、`pnpm env:init`、`pnpm dev` 或 `pnpm preview`。
 - 禁止在未备份、未检查 SQL、未安排变更窗口时执行正式 migration。
 - 禁止修改或删除已经执行的 migration，禁止手工篡改 Drizzle migration 记录。
-- 禁止让 App/Worker 使用数据库管理员账号，禁止把管理员数据库端口开放到非部署网络。
+- 禁止让 App 使用数据库管理员账号，禁止把管理员数据库端口开放到非部署网络。
 - 禁止直接修改或删除风险事件、审计日志、访问授权和 Outbox 历史。
 - 禁止使用 `docker compose down -v` 处理普通故障。
 - 禁止将正式数据库复制到个人电脑，禁止在日志、短信或普通聊天工具中发送个人业务数据。

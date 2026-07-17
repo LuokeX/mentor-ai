@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
+import { ensurePlanActions } from '../../../domain/plan-actions'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -46,6 +47,7 @@ export default defineEventHandler(async (event) => {
   const reviews = await db.select().from(schema.planReviews)
     .where(eq(schema.planReviews.planId, id))
     .orderBy(desc(schema.planReviews.reviewAt), desc(schema.planReviews.createdAt))
+  const actions = await ensurePlanActions(event, plan.id, user.id)
 
   return {
     ...plan,
@@ -54,6 +56,7 @@ export default defineEventHandler(async (event) => {
     student,
     class: klass,
     sourceAssessment,
+    actions,
     reviews,
   }
 })

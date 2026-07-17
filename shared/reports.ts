@@ -52,6 +52,8 @@ export const planReviewCreateSchema = z.object({
   effectScore: z.number().int().min(1).max(5),
   progressNote: z.string().trim().min(4).max(1000),
   nextAction: z.string().trim().min(2).max(500),
+  completedActionIds: z.array(z.string().uuid()).max(20).optional(),
+  // 试用期保留一个版本，供旧客户端平滑迁移。
   completedActionIndices: z.array(z.number().int().min(0)).max(20).optional()
 })
 

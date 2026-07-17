@@ -11,5 +11,10 @@ export default defineEventHandler(async (event) => {
       eq(schema.users.schoolId, admin.schoolId!), eq(schema.users.role, 'psychologist'), eq(schema.users.status, 'active')
     ))
   ])
-  return { ...settings, psychologists }
+  return {
+    ...settings,
+    psychologists,
+    aiProviderAgreementReady: Boolean(useRuntimeConfig(event).deepseekAgreementVersion),
+    aiProviderAgreementVersion: useRuntimeConfig(event).deepseekAgreementVersion || null
+  }
 })

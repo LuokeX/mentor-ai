@@ -1,6 +1,7 @@
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-01',
   devtools: { enabled: true },
+  devServer: { host: '0.0.0.0' },
   modules: [['@nuxt/ui', { fonts: false }]],
   ui: { fonts: false },
   css: ['~/assets/css/main.css'],
@@ -16,6 +17,8 @@ export default defineNuxtConfig({
     deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
     deepseekRouterModel: process.env.DEEPSEEK_ROUTER_MODEL || 'deepseek-v4-flash',
     deepseekGeneratorModel: process.env.DEEPSEEK_GENERATOR_MODEL || 'deepseek-v4-pro',
+    // 完整上下文只有登记供应商协议版本后才允许启用。
+    deepseekAgreementVersion: process.env.DEEPSEEK_AGREEMENT_VERSION || '',
     deepseekTimeoutMs: Number(process.env.DEEPSEEK_TIMEOUT_MS || 8000),
     embeddingEnabled: process.env.EMBEDDING_ENABLED === 'true',
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',

@@ -10,6 +10,8 @@ import { evaluateAssessment } from '../../../../domain/rules'
 import { executeRules } from '../../../../domain/rules-executor'
 import { encryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
+import { createPlanActions, defaultReviewAt } from '../../../../domain/plan-actions'
+import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
 import { generateAssessmentReport } from '../../../../integrations/deepseek'
 
@@ -159,13 +161,30 @@ export default defineEventHandler(async (event) => {
       summaryEnc: encryptSensitive(narrative || result.reasons.join('；'), useRuntimeConfig(event).encryptionKey),
       actions: result.actions, tools: result.tools,
       report: report as unknown as Record<string, unknown>,
-      sourceVersions: [`${definition.code}@${definition.version}`, ...result.matchedRuleIds]
-    }).returning({ id: schema.plans.id })
+      sourceVersions: [`${definition.code}@${definition.version}`, ...result.matchedRuleIds],
+      nextReviewAt: defaultReviewAt()
+    }).returning({ id: schema.plans.id, createdAt: schema.plans.createdAt })
     planId = plan?.id || null
+    if (plan) {
+      await createPlanActions(event, {
+        planId: plan.id, schoolId: user.schoolId, ownerUserId: user.id,
+        createdAt: plan.createdAt, actions: result.actions
+      })
+    }
   }
   await writeAudit(event, {
     schoolId: user.schoolId, actorId: user.id, action: 'assessment.submit', targetType: 'assessment', targetId: attempt.id,
     metadata: { module, level: result.level, blocked: result.blocked, ruleIds: result.matchedRuleIds, studentId: body.studentId, classId: linkedClassId, guardianId: body.guardianId, sourceChatSessionId: body.sourceChatSessionId }
   })
+  await trackProductEvent(event, {
+    schoolId: user.schoolId, userId: user.id, eventName: 'assessment_completed',
+    targetType: 'assessment', targetId: attempt.id, metadata: { module, blocked: result.blocked, planGenerated: Boolean(planId) }
+  })
+  if (planId) {
+    await trackProductEvent(event, {
+      schoolId: user.schoolId, userId: user.id, eventName: 'plan_generated',
+      targetType: 'plan', targetId: planId, metadata: { module }
+    })
+  }
   return { attemptId: attempt.id, planId, result: presentedResult, report, fuse }
 })

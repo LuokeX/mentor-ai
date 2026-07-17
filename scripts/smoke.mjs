@@ -101,6 +101,8 @@ await login(schoolAdmin, 'school.admin@demo.local')
 assert((await schoolAdmin('/api/v1/information/export')).response.status === 403, 'school administrator could use teacher export')
 const schoolDashboard = await schoolAdmin('/api/v1/school-admin/dashboard')
 assert(schoolDashboard.response.ok, 'school dashboard failed')
+const pilotMetrics = await schoolAdmin('/api/v1/school-admin/pilot-metrics')
+assert(pilotMetrics.response.ok && pilotMetrics.data.assistant && pilotMetrics.data.firstTask, `pilot metrics failed: ${pilotMetrics.text}`)
 const teacherRow = schoolDashboard.data.users.find(user => user.role === 'teacher')
 const ownAdminRow = schoolDashboard.data.users.find(user => user.role === 'school_admin')
 assert(teacherRow && ownAdminRow, 'seed school users missing')
@@ -149,5 +151,5 @@ assert(platformSensitive.response.ok, `approved platform read failed: ${platform
 
 process.stdout.write(JSON.stringify({
   ok: true,
-  checks: ['health and OpenAPI', 'teacher ownership and export', 'knowledge import and citation', 'multi-turn session history', 'server draft restore', 'deterministic assessment', 'crisis fuse', 'specialist assignment', 'school reason grant', 'print audit', 'platform break-glass approval']
+  checks: ['health and OpenAPI', 'teacher ownership and export', 'knowledge import and citation', 'multi-turn session history', 'server draft restore', 'deterministic assessment', 'crisis fuse', 'specialist assignment', 'privacy-safe pilot metrics', 'school reason grant', 'print audit', 'platform break-glass approval']
 }, null, 2) + '\n')

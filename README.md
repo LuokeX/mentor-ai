@@ -1,6 +1,6 @@
 # 教师赋能智能平台
 
-依据《教师赋能智能平台 PRD V2.0》实现的校内封闭试用版代码基线。项目采用 Nuxt 4、Vue 3、Nitro、PostgreSQL、Drizzle 和独立 PostgreSQL Outbox Worker，包含教师、心理专员、学校管理员、平台管理员四类角色。
+依据《教师赋能智能平台 PRD V2.0》实现的校内封闭试用版代码基线。项目采用 Nuxt 4、Vue 3、Nitro、PostgreSQL 和 Drizzle；通知消费者作为 Nitro 插件随 App 运行，包含教师、心理专员、学校管理员、平台管理员四类角色。
 
 ## 已实现范围
 
@@ -8,12 +8,16 @@
 - AI 业务知识库：平台管理员导入 Markdown/TXT/JSON，自动分块、Ollama `qwen3-embedding:0.6b` 向量化、pgvector + `pg_trgm` 混合检索、草稿发布、全局/校级范围、重复校验和模型调用审计。
 - 四个业务模块：动态问卷、确定性计分/分级、行动和工具生成、方案存档；自我成长的连续四次低意义感紫色规则由历史记录计算。
 - 问卷草稿同时保存在浏览器和服务端，可跨会话恢复；共享 Zod 契约生成 `/openapi.json`。
+- 账号入校：72 小时一次性激活链接、心理专员自助 TOTP 绑定与单次恢复码、管理员重新邀请/MFA 重置/停用，以及 users/classes/students/guardians 四类 CSV 预检和事务导入。
 - 信息中心：状态、班级、学生、家长、沟通记录和方案记录；个人字段使用 AES-256-GCM 加密，教师可导出自己的完整 JSON 数据，管理员不能调用该导出。
-- 安全熔断：风险事件、转介、短信 Outbox 和审计在单一事务中生成；Worker 支持 1/5/15 分钟重试、过期锁恢复和通知幂等键。
-- 心理专员工作台：强制 TOTP，只能处理分配给本人的最小转介包。
+- 执行闭环：稳定 UUID 方案动作、今日/逾期待办、7 天复盘节点、个人站内通知、AI 回答反馈和需教师确认后才生效的方案建议。
+- AI 数据治理：学校级 `local | redacted | full_context` 模式、供应商协议和学校审批门禁、教师版本化告知、发送前上下文预览和“不带档案咨询”。
+- 安全熔断：风险事件、转介、短信 Outbox 和审计在单一事务中生成；危机短信只含事件号和登录提示，支持 5 分钟确认 SLA、15 分钟升级 SLA、转派和不可变处置时间线。
+- 心理专员工作台：强制 TOTP，只能处理分配给本人的最小转介包，展示状态、优先级、SLA 倒计时、处置记录和关闭原因。
 - 学校后台：校内账号、心理专员配置、敏感业务档案只读访问、访问事由、15 分钟目标级授权、平台访问审批和访问审计。
 - 平台后台：学校及学校管理员创建、学校启停、内容包发布/停用/回滚、服务状态、学校批准的 30 分钟 Break-glass 访问。
 - 防扩散控制：敏感响应 `no-store`、动态水印、打印正文隐藏、打印尝试审计、管理员无批量导出接口、详情集合最多返回 50 条。
+- 试点运营：不记录业务正文的产品事件、学校聚合指标面板、桌面与手机双视口 Playwright 核心路径。
 - 部署：Node 24、PostgreSQL 18、Nginx/TLS、Docker Compose、健康检查、迁移、备份和恢复脚本。
 
 ## 本地启动
@@ -29,7 +33,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-`pnpm env:init` 会替换模板占位值、生成互不相同的随机本地密钥，并为已有 `.env` 补充新配置，不会打印密钥或覆盖已有值。`pnpm db:up` 会启动带 pgvector 的 PostgreSQL 18、Ollama、模型拉取、数据库迁移和已有知识补向量任务；首次启动需下载 Ollama 镜像和约 639 MB 的 Embedding 模型。`pnpm db:migrate`、`pnpm db:seed` 和 `pnpm worker` 也会自动读取 `.env`；Shell 或 CI 中已设置的环境变量优先。
+`pnpm env:init` 会替换模板占位值、生成互不相同的随机本地密钥，并为已有 `.env` 补充新配置，不会打印密钥或覆盖已有值。`pnpm db:up` 会启动带 pgvector 的 PostgreSQL 18、Ollama、模型拉取、数据库迁移和已有知识补向量任务；首次启动需下载 Ollama 镜像和约 639 MB 的 Embedding 模型。`pnpm db:migrate`、`pnpm db:seed` 和 `pnpm dev` 会自动读取 `.env`；通知消费随 App 启动，无独立 `pnpm worker` 命令。
 
 日常开发通常只需：
 
@@ -51,7 +55,7 @@ pnpm dev
 
 心理专员演示 TOTP secret 为 `JBSWY3DPEHPK3PXP`。它只用于本地演示，部署时必须删除演示账号或重新绑定。
 
-若没有配置 `DEEPSEEK_API_KEY`，系统自动使用本地路由降级规则；Ollama 不可用时知识检索自动降级为关键词模式；`SMS_PROVIDER=mock` 时短信仅写入 Worker 日志。
+若没有配置 `DEEPSEEK_API_KEY`，系统自动使用本地路由降级规则；Ollama 不可用时知识检索自动降级为关键词模式；`SMS_PROVIDER=mock` 时短信仅写入 App 的通知插件日志。
 
 ## 校内服务器部署
 
@@ -65,7 +69,7 @@ docker compose --profile tls up -d
 docker compose exec app node -e "fetch('http://127.0.0.1:3000/health/ready').then(r=>r.text()).then(console.log)"
 ```
 
-PostgreSQL 首次初始化会创建无建库/建表权限的 `mentor_app` 运行账户；只有 `migrate` 和备份恢复使用数据库管理员。`migrate` 成功后 App 和 Worker 才启动。Nginx 将 HTTP 强制跳转到 HTTPS，并对登录接口限速。
+PostgreSQL 首次初始化会创建无建库/建表权限的 `mentor_app` 运行账户；只有 `migrate` 和备份恢复使用数据库管理员。`migrate` 成功后 App 启动，通知消费者随 App 一起运行。Nginx 将 HTTP 强制跳转到 HTTPS，并对登录接口限速。
 
 ## 质量检查
 
@@ -73,9 +77,10 @@ PostgreSQL 首次初始化会创建无建库/建表权限的 `mentor_app` 运行
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm test:e2e
 ```
 
-当前单元测试覆盖四模块关键阈值、反向计分、连续四次紫色规则、危机关键词和 AI/管理员输入契约。正式 UAT 仍需业务方提供完整题库、120 条路由黄金样本和规则黄金样本。
+当前单元测试覆盖四模块关键阈值、反向计分、连续四次紫色规则、危机关键词、邀请过期、方案节点、CSV 解析和 AI 数据模式；Playwright 覆盖四角色的桌面与手机视口核心路径。正式 UAT 仍需业务方提供完整题库、120 条路由黄金样本和规则黄金样本。分批准入、指标口径和演练记录见 [校内试点验收手册](docs/PILOT_ROLLOUT.md)。
 
 ## 数据运维
 

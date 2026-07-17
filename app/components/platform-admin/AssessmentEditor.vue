@@ -72,15 +72,19 @@ function removeOption(qIdx: number, optIdx: number) {
 }
 
 // ---- 导入/导出 ----
-const importText = ref('')
+const importText = ref<string | null>(null)
+const importError = ref('')
 function doImport() {
+  importError.value = ''
   try {
-    const parsed = JSON.parse(importText.value)
+    const parsed = JSON.parse(importText.value || '')
     Object.assign(editing, { questions: parsed.questions || parsed })
     selectedIndex.value = 0
-    importText.value = ''
+    importText.value = null
     emitUpdate()
-  } catch { alert('JSON 解析失败') }
+  } catch {
+    importError.value = '无法解析 JSON，请检查括号、逗号和字段格式。'
+  }
 }
 
 function doExport() {
@@ -237,15 +241,16 @@ watch(() => editing.questions, (qs) => {
     <div class="flex items-center justify-between border-t border-slate-100 pt-4">
       <div class="flex gap-2">
         <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-download" @click="doExport">导出 JSON</UButton>
-        <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-upload" @click="importText = ''; /* opens import area */">导入 JSON</UButton>
+        <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-upload" @click="importText = ''; importError = ''">导入 JSON</UButton>
       </div>
     </div>
     <!-- 导入区 -->
-    <div v-if="importText !== undefined && importText === ''" class="rounded-2xl border border-dashed border-indigo-300 bg-indigo-50/30 p-4">
+    <div v-if="importText !== null" class="rounded-2xl border border-dashed border-indigo-300 bg-indigo-50/30 p-4">
       <UTextarea v-model="importText" :rows="4" class="w-full font-mono text-xs" placeholder="粘贴 JSON..."/>
+      <UAlert v-if="importError" class="mt-3" color="error" variant="soft" title="导入失败" :description="importError" />
       <div class="mt-2 flex gap-2">
         <UButton size="xs" @click="doImport">确认导入</UButton>
-        <UButton size="xs" color="neutral" variant="ghost" @click="importText = undefined as any">取消</UButton>
+        <UButton size="xs" color="neutral" variant="ghost" @click="importText = null; importError = ''">取消</UButton>
       </div>
     </div>
   </div>

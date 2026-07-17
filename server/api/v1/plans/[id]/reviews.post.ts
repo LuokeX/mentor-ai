@@ -4,6 +4,8 @@ import { planReviewCreateSchema } from '../../../../../shared/reports'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
+import { ensurePlanActions } from '../../../../domain/plan-actions'
+import { trackProductEvent } from '../../../../domain/product-events'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -31,14 +33,23 @@ export default defineEventHandler(async (event) => {
     nextAction: body.nextAction
   }).returning()
 
-  // 联动完成动作
-  if (body.completedActionIndices?.length) {
+  const actionRows = await ensurePlanActions(event, plan.id, user.id)
+  const completedIds = new Set(body.completedActionIds || [])
+  for (const index of body.completedActionIndices || []) {
+    const action = actionRows.find(item => item.sequence === index)
+    if (action) completedIds.add(action.id)
+  }
+
+  // 新实体与旧快照同步，旧客户端仍可按索引读取一个试用版本。
+  if (completedIds.size) {
+    const now = new Date()
+    for (const actionId of completedIds) {
+      await db.update(schema.planActions).set({ status: 'completed', completedAt: now, updatedAt: now })
+        .where(and(eq(schema.planActions.id, actionId), eq(schema.planActions.ownerUserId, user.id), eq(schema.planActions.planId, plan.id)))
+    }
     const actions = (plan.actions as Array<{ title: string; detail: string; status: string }>) || []
-    for (const idx of body.completedActionIndices) {
-      if (idx >= 0 && idx < actions.length) {
-        const a = actions[idx]!
-        actions[idx] = { title: a.title, detail: a.detail, status: 'completed' }
-      }
+    for (const row of actionRows.filter(item => completedIds.has(item.id))) {
+      if (actions[row.sequence]) actions[row.sequence] = { ...actions[row.sequence]!, status: 'completed' }
     }
     await db.update(schema.plans)
       .set({ actions: actions as any, updatedAt: new Date() })
@@ -54,6 +65,10 @@ export default defineEventHandler(async (event) => {
     targetType: 'plan',
     targetId: plan.id,
     metadata: { effectScore: body.effectScore }
+  })
+  await trackProductEvent(event, {
+    schoolId: plan.schoolId, userId: user.id, eventName: 'plan_review_completed',
+    targetType: 'plan', targetId: plan.id, metadata: { effectScore: body.effectScore, completedActions: completedIds.size }
   })
   return review
 })

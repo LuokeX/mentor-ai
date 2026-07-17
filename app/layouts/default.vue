@@ -8,6 +8,17 @@ const roleHome = computed(() => {
   if (user.value?.role === 'psychologist') return '/specialist'
   return '/'
 })
+const mobileItems = computed(() => {
+  if (user.value?.role === 'teacher') return [
+    { label: '工作台', icon: 'i-lucide-house', to: '/' },
+    { label: '档案', icon: 'i-lucide-folder-user', to: '/information' },
+    { label: '通知', icon: 'i-lucide-bell', to: '/notifications' }
+  ]
+  return [
+    { label: '工作台', icon: 'i-lucide-layout-dashboard', to: roleHome.value },
+    { label: '通知', icon: 'i-lucide-bell', to: '/notifications' }
+  ]
+})
 </script>
 
 <template>
@@ -37,8 +48,15 @@ const roleHome = computed(() => {
         </div>
       </div>
     </header>
-    <main>
+    <main class="pb-20 md:pb-0">
       <slot />
     </main>
+    <nav v-if="user" class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 px-[max(1rem,env(safe-area-inset-left))] pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
+      <div class="mx-auto flex max-w-md justify-around">
+        <NuxtLink v-for="item in mobileItems" :key="item.to" :to="item.to" class="flex min-h-16 min-w-20 flex-col items-center justify-center gap-1 text-xs text-slate-500" active-class="!text-emerald-700">
+          <UIcon :name="item.icon" class="size-5" /><span>{{ item.label }}</span>
+        </NuxtLink>
+      </div>
+    </nav>
   </div>
 </template>

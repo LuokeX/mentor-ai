@@ -14,6 +14,7 @@ const keywordRoutes: Array<[RouteDecision['primaryModule'], RegExp]> = [
   ['home_school', /(家长|投诉|家长群|家校|沟通)/i],
   ['class_system', /(班级|纪律|班干部|班规|班风|秩序)/i],
   ['student_case', /(学生|孩子|同学|打架|情绪|不合群|走神)/i],
+  ['learning_problem', /(学不|学不会|不想学|成绩|作业|考试|偏科|补习|厌学|听不懂|记不住)/i],
   ['self_growth', /(我很累|疲惫|压力|倦怠|无力|委屈|崩溃)/i]
 ]
 
@@ -36,7 +37,7 @@ const assistantResponseSchema = z.object({
   suggestedActions: z.array(z.object({
     label: z.string().trim().min(2).max(80),
     type: z.enum(['clarify', 'open_module', 'record', 'tool']),
-    module: z.enum(['self_growth', 'class_system', 'home_school', 'student_case']).optional()
+    module: z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']).optional()
   })).max(4).default([]),
   citationIds: z.array(z.string().uuid()).max(6).default([])
 })
@@ -64,6 +65,7 @@ function buildAssistantMessages(input: {
   history: Array<{ role: 'user' | 'assistant', content: string }>
   citations: KnowledgeCitation[]
   businessContext?: AssistantBusinessContext | null
+  dataMode?: 'redacted' | 'full_context'
 }, outputMode: 'json' | 'text') {
   const knowledgeContext = input.citations.length
     ? input.citations.map(item => `[${item.chunkId}] 来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`).join('\n\n')
@@ -77,7 +79,7 @@ function buildAssistantMessages(input: {
   return [
     {
       role: 'system',
-      content: `你是“教师赋能智能平台”的统一 AI 助手，服务班主任。业务模块只有 self_growth、class_system、home_school、student_case。
+      content: `你是“教师赋能智能平台”的统一 AI 助手，服务班主任。业务模块只有 self_growth、class_system、home_school、student_case、learning_problem。
 你的职责：理解教师自然语言、进行多轮澄清、结合已审核知识和通用班主任工作方法给出当下可执行建议，并建议进入合适模块。
 硬约束：
 1. 不做精神、医学、法律诊断，不承诺效果，不替代心理专员、医生、警方或校方制度。
@@ -97,8 +99,8 @@ ${knowledgeContext}
 当前业务对象上下文：
 ${businessContextText}`
     },
-    ...input.history.slice(-8).map(item => ({ role: item.role, content: redactPii(item.content).slice(0, 2500) })),
-    { role: 'user', content: redactPii(input.message) }
+    ...input.history.slice(-8).map(item => ({ role: item.role, content: sanitizeModelText(item.content, input.dataMode).slice(0, 2500) })),
+    { role: 'user', content: sanitizeModelText(input.message, input.dataMode) }
   ]
 }
 
@@ -110,12 +112,16 @@ export async function streamAssistantResponse(event: H3Event, input: {
   history: Array<{ role: 'user' | 'assistant', content: string }>
   citations: KnowledgeCitation[]
   businessContext?: AssistantBusinessContext | null
+  dataMode?: 'redacted' | 'full_context'
+  contextType?: string
+  noticeVersion?: string
+  forceLocal?: boolean
   onDelta: (text: string) => void | Promise<void>
 }): Promise<AssistantResponse> {
   const config = useRuntimeConfig(event)
   const fallback = localAssistantResponse(input.message, input.citations, input.businessContext)
   const suggestedActions = [{ label: '进入建议模块继续评估', type: 'open_module' as const, module: localRoute(input.message).primaryModule }]
-  if (!config.deepseekApiKey) {
+  if (!config.deepseekApiKey || input.forceLocal) {
     for (const chunk of fallback.answer.match(/[\s\S]{1,18}/g) || [fallback.answer]) await input.onDelta(chunk)
     return fallback
   }
@@ -170,7 +176,10 @@ export async function streamAssistantResponse(event: H3Event, input: {
       model: config.deepseekGeneratorModel,
       purpose: 'assistant_answer_stream',
       status: 'success',
-      latencyMs: Date.now() - startedAt
+      latencyMs: Date.now() - startedAt,
+      dataMode: input.forceLocal ? 'local' : input.dataMode,
+      contextType: input.contextType,
+      noticeVersion: input.noticeVersion
     }).catch(() => undefined)
     const route = localRoute(input.message)
     return {
@@ -190,7 +199,10 @@ export async function streamAssistantResponse(event: H3Event, input: {
       purpose: 'assistant_answer_stream',
       status: 'failed',
       latencyMs: Date.now() - startedAt,
-      errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown'
+      errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown',
+      dataMode: input.dataMode,
+      contextType: input.contextType,
+      noticeVersion: input.noticeVersion
     }).catch(() => undefined)
     if (!answer) {
       for (const chunk of fallback.answer.match(/[\s\S]{1,18}/g) || [fallback.answer]) await input.onDelta(chunk)
@@ -279,6 +291,15 @@ export function redactPii(text: string) {
     .replace(/([\u4e00-\u9fa5]{1,4})(老师|同学|妈妈|爸爸|家长)/g, '[PERSON]$2')
 }
 
+function sanitizeModelText(text: string, mode: 'redacted' | 'full_context' = 'redacted') {
+  const withoutContacts = text
+    .replace(/1[3-9]\d{9}/g, '[PHONE]')
+    .replace(/[\w.-]+@[\w.-]+\.\w+/g, '[EMAIL]')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '[SYSTEM_ID]')
+    .replace(/(?:密码|密钥|token|secret|totp)\s*[:：=]?\s*\S+/gi, '[SECRET]')
+  return mode === 'full_context' ? withoutContacts : redactPii(withoutContacts)
+}
+
 const semanticRiskSchema = z.object({
   risks: z.array(z.enum(['suicide', 'self_harm', 'violence', 'abuse', 'threat'])).max(5)
 })
@@ -291,9 +312,9 @@ const riskRuleIds: Record<z.infer<typeof semanticRiskSchema>['risks'][number], s
   threat: 'SAFE-SEMANTIC-THREAT'
 }
 
-export async function semanticSafetySignals(event: H3Event, text: string) {
+export async function semanticSafetySignals(event: H3Event, text: string, forceLocal = false) {
   const config = useRuntimeConfig(event)
-  if (!config.deepseekApiKey) return []
+  if (!config.deepseekApiKey || forceLocal) return []
   const redacted = redactPii(text)
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -449,7 +470,7 @@ export async function routeWithDeepSeek(event: H3Event, text: string): Promise<R
   const config = useRuntimeConfig(event)
   if (!config.deepseekApiKey) return localRoute(text)
   const redacted = redactPii(text)
-  const prompt = `你是教师赋能平台的路由器。只返回 json。模块只能是 self_growth、class_system、home_school、student_case。\nJSON示例：{"primaryModule":"home_school","secondaryModules":[],"confidence":0.86,"needsClarification":false,"rationale":"主要困扰是家长沟通"}\n教师描述：${redacted}`
+  const prompt = `你是教师赋能平台的路由器。只返回 json。模块只能是 self_growth、class_system、home_school、student_case、learning_problem。\nJSON示例：{"primaryModule":"home_school","secondaryModules":[],"confidence":0.86,"needsClarification":false,"rationale":"主要困扰是家长沟通"}\n教师描述：${redacted}`
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -480,7 +501,7 @@ export async function routeWithDeepSeek(event: H3Event, text: string): Promise<R
 
 const planUpdateExtractionSchema = z.object({
   updates: z.array(z.object({
-    planId: z.string().uuid(),
+    planTitle: z.string().trim().min(1).max(200),
     actionTitle: z.string().optional(),
     newStatus: z.enum(['pending', 'in_progress', 'completed', 'cancelled']).optional(),
     progressNote: z.string().max(500).optional()
@@ -496,7 +517,8 @@ export type PlanUpdateExtraction = z.infer<typeof planUpdateExtractionSchema>
 export async function extractPlanUpdates(
   event: H3Event,
   aiResponse: string,
-  businessContext: { snapshot: Record<string, unknown> } | null | undefined
+  businessContext: { snapshot: Record<string, unknown> } | null | undefined,
+  audit?: { schoolId: string, ownerUserId: string, sessionId: string, dataMode?: string, contextType?: string, noticeVersion?: string }
 ): Promise<PlanUpdateExtraction['updates']> {
   if (!businessContext?.snapshot) return []
   const config = useRuntimeConfig(event)
@@ -504,7 +526,6 @@ export async function extractPlanUpdates(
 
   // 从 snapshot 中提取方案摘要供 LLM 参考
   const plansSummary = (businessContext.snapshot as any).recentPlans?.map((p: any) => ({
-    id: p.id,
     title: p.title,
     status: p.status,
     actions: p.actions || []
@@ -526,7 +547,8 @@ ${aiResponse.slice(0, 2000)}
 3. actionTitle 必须与方案中现有动作标题匹配（模糊匹配即可）
 4. 如果没有明确的更新意图，返回空数组
 
-返回严格 JSON：{"updates":[{"planId":"...","actionTitle":"...","newStatus":"completed","progressNote":"..."}]}`
+返回严格 JSON：{"updates":[{"planTitle":"方案标题","actionTitle":"动作标题","newStatus":"completed","progressNote":"..."}]}
+不得输出或猜测任何数据库 ID、UUID 或账号标识。`
 
   const startedAt = Date.now()
   try {
@@ -552,11 +574,14 @@ ${aiResponse.slice(0, 2000)}
     if (!content) return []
     const parsed = planUpdateExtractionSchema.parse(JSON.parse(content))
     await useDb(event).insert(schema.aiModelCalls).values({
-      schoolId: '', ownerUserId: '', provider: 'deepseek',
+      schoolId: audit?.schoolId, ownerUserId: audit?.ownerUserId, sessionId: audit?.sessionId, provider: 'deepseek',
       model: config.deepseekRouterModel,
       purpose: 'plan_update_extraction',
       status: 'success',
-      latencyMs: Date.now() - startedAt
+      latencyMs: Date.now() - startedAt,
+      dataMode: audit?.dataMode,
+      contextType: audit?.contextType,
+      noticeVersion: audit?.noticeVersion
     }).catch(() => undefined)
     return parsed.updates
   } catch {

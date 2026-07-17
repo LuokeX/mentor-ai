@@ -22,7 +22,7 @@ docker compose --profile tls up -d
 docker compose ps
 ```
 
-应用回滚使用上一个经过验证的镜像标签重新部署。数据库迁移默认只做向前兼容变更；若必须回退数据库，先停止 App/Worker，再在隔离数据库验证目标备份，最后使用恢复脚本。不要在未验证备份时直接删除卷。
+应用回滚使用上一个经过验证的镜像标签重新部署。数据库迁移默认只做向前兼容变更；若必须回退数据库，先停止 App（含内置通知消费者），再在隔离数据库验证目标备份，最后使用恢复脚本。不要在未验证备份时直接删除卷。
 
 正式环境禁止执行 `pnpm db:seed`、`pnpm env:init`、`pnpm dev` 和 `docker compose down -v`。每次发布必须记录 migration、备份文件及校验和、健康检查与冒烟结果。
 
@@ -34,8 +34,8 @@ docker compose ps
 
 - 存活：`GET /health/live`
 - 就绪：`GET /health/ready`
-- App、Nginx、PostgreSQL 和 Worker 日志使用 `docker compose logs` 收集；生产环境应接入校内集中日志并限制管理员访问。
-- Worker 会回收超过两分钟的 `processing` 锁；短信按立即、1、5、15 分钟尝试。最终失败时 `notification_outbox.status=failed`，需要人工复核接收人和网关。
+- App（含内置通知消费者）、Nginx 和 PostgreSQL 日志使用 `docker compose logs` 收集；生产环境应接入校内集中日志并限制管理员访问。
+- 内置通知消费者会回收超过两分钟的 `processing` 锁；短信按立即、1、5、15 分钟尝试。最终失败时 `notification_outbox.status=failed`，需要人工复核接收人和网关。
 
 ## 危机事故
 

@@ -3,12 +3,14 @@ import { moduleMeta } from '#shared/assessments'
 
 const { data, refresh } = await useFetch<any>('/api/v1/information/overview')
 const { data: statsData } = await useFetch<any>('/api/v1/information/stats')
+const toast = useToast()
 const route = useRoute()
 const active = ref(String(route.query.tab || 'status'))
 const showForm = ref(false)
 const formType = ref<'class' | 'student' | 'guardian' | 'communication'>('class')
 const form = reactive<any>({ name: '', grade: 1, studentCount: 0, classId: '', studentId: '', guardianId: '', gender: '', notes: '', phone: '', relation: '', summary: '' })
 const pending = ref(false)
+const assessmentToDelete = ref<string | null>(null)
 const tabs = [
   { id: 'status', label: '我的状态', icon: 'i-lucide-heart-pulse' }, { id: 'classes', label: '负责班级', icon: 'i-lucide-school' }, { id: 'students', label: '负责学生', icon: 'i-lucide-users' },
   { id: 'guardians', label: '关联家长', icon: 'i-lucide-contact' }, { id: 'communications', label: '家校沟通', icon: 'i-lucide-messages-square' }, { id: 'cases', label: '支持案例', icon: 'i-lucide-folder-heart' }
@@ -32,9 +34,17 @@ function handleAssessmentClick(item: any) {
 }
 
 async function deleteAssessment(id: string) {
-  if (!confirm('确定要删除这条评估记录吗？')) return
-  await $fetch(`/api/v1/assessments/attempts/${id}`, { method: 'DELETE' })
-  await refresh()
+  pending.value = true
+  try {
+    await $fetch(`/api/v1/assessments/attempts/${id}`, { method: 'DELETE' })
+    assessmentToDelete.value = null
+    await refresh()
+    toast.add({ title: '评估记录已删除', color: 'success' })
+  } catch (error: any) {
+    toast.add({ title: '删除失败', description: error?.data?.message || '请稍后重试', color: 'error' })
+  } finally {
+    pending.value = false
+  }
 }
 
 const mergedMonths = computed(() => {
@@ -84,7 +94,7 @@ onMounted(() => {
     <div class="mt-8 grid gap-6 lg:grid-cols-[15rem_1fr]">
       <aside class="panel h-fit p-3"><button v-for="tab in tabs" :key="tab.id" class="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm transition" :class="active === tab.id ? 'bg-emerald-800 text-white' : 'text-slate-600 hover:bg-slate-100'" @click="switchTab(tab.id)"><UIcon :name="tab.icon" class="size-4" />{{ tab.label }}</button></aside>
       <section class="panel min-h-[32rem] p-6 sm:p-8">
-        <template v-if="active === 'status'"><h2 class="text-xl font-semibold">档案总览</h2><div class="mt-5 grid gap-4 md:grid-cols-4"><button v-for="item in data?.overviewCards" :key="item.label" type="button" class="rounded-2xl border border-slate-100 bg-slate-50 p-5 text-left transition hover:border-emerald-200 hover:bg-emerald-50/50" @click="switchTab(item.label === '负责班级' ? 'classes' : item.label === '关联家长' ? 'guardians' : item.label === '家校沟通' ? 'communications' : 'cases')"><p class="text-sm text-slate-500">{{ item.label }}</p><strong class="mt-2 block text-3xl">{{ item.value }}</strong><p class="mt-2 line-clamp-1 text-xs text-slate-400">{{ item.hint }}</p></button></div><h3 class="mt-8 font-semibold">最近评估</h3><div class="mt-4 grid gap-4 md:grid-cols-2"><div v-for="item in data?.assessments" :key="item.id" class="group relative"><button type="button" class="w-full text-left rounded-2xl border border-slate-100 p-5 transition hover:border-emerald-200 hover:bg-emerald-50/40" @click="handleAssessmentClick(item)"><div class="flex justify-between"><strong>{{ moduleTitle(item.module) }}</strong><UBadge variant="soft" :color="item.levelColor || 'neutral'">{{ item.levelLabel || item.result?.level || item.status }}</UBadge></div><p class="mt-2 text-xs text-slate-400">{{ item.submittedAt ? new Date(item.submittedAt).toLocaleString('zh-CN') : '草稿' }}</p><p class="mt-3 text-sm text-slate-600">{{ item.result?.reasons?.join('；') || '暂无结果摘要' }}</p><div v-if="item.planId" class="mt-3 flex items-center gap-1.5 text-xs font-medium text-emerald-700"><UIcon name="i-lucide-file-text" class="size-3.5" />已有方案</div></button><button class="absolute right-1.5 top-2 grid size-6 place-items-center rounded-md text-slate-400 opacity-0 transition hover:bg-red-50 hover:text-red-500 group-hover:opacity-100" title="删除评估" @click.stop="deleteAssessment(item.id)"><UIcon name="i-lucide-x" class="size-3.5" /></button></div></div>
+        <template v-if="active === 'status'"><h2 class="text-xl font-semibold">档案总览</h2><div class="mt-5 grid gap-4 md:grid-cols-4"><button v-for="item in data?.overviewCards" :key="item.label" type="button" class="rounded-2xl border border-slate-100 bg-slate-50 p-5 text-left transition hover:border-emerald-200 hover:bg-emerald-50/50" @click="switchTab(item.label === '负责班级' ? 'classes' : item.label === '关联家长' ? 'guardians' : item.label === '家校沟通' ? 'communications' : 'cases')"><p class="text-sm text-slate-500">{{ item.label }}</p><strong class="mt-2 block text-3xl">{{ item.value }}</strong><p class="mt-2 line-clamp-1 text-xs text-slate-400">{{ item.hint }}</p></button></div><h3 class="mt-8 font-semibold">最近评估</h3><div class="mt-4 grid gap-4 md:grid-cols-2"><div v-for="item in data?.assessments" :key="item.id" class="group relative"><button type="button" class="w-full text-left rounded-2xl border border-slate-100 p-5 transition hover:border-emerald-200 hover:bg-emerald-50/40" @click="handleAssessmentClick(item)"><div class="flex justify-between"><strong>{{ moduleTitle(item.module) }}</strong><UBadge variant="soft" :color="item.levelColor || 'neutral'">{{ item.levelLabel || item.result?.level || item.status }}</UBadge></div><p class="mt-2 text-xs text-slate-400">{{ item.submittedAt ? new Date(item.submittedAt).toLocaleString('zh-CN') : '草稿' }}</p><p class="mt-3 text-sm text-slate-600">{{ item.result?.reasons?.join('；') || '暂无结果摘要' }}</p><div v-if="item.planId" class="mt-3 flex items-center gap-1.5 text-xs font-medium text-emerald-700"><UIcon name="i-lucide-file-text" class="size-3.5" />已有方案</div></button><button class="absolute right-1.5 top-2 grid size-6 place-items-center rounded-md text-slate-400 opacity-0 transition hover:bg-red-50 hover:text-red-500 group-hover:opacity-100" title="删除评估" @click.stop="assessmentToDelete = item.id"><UIcon name="i-lucide-x" class="size-3.5" /></button></div></div>
 
 <h3 class="mt-8 font-semibold">趋势与统计</h3>
 <div class="mt-4 grid gap-6 md:grid-cols-2">
@@ -245,6 +255,14 @@ onMounted(() => {
           <template v-if="formType === 'guardian'"><UFormField label="关联学生"><USelect v-model="form.studentId" :items="[{label:'暂不关联',value:''}, ...(data?.students || []).map((item:any)=>({label:`${item.name}${item.className ? ` · ${item.className}` : ''}`,value:item.id}))]" class="w-full" /></UFormField><UFormField label="关系"><UInput v-model="form.relation" class="w-full" /></UFormField><UFormField label="电话"><UInput v-model="form.phone" class="w-full" /></UFormField></template>
           <template v-if="formType === 'communication'"><div class="grid gap-3 md:grid-cols-2"><UFormField label="关联学生"><USelect v-model="form.studentId" :items="[{label:'不关联学生',value:''}, ...(data?.students || []).map((item:any)=>({label:`${item.name}${item.className ? ` · ${item.className}` : ''}`,value:item.id}))]" class="w-full" /></UFormField><UFormField label="关联家长"><USelect v-model="form.guardianId" :items="[{label:'不关联家长',value:''}, ...(data?.guardians || []).map((item:any)=>({label:item.name,value:item.id}))]" class="w-full" /></UFormField></div><UFormField label="沟通摘要"><UTextarea v-model="form.summary" :rows="5" class="w-full" /></UFormField></template>
           <UButton block :loading="pending" @click="createEntity">保存</UButton>
+        </div>
+      </template>
+    </UModal>
+    <UModal :open="Boolean(assessmentToDelete)" title="删除评估记录" description="删除后无法恢复，请确认这条记录不再需要。" @update:open="value => { if (!value) assessmentToDelete = null }">
+      <template #body>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="ghost" @click="() => { assessmentToDelete = null }">取消</UButton>
+          <UButton color="error" :loading="pending" @click="() => { if (assessmentToDelete) void deleteAssessment(assessmentToDelete) }">确认删除</UButton>
         </div>
       </template>
     </UModal>

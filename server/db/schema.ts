@@ -40,6 +40,7 @@ export const users = pgTable('users', {
   role: varchar('role', { length: 30 }).notNull(),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   totpSecretEnc: text('totp_secret_enc'),
+  activatedAt: timestamp('activated_at', { withTimezone: true }),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   ...timestamps
 }, table => [
@@ -64,12 +65,27 @@ export const invitations = pgTable('invitations', {
   email: varchar('email', { length: 254 }).notNull(),
   name: varchar('name', { length: 120 }).notNull(),
   role: varchar('role', { length: 30 }).notNull(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
   tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+  pendingPasswordHash: text('pending_password_hash'),
+  pendingTotpSecretEnc: text('pending_totp_secret_enc'),
+  pendingRecoveryCodeHashes: jsonb('pending_recovery_code_hashes').$type<string[]>(),
   invitedBy: uuid('invited_by').notNull().references(() => users.id),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   acceptedAt: timestamp('accepted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
-})
+}, table => [
+  uniqueIndex('invitations_token_hash_uidx').on(table.tokenHash),
+  index('invitations_school_email_idx').on(table.schoolId, table.email)
+])
+
+export const mfaRecoveryCodes = pgTable('mfa_recovery_codes', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  codeHash: varchar('code_hash', { length: 64 }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [uniqueIndex('mfa_recovery_code_hash_uidx').on(table.codeHash), index('mfa_recovery_user_idx').on(table.userId)])
 
 export const schoolSettings = pgTable('school_settings', {
   schoolId: uuid('school_id').primaryKey().references(() => schools.id, { onDelete: 'cascade' }),
@@ -77,6 +93,14 @@ export const schoolSettings = pgTable('school_settings', {
   smsRecipients: jsonb('sms_recipients').$type<string[]>().default([]).notNull(),
   referralPsychologistId: uuid('referral_psychologist_id').references(() => users.id),
   crisisGuide: text('crisis_guide').default('请立即联系校内心理专员；如存在即时危险，请拨打 110 或 120。').notNull(),
+  safetyContactRecipients: jsonb('safety_contact_recipients').$type<string[]>().default([]).notNull(),
+  aiDataMode: varchar('ai_data_mode', { length: 20 }).default('redacted').notNull(),
+  aiApprovalReference: text('ai_approval_reference'),
+  aiNoticeVersion: varchar('ai_notice_version', { length: 50 }).default('pilot-v1').notNull(),
+  aiApprovedBy: uuid('ai_approved_by').references(() => users.id),
+  aiApprovedAt: timestamp('ai_approved_at', { withTimezone: true }),
+  referralAckMinutes: integer('referral_ack_minutes').default(5).notNull(),
+  referralEscalationMinutes: integer('referral_escalation_minutes').default(15).notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
 })
 
@@ -144,12 +168,16 @@ export const classes = pgTable('classes', {
   // 语义：当前负责教师。保留 owner_user_id 列名是为了兼容既有迁移和接口。
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   name: varchar('name', { length: 120 }).notNull(),
+  externalCode: varchar('external_code', { length: 80 }),
   grade: integer('grade').notNull(),
   studentCount: integer('student_count').default(0).notNull(),
   establishedAt: timestamp('established_at', { withTimezone: true }),
   dataClassification: varchar('data_classification', { length: 30 }).default('sensitive').notNull(),
   ...timestamps
-}, table => [index('classes_owner_idx').on(table.ownerUserId)])
+}, table => [
+  index('classes_owner_idx').on(table.ownerUserId),
+  uniqueIndex('classes_school_external_code_uidx').on(table.schoolId, table.externalCode)
+])
 
 export const students = pgTable('students', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -162,9 +190,15 @@ export const students = pgTable('students', {
   gender: varchar('gender', { length: 20 }),
   profileEnc: text('profile_enc'),
   notesEnc: text('notes_enc'),
+  externalRefEnc: text('external_ref_enc'),
+  externalRefSearch: varchar('external_ref_search', { length: 64 }),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
-}, table => [index('students_owner_idx').on(table.ownerUserId), index('students_name_search_idx').on(table.nameSearch)])
+}, table => [
+  index('students_owner_idx').on(table.ownerUserId),
+  index('students_name_search_idx').on(table.nameSearch),
+  uniqueIndex('students_school_external_ref_uidx').on(table.schoolId, table.externalRefSearch)
+])
 
 export const guardians = pgTable('guardians', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -174,10 +208,15 @@ export const guardians = pgTable('guardians', {
   nameEnc: text('name_enc').notNull(),
   nameSearch: varchar('name_search', { length: 64 }).notNull(),
   phoneEnc: text('phone_enc'),
+  externalRefEnc: text('external_ref_enc'),
+  externalRefSearch: varchar('external_ref_search', { length: 64 }),
   relation: varchar('relation', { length: 40 }),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
-}, table => [index('guardians_owner_idx').on(table.ownerUserId)])
+}, table => [
+  index('guardians_owner_idx').on(table.ownerUserId),
+  uniqueIndex('guardians_school_external_ref_uidx').on(table.schoolId, table.externalRefSearch)
+])
 
 export const studentGuardians = pgTable('student_guardians', {
   studentId: uuid('student_id').notNull().references(() => students.id, { onDelete: 'cascade' }),
@@ -273,6 +312,9 @@ export const plans = pgTable('plans', {
   report: jsonb('report').$type<Record<string, unknown>>().default({}).notNull(),
   sourceVersions: jsonb('source_versions').$type<string[]>().default([]).notNull(),
   status: varchar('status', { length: 30 }).default('in_progress').notNull(),
+  nextReviewAt: timestamp('next_review_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
 }, table => [
@@ -281,6 +323,23 @@ export const plans = pgTable('plans', {
   index('plans_class_idx').on(table.classId),
   index('plans_guardian_idx').on(table.guardianId),
   index('plans_source_chat_idx').on(table.sourceChatSessionId)
+])
+
+export const planActions = pgTable('plan_actions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  sequence: integer('sequence').notNull(),
+  title: varchar('title', { length: 200 }).notNull(),
+  detail: text('detail').notNull(),
+  status: varchar('status', { length: 30 }).default('pending').notNull(),
+  dueAt: timestamp('due_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  ...timestamps
+}, table => [
+  uniqueIndex('plan_actions_plan_sequence_uidx').on(table.planId, table.sequence),
+  index('plan_actions_owner_due_idx').on(table.ownerUserId, table.status, table.dueAt)
 ])
 
 export const planReviews = pgTable('plan_reviews', {
@@ -396,6 +455,9 @@ export const aiModelCalls = pgTable('ai_model_calls', {
   promptTokens: integer('prompt_tokens'),
   completionTokens: integer('completion_tokens'),
   errorCode: varchar('error_code', { length: 80 }),
+  dataMode: varchar('data_mode', { length: 20 }),
+  contextType: varchar('context_type', { length: 30 }),
+  noticeVersion: varchar('notice_version', { length: 50 }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [index('ai_model_calls_school_created_idx').on(table.schoolId, table.createdAt)])
 
@@ -418,12 +480,100 @@ export const referrals = pgTable('referrals', {
   schoolId: uuid('school_id').notNull().references(() => schools.id),
   safetyEventId: uuid('safety_event_id').notNull().references(() => safetyEvents.id),
   psychologistId: uuid('psychologist_id').references(() => users.id),
+  priority: varchar('priority', { length: 20 }).default('urgent').notNull(),
   status: varchar('status', { length: 30 }).default('created').notNull(),
+  assignedAt: timestamp('assigned_at', { withTimezone: true }).defaultNow().notNull(),
+  // 兼容迁移前工单；新建工单必须写入两个 SLA 时间点。
+  acknowledgeDueAt: timestamp('acknowledge_due_at', { withTimezone: true }),
+  escalationDueAt: timestamp('escalation_due_at', { withTimezone: true }),
+  escalatedAt: timestamp('escalated_at', { withTimezone: true }),
   acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
   handlingNoteEnc: text('handling_note_enc'),
+  closureReason: varchar('closure_reason', { length: 80 }),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [index('referral_psych_status_idx').on(table.psychologistId, table.status)])
+
+export const referralEvents = pgTable('referral_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  referralId: uuid('referral_id').notNull().references(() => referrals.id, { onDelete: 'cascade' }),
+  actorId: uuid('actor_id').references(() => users.id),
+  eventType: varchar('event_type', { length: 40 }).notNull(),
+  fromStatus: varchar('from_status', { length: 30 }),
+  toStatus: varchar('to_status', { length: 30 }),
+  noteEnc: text('note_enc'),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [index('referral_events_referral_created_idx').on(table.referralId, table.createdAt)])
+
+export const userConsents = pgTable('user_consents', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  noticeVersion: varchar('notice_version', { length: 50 }).notNull(),
+  dataMode: varchar('data_mode', { length: 20 }).notNull(),
+  acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }).defaultNow().notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [uniqueIndex('user_consents_user_notice_mode_uidx').on(table.userId, table.noticeVersion, table.dataMode)])
+
+export const schoolImports = pgTable('school_imports', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  importType: varchar('import_type', { length: 30 }).notNull(),
+  checksum: varchar('checksum', { length: 64 }).notNull(),
+  status: varchar('status', { length: 20 }).notNull(),
+  totalRows: integer('total_rows').default(0).notNull(),
+  createdRows: integer('created_rows').default(0).notNull(),
+  updatedRows: integer('updated_rows').default(0).notNull(),
+  skippedRows: integer('skipped_rows').default(0).notNull(),
+  errorCount: integer('error_count').default(0).notNull(),
+  errors: jsonb('errors').$type<Array<{ row: number, code: string }>>().default([]).notNull(),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [index('school_imports_school_created_idx').on(table.schoolId, table.createdAt)])
+
+export const notifications = pgTable('notifications', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  type: varchar('type', { length: 40 }).notNull(),
+  title: varchar('title', { length: 200 }).notNull(),
+  body: text('body').notNull(),
+  targetType: varchar('target_type', { length: 40 }),
+  targetId: uuid('target_id'),
+  deduplicationKey: varchar('deduplication_key', { length: 180 }).notNull(),
+  readAt: timestamp('read_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('notifications_dedupe_uidx').on(table.deduplicationKey),
+  index('notifications_user_read_created_idx').on(table.userId, table.readAt, table.createdAt)
+])
+
+export const assistantFeedback = pgTable('assistant_feedback', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  sessionId: uuid('session_id').notNull().references(() => chatSessions.id, { onDelete: 'cascade' }),
+  messageId: uuid('message_id').notNull().references(() => chatMessages.id, { onDelete: 'cascade' }),
+  rating: varchar('rating', { length: 20 }).notNull(),
+  reasons: jsonb('reasons').$type<string[]>().default([]).notNull(),
+  commentEnc: text('comment_enc'),
+  ...timestamps
+}, table => [uniqueIndex('assistant_feedback_user_message_uidx').on(table.userId, table.messageId)])
+
+export const productEvents = pgTable('product_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').references(() => schools.id),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  eventName: varchar('event_name', { length: 80 }).notNull(),
+  targetType: varchar('target_type', { length: 40 }),
+  targetId: uuid('target_id'),
+  metadata: jsonb('metadata').$type<Record<string, string | number | boolean | null>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [index('product_events_school_name_created_idx').on(table.schoolId, table.eventName, table.createdAt)])
 
 export const notificationOutbox = pgTable('notification_outbox', {
   id: uuid('id').defaultRandom().primaryKey(),

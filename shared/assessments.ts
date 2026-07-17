@@ -100,32 +100,53 @@ const studentCase: AssessmentDefinition = {
   ] as Array<[string, string, string]>).map(([id, dimension, text]) => ({ id, dimension, text, options: agree }))
 }
 
+const learningProblem: AssessmentDefinition = {
+  code: 'learning-three-layer', version: '1.0.0', module: 'learning_problem',
+  title: '学生学习问题三层诊断', description: '从行为、认知和关系三个层面识别学生学习困难的主导因素，不构成学习障碍诊断。', estimatedMinutes: 5,
+  questions: ([
+    ['behavior1', '行为层', '学生经常不交或拖延完成作业。'],
+    ['behavior2', '行为层', '课堂上明显走神、分心或做与学习无关的事。'],
+    ['behavior3', '行为层', '考试或测验成绩与实际能力之间存在明显落差。'],
+    ['behavior4', '行为层', '已有提醒或奖励措施对改善学习行为效果有限。'],
+    ['cognition1', '认知层', '学生对核心概念的理解停留在表面，难以迁移或应用。'],
+    ['cognition2', '认知层', '学生在记忆、推理或组织信息方面存在明显困难。'],
+    ['cognition3', '认知层', '学生在独立解决问题时容易卡住，缺少元认知策略。'],
+    ['relation1', '关系层', '师生关系或课堂归属感对学生的学习动机有明显影响。'],
+    ['relation2', '关系层', '同伴之间的比较、竞争或排斥影响了学生的学习投入。'],
+    ['relation3', '关系层', '家庭对学习的支持、期待或冲突明显影响了学生的学业状态。']
+  ] as Array<[string, string, string]>).map(([id, dimension, text]) => ({ id, dimension, text, options: agree }))
+}
+
 export const assessmentDefinitions: Record<ModuleId, AssessmentDefinition> = {
   self_growth: selfGrowth,
   class_system: classSystem,
   home_school: homeSchool,
-  student_case: studentCase
+  student_case: studentCase,
+  learning_problem: learningProblem
 }
 
 export const moduleMeta: Record<ModuleId, { title: string, short: string, color: string, icon: string }> = {
   self_growth: { title: '自我成长赋能', short: '看见状态，补充力量', color: 'emerald', icon: 'i-lucide-heart-handshake' },
   class_system: { title: '班级系统建设', short: '定位短板，建设班级', color: 'sky', icon: 'i-lucide-school' },
   home_school: { title: '家校沟通合作', short: '理解关系，准备沟通', color: 'amber', icon: 'i-lucide-messages-square' },
-  student_case: { title: '学生个体问题', short: '快速编码，分级支持', color: 'violet', icon: 'i-lucide-user-round-search' }
+  student_case: { title: '学生个体问题', short: '快速编码，分级支持', color: 'violet', icon: 'i-lucide-user-round-search' },
+  learning_problem: { title: '学生学习问题', short: '三层诊断，精准支持', color: 'rose', icon: 'i-lucide-brain' }
 }
 
 // level → { label, color } 映射，用于评估结果徽章展示
 const LEVEL_COLORS: Record<string, string> = {
   green: 'success', blue: 'info', yellow: 'warning', orange: 'warning', red: 'error', purple: 'error',
   survival: 'error', norming: 'warning', operating: 'info', mature: 'success',
-  L1: 'info', L2: 'warning', L3: 'error'
+  L1: 'info', L2: 'warning', L3: 'error',
+  LP1: 'info', LP2: 'warning', LP3: 'error'
 }
 
 const LEVEL_LABELS: Record<string, string> = {
   green: '状态良好', blue: '轻微波动', yellow: '关注', orange: '需支持',
   red: '需关注', purple: '需转介',
   survival: '生存期', norming: '规范期', operating: '运行期', mature: '成熟期',
-  L1: '教师支持', L2: '年级协同', L3: '专业会商'
+  L1: '教师支持', L2: '年级协同', L3: '专业会商',
+  LP1: '教师自主支持', LP2: '深入诊断', LP3: '系统干预'
 }
 
 export function assessmentBadge(level?: string): { label: string, color: string } | null {

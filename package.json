@@ -30,6 +30,7 @@
     "nuxt": "^4.4.0",
     "otpauth": "latest",
     "pg": "latest",
+    "qrcode": "^1.5.4",
     "vue": "latest",
     "vue-router": "latest",
     "zod": "latest"
@@ -40,6 +41,7 @@
     "@playwright/test": "latest",
     "@types/node": "latest",
     "@types/pg": "latest",
+    "@types/qrcode": "^1.5.6",
     "drizzle-kit": "latest",
     "tsx": "latest",
     "typescript": "^5.9.3",

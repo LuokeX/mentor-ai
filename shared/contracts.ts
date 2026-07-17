@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const roleSchema = z.enum(['teacher', 'psychologist', 'school_admin', 'platform_admin'])
-export const moduleIdSchema = z.enum(['self_growth', 'class_system', 'home_school', 'student_case'])
+export const moduleIdSchema = z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem'])
 export const targetTypeSchema = z.enum([
   'teacher_profile', 'assessment', 'conversation', 'student_case', 'guardian_communication', 'plan'
 ])
@@ -15,6 +15,10 @@ export const loginRequestSchema = z.object({
   otp: z.preprocess(
     value => typeof value === 'string' && value.trim() === '' ? undefined : value,
     z.string().regex(/^\d{6}$/).optional()
+  ),
+  recoveryCode: z.preprocess(
+    value => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().trim().regex(/^[A-F0-9]{6}-[A-F0-9]{6}$/i).optional()
   )
 })
 
@@ -30,7 +34,8 @@ export const chatMessageSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(4000),
   contextType: z.enum(['student', 'class', 'guardian']).optional(),
-  contextId: z.string().uuid().optional()
+  contextId: z.string().uuid().optional(),
+  withoutRecord: z.boolean().optional()
 }).superRefine((value, context) => {
   if (Boolean(value.contextType) !== Boolean(value.contextId)) {
     context.addIssue({ code: 'custom', path: ['contextId'], message: 'contextType 和 contextId 必须同时提供' })

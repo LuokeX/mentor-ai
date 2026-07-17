@@ -37,12 +37,41 @@ export async function createSafetyReferral(event: H3Event, input: {
       summaryEnc: encryptSensitive(input.text.slice(0, 1000), config.encryptionKey)
     }).returning()
     if (!safety) throw new Error('安全事件创建失败')
+    const now = new Date()
+    const acknowledgeDueAt = new Date(now.getTime() + (settings?.referralAckMinutes || 5) * 60_000)
+    const escalationDueAt = new Date(now.getTime() + (settings?.referralEscalationMinutes || 15) * 60_000)
+    const assignedPsychologistId = settings?.referralPsychologistId || null
     const [referral] = await tx.insert(schema.referrals).values({
       schoolId: input.schoolId,
       safetyEventId: safety.id,
-      psychologistId: settings?.referralPsychologistId || null
+      psychologistId: assignedPsychologistId,
+      status: assignedPsychologistId ? 'created' : 'escalated',
+      assignedAt: now,
+      acknowledgeDueAt,
+      escalationDueAt,
+      escalatedAt: assignedPsychologistId ? null : now
     }).returning()
     if (!referral) throw new Error('转介工单创建失败')
+    await tx.insert(schema.referralEvents).values([
+      {
+        schoolId: input.schoolId, referralId: referral.id, actorId: input.ownerUserId,
+        eventType: 'created', toStatus: 'created', metadata: { priority: referral.priority }
+      },
+      ...(!assignedPsychologistId ? [{
+        schoolId: input.schoolId, referralId: referral.id, actorId: null,
+        eventType: 'auto_escalated', fromStatus: 'created', toStatus: 'escalated', metadata: { reason: 'no_default_psychologist' }
+      }] : [])
+    ])
+    if (assignedPsychologistId) {
+      await tx.insert(schema.notifications).values({
+        schoolId: input.schoolId, userId: assignedPsychologistId, type: 'referral_assigned',
+        title: '新的危机转介工单', body: `危机事件 ${safety.id.slice(0, 8)} 待确认，请立即进入工作台。`,
+        targetType: 'referral', targetId: referral.id, deduplicationKey: `referral-assigned:${referral.id}`
+      })
+    }
+    const escalationRecipients = settings?.safetyContactRecipients?.length
+      ? settings.safetyContactRecipients
+      : settings?.smsRecipients || []
     await tx.insert(schema.notificationOutbox).values({
       schoolId: input.schoolId,
       eventType: 'crisis_referral',
@@ -50,7 +79,7 @@ export async function createSafetyReferral(event: H3Event, input: {
       payload: {
         eventId: safety.id,
         referralId: referral.id,
-        recipients: settings?.smsRecipients || [],
+        recipients: assignedPsychologistId ? settings?.smsRecipients || [] : escalationRecipients,
         message: `教师赋能平台危机事件 ${safety.id.slice(0, 8)}，请立即登录转介工作台。`
       }
     })

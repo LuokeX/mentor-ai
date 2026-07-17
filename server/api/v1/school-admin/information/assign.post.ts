@@ -36,6 +36,25 @@ async function writeAssignment(
   })
 }
 
+async function transferPlans(db: ReturnType<typeof useDb>, schoolId: string, toUserId: string, where: ReturnType<typeof eq>) {
+  const plans = await db.update(schema.plans).set({ ownerUserId: toUserId, updatedAt: new Date() })
+    .where(and(eq(schema.plans.schoolId, schoolId), where)).returning({ id: schema.plans.id })
+  const planIds = plans.map(item => item.id)
+  if (!planIds.length) return 0
+  const actions = await db.update(schema.planActions).set({ ownerUserId: toUserId, updatedAt: new Date() })
+    .where(inArray(schema.planActions.planId, planIds)).returning({ id: schema.planActions.id })
+  await db.update(schema.notifications).set({ userId: toUserId }).where(and(
+    eq(schema.notifications.targetType, 'plan'), inArray(schema.notifications.targetId, planIds)
+  ))
+  const actionIds = actions.map(item => item.id)
+  if (actionIds.length) {
+    await db.update(schema.notifications).set({ userId: toUserId }).where(and(
+      eq(schema.notifications.targetType, 'plan_action'), inArray(schema.notifications.targetId, actionIds)
+    ))
+  }
+  return planIds.length
+}
+
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['school_admin'])
   const schoolId = admin.schoolId!
@@ -60,6 +79,7 @@ export default defineEventHandler(async (event) => {
       eq(schema.students.classId, body.targetId),
       eq(schema.students.schoolId, schoolId)
     )).returning({ id: schema.students.id })
+    await transferPlans(db, schoolId, body.ownerUserId, eq(schema.plans.classId, body.targetId))
     const studentIds = students.map(student => student.id)
     if (studentIds.length) {
       await db.update(schema.communications).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(
@@ -108,6 +128,7 @@ export default defineEventHandler(async (event) => {
     if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
     await db.update(schema.students).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.students.id, body.targetId))
     await db.update(schema.communications).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(eq(schema.communications.studentId, body.targetId), eq(schema.communications.schoolId, schoolId)))
+    await transferPlans(db, schoolId, body.ownerUserId, eq(schema.plans.studentId, body.targetId))
     await writeAssignment(db, {
       schoolId,
       targetType: 'student',
@@ -126,6 +147,7 @@ export default defineEventHandler(async (event) => {
     if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
     await db.update(schema.guardians).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.guardians.id, body.targetId))
     await db.update(schema.communications).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(eq(schema.communications.guardianId, body.targetId), eq(schema.communications.schoolId, schoolId)))
+    await transferPlans(db, schoolId, body.ownerUserId, eq(schema.plans.guardianId, body.targetId))
     await writeAssignment(db, {
       schoolId,
       targetType: 'guardian',
@@ -159,6 +181,8 @@ export default defineEventHandler(async (event) => {
     )).limit(1)
     if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
     await db.update(schema.plans).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.plans.id, body.targetId))
+    await db.update(schema.planActions).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.planActions.planId, body.targetId))
+    await db.update(schema.notifications).set({ userId: body.ownerUserId }).where(and(eq(schema.notifications.targetType, 'plan'), eq(schema.notifications.targetId, body.targetId)))
     await writeAssignment(db, {
       schoolId,
       targetType: 'plan',

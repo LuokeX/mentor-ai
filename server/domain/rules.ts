@@ -38,7 +38,8 @@ export function evaluateAssessment(
   if (module === 'self_growth') return selfGrowthRules(items, dimensions, context.previousConsecutiveLowMeaning || 0)
   if (module === 'class_system') return classSystemRules(dimensions)
   if (module === 'home_school') return homeSchoolRules(items, dimensions)
-  return studentCaseRules(dimensions)
+  if (module === 'student_case') return studentCaseRules(dimensions)
+  return learningProblemRules(dimensions)
 }
 
 function selfGrowthRules(items: ReturnType<typeof scoredAnswers>, dimensions: Record<string, number>, previousConsecutiveLowMeaning: number): RuleOutput {
@@ -135,5 +136,30 @@ function studentCaseRules(dimensions: Record<string, number>): RuleOutput {
       { title: level === 'L2' ? '准备年级协同材料' : '准备专业会商材料', detail: '整理时间线、已有措施、效果和当前风险。', status: 'pending' }
     ],
     tools: [{ title: 'ABC 观察记录', content: 'A发生前情境｜B可观察行为｜C行为后的结果｜下一次支持调整' }]
+  }
+}
+
+function learningProblemRules(dimensions: Record<string, number>): RuleOutput {
+  const ordered = Object.entries(dimensions).sort((a, b) => b[1] - a[1])
+  const [primary = '行为层', score = 1] = ordered[0] || []
+  const overall = Object.values(dimensions).reduce((a, b) => a + b, 0) / Object.values(dimensions).length
+  const level = overall >= 3.5 ? 'LP3' : overall >= 2.5 ? 'LP2' : 'LP1'
+  const layerNames: Record<string, string> = { '行为层': '行为层面', '认知层': '认知层面', '关系层': '关系层面' }
+  return {
+    level, blocked: false, dimensions, matchedRuleIds: ['LEARNING-THREE-LAYER', `LEARNING-${level}`],
+    reasons: [`主导因素集中在${layerNames[primary] || primary}`, `${level === 'LP1' ? '可由教师通过教学策略调整自主支持' : level === 'LP2' ? '建议做进一步诊断并匹配针对性工具' : '建议启动系统性干预方案'}`],
+    actions: level === 'LP1' ? [
+      { title: '完成一周学习行为观察', detail: '记录课堂参与、作业完成和测验表现的变化模式。', status: 'pending' },
+      { title: '试用一项教学支架调整', detail: '从ZPD支架、目标拆解或元认知提示中选择一项在课堂中试行。', status: 'pending' }
+    ] : level === 'LP2' ? [
+      { title: '开展针对性诊断', detail: '从行为、认知和关系三个层面逐项排查，找出卡点和已有支持缺口。', status: 'pending' },
+      { title: '匹配干预工具', detail: '根据诊断结果选择动机激发、策略训练或关系修复工具。', status: 'pending' }
+    ] : [
+      { title: '启动系统干预方案', detail: '整合教师、年级、家庭支持，制定包含目标、支架和评估循环的干预计划。', status: 'pending' }
+    ],
+    tools: [
+      { title: 'ZPD 支架卡', content: '目标→当前水平→最近发展区→支架类型(示范/提示/提问/同伴)→退出标准' },
+      { title: '黄金话术：与学生谈学习', content: '我注意到你在[具体任务]上遇到了困难。能不能跟我聊聊你是怎么做的？我们一起找找哪里卡住了。' }
+    ]
   }
 }
