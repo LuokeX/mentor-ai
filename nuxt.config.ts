@@ -27,7 +27,8 @@ export default defineNuxtConfig({
     smsProvider: process.env.SMS_PROVIDER || 'mock',
     smsWebhookUrl: process.env.SMS_WEBHOOK_URL || '',
     public: {
-      appName: '教师赋能智能平台'
+      appName: '教师赋能智能平台',
+      showDemoLogin: process.env.NUXT_PUBLIC_SHOW_DEMO_LOGIN === 'true' || process.env.NODE_ENV !== 'production'
     }
   },
   routeRules: {

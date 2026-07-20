@@ -1,7 +1,8 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
-const isDev = import.meta.dev
-const form = reactive({ email: isDev ? 'teacher@demo.local' : '', password: isDev ? 'Mentor@2026' : '', otp: '', recoveryCode: '' })
+const config = useRuntimeConfig()
+const showDemoLogin = config.public.showDemoLogin
+const form = reactive({ email: showDemoLogin ? 'teacher@demo.local' : '', password: showDemoLogin ? 'Mentor@2026' : '', otp: '', recoveryCode: '' })
 const pending = ref(false)
 const hydrated = ref(false)
 const errorMessage = ref('')
@@ -78,7 +79,7 @@ async function login() {
         <h2 class="mt-2 text-3xl font-semibold">登录您的工作空间</h2>
         <p class="mt-2 text-sm text-slate-500">封闭试用环境 · 所有敏感操作均会留痕</p>
         <form class="mt-8 space-y-5" @submit.prevent="login">
-          <UFormField v-if="isDev" label="演示账号">
+          <UFormField v-if="showDemoLogin" label="演示账号">
             <USelect v-model="selectedDemo" :items="demoAccounts" class="w-full" @update:model-value="onDemoSelect" />
           </UFormField>
           <UFormField label="邮箱"><UInput v-model="form.email" size="xl" icon="i-lucide-mail" class="w-full" /></UFormField>
@@ -90,7 +91,7 @@ async function login() {
           <UButton type="submit" block size="xl" color="primary" :loading="pending" :disabled="!hydrated">安全登录</UButton>
         </form>
         <p class="mt-5 text-center text-sm text-slate-500">收到学校邀请？<NuxtLink class="font-medium text-emerald-700 hover:underline" to="/activate">激活账号</NuxtLink></p>
-        <div v-if="isDev" class="mt-8 rounded-2xl bg-slate-100/80 p-4 text-xs leading-6 text-slate-500">
+        <div v-if="showDemoLogin" class="mt-8 rounded-2xl bg-slate-100/80 p-4 text-xs leading-6 text-slate-500">
           演示账号：teacher@demo.local、school.admin@demo.local、platform.admin@demo.local；统一密码 Mentor@2026。
         </div>
         <p class="mt-6 text-xs leading-5 text-slate-400">登录即表示您已阅读校方隐私告知：学校管理员仅可在填写事由、获得短时只读授权并完整审计的前提下履行校内管理职责；平台管理员须另经学校审批。</p>

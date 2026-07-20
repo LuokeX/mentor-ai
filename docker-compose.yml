@@ -5,8 +5,10 @@ x-app-environment: &app-environment
   NUXT_DATABASE_URL: postgres://${APP_DB_USER:-mentor_app}:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-mentor_ai}
   SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
   NUXT_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
   ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
   NUXT_ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
+  NUXT_PUBLIC_SHOW_DEMO_LOGIN: ${SHOW_DEMO_LOGIN:-true}
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
   NUXT_DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
   DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
@@ -103,7 +105,7 @@ services:
     expose:
       - "3000"
     ports:
-      - "127.0.0.1:${APP_PORT:-3000}:3000"
+      - "0.0.0.0:${APP_PORT:-3000}:3000"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
       interval: 10s

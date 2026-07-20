@@ -22,7 +22,7 @@ export async function createSession(event: H3Event, userId: string) {
   })
   setCookie(event, COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV === 'production' && process.env.SESSION_COOKIE_SECURE !== 'false',
     sameSite: 'lax',
     path: '/',
     expires: expiresAt
