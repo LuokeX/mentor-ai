@@ -1,7 +1,7 @@
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-01',
   devtools: { enabled: true },
-  devServer: { host: '0.0.0.0' },
+  devServer: { host: '0.0.0.0', port: 3300 },
   modules: [['@nuxt/ui', { fonts: false }]],
   ui: { fonts: false },
   css: ['~/assets/css/main.css'],

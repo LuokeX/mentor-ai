@@ -1,6 +1,6 @@
 import type { H3Event } from 'h3'
 import { z } from 'zod'
-import { routeDecisionSchema, type RouteDecision } from '../../shared/contracts'
+import { clarificationRoundSchema, clarificationSummarySchema, routeDecisionSchema, type ClarificationRound, type ClarificationSummary, type RouteDecision } from '../../shared/contracts'
 import type { ModuleId } from '../../shared/contracts'
 import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
 import { assessmentDefinitions, moduleMeta } from '../../shared/assessments'
@@ -102,6 +102,256 @@ ${businessContextText}`
     ...input.history.slice(-8).map(item => ({ role: item.role, content: sanitizeModelText(item.content, input.dataMode).slice(0, 2500) })),
     { role: 'user', content: sanitizeModelText(input.message, input.dataMode) }
   ]
+}
+
+// ---- AI 追问与分类机制 ----
+
+function buildClarificationPrompt(input: {
+  message: string
+  history: Array<{ role: 'user' | 'assistant', content: string }>
+  citations: KnowledgeCitation[]
+  clarificationRound: number
+  previousModuleScores?: Record<string, number>
+}) {
+  const knowledgeContext = input.citations.length
+    ? input.citations.map(item => `[${item.chunkId}] 来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`).join('\n\n')
+    : '没有检索到已发布知识。'
+  const previousScores = input.previousModuleScores
+    ? `上一轮模块相关性评分：${JSON.stringify(input.previousModuleScores)}`
+    : '这是第一轮追问，暂无历史模块评分。'
+
+  return [
+    {
+      role: 'system',
+      content: `你是"教师赋能智能平台"的追问助手。当前处于**问题澄清阶段（第${input.clarificationRound}轮）**，你的唯一职责是通过追问帮助教师明确问题方向。
+
+硬约束：
+1. **禁止给出任何建议、诊断或解决方案**。这个阶段你只做追问和方向确认。
+2. 每轮输出一个追问问题 + 至少3个选项供教师选择。选项应覆盖不同的可能方向。
+3. 同时评估5个业务模块（self_growth/class_system/home_school/student_case/learning_problem）与当前问题的相关性，给出0-1的评分。
+4. 模块评分应基于教师所有轮次的回答综合判断，本轮评分应在前一轮评分基础上调整。
+5. 评分规则：0=无关，0.3=可能有微弱关联，0.5=中等关联，0.7=明显相关，1.0=强相关。总分不要求为1。
+6. 如果本轮是第1轮，先确认教师最困扰的核心层面（自身状态/班级/学生等）；后续轮次在此基础上深入。
+7. 追问语气温和、简洁，不重复教师已经明确的内容。
+8. 到了第3轮之后，逐步开始总结方向，在question中体现"当前的综合判断是..."
+
+输出严格 JSON 格式：
+{"type":"clarification","round":${input.clarificationRound},"question":"追问的问题文本","options":["选项1","选项2","选项3",...],"moduleScores":{"self_growth":0.5,"class_system":0.3,"home_school":0.2,"student_case":0.7,"learning_problem":0.1}}
+
+${previousScores}
+
+已审核知识（仅供了解业务范围，不直接引用）：
+${knowledgeContext}`
+    },
+    ...input.history.slice(-12).map(item => ({ role: item.role, content: item.content.slice(0, 2000) })),
+    { role: 'user', content: input.message.slice(0, 2000) }
+  ]
+}
+
+function buildSummaryPrompt(input: {
+  history: Array<{ role: 'user' | 'assistant', content: string }>
+  citations: KnowledgeCitation[]
+  lastModuleScores?: Record<string, number>
+}) {
+  const knowledgeContext = input.citations.length
+    ? input.citations.map(item => `[${item.chunkId}] 来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`).join('\n\n')
+    : '没有检索到已发布知识。'
+  const scoresContext = input.lastModuleScores
+    ? `上一轮模块评分：${JSON.stringify(input.lastModuleScores)}。请在此基础上汇总最终占比。`
+    : ''
+
+  return [
+    {
+      role: 'system',
+      content: `你是"教师赋能智能平台"的总结助手。现在是**问题澄清结束后的总结阶段**。教师已通过多轮追问明确了问题方向，现在你需要基于所有对话历史，生成一个完整的分析回复。
+
+你需要输出两部分核心内容：
+
+【answer】—— 给教师的完整分析回复（500-1500字），直接对教师说话。结构如下：
+1. 用1-2句话概括你理解到的教师的困扰和处境（表达共情）
+2. 基于追问中收集的信息，分析问题的几个关键维度（对应各模块的方向）
+3. 给出3-5条具体、可执行的建议或思路（结合知识库中的方法论，但不照搬原文）
+4. 建议教师进入哪个模块做系统性评估，并简要说明为什么
+
+【分类信息】—— 用于系统路由的元数据：
+- rationale：一句话概括（50字内，仅用于系统记录）
+- primaryModule：最匹配的模块ID
+- moduleProportions：5个模块的最终占比，总和为1
+- suggestedActions：1-4个后续建议动作（按钮）
+
+硬约束：
+1. answer 必须是一段完整的、可直接发给教师看的回复，语气温和、有共情、有实质内容
+2. 不做精神、医学、法律诊断；不计算量表分数
+3. 不照搬知识库原文，用自己的话组织
+4. 涉及平台规则、SOP时，建议进入对应模块评估而不是自行下结论
+
+输出严格 JSON 格式：
+{"type":"summary","answer":"完整的分析回复文本（500-1500字）","rationale":"一句话概括","primaryModule":"self_growth","moduleProportions":{"self_growth":0.4,"class_system":0.2,"home_school":0.1,"student_case":0.2,"learning_problem":0.1},"suggestedActions":[{"label":"进入自我成长模块评估","type":"open_module","module":"self_growth"}]}
+
+${scoresContext}
+
+已审核知识（供参考方法论，不照搬原文）：
+${knowledgeContext}`
+    },
+    ...input.history.slice(-16).map(item => ({ role: item.role, content: item.content.slice(0, 2000) }))
+  ]
+}
+
+/**
+ * 流式调用 DeepSeek 进行追问，返回解析后的 ClarificationRound。
+ * 输出 JSON 模式（非流式流式传输），因为追问响应较短。
+ */
+export async function streamClarificationRound(event: H3Event, input: {
+  schoolId: string
+  ownerUserId: string
+  sessionId: string
+  message: string
+  history: Array<{ role: 'user' | 'assistant', content: string }>
+  citations: KnowledgeCitation[]
+  clarificationRound: number
+  previousModuleScores?: Record<string, number>
+}): Promise<{ data: ClarificationRound; fallback: boolean }> {
+  const config = useRuntimeConfig(event)
+  const defaultScores: Record<string, number> = { self_growth: 0.3, class_system: 0.3, home_school: 0.2, student_case: 0.1, learning_problem: 0.1 }
+  const fallback: ClarificationRound = {
+    type: 'clarification',
+    round: input.clarificationRound,
+    question: '根据您目前描述的情况，这件事最核心困扰您的是哪一个方面？',
+    options: ['自己的状态和感受', '班级管理和秩序', '与家长的沟通', '某位学生的表现', '学生学业问题'],
+    moduleScores: input.previousModuleScores || defaultScores as ClarificationRound['moduleScores']
+  }
+
+  if (!config.deepseekApiKey) return { data: fallback, fallback: true }
+
+  const startedAt = Date.now()
+  const messages = buildClarificationPrompt({
+    message: input.message,
+    history: input.history,
+    citations: input.citations,
+    clarificationRound: input.clarificationRound,
+    previousModuleScores: input.previousModuleScores
+  })
+
+  try {
+    const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
+      body: JSON.stringify({
+        model: config.deepseekGeneratorModel,
+        messages,
+        response_format: { type: 'json_object' },
+        thinking: { type: 'disabled' },
+        temperature: 0.4,
+        max_tokens: 600
+      }),
+      signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
+    })
+    if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
+    const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+    const content = json.choices?.[0]?.message?.content
+    if (!content) throw new Error('Empty model output')
+    const parsed = clarificationRoundSchema.parse(JSON.parse(content))
+    await useDb(event).insert(schema.aiModelCalls).values({
+      schoolId: input.schoolId,
+      ownerUserId: input.ownerUserId,
+      sessionId: input.sessionId,
+      provider: 'deepseek',
+      model: config.deepseekGeneratorModel,
+      purpose: 'clarification_round',
+      status: 'success',
+      latencyMs: Date.now() - startedAt
+    }).catch(() => undefined)
+    return { data: parsed, fallback: false }
+  } catch (error) {
+    await useDb(event).insert(schema.aiModelCalls).values({
+      schoolId: input.schoolId,
+      ownerUserId: input.ownerUserId,
+      sessionId: input.sessionId,
+      provider: 'deepseek',
+      model: config.deepseekGeneratorModel,
+      purpose: 'clarification_round',
+      status: 'failed',
+      latencyMs: Date.now() - startedAt,
+      errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown'
+    }).catch(() => undefined)
+    return { data: fallback, fallback: true }
+  }
+}
+
+/**
+ * 流式调用 DeepSeek 进行总结，返回解析后的 ClarificationSummary。
+ */
+export async function streamClarificationSummary(event: H3Event, input: {
+  schoolId: string
+  ownerUserId: string
+  sessionId: string
+  history: Array<{ role: 'user' | 'assistant', content: string }>
+  citations: KnowledgeCitation[]
+  lastModuleScores?: Record<string, number>
+}): Promise<{ data: ClarificationSummary; fallback: boolean }> {
+  const config = useRuntimeConfig(event)
+  const fallback: ClarificationSummary = {
+    type: 'summary',
+    answer: '根据您的描述，您目前面临多方面的工作困扰。建议优先选择一个最困扰的方向进入模块评估，再通过系统性的量表和分析工具深入了解具体情况。您可以先从"自我成长"模块开始，评估当前的压力水平和应对资源，再根据评估结果决定是否需要进入其他模块。',
+    rationale: '教师面临多方面困扰，建议优先自我成长模块评估。',
+    primaryModule: 'self_growth',
+    moduleProportions: { self_growth: 0.25, class_system: 0.2, home_school: 0.15, student_case: 0.25, learning_problem: 0.15 },
+    suggestedActions: [{ label: '进入自我成长模块评估', type: 'open_module', module: 'self_growth' }]
+  }
+
+  if (!config.deepseekApiKey) return { data: fallback, fallback: true }
+
+  const startedAt = Date.now()
+  const messages = buildSummaryPrompt({
+    history: input.history,
+    citations: input.citations,
+    lastModuleScores: input.lastModuleScores
+  })
+
+  try {
+    const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
+      body: JSON.stringify({
+        model: config.deepseekGeneratorModel,
+        messages,
+        response_format: { type: 'json_object' },
+        thinking: { type: 'disabled' },
+        temperature: 0.35,
+        max_tokens: 800
+      }),
+      signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 10000)
+    })
+    if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
+    const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+    const content = json.choices?.[0]?.message?.content
+    if (!content) throw new Error('Empty model output')
+    const parsed = clarificationSummarySchema.parse(JSON.parse(content))
+    await useDb(event).insert(schema.aiModelCalls).values({
+      schoolId: input.schoolId,
+      ownerUserId: input.ownerUserId,
+      sessionId: input.sessionId,
+      provider: 'deepseek',
+      model: config.deepseekGeneratorModel,
+      purpose: 'clarification_summary',
+      status: 'success',
+      latencyMs: Date.now() - startedAt
+    }).catch(() => undefined)
+    return { data: parsed, fallback: false }
+  } catch (error) {
+    await useDb(event).insert(schema.aiModelCalls).values({
+      schoolId: input.schoolId,
+      ownerUserId: input.ownerUserId,
+      sessionId: input.sessionId,
+      provider: 'deepseek',
+      model: config.deepseekGeneratorModel,
+      purpose: 'clarification_summary',
+      status: 'failed',
+      latencyMs: Date.now() - startedAt,
+      errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown'
+    }).catch(() => undefined)
+    return { data: fallback, fallback: true }
+  }
 }
 
 export async function streamAssistantResponse(event: H3Event, input: {

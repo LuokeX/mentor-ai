@@ -3,7 +3,7 @@ import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { decryptSensitive, encryptSensitive } from '../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../domain/safety'
-import { semanticSafetySignals, streamAssistantResponse, extractPlanUpdates } from '../../../integrations/deepseek'
+import { semanticSafetySignals, streamAssistantResponse, extractPlanUpdates, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
 import { buildKnowledgeRetrievalQuery, retrieveKnowledge } from '../../../domain/knowledge'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
 import { governBusinessContext, resolveAiGovernance } from '../../../domain/ai-governance'
@@ -11,6 +11,22 @@ import { ensurePlanActions } from '../../../domain/plan-actions'
 import { trackProductEvent } from '../../../domain/product-events'
 import { sendStream } from 'h3'
 import { and, desc, eq } from 'drizzle-orm'
+
+const CLARIFICATION_DONE_SIGNAL = '[DONE]'
+const MAX_CLARIFICATION_ROUNDS = 4
+
+interface ClarificationState {
+  phase: 'clarifying' | 'summarizing' | 'done'
+  round: number
+  moduleScores: Record<string, number>
+}
+
+function getClarificationState(sessionMetadata: Record<string, unknown> | null | undefined): ClarificationState | null {
+  if (!sessionMetadata) return null
+  const cs = sessionMetadata.clarificationState as ClarificationState | undefined
+  if (!cs || !cs.phase) return null
+  return cs
+}
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -20,12 +36,14 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
   const governance = await resolveAiGovernance(event, user.schoolId, user.id)
   let sessionId = body.sessionId
+  let sessionMetadata: Record<string, unknown> = {}
   let businessContext = await buildAssistantBusinessContext(event, user, body.contextType, body.contextId)
   if (sessionId) {
     const [owned] = await db.select({
       id: schema.chatSessions.id,
       contextType: schema.chatSessions.contextType,
-      contextId: schema.chatSessions.contextId
+      contextId: schema.chatSessions.contextId,
+      metadata: schema.chatSessions.metadata
     }).from(schema.chatSessions)
       .where(and(eq(schema.chatSessions.id, sessionId), eq(schema.chatSessions.ownerUserId, user.id))).limit(1)
     if (!owned) throw createError({ statusCode: 404, message: '对话不存在' })
@@ -35,6 +53,7 @@ export default defineEventHandler(async (event) => {
     if (requestedType && (requestedType !== sessionContextType || requestedId !== owned.contextId)) {
       throw createError({ statusCode: 409, message: '该对话已绑定其他咨询对象，请新建对话后切换对象' })
     }
+    sessionMetadata = (owned.metadata as Record<string, unknown>) || {}
     businessContext = await buildAssistantBusinessContext(event, user, sessionContextType, owned.contextId || undefined)
   } else {
     const [session] = await db.insert(schema.chatSessions).values({
@@ -42,10 +61,12 @@ export default defineEventHandler(async (event) => {
       ownerUserId: user.id,
       title: body.message.slice(0, 40),
       contextType: businessContext?.type || 'none',
-      contextId: businessContext?.id
+      contextId: businessContext?.id,
+      metadata: { clarificationState: { phase: 'clarifying', round: 0, moduleScores: {} } }
     }).returning()
     if (!session) throw createError({ statusCode: 500, message: '对话创建失败' })
     sessionId = session.id
+    sessionMetadata = { clarificationState: { phase: 'clarifying', round: 0, moduleScores: {} } }
   }
   const previousMessages = await db.select({ role: schema.chatMessages.role, contentEnc: schema.chatMessages.contentEnc })
     .from(schema.chatMessages)
@@ -91,6 +112,8 @@ export default defineEventHandler(async (event) => {
     controller.enqueue(encoder.encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`))
   }
   const ownedSessionId = sessionId
+  const clarificationState = getClarificationState(sessionMetadata)
+
   const stream = new ReadableStream({
     async start(controller) {
       try {
@@ -115,8 +138,118 @@ export default defineEventHandler(async (event) => {
           controller.close()
           return
         }
+
         const knowledgeQuery = buildKnowledgeRetrievalQuery(body.message, history)
         const citations = await retrieveKnowledge(event, user.schoolId!, knowledgeQuery)
+        const isDoneSignal = body.message.trim() === CLARIFICATION_DONE_SIGNAL
+
+        // ---- 追问流程 ----
+        if (clarificationState && clarificationState.phase === 'clarifying') {
+          if (isDoneSignal) {
+            // 用户表示没有补充了 → 进入总结阶段
+            const combinedHistory = [...entityMemory, ...history]
+            const summary = await streamClarificationSummary(event, {
+              schoolId: user.schoolId!,
+              ownerUserId: user.id,
+              sessionId: ownedSessionId,
+              history: combinedHistory,
+              citations,
+              lastModuleScores: clarificationState.moduleScores
+            })
+            await db.update(schema.chatSessions).set({
+              metadata: { clarificationState: { phase: 'done', round: clarificationState.round, moduleScores: summary.data.moduleProportions } },
+              updatedAt: new Date()
+            }).where(eq(schema.chatSessions.id, ownedSessionId))
+
+            // 保存总结消息
+            const summaryText = summary.data.answer
+            const [assistantMessage] = await db.insert(schema.chatMessages).values({
+              schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
+              role: 'assistant', contentEnc: encryptSensitive(summaryText, config.encryptionKey),
+              metadata: { type: 'clarification_summary', answer: summary.data.answer, rationale: summary.data.rationale, primaryModule: summary.data.primaryModule, moduleProportions: summary.data.moduleProportions, suggestedActions: summary.data.suggestedActions }
+            }).returning({ id: schema.chatMessages.id })
+            if (assistantMessage) {
+              emit(controller, 'answer', { messageId: assistantMessage.id, text: summaryText, mode: 'deepseek', suggestedActions: summary.data.suggestedActions })
+            }
+            emit(controller, 'clarification_summary', summary.data)
+            emit(controller, 'done', { sessionId: ownedSessionId })
+            controller.close()
+            return
+          }
+
+          // 追问轮次
+          const nextRound = clarificationState.round + 1
+
+          // 达到上限 → 自动进入总结阶段
+          if (nextRound > MAX_CLARIFICATION_ROUNDS) {
+            const combinedHistory = [...entityMemory, ...history]
+            const summary = await streamClarificationSummary(event, {
+              schoolId: user.schoolId!,
+              ownerUserId: user.id,
+              sessionId: ownedSessionId,
+              history: combinedHistory,
+              citations,
+              lastModuleScores: clarificationState.moduleScores
+            })
+            await db.update(schema.chatSessions).set({
+              metadata: { clarificationState: { phase: 'done', round: clarificationState.round, moduleScores: summary.data.moduleProportions } },
+              updatedAt: new Date()
+            }).where(eq(schema.chatSessions.id, ownedSessionId))
+
+            const [assistantMessage] = await db.insert(schema.chatMessages).values({
+              schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
+              role: 'assistant', contentEnc: encryptSensitive(summary.data.answer, config.encryptionKey),
+              metadata: { type: 'clarification_summary', answer: summary.data.answer, rationale: summary.data.rationale, primaryModule: summary.data.primaryModule, moduleProportions: summary.data.moduleProportions, suggestedActions: summary.data.suggestedActions }
+            }).returning({ id: schema.chatMessages.id })
+            if (assistantMessage) {
+              emit(controller, 'answer', { messageId: assistantMessage.id, text: summary.data.answer, mode: 'deepseek', suggestedActions: summary.data.suggestedActions })
+            }
+            emit(controller, 'clarification_summary', summary.data)
+            emit(controller, 'done', { sessionId: ownedSessionId })
+            controller.close()
+            return
+          }
+
+          const combinedHistory = [...entityMemory, ...history]
+          const result = await streamClarificationRound(event, {
+            schoolId: user.schoolId!,
+            ownerUserId: user.id,
+            sessionId: ownedSessionId,
+            message: body.message,
+            history: combinedHistory,
+            citations,
+            clarificationRound: nextRound,
+            previousModuleScores: clarificationState.moduleScores
+          })
+
+          // 更新会话追问状态
+          const newClarificationState: ClarificationState = {
+            phase: 'clarifying',
+            round: nextRound,
+            moduleScores: result.data.moduleScores as Record<string, number>
+          }
+          await db.update(schema.chatSessions).set({
+            metadata: { clarificationState: newClarificationState },
+            updatedAt: new Date()
+          }).where(eq(schema.chatSessions.id, ownedSessionId))
+
+          // 保存 AI 追问消息
+          const clarificationText = `${result.data.question}\n\n选项：${result.data.options.join('、')}`
+          const [assistantMessage] = await db.insert(schema.chatMessages).values({
+            schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
+            role: 'assistant', contentEnc: encryptSensitive(clarificationText, config.encryptionKey),
+            metadata: { type: 'clarification_round', round: result.data.round, question: result.data.question, options: result.data.options, moduleScores: result.data.moduleScores }
+          }).returning({ id: schema.chatMessages.id })
+          if (assistantMessage) {
+            emit(controller, 'answer', { messageId: assistantMessage.id, text: result.data.question, mode: 'deepseek' })
+          }
+          emit(controller, 'clarification_round', result.data)
+          emit(controller, 'done', { sessionId: ownedSessionId })
+          controller.close()
+          return
+        }
+
+        // ---- 原有流程（非追问阶段）----
         const modelContext = body.withoutRecord ? null : governBusinessContext(businessContext, governance.effectiveMode)
         emit(controller, 'answer_start', { mode: governance.effectiveMode === 'local' || !useRuntimeConfig(event).deepseekApiKey ? 'local_fallback' : 'deepseek', suggestedActions: [] })
         const assistant = await streamAssistantResponse(event, {

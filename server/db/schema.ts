@@ -232,6 +232,7 @@ export const chatSessions = pgTable('chat_sessions', {
   contextType: varchar('context_type', { length: 30 }).default('none').notNull(),
   contextId: uuid('context_id'),
   status: varchar('status', { length: 20 }).default('active').notNull(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
   ...timestamps
 }, table => [
   index('chat_sessions_owner_idx').on(table.ownerUserId),

@@ -1,6 +1,24 @@
 <script setup lang="ts">
 import { assessmentBadge, moduleMeta } from '#shared/assessments'
 import type { ModuleId, RouteDecision } from '#shared/contracts'
+import { useModuleScores } from '~/composables/useModuleScores'
+
+interface ClarificationRoundData {
+  type: 'clarification'
+  round: number
+  question: string
+  options: string[]
+  moduleScores: Record<string, number>
+}
+
+interface ClarificationSummaryData {
+  type: 'summary'
+  answer: string
+  rationale: string
+  primaryModule: ModuleId
+  moduleProportions: Record<string, number>
+  suggestedActions: Array<{ label: string; type: string; module?: ModuleId }>
+}
 
 interface SourceItem {
   chunkId: string
@@ -18,9 +36,12 @@ interface TimelineItem {
   mode?: 'deepseek' | 'local_fallback'
   planUpdateSuggestions?: Array<any>
   feedback?: 'helpful' | 'not_helpful'
+  clarification?: ClarificationRoundData
+  summary?: ClarificationSummaryData
 }
 
 const { user } = useAuth()
+const { updateScores, moduleScores } = useModuleScores()
 const { data: sessions, refresh: refreshSessions } = await useFetch<any[]>('/api/v1/chat/sessions')
 const { data: assistantStatus } = await useFetch<any>('/api/v1/chat/status')
 const { data: governance, refresh: refreshGovernance } = await useFetch<any>('/api/v1/chat/data-governance')
@@ -38,11 +59,14 @@ const messageViewport = ref<HTMLElement | null>(null)
 const copiedMessage = ref<number | null>(null)
 const confirmingModule = ref<ModuleId | null>(null)
 const routeConfirmError = ref('')
+const selectedOptions = ref<Record<number, string>>({})
 const selectedContextKey = ref('none')
 const suppressContextWatch = ref(false)
 const contextPreview = ref<any>(null)
 const previewLoading = ref(false)
 const withoutRecord = ref(false)
+const centerHint = ref<HTMLElement | null>(null)
+const showRightHint = ref(true)
 const deleteCandidate = ref<string>()
 const toast = useToast()
 const quickPrompts = [
@@ -100,6 +124,21 @@ function usePrompt(prompt: string) {
   input.value = prompt
 }
 
+function sendClarificationSelection(option: string) {
+  // 找到当前活跃的追问轮次，记录选中项
+  const lastClarification = [...timeline.value].reverse().find(item => item.clarification)
+  if (lastClarification?.clarification) {
+    selectedOptions.value = { ...selectedOptions.value, [lastClarification.clarification.round]: option }
+  }
+  input.value = option
+  nextTick(() => ask())
+}
+
+function sendClarificationDone() {
+  input.value = '[DONE]'
+  nextTick(() => ask())
+}
+
 async function copyMessage(text: string, index: number) {
   await navigator.clipboard.writeText(text)
   copiedMessage.value = index
@@ -112,6 +151,7 @@ function newConversation() {
   route.value = null
   fuse.value = null
   routeConfirmError.value = ''
+  selectedOptions.value = {}
   nextTick(() => scrollToLatest('auto'))
 }
 
@@ -136,14 +176,50 @@ async function loadSession(id: string) {
     route.value = null
     fuse.value = null
     routeConfirmError.value = ''
-    timeline.value = result.messages.map((item: any) => ({
-      messageId: item.id,
-      role: item.role,
-      text: item.text,
-      mode: item.metadata?.mode,
-      sources: item.metadata?.sources || [],
-      planUpdateSuggestions: item.metadata?.planUpdateSuggestions || []
-    }))
+    timeline.value = result.messages.map((item: any) => {
+      const base: TimelineItem = {
+        messageId: item.id,
+        role: item.role,
+        text: item.text,
+        mode: item.metadata?.mode,
+        sources: item.metadata?.sources || [],
+        planUpdateSuggestions: item.metadata?.planUpdateSuggestions || []
+      }
+      // 恢复追问轮次数据
+      if (item.metadata?.type === 'clarification_round') {
+        base.clarification = {
+          type: 'clarification',
+          round: item.metadata.round,
+          question: item.metadata.question,
+          options: item.metadata.options,
+          moduleScores: item.metadata.moduleScores
+        }
+      }
+      // 恢复总结数据
+      if (item.metadata?.type === 'clarification_summary') {
+        base.summary = {
+          type: 'summary',
+          answer: item.metadata.answer,
+          rationale: item.metadata.rationale,
+          primaryModule: item.metadata.primaryModule,
+          moduleProportions: item.metadata.moduleProportions,
+          suggestedActions: item.metadata.suggestedActions
+        }
+      }
+      return base
+    })
+
+    // 重建 selectedOptions：每个追问轮次后的第一条用户消息即为所选选项
+    selectedOptions.value = {}
+    let pendingClarificationRound: number | null = null
+    for (const item of timeline.value) {
+      if (item.clarification) {
+        pendingClarificationRound = item.clarification.round
+      } else if (item.role === 'user' && pendingClarificationRound !== null) {
+        selectedOptions.value[pendingClarificationRound] = item.text
+        pendingClarificationRound = null
+      }
+    }
     const lastAssistant = [...result.messages].reverse().find((item: any) => item.role === 'assistant')
     if (lastAssistant?.metadata?.mode) assistantMode.value = lastAssistant.metadata.mode
     if (lastAssistant?.metadata?.route) route.value = { id: lastAssistant.metadata.route.decisionId || '', ...lastAssistant.metadata.route }
@@ -233,6 +309,18 @@ async function ask() {
         }
         if (event === 'sources' && assistantIndex >= 0) timeline.value[assistantIndex]!.sources = data
         if (event === 'route') route.value = data
+        if (event === 'clarification_round') {
+          if (assistantIndex >= 0) {
+            timeline.value[assistantIndex]!.clarification = data
+          }
+          updateScores(data.moduleScores)
+        }
+        if (event === 'clarification_summary') {
+          if (assistantIndex >= 0) {
+            timeline.value[assistantIndex]!.summary = data
+          }
+          updateScores(data.moduleProportions)
+        }
         if (event === 'fuse') fuse.value = data
         if (event === 'error') throw new Error(data.message)
       }
@@ -315,6 +403,15 @@ onMounted(() => {
   else if (prefill?.contextKey) selectedContextKey.value = prefill.contextKey
   else loadContextPreview()
   if (prefill?.prompt) input.value = prefill.prompt
+
+  // 当居中提示或下方内容进入视口时，隐藏右侧悬浮引导
+  if (centerHint.value) {
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry) showRightHint.value = !entry.isIntersecting },
+      { rootMargin: '-80px 0px 0px 0px' }
+    )
+    observer.observe(centerHint.value)
+  }
 })
 </script>
 
@@ -333,7 +430,7 @@ onMounted(() => {
     </section>
 
     <section class="mt-10 grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
-      <aside class="panel flex h-[18rem] flex-col overflow-hidden lg:h-[46rem] lg:min-h-[42rem]">
+      <aside class="panel flex h-[18rem] flex-col overflow-hidden lg:h-[36rem] lg:min-h-[34rem]">
         <div class="border-b border-slate-100 p-4">
           <UButton block icon="i-lucide-message-square-plus" size="lg" @click="newConversation">新对话</UButton>
         </div>
@@ -354,9 +451,12 @@ onMounted(() => {
           <div v-if="!sessions?.length" class="grid place-items-center px-3 py-16 text-center"><UIcon name="i-lucide-messages-square" class="size-7 text-slate-300" /><p class="mt-2 text-xs text-slate-400">暂无历史对话</p></div>
         </div>
         <div class="border-t border-slate-100 px-4 py-3 text-xs leading-5 text-slate-400"><UIcon name="i-lucide-lock-keyhole" class="mr-1 inline size-3.5" />对话仅您本人可见</div>
+        <div class="border-t border-slate-100 p-3">
+          <ModuleProportionPanel />
+        </div>
       </aside>
 
-      <div class="panel flex h-[calc(100dvh-7.5rem)] min-h-[36rem] min-w-0 flex-col overflow-hidden lg:h-[46rem] lg:min-h-[42rem]">
+      <div class="panel flex h-[calc(100dvh-7.5rem)] min-h-[36rem] min-w-0 flex-col overflow-hidden lg:h-[36rem] lg:min-h-[34rem]">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white/90 px-5 py-3.5 sm:px-6">
           <div class="flex min-w-0 items-center gap-3">
             <div class="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-4.5" /></div>
@@ -384,6 +484,30 @@ onMounted(() => {
                   <div v-if="item.role === 'user'" class="whitespace-pre-wrap" v-text="item.text" />
                   <div v-else class="markdown-body" v-html="useMarkdown(item.text)" />
                   <button v-if="item.role === 'assistant'" type="button" class="absolute -bottom-7 left-0 flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
+                </div>
+                <ClarificationOptions
+                  v-if="item.clarification"
+                  :question="item.clarification.question"
+                  :options="item.clarification.options"
+                  :round="item.clarification.round"
+                  :selected-option="selectedOptions[item.clarification.round]"
+                  @select="sendClarificationSelection"
+                  @done="sendClarificationDone"
+                />
+                <div v-if="item.summary" class="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5">
+                  <div class="flex items-center gap-2 text-xs font-semibold text-emerald-700">
+                    <UIcon name="i-lucide-bar-chart-3" class="size-4" />分析结果
+                  </div>
+                  <div class="markdown-body mt-2 text-sm leading-7 text-slate-700" v-html="useMarkdown(item.summary.answer)" />
+                  <div class="mt-4 flex flex-wrap items-center gap-2">
+                    <UButton
+                      v-for="action in item.summary.suggestedActions"
+                      :key="action.label"
+                      color="primary"
+                      size="sm"
+                      @click="() => { if (action.module) navigateTo(`/module/${action.module}`) }"
+                    >{{ action.label }}</UButton>
+                  </div>
                 </div>
                 <details v-if="item.sources?.length" class="group mt-7 overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/50 text-xs text-slate-600">
                   <summary class="flex cursor-pointer list-none items-center justify-between px-3.5 py-2.5 font-medium text-emerald-800"><span class="flex items-center gap-2"><UIcon name="i-lucide-book-open-check" class="size-4" />参考了 {{ item.sources.length }} 条知识内容</span><UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" /></summary>
@@ -421,7 +545,12 @@ onMounted(() => {
       </div>
     </section>
 
-    <section v-if="today" class="mt-12">
+    <div ref="centerHint" class="mt-10 hidden flex-col items-center gap-2 text-emerald-600/70 lg:flex">
+      <UIcon name="i-lucide-chevrons-down" class="size-6 animate-bounce" />
+      <span class="text-sm font-semibold tracking-wide">持续使用闭环 &amp; 快捷入口</span>
+    </div>
+
+    <section v-if="today" class="mt-0">
       <div class="flex items-end justify-between"><div><p class="text-sm font-semibold text-emerald-700">持续使用闭环</p><h2 class="mt-1 text-2xl font-semibold">今日待办</h2></div><UButton to="/notifications" variant="ghost" color="neutral" trailing-icon="i-lucide-bell">{{ today.unreadCount }} 条未读</UButton></div>
       <div class="mt-5 grid gap-4 lg:grid-cols-[.8fr_1.2fr]">
         <div class="panel p-5"><h3 class="font-semibold">首次使用清单</h3><div class="mt-4 space-y-3"><div v-for="item in today.onboarding" :key="item.key" class="flex items-center gap-3 text-sm"><span class="grid size-6 place-items-center rounded-full" :class="item.completed?'bg-emerald-100 text-emerald-700':'bg-slate-100 text-slate-400'"><UIcon :name="item.completed?'i-lucide-check':'i-lucide-circle'" class="size-3.5" /></span><span :class="item.completed?'text-slate-400 line-through':'text-slate-700'">{{ item.label }}</span></div></div></div>
@@ -444,6 +573,11 @@ onMounted(() => {
         </NuxtLink>
       </div>
     </section>
+
+    <div v-show="showRightHint" class="fixed right-6 top-1/2 -translate-y-1/2 hidden flex-col items-center gap-2 text-emerald-600 lg:flex z-30">
+      <UIcon name="i-lucide-chevrons-down" class="size-6 animate-bounce" />
+      <span class="text-sm font-semibold tracking-wide [writing-mode:vertical-rl]">更多内容在下方</span>
+    </div>
   </div>
 </template>
 

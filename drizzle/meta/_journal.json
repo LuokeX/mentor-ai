@@ -57,6 +57,13 @@
       "when": 1784255338736,
       "tag": "0007_freezing_lady_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784623763336,
+      "tag": "0008_closed_moondragon",
+      "breakpoints": true
     }
   ]
 }

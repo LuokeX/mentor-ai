@@ -79,6 +79,31 @@ export const routeDecisionSchema = z.object({
 export type ModuleId = z.infer<typeof moduleIdSchema>
 export type RouteDecision = z.infer<typeof routeDecisionSchema>
 
+// ---- AI 追问与分类机制 ----
+export const clarificationRoundSchema = z.object({
+  type: z.literal('clarification'),
+  round: z.number().int().min(1).max(10),
+  question: z.string().min(5).max(300),
+  options: z.array(z.string().min(2).max(80)).min(3).max(8),
+  moduleScores: z.record(moduleIdSchema, z.number().min(0).max(1))
+})
+
+export const clarificationSummarySchema = z.object({
+  type: z.literal('summary'),
+  answer: z.string().min(50).max(2000),
+  rationale: z.string().max(500),
+  primaryModule: moduleIdSchema,
+  moduleProportions: z.record(moduleIdSchema, z.number().min(0).max(1)),
+  suggestedActions: z.array(z.object({
+    label: z.string(),
+    type: z.enum(['open_module', 'record', 'tool']),
+    module: moduleIdSchema.optional()
+  })).max(4)
+})
+
+export type ClarificationRound = z.infer<typeof clarificationRoundSchema>
+export type ClarificationSummary = z.infer<typeof clarificationSummarySchema>
+
 // ---- 评估系统可配置化 ----
 // 题库 payload 存入 content_packages (type='assessment')
 export interface AssessmentPayload {

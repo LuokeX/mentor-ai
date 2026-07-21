@@ -1,4 +1,5 @@
 <script setup lang="ts">
+const route = useRoute()
 const { user, refresh, logout } = useAuth()
 await refresh()
 
@@ -33,11 +34,11 @@ const mobileItems = computed(() => {
           </span>
         </NuxtLink>
         <nav class="hidden items-center gap-2 md:flex">
-          <UButton v-if="user.role === 'teacher'" to="/" variant="ghost" color="neutral">工作台</UButton>
-          <UButton v-if="user.role === 'teacher'" to="/information" variant="ghost" color="neutral">信息中心</UButton>
-          <UButton v-if="user.role === 'school_admin'" to="/school-admin" variant="ghost" color="neutral">学校管理</UButton>
-          <UButton v-if="user.role === 'platform_admin'" to="/platform-admin" variant="ghost" color="neutral">平台管理</UButton>
-          <UButton v-if="user.role === 'psychologist'" to="/specialist" variant="ghost" color="neutral">转介工作台</UButton>
+          <UButton v-if="user.role === 'teacher'" to="/" :variant="route.path === '/' ? 'soft' : 'ghost'" :color="route.path === '/' ? 'primary' : 'neutral'">工作台</UButton>
+          <UButton v-if="user.role === 'teacher'" to="/information" :variant="route.path.startsWith('/information') ? 'soft' : 'ghost'" :color="route.path.startsWith('/information') ? 'primary' : 'neutral'">信息中心</UButton>
+          <UButton v-if="user.role === 'school_admin'" to="/school-admin" :variant="route.path.startsWith('/school-admin') ? 'soft' : 'ghost'" :color="route.path.startsWith('/school-admin') ? 'primary' : 'neutral'">学校管理</UButton>
+          <UButton v-if="user.role === 'platform_admin'" to="/platform-admin" :variant="route.path.startsWith('/platform-admin') ? 'soft' : 'ghost'" :color="route.path.startsWith('/platform-admin') ? 'primary' : 'neutral'">平台管理</UButton>
+          <UButton v-if="user.role === 'psychologist'" to="/specialist" :variant="route.path.startsWith('/specialist') ? 'soft' : 'ghost'" :color="route.path.startsWith('/specialist') ? 'primary' : 'neutral'">转介工作台</UButton>
         </nav>
         <div class="flex items-center gap-3">
           <div class="hidden text-right sm:block">
