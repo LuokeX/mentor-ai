@@ -68,7 +68,12 @@ function buildAssistantMessages(input: {
   dataMode?: 'redacted' | 'full_context'
 }, outputMode: 'json' | 'text') {
   const knowledgeContext = input.citations.length
-    ? input.citations.map(item => `[${item.chunkId}] 来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`).join('\n\n')
+    ? input.citations.map(item => {
+        const resourceMeta = item.module && item.libraryType
+          ? `模块：${item.module}；资源类型：${item.libraryType}；资源库：${item.resourceTitle || item.knowledgeBase}${item.resourceVersionId ? `；资源版本：${item.resourceVersionId}` : ''}`
+          : `知识库：${item.knowledgeBase}`
+        return `[${item.chunkId}] ${resourceMeta}\n来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`
+      }).join('\n\n')
     : '没有检索到已发布知识。此时可以基于通用班主任工作方法进行共情、澄清、问题拆解和非制度性行动建议；不得编造平台手册、量表、SOP、等级、制度或来源。'
   const businessContextText = input.businessContext
     ? `当前咨询对象：${input.businessContext.type} / ${input.businessContext.label}\n${input.businessContext.prompt}`
@@ -91,7 +96,8 @@ function buildAssistantMessages(input: {
 7. 不复述姓名、电话、邮箱等个人信息，不扩大到其他教师或学生数据。
 8. 上下文中的方案(recentPlans)包含执行动作(actions)及其状态。可引用方案进度，根据教师反馈在回答中建议更新方案状态。
 9. 如果提供了“当前业务对象上下文”，可以结合其中的学生/班级/家长/沟通/历史方案摘要进行分析，但不能暴露完整电话等隐私字段，不能推断上下文之外的个人信息。
-10. ${formatInstruction}
+10. 工具、SOP、制度、分级、量表、红线和平台要求属于强约束资源：没有命中对应已发布资源时，只能给通用沟通建议，不能说“平台规定”“工具库要求”或生成看似正式的工具原文。
+11. ${formatInstruction}
 
 已审核知识：
 ${knowledgeContext}
@@ -117,28 +123,57 @@ function buildClarificationPrompt(input: {
     ? input.citations.map(item => `[${item.chunkId}] 来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`).join('\n\n')
     : '没有检索到已发布知识。'
   const previousScores = input.previousModuleScores
-    ? `上一轮模块相关性评分：${JSON.stringify(input.previousModuleScores)}`
+    ? `参考：上一轮内部模块评分 ${JSON.stringify(input.previousModuleScores)}（仅用于内部记录，不影响追问方向和选项设计。）`
     : '这是第一轮追问，暂无历史模块评分。'
 
   return [
     {
       role: 'system',
-      content: `你是"教师赋能智能平台"的追问助手。当前处于**问题澄清阶段（第${input.clarificationRound}轮）**，你的唯一职责是通过追问帮助教师明确问题方向。
+      content: `你是"教师赋能智能平台"的追问助手。当前处于**问题澄清阶段（第${input.clarificationRound}轮）**，系统最多允许 3 轮追问，你的唯一职责是通过追问帮助教师明确问题方向。
 
 硬约束：
 1. **禁止给出任何建议、诊断或解决方案**。这个阶段你只做追问和方向确认。
-2. 每轮输出一个追问问题 + 至少3个选项供教师选择。选项应覆盖不同的可能方向。
-3. 同时评估5个业务模块（self_growth/class_system/home_school/student_case/learning_problem）与当前问题的相关性，给出0-1的评分。
-4. 模块评分应基于教师所有轮次的回答综合判断，本轮评分应在前一轮评分基础上调整。
-5. 评分规则：0=无关，0.3=可能有微弱关联，0.5=中等关联，0.7=明显相关，1.0=强相关。总分不要求为1。
-6. 如果本轮是第1轮，先确认教师最困扰的核心层面（自身状态/班级/学生等）；后续轮次在此基础上深入。
-7. 追问语气温和、简洁，不重复教师已经明确的内容。
-8. 到了第3轮之后，逐步开始总结方向，在question中体现"当前的综合判断是..."
+2. 每轮输出一个追问问题 + 2~4个选项。**提问优先用开放式场景问题**（如"最近一次是什么情况？""当时发生了什么？"），鼓励教师用自己的话描述具体场景。选项只是列举几种教师**可能遇到过的典型场景**作为参考，教师完全可以忽略选项、在输入框自由打字。
+3. **选项必须是具体的场景或感受描述，而不是分类标签**。好的选项："连续几天睡不好，上课硬撑""被家长一句话说得心凉了半截"。坏的选项："自己的状态和感受""班级管理秩序"（这是把模块名翻译了一下，毫无意义）。
+4. **禁止选项之间含义重叠**。每个选项应该指向明显不同的情况，不要出现"容易累"和"感觉很累"这种近义选项。
+5. **后续轮次追问原则（最重要的一条）**。第2、3轮必须基于对话历史中教师在上一轮选择或输入的具体内容，像剥洋葱一样深入追问该方向的细节。**绝对不能**回到通用开放问题或模块分类。
 
-输出严格 JSON 格式：
-{"type":"clarification","round":${input.clarificationRound},"question":"追问的问题文本","options":["选项1","选项2","选项3",...],"moduleScores":{"self_growth":0.5,"class_system":0.3,"home_school":0.2,"student_case":0.7,"learning_problem":0.1}}
+   反例（第2、3轮禁止这样做）：
+   - 问题又是"这件事给你带来最大的影响是什么？"（回到通用开放问题）
+   - 问题又是"你自己觉得主要困扰哪个方面？"（回到分类）
+   - 选项又是 ["睡眠和精力","班级管理","家长沟通","学生情况"] 这种分类标签（毫无意义，等于没问）
+
+   正例（教师上一轮选了"连着几天睡不好"后的深入追问）：
+   问题："这种睡不好的状态大概持续多久了？是入睡困难还是容易早醒？"
+   选项：["最近一两周才开始的","已经持续一两个月了","入睡困难，躺床上脑子停不下来","半夜或凌晨醒，醒了就睡不着","睡眠很浅，一晚上醒好几次"]
+
+   正例（教师上一轮选了"家长说话不客气"后的深入追问）：
+   问题："当时家长是在什么场合跟你说的？"
+   选项：["班级微信群里，当着其他家长的面","单独打电话给我，语气很冲","来学校当面找我谈的","通过班主任或孩子传话，没直接跟我说"]
+6. 同时评估5个业务模块（self_growth/class_system/home_school/student_case/learning_problem）与当前问题的相关性，给出0-1评分。这个评分仅用于系统内部分析，不在追问中展示。
+7. 模块评分基于教师所有轮次的回答综合判断，本轮评分在前一轮基础上调整。评分规则：0=无关，0.3=微弱关联，0.5=中等，0.7=明显相关，1.0=强相关。总分不要求为1。
+8. 追问语气自然，像同事聊天。选项措辞口语化，用教师日常会说的话。
+9. 若当前是第3轮（最后一轮），追问中体现收束总结的语气。
+
+输出格式：先直接输出追问问题纯文本（10-40字，直接对教师发问），然后输出分隔符 <!--JSON-->，然后输出 JSON 元数据。
+
+**重要：不要在问题文本后面追加"选项：..."开头的选项列表。用户可见的选项按钮由系统根据JSON元数据自动生成，你只需把选项写在JSON的options字段里。**
+
+以上所有正例和反例仅供参考追问方向，不要逐字照抄，必须根据对话历史中教师的实际回答来生成追问。
+
+示例（第1轮，教师说"最近工作压力很大"）：
+最近一次让你觉得特别累或者特别烦的，是什么事？
+<!--JSON-->
+{"options":["连着几天睡不好，白天上课硬撑着","班上几个学生同时出问题，感觉应付不过来","刚开完家长会，有家长说话不太客气","有个学生情况特殊，越想越不知道怎么帮他","好像没有具体的事，就是整个人很疲惫"],"moduleScores":{"self_growth":0.5,"class_system":0.3,"home_school":0.4,"student_case":0.4,"learning_problem":0.2}}
+
+示例（第2轮，教师上一轮描述了和家长沟通的问题）：
+当时那位家长说了什么让你印象最深的话？或者做了什么让你觉得不太舒服？
+<!--JSON-->
+{"options":["在班级群里公开质疑我的做法","私下找我谈话时语气很冲","觉得我对他孩子不公平，反复提要求","倒没有具体冲突，就是每次沟通都很消耗我"],"moduleScores":{"self_growth":0.2,"class_system":0.1,"home_school":0.8,"student_case":0.3,"learning_problem":0.1}}
 
 ${previousScores}
+
+（第3轮示例：若教师第2轮选了"入睡困难，躺床上脑子停不下来"，则需要收束追问——"听起来脑子里转的事不少。闭眼的时候最常想到的是什么？是某个具体的学生、某件事，还是整体的责任感？" 选项：["有个行为习惯特别难管的学生，天天都得跟他较劲","班上最近出了几次突发状况，心里总悬着","某个学生的学习成绩一直往下掉","倒不是具体哪个学生，就是总觉得自己做得不够好"] 模块评分示例：{"self_growth":0.3,"class_system":0.2,"home_school":0.1,"student_case":0.2,"learning_problem":0.2}）
 
 已审核知识（仅供了解业务范围，不直接引用）：
 ${knowledgeContext}`
@@ -165,28 +200,23 @@ function buildSummaryPrompt(input: {
       role: 'system',
       content: `你是"教师赋能智能平台"的总结助手。现在是**问题澄清结束后的总结阶段**。教师已通过多轮追问明确了问题方向，现在你需要基于所有对话历史，生成一个完整的分析回复。
 
-你需要输出两部分核心内容：
+你需要输出两部分内容，**必须严格按照以下格式**：
 
-【answer】—— 给教师的完整分析回复（500-1500字），直接对教师说话。结构如下：
+第一部分：直接输出给教师的完整分析回复（纯文本，500-1500字），不要任何 JSON 包裹。结构如下：
 1. 用1-2句话概括你理解到的教师的困扰和处境（表达共情）
-2. 基于追问中收集的信息，分析问题的几个关键维度（对应各模块的方向）
-3. 给出3-5条具体、可执行的建议或思路（结合知识库中的方法论，但不照搬原文）
-4. 建议教师进入哪个模块做系统性评估，并简要说明为什么
+2. 基于追问中收集的信息，对教师面临的问题做深入分析——这是最重要的部分。结合教师描述的具体情境，从多个维度剖析问题所在，不要泛泛而谈标签式的"压力大""沟通困难"
+3. 给出3-5条具体、可执行的建议或思路。每条建议要基于教师的具体情况，结合知识库中的方法论但不照搬原文。建议中如果提到平台工具，用自然的方式引导（如"平台上有XX量表可以帮你系统梳理YY问题"），不要机械地说"请进入XX模块"
 
-【分类信息】—— 用于系统路由的元数据：
-- rationale：一句话概括（50字内，仅用于系统记录）
-- primaryModule：最匹配的模块ID
-- moduleProportions：5个模块的最终占比，总和为1
-- suggestedActions：1-4个后续建议动作（按钮）
+然后紧跟着输出分隔符 <!--JSON-->，然后输出用于系统路由的 JSON 元数据：
+{"rationale":"一句话概括（50字内）","primaryModule":"self_growth","moduleProportions":{"self_growth":0.4,"class_system":0.2,"home_school":0.1,"student_case":0.2,"learning_problem":0.1},"suggestedActions":[{"label":"先做一次压力与应对资源评估","type":"open_module","module":"self_growth"}]}
 
 硬约束：
-1. answer 必须是一段完整的、可直接发给教师看的回复，语气温和、有共情、有实质内容
+1. answer 部分必须是一段完整的、可直接发给教师看的回复，语气温和、有共情、有实质内容
 2. 不做精神、医学、法律诊断；不计算量表分数
 3. 不照搬知识库原文，用自己的话组织
-4. 涉及平台规则、SOP时，建议进入对应模块评估而不是自行下结论
-
-输出严格 JSON 格式：
-{"type":"summary","answer":"完整的分析回复文本（500-1500字）","rationale":"一句话概括","primaryModule":"self_growth","moduleProportions":{"self_growth":0.4,"class_system":0.2,"home_school":0.1,"student_case":0.2,"learning_problem":0.1},"suggestedActions":[{"label":"进入自我成长模块评估","type":"open_module","module":"self_growth"}]}
+4. 不要在answer里反复说"建议进入XX模块"——这是系统内部的路由信息，已经放在JSON里了。answer要聚焦于分析教师的具体处境和给出可操作的建议。如果确实需要提及平台工具，用"平台上有XX评估可以帮你梳理YY问题"这种自然表述，而不是"请进入XX模块"
+5. 分隔符必须是 <!--JSON-->（前后不带空格），JSON 必须严格有效、单行或紧凑多行均可
+6. moduleProportions 总和必须为1
 
 ${scoresContext}
 
@@ -198,8 +228,7 @@ ${knowledgeContext}`
 }
 
 /**
- * 流式调用 DeepSeek 进行追问，返回解析后的 ClarificationRound。
- * 输出 JSON 模式（非流式流式传输），因为追问响应较短。
+ * 流式调用 DeepSeek 进行追问，实时推送 question 内容，返回解析后的 ClarificationRound。
  */
 export async function streamClarificationRound(event: H3Event, input: {
   schoolId: string
@@ -210,6 +239,7 @@ export async function streamClarificationRound(event: H3Event, input: {
   citations: KnowledgeCitation[]
   clarificationRound: number
   previousModuleScores?: Record<string, number>
+  onDelta: (text: string) => void
 }): Promise<{ data: ClarificationRound; fallback: boolean }> {
   const config = useRuntimeConfig(event)
   const defaultScores: Record<string, number> = { self_growth: 0.3, class_system: 0.3, home_school: 0.2, student_case: 0.1, learning_problem: 0.1 }
@@ -221,7 +251,10 @@ export async function streamClarificationRound(event: H3Event, input: {
     moduleScores: input.previousModuleScores || defaultScores as ClarificationRound['moduleScores']
   }
 
-  if (!config.deepseekApiKey) return { data: fallback, fallback: true }
+  if (!config.deepseekApiKey) {
+    for (const chunk of fallback.question.match(/[\s\S]{1,18}/g) || [fallback.question]) input.onDelta(chunk)
+    return { data: fallback, fallback: true }
+  }
 
   const startedAt = Date.now()
   const messages = buildClarificationPrompt({
@@ -239,18 +272,118 @@ export async function streamClarificationRound(event: H3Event, input: {
       body: JSON.stringify({
         model: config.deepseekGeneratorModel,
         messages,
-        response_format: { type: 'json_object' },
+        stream: true,
         thinking: { type: 'disabled' },
-        temperature: 0.4,
-        max_tokens: 600
+        temperature: 0.4
       }),
       signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
     })
-    if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
-    const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
-    const content = json.choices?.[0]?.message?.content
-    if (!content) throw new Error('Empty model output')
-    const parsed = clarificationRoundSchema.parse(JSON.parse(content))
+    if (!response.ok || !response.body) throw new Error(`DeepSeek ${response.status}`)
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let fullText = ''
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const payload = line.slice(6).trim()
+        if (payload === '[DONE]') continue
+        try {
+          const parsed = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> }
+          const token = parsed.choices?.[0]?.delta?.content
+          if (!token) continue
+          fullText += token
+          const sepIdx = fullText.indexOf('<!--JSON-->')
+          if (sepIdx === -1) {
+            input.onDelta(token)
+          } else {
+            const tokenStartInFull = fullText.length - token.length
+            if (tokenStartInFull < sepIdx) {
+              const visiblePart = token.slice(0, Math.max(0, sepIdx - tokenStartInFull))
+              if (visiblePart) input.onDelta(visiblePart)
+            }
+          }
+        } catch { /* 跳过非 JSON 行 */ }
+      }
+    }
+
+    const sepIndex = fullText.indexOf('<!--JSON-->')
+    let question: string
+    let jsonPart: string
+    if (sepIndex !== -1) {
+      question = fullText.slice(0, sepIndex).trim()
+      jsonPart = fullText.slice(sepIndex + '<!--JSON-->'.length).trim()
+    } else {
+      question = fullText.trim()
+      jsonPart = ''
+      const lastBrace = fullText.lastIndexOf('{')
+      if (lastBrace !== -1) {
+        question = fullText.slice(0, lastBrace).trim()
+        jsonPart = fullText.slice(lastBrace).trim()
+      }
+    }
+
+    if (!question || question.length < 4) throw new Error('模型追问内容为空或过短')
+
+    // 防止模型把选项列表写在问题文本里（应放在 JSON 元数据中）
+    // 但模型有时仍然会把选项写在"选项："后面，此时保留剥离的文本用于兜底
+    let strippedOptionsText = ''
+    const optionDelimIdx = question.indexOf('选项：')
+    if (optionDelimIdx !== -1) {
+      strippedOptionsText = question.slice(optionDelimIdx + '选项：'.length).trim()
+      question = question.slice(0, optionDelimIdx).trim()
+    }
+
+    let jsonMeta: { options?: string[]; moduleScores?: Record<string, number> } = {}
+    if (jsonPart) {
+      // 从 jsonPart 中提取 JSON 对象，容忍模型在 JSON 后附带多余文本
+      const firstBrace = jsonPart.indexOf('{')
+      if (firstBrace !== -1) {
+        // 从第一个 { 开始找匹配的 }
+        let depth = 0
+        let endIdx = -1
+        for (let i = firstBrace; i < jsonPart.length; i++) {
+          if (jsonPart[i] === '{') depth++
+          if (jsonPart[i] === '}') depth--
+          if (depth === 0) { endIdx = i; break }
+        }
+        if (endIdx !== -1) {
+          const jsonBlock = jsonPart.slice(firstBrace, endIdx + 1)
+          try { jsonMeta = JSON.parse(jsonBlock) } catch (e) {
+            console.error('[clarification_round] JSON 解析失败:', e instanceof Error ? e.message : e, '\n原始 jsonBlock 前300字符:', jsonBlock.slice(0, 300), '\n完整 fullText 后500字符:', fullText.slice(-500))
+          }
+        } else {
+          console.error('[clarification_round] JSON 括号不匹配, jsonPart 前300字符:', jsonPart.slice(0, 300), '\n完整 fullText:', fullText)
+        }
+      } else {
+        console.error('[clarification_round] jsonPart 中未找到 JSON 对象, jsonPart 前300字符:', jsonPart.slice(0, 300), '\n完整 fullText:', fullText)
+      }
+    }
+
+    // 如果 JSON 中没有 options，尝试从问题文本中剥离的"选项："部分解析
+    const parseOptionsFromText = (text: string): string[] => {
+      if (!text) return []
+      // 按顿号、逗号或中文逗号拆分
+      const raw = text.split(/[、，,\n]/).map(s => s.trim()).filter(Boolean)
+      // 限制每项长度，过滤明显不是选项的片段
+      return raw.filter(s => s.length >= 2 && s.length <= 60)
+    }
+    const textOptions = parseOptionsFromText(strippedOptionsText)
+
+    const parsed: ClarificationRound = {
+      type: 'clarification',
+      round: input.clarificationRound,
+      question: question.slice(0, 200),
+      options: (jsonMeta.options && jsonMeta.options.length ? jsonMeta.options : textOptions.length ? textOptions : fallback.options).slice(0, 6),
+      moduleScores: (jsonMeta.moduleScores || input.previousModuleScores || defaultScores) as ClarificationRound['moduleScores']
+    }
+
     await useDb(event).insert(schema.aiModelCalls).values({
       schoolId: input.schoolId,
       ownerUserId: input.ownerUserId,
@@ -263,6 +396,8 @@ export async function streamClarificationRound(event: H3Event, input: {
     }).catch(() => undefined)
     return { data: parsed, fallback: false }
   } catch (error) {
+    console.error('[clarification_round] DeepSeek 调用失败:', error instanceof Error ? error.message : error)
+    for (const chunk of fallback.question.match(/[\s\S]{1,18}/g) || [fallback.question]) input.onDelta(chunk)
     await useDb(event).insert(schema.aiModelCalls).values({
       schoolId: input.schoolId,
       ownerUserId: input.ownerUserId,
@@ -279,7 +414,7 @@ export async function streamClarificationRound(event: H3Event, input: {
 }
 
 /**
- * 流式调用 DeepSeek 进行总结，返回解析后的 ClarificationSummary。
+ * 流式调用 DeepSeek 进行总结，实时推送 answer 内容，返回解析后的 ClarificationSummary。
  */
 export async function streamClarificationSummary(event: H3Event, input: {
   schoolId: string
@@ -288,18 +423,22 @@ export async function streamClarificationSummary(event: H3Event, input: {
   history: Array<{ role: 'user' | 'assistant', content: string }>
   citations: KnowledgeCitation[]
   lastModuleScores?: Record<string, number>
+  onDelta: (text: string) => void
 }): Promise<{ data: ClarificationSummary; fallback: boolean }> {
   const config = useRuntimeConfig(event)
   const fallback: ClarificationSummary = {
     type: 'summary',
-    answer: '根据您的描述，您目前面临多方面的工作困扰。建议优先选择一个最困扰的方向进入模块评估，再通过系统性的量表和分析工具深入了解具体情况。您可以先从"自我成长"模块开始，评估当前的压力水平和应对资源，再根据评估结果决定是否需要进入其他模块。',
-    rationale: '教师面临多方面困扰，建议优先自我成长模块评估。',
+    answer: '从您描述的情况来看，作为教师您所承担的责任和压力是真实的，这些感受值得被认真对待。您目前遇到的困扰涉及多个层面，我们可以先梳理清楚这些困扰之间的关系，找到最需要优先应对的那个点。平台上有一套系统的评估和分析工具，可以帮助您更清晰地看见问题全貌，从而找到具体的应对方向。',
+    rationale: '教师面临多方面困扰，需要先梳理优先级再深入评估。',
     primaryModule: 'self_growth',
     moduleProportions: { self_growth: 0.25, class_system: 0.2, home_school: 0.15, student_case: 0.25, learning_problem: 0.15 },
-    suggestedActions: [{ label: '进入自我成长模块评估', type: 'open_module', module: 'self_growth' }]
+    suggestedActions: [{ label: '梳理当前困扰的优先级', type: 'open_module', module: 'self_growth' }]
   }
 
-  if (!config.deepseekApiKey) return { data: fallback, fallback: true }
+  if (!config.deepseekApiKey) {
+    for (const chunk of fallback.answer.match(/[\s\S]{1,18}/g) || [fallback.answer]) input.onDelta(chunk)
+    return { data: fallback, fallback: true }
+  }
 
   const startedAt = Date.now()
   const messages = buildSummaryPrompt({
@@ -315,18 +454,107 @@ export async function streamClarificationSummary(event: H3Event, input: {
       body: JSON.stringify({
         model: config.deepseekGeneratorModel,
         messages,
-        response_format: { type: 'json_object' },
+        stream: true,
         thinking: { type: 'disabled' },
-        temperature: 0.35,
-        max_tokens: 800
+        temperature: 0.35
       }),
-      signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 10000)
+      signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 15000)
     })
-    if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
-    const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
-    const content = json.choices?.[0]?.message?.content
-    if (!content) throw new Error('Empty model output')
-    const parsed = clarificationSummarySchema.parse(JSON.parse(content))
+    if (!response.ok || !response.body) throw new Error(`DeepSeek ${response.status}`)
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let fullText = ''
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const payload = line.slice(6).trim()
+        if (payload === '[DONE]') continue
+        try {
+          const parsed = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> }
+          const token = parsed.choices?.[0]?.delta?.content
+          if (!token) continue
+          fullText += token
+          // 遇到分隔符之前的内容实时推送为 answer_delta
+          const sepIdx = fullText.indexOf('<!--JSON-->')
+          if (sepIdx === -1) {
+            input.onDelta(token)
+          } else {
+            // 分隔符已出现：只推送分隔符之前尚未发送的部分
+            const beforeSep = fullText.slice(0, sepIdx)
+            const alreadySent = fullText.length - token.length <= sepIdx
+              ? beforeSep.length - (fullText.length - token.length)
+              : 0
+            // 简化处理：计算本次 token 中属于分隔符之前的部分
+            const tokenStartInFull = fullText.length - token.length
+            if (tokenStartInFull < sepIdx) {
+              const visiblePart = token.slice(0, Math.max(0, sepIdx - tokenStartInFull))
+              if (visiblePart) input.onDelta(visiblePart)
+            }
+          }
+        } catch { /* 跳过非 JSON 行 */ }
+      }
+    }
+
+    // 解析完整文本，提取 answer 和 JSON
+    const sepIndex = fullText.indexOf('<!--JSON-->')
+    let answer: string
+    let jsonPart: string
+    if (sepIndex !== -1) {
+      answer = fullText.slice(0, sepIndex).trim()
+      jsonPart = fullText.slice(sepIndex + '<!--JSON-->'.length).trim()
+    } else {
+      // 模型没有输出分隔符，把全文当 answer，尝试从末尾提取 JSON
+      answer = fullText.trim()
+      jsonPart = ''
+      const lastBrace = fullText.lastIndexOf('{')
+      if (lastBrace !== -1) {
+        answer = fullText.slice(0, lastBrace).trim()
+        jsonPart = fullText.slice(lastBrace).trim()
+      }
+    }
+
+    if (!answer || answer.length < 20) throw new Error('模型总结回答为空或过短')
+
+    let jsonMeta: { rationale?: string; primaryModule?: string; moduleProportions?: Record<string, number>; suggestedActions?: Array<{ label: string; type: string; module?: string }> } = {}
+    if (jsonPart) {
+      const firstBrace = jsonPart.indexOf('{')
+      if (firstBrace !== -1) {
+        let depth = 0
+        let endIdx = -1
+        for (let i = firstBrace; i < jsonPart.length; i++) {
+          if (jsonPart[i] === '{') depth++
+          if (jsonPart[i] === '}') depth--
+          if (depth === 0) { endIdx = i; break }
+        }
+        if (endIdx !== -1) {
+          const jsonBlock = jsonPart.slice(firstBrace, endIdx + 1)
+          try { jsonMeta = JSON.parse(jsonBlock) } catch (e) {
+            console.error('[clarification_summary] JSON 解析失败:', e instanceof Error ? e.message : e, '\n原始 jsonBlock 前200字符:', jsonBlock.slice(0, 200))
+          }
+        } else {
+          console.error('[clarification_summary] JSON 括号不匹配, jsonPart 前200字符:', jsonPart.slice(0, 200))
+        }
+      } else {
+        console.error('[clarification_summary] jsonPart 中未找到 JSON 对象, jsonPart 前200字符:', jsonPart.slice(0, 200))
+      }
+    }
+
+    const parsed: ClarificationSummary = {
+      type: 'summary',
+      answer: answer.slice(0, 2000),
+      rationale: jsonMeta.rationale || answer.slice(0, 50),
+      primaryModule: (jsonMeta.primaryModule || 'self_growth') as ClarificationSummary['primaryModule'],
+      moduleProportions: jsonMeta.moduleProportions || { self_growth: 0.25, class_system: 0.2, home_school: 0.15, student_case: 0.25, learning_problem: 0.15 },
+      suggestedActions: (jsonMeta.suggestedActions || [{ label: '进入自我成长模块评估', type: 'open_module', module: 'self_growth' }]).slice(0, 4) as ClarificationSummary['suggestedActions']
+    }
+
     await useDb(event).insert(schema.aiModelCalls).values({
       schoolId: input.schoolId,
       ownerUserId: input.ownerUserId,
@@ -339,6 +567,9 @@ export async function streamClarificationSummary(event: H3Event, input: {
     }).catch(() => undefined)
     return { data: parsed, fallback: false }
   } catch (error) {
+    console.error('[clarification_summary] DeepSeek 调用失败:', error instanceof Error ? error.message : error)
+    // 失败时也用流式推送 fallback
+    for (const chunk of fallback.answer.match(/[\s\S]{1,18}/g) || [fallback.answer]) input.onDelta(chunk)
     await useDb(event).insert(schema.aiModelCalls).values({
       schoolId: input.schoolId,
       ownerUserId: input.ownerUserId,
@@ -387,8 +618,7 @@ export async function streamAssistantResponse(event: H3Event, input: {
         messages: buildAssistantMessages(input, 'text'),
         stream: true,
         thinking: { type: 'disabled' },
-        temperature: 0.35,
-        max_tokens: 900
+        temperature: 0.35
       }),
       signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 12000)
     })
@@ -489,8 +719,7 @@ export async function generateAssistantResponse(event: H3Event, input: {
           messages,
           response_format: { type: 'json_object' },
           thinking: { type: 'disabled' },
-          temperature: 0.25,
-          max_tokens: 1200
+          temperature: 0.25
         }),
         signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
       })
@@ -578,7 +807,7 @@ export async function semanticSafetySignals(event: H3Event, text: string, forceL
             { role: 'user', content: `识别文本是否明确或隐含涉及自杀、自伤、暴力、虐待或威胁。没有则 risks 为空。文本：${redacted}` }
           ],
           response_format: { type: 'json_object' },
-          thinking: { type: 'disabled' }, temperature: 0, max_tokens: 160
+          thinking: { type: 'disabled' }, temperature: 0
         }),
         signal: AbortSignal.timeout(1500)
       })
@@ -613,7 +842,7 @@ export async function expressRuleResult(event: H3Event, module: string, result: 
             { role: 'user', content: `${facts}\n返回格式：{"summary":"..."}` }
           ],
           response_format: { type: 'json_object' },
-          thinking: { type: 'disabled' }, temperature: 0.3, max_tokens: 300
+          thinking: { type: 'disabled' }, temperature: 0.3
         }),
         signal: AbortSignal.timeout(1500)
       })
@@ -675,8 +904,7 @@ export async function generateAssessmentReport(event: H3Event, input: {
         ],
         response_format: { type: 'json_object' },
         thinking: { type: 'disabled' },
-        temperature: 0.35,
-        max_tokens: 2200
+        temperature: 0.35
       }),
       signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
     })
@@ -732,8 +960,7 @@ export async function routeWithDeepSeek(event: H3Event, text: string): Promise<R
           messages: [{ role: 'system', content: '输出严格 json，不进行心理或医学诊断。' }, { role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
           thinking: { type: 'disabled' },
-          temperature: 0.1,
-          max_tokens: 500
+          temperature: 0.1
         }),
         signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
       })
@@ -813,8 +1040,7 @@ ${aiResponse.slice(0, 2000)}
         ],
         response_format: { type: 'json_object' },
         thinking: { type: 'disabled' },
-        temperature: 0,
-        max_tokens: 600
+        temperature: 0
       }),
       signal: AbortSignal.timeout(3000)
     })
