@@ -26,6 +26,10 @@ interface SourceItem {
   heading?: string | null
   knowledgeBase: string
   excerpt?: string
+  module?: ModuleId
+  libraryType?: string
+  resourceVersionId?: string
+  resourceTitle?: string
 }
 
 interface TimelineItem {
@@ -65,9 +69,12 @@ const suppressContextWatch = ref(false)
 const contextPreview = ref<any>(null)
 const previewLoading = ref(false)
 const withoutRecord = ref(false)
-const centerHint = ref<HTMLElement | null>(null)
-const showRightHint = ref(true)
 const deleteCandidate = ref<string>()
+const greeting = ref('')
+const typingDone = ref(false)
+const currentSnapPage = ref(0) // 0: 欢迎区, 1: 聊天面板, 2: 使用闭环
+const snapLocked = ref(false)
+let snapUnlockTimer: number | undefined
 const toast = useToast()
 const quickPrompts = [
   '最近工作压力很大，总觉得精力不够用',
@@ -82,6 +89,10 @@ const contextSelectItems = computed(() => [
   ...((contextOptions.value?.classes || []).map((item: any) => ({ label: `班级 · ${item.label}`, value: `class:${item.id}` }))),
   ...((contextOptions.value?.guardians || []).map((item: any) => ({ label: `家长 · ${item.label}`, value: `guardian:${item.id}` })))
 ])
+const mobileSessionItems = computed(() => (sessions.value || []).map((item: any) => ({
+  label: item.title,
+  value: item.id
+})))
 const allContextOptions = computed(() => [
   ...((contextOptions.value?.students || []).map((item: any) => ({ ...item, type: 'student' }))),
   ...((contextOptions.value?.classes || []).map((item: any) => ({ ...item, type: 'class' }))),
@@ -153,6 +164,11 @@ function newConversation() {
   routeConfirmError.value = ''
   selectedOptions.value = {}
   nextTick(() => scrollToLatest('auto'))
+}
+
+function handleMobileSessionSelect(value: string | undefined) {
+  if (!value || value === sessionId.value) return
+  void loadSession(value)
 }
 
 watch(selectedContextKey, () => {
@@ -290,6 +306,8 @@ async function ask() {
           }
           timeline.value[assistantIndex]!.text += data.text
           await scrollToLatest('auto')
+          // 让出控制权给浏览器渲染管线，使流式输出可见
+          await new Promise(r => requestAnimationFrame(r))
         }
         if (event === 'answer') {
           assistantMode.value = data.mode
@@ -389,7 +407,7 @@ async function confirmModule(module: ModuleId) {
   await navigateTo({ path: `/module/${module}`, query: selectedContext.value ? { contextType: selectedContext.value.type, contextId: selectedContext.value.id, sourceChatSessionId: sessionId.value } : undefined })
 }
 
-onMounted(() => {
+onMounted(async () => {
   const query = useRoute().query
   const type = typeof query.contextType === 'string' ? query.contextType : ''
   const id = typeof query.contextId === 'string' ? query.contextId : ''
@@ -404,23 +422,119 @@ onMounted(() => {
   else loadContextPreview()
   if (prefill?.prompt) input.value = prefill.prompt
 
-  // 当居中提示或下方内容进入视口时，隐藏右侧悬浮引导
-  if (centerHint.value) {
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry) showRightHint.value = !entry.isIntersecting },
-      { rootMargin: '-80px 0px 0px 0px' }
-    )
-    observer.observe(centerHint.value)
+  // 打字机动画
+  const fullGreeting = `${user.value?.name || '老师'}，今天遇到了什么？`
+  for (let i = 0; i <= fullGreeting.length; i++) {
+    await new Promise(r => setTimeout(r, 40))
+    greeting.value = fullGreeting.slice(0, i)
   }
+  typingDone.value = true
+})
+
+function getSnapSections() {
+  return [
+    document.getElementById('welcome-section'),
+    document.getElementById('chat-section'),
+    document.getElementById('dashboard-section')
+  ].filter((section): section is HTMLElement => Boolean(section))
+}
+
+function getStickyHeaderOffset() {
+  return (document.querySelector('header') as HTMLElement | null)?.offsetHeight || 0
+}
+
+function getSnapPoint(section: HTMLElement, index: number) {
+  if (index === 0) return 0
+  const top = section.getBoundingClientRect().top + window.scrollY
+  return Math.max(0, top - getStickyHeaderOffset() - 16)
+}
+
+function getNearestSnapPage(sections = getSnapSections()) {
+  let nearestIndex = 0
+  let nearestDistance = Number.POSITIVE_INFINITY
+  sections.forEach((section, index) => {
+    const distance = Math.abs(getSnapPoint(section, index) - window.scrollY)
+    if (distance < nearestDistance) {
+      nearestDistance = distance
+      nearestIndex = index
+    }
+  })
+  return nearestIndex
+}
+
+function scrollToSnapSection(section: HTMLElement, index: number) {
+  window.scrollTo({ top: getSnapPoint(section, index), behavior: 'smooth' })
+}
+
+function canScrollInside(target: EventTarget | null, dir: number) {
+  let el = target instanceof Element ? target : null
+  while (el && el !== document.body) {
+    if (el.matches('input, textarea, select, [contenteditable="true"], [role="listbox"]')) return true
+    const style = window.getComputedStyle(el)
+    const canScroll = /(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 2
+    if (canScroll) {
+      const atTop = el.scrollTop <= 2
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
+      if ((dir > 0 && !atBottom) || (dir < 0 && !atTop)) return true
+    }
+    el = el.parentElement
+  }
+  return false
+}
+
+function syncSnapPage() {
+  currentSnapPage.value = getNearestSnapPage()
+}
+
+// 全页 snap 滚动：欢迎区 → 聊天面板 → 使用闭环
+function handleWheel(event: WheelEvent) {
+  if (Math.abs(event.deltaY) < 8) return
+  const dir = event.deltaY > 0 ? 1 : -1
+  if (canScrollInside(event.target, dir)) return
+
+  if (snapLocked.value) {
+    event.preventDefault()
+    return
+  }
+
+  const sections = getSnapSections()
+  const activePage = getNearestSnapPage(sections)
+  const nextPage = activePage + dir
+  if (nextPage < 0 || nextPage >= sections.length) return
+
+  event.preventDefault()
+  currentSnapPage.value = nextPage
+  snapLocked.value = true
+  scrollToSnapSection(sections[nextPage]!, nextPage)
+
+  if (snapUnlockTimer) window.clearTimeout(snapUnlockTimer)
+  snapUnlockTimer = window.setTimeout(() => {
+    snapLocked.value = false
+    syncSnapPage()
+  }, 700)
+}
+
+onMounted(() => {
+  syncSnapPage()
+  window.addEventListener('wheel', handleWheel, { passive: false })
+  window.addEventListener('scroll', syncSnapPage, { passive: true })
+  window.addEventListener('resize', syncSnapPage, { passive: true })
+})
+
+onUnmounted(() => {
+  if (snapUnlockTimer) window.clearTimeout(snapUnlockTimer)
+  window.removeEventListener('wheel', handleWheel)
+  window.removeEventListener('scroll', syncSnapPage)
+  window.removeEventListener('resize', syncSnapPage)
 })
 </script>
 
 <template>
   <div class="mx-auto max-w-7xl px-5 py-8 sm:py-12">
-    <section class="grid gap-8 lg:grid-cols-[1.25fr_.75fr]">
+    <section id="welcome-section" class="grid gap-8 lg:grid-cols-[1.25fr_.75fr]">
       <div>
         <p class="text-sm font-semibold text-emerald-700">{{ new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }) }}</p>
-        <h1 class="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">{{ user?.name }}，今天遇到了什么？</h1>
+        <h1 class="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">{{ greeting }}<span v-if="!typingDone" class="animate-pulse text-emerald-500">|</span></h1>
         <p class="mt-4 max-w-2xl text-base leading-7 text-slate-600">把情况像对同事一样说出来。助手会结合已审核业务知识进行多轮分析，给出来源和可执行建议，再由您确认处理方向。</p>
       </div>
       <div class="panel flex items-center gap-4 p-5">
@@ -429,8 +543,8 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="mt-10 grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
-      <aside class="panel flex h-[18rem] flex-col overflow-hidden lg:h-[36rem] lg:min-h-[34rem]">
+    <section id="chat-section" class="mt-10 grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
+      <aside class="panel hidden h-[18rem] flex-col overflow-hidden lg:flex lg:h-[calc(100dvh-7rem)] lg:min-h-[34rem]">
         <div class="border-b border-slate-100 p-4">
           <UButton block icon="i-lucide-message-square-plus" size="lg" @click="newConversation">新对话</UButton>
         </div>
@@ -456,7 +570,20 @@ onMounted(() => {
         </div>
       </aside>
 
-      <div class="panel flex h-[calc(100dvh-7.5rem)] min-h-[36rem] min-w-0 flex-col overflow-hidden lg:h-[36rem] lg:min-h-[34rem]">
+      <div class="panel flex h-[calc(100dvh-10rem)] min-h-[26rem] min-w-0 flex-col overflow-hidden lg:h-[calc(100dvh-7rem)] lg:min-h-[34rem]">
+        <div class="border-b border-slate-100 bg-white/95 px-4 py-3 lg:hidden">
+          <div class="flex items-center gap-2">
+            <UButton icon="i-lucide-message-square-plus" size="sm" @click="newConversation">新对话</UButton>
+            <USelect
+              :model-value="sessionId || ''"
+              :items="mobileSessionItems"
+              :disabled="!mobileSessionItems.length || pending"
+              placeholder="最近对话"
+              class="min-w-0 flex-1"
+              @update:model-value="handleMobileSessionSelect"
+            />
+          </div>
+        </div>
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white/90 px-5 py-3.5 sm:px-6">
           <div class="flex min-w-0 items-center gap-3">
             <div class="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-4.5" /></div>
@@ -514,7 +641,7 @@ onMounted(() => {
                   <div class="space-y-2 border-t border-emerald-100 px-3 py-3">
                     <div v-for="(source, sourceIndex) in item.sources" :key="source.chunkId" class="rounded-lg bg-white/80 p-3">
                       <p class="font-medium text-slate-700"><span class="mr-1 text-emerald-600">{{ sourceIndex + 1 }}.</span>{{ source.documentTitle }}<span v-if="source.heading" class="font-normal text-slate-400"> · {{ source.heading }}</span></p>
-                      <p class="mt-1 text-[11px] text-emerald-700/70">{{ source.knowledgeBase }}</p><p v-if="source.excerpt" class="mt-1.5 line-clamp-3 leading-5 text-slate-500">{{ source.excerpt }}</p>
+                      <p class="mt-1 text-[11px] text-emerald-700/70">{{ source.resourceTitle || source.knowledgeBase }}<template v-if="source.module || source.libraryType"> · {{ source.module || '通用' }} / {{ source.libraryType || 'knowledge' }}</template></p><p v-if="source.excerpt" class="mt-1.5 line-clamp-3 leading-5 text-slate-500">{{ source.excerpt }}</p>
                     </div>
                   </div>
                 </details>
@@ -545,12 +672,7 @@ onMounted(() => {
       </div>
     </section>
 
-    <div ref="centerHint" class="mt-10 hidden flex-col items-center gap-2 text-emerald-600/70 lg:flex">
-      <UIcon name="i-lucide-chevrons-down" class="size-6 animate-bounce" />
-      <span class="text-sm font-semibold tracking-wide">持续使用闭环 &amp; 快捷入口</span>
-    </div>
-
-    <section v-if="today" class="mt-0">
+    <section id="dashboard-section" v-if="today" class="mt-12">
       <div class="flex items-end justify-between"><div><p class="text-sm font-semibold text-emerald-700">持续使用闭环</p><h2 class="mt-1 text-2xl font-semibold">今日待办</h2></div><UButton to="/notifications" variant="ghost" color="neutral" trailing-icon="i-lucide-bell">{{ today.unreadCount }} 条未读</UButton></div>
       <div class="mt-5 grid gap-4 lg:grid-cols-[.8fr_1.2fr]">
         <div class="panel p-5"><h3 class="font-semibold">首次使用清单</h3><div class="mt-4 space-y-3"><div v-for="item in today.onboarding" :key="item.key" class="flex items-center gap-3 text-sm"><span class="grid size-6 place-items-center rounded-full" :class="item.completed?'bg-emerald-100 text-emerald-700':'bg-slate-100 text-slate-400'"><UIcon :name="item.completed?'i-lucide-check':'i-lucide-circle'" class="size-3.5" /></span><span :class="item.completed?'text-slate-400 line-through':'text-slate-700'">{{ item.label }}</span></div></div></div>
@@ -574,10 +696,6 @@ onMounted(() => {
       </div>
     </section>
 
-    <div v-show="showRightHint" class="fixed right-6 top-1/2 -translate-y-1/2 hidden flex-col items-center gap-2 text-emerald-600 lg:flex z-30">
-      <UIcon name="i-lucide-chevrons-down" class="size-6 animate-bounce" />
-      <span class="text-sm font-semibold tracking-wide [writing-mode:vertical-rl]">更多内容在下方</span>
-    </div>
   </div>
 </template>
 

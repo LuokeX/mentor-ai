@@ -146,6 +146,51 @@ export const adminAccessEvents = pgTable('admin_access_events', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [index('access_events_school_created_idx').on(table.schoolId, table.createdAt)])
 
+export const delegatedManagementGrants = pgTable('delegated_management_grants', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  requesterId: uuid('requester_id').notNull().references(() => users.id),
+  reviewerId: uuid('reviewer_id').references(() => users.id),
+  scopes: jsonb('scopes').$type<string[]>().default([]).notNull(),
+  reason: text('reason').notNull(),
+  status: varchar('status', { length: 20 }).default('pending').notNull(),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  ...timestamps
+}, table => [
+  index('delegated_management_school_status_idx').on(table.schoolId, table.status),
+  index('delegated_management_requester_idx').on(table.requesterId, table.status)
+])
+
+export const departments = pgTable('departments', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'restrict' }),
+  parentId: uuid('parent_id'),
+  leaderUserId: uuid('leader_user_id').references(() => users.id, { onDelete: 'set null' }),
+  name: varchar('name', { length: 120 }).notNull(),
+  code: varchar('code', { length: 80 }),
+  type: varchar('type', { length: 30 }).default('other').notNull(),
+  description: text('description'),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
+  ...timestamps
+}, table => [
+  index('departments_school_status_idx').on(table.schoolId, table.status),
+  index('departments_parent_idx').on(table.schoolId, table.parentId),
+  uniqueIndex('departments_school_code_uidx').on(table.schoolId, table.code)
+])
+
+export const departmentMembers = pgTable('department_members', {
+  departmentId: uuid('department_id').notNull().references(() => departments.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'restrict' }),
+  memberRole: varchar('member_role', { length: 80 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('department_member_uidx').on(table.departmentId, table.userId),
+  index('department_members_user_idx').on(table.schoolId, table.userId)
+])
+
 export const recordAssignments = pgTable('record_assignments', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
@@ -165,6 +210,7 @@ export const recordAssignments = pgTable('record_assignments', {
 export const classes = pgTable('classes', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
+  departmentId: uuid('department_id').references(() => departments.id, { onDelete: 'set null' }),
   // 语义：当前负责教师。保留 owner_user_id 列名是为了兼容既有迁移和接口。
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   name: varchar('name', { length: 120 }).notNull(),
@@ -172,9 +218,11 @@ export const classes = pgTable('classes', {
   grade: integer('grade').notNull(),
   studentCount: integer('student_count').default(0).notNull(),
   establishedAt: timestamp('established_at', { withTimezone: true }),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('sensitive').notNull(),
   ...timestamps
 }, table => [
+  index('classes_department_idx').on(table.schoolId, table.departmentId),
   index('classes_owner_idx').on(table.ownerUserId),
   uniqueIndex('classes_school_external_code_uidx').on(table.schoolId, table.externalCode)
 ])
@@ -192,6 +240,7 @@ export const students = pgTable('students', {
   notesEnc: text('notes_enc'),
   externalRefEnc: text('external_ref_enc'),
   externalRefSearch: varchar('external_ref_search', { length: 64 }),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
 }, table => [
@@ -211,6 +260,7 @@ export const guardians = pgTable('guardians', {
   externalRefEnc: text('external_ref_enc'),
   externalRefSearch: varchar('external_ref_search', { length: 64 }),
   relation: varchar('relation', { length: 40 }),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
 }, table => [
@@ -337,6 +387,8 @@ export const planActions = pgTable('plan_actions', {
   status: varchar('status', { length: 30 }).default('pending').notNull(),
   dueAt: timestamp('due_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
+  executedAt: timestamp('executed_at', { withTimezone: true }),
+  executionNote: text('execution_note'),
   ...timestamps
 }, table => [
   uniqueIndex('plan_actions_plan_sequence_uidx').on(table.planId, table.sequence),
@@ -441,6 +493,80 @@ export const knowledgeChunks = pgTable('knowledge_chunks', {
   uniqueIndex('knowledge_chunks_document_index_uidx').on(table.documentId, table.chunkIndex),
   index('knowledge_chunks_base_idx').on(table.knowledgeBaseId),
   index('knowledge_chunks_document_idx').on(table.documentId)
+])
+
+export const moduleResourceLibraries = pgTable('module_resource_libraries', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'cascade' }),
+  module: varchar('module', { length: 40 }).notNull(),
+  libraryType: varchar('library_type', { length: 40 }).notNull(),
+  scope: varchar('scope', { length: 20 }).default('global').notNull(),
+  name: varchar('name', { length: 160 }).notNull(),
+  description: text('description'),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  ...timestamps
+}, table => [
+  index('module_resource_libraries_lookup_idx').on(table.module, table.libraryType, table.scope, table.schoolId),
+  index('module_resource_libraries_school_idx').on(table.schoolId, table.module)
+])
+
+export const moduleResourceVersions = pgTable('module_resource_versions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  libraryId: uuid('library_id').notNull().references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
+  version: varchar('version', { length: 40 }).notNull(),
+  status: varchar('status', { length: 20 }).default('draft').notNull(),
+  payload: jsonb('payload').$type<Record<string, unknown>>().default({}).notNull(),
+  notes: text('notes'),
+  sourceContentPackageId: uuid('source_content_package_id').references(() => contentPackages.id, { onDelete: 'set null' }),
+  sourceKnowledgeBaseId: uuid('source_knowledge_base_id').references(() => knowledgeBases.id, { onDelete: 'set null' }),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  publishedBy: uuid('published_by').references(() => users.id),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+  ...timestamps
+}, table => [
+  uniqueIndex('module_resource_versions_library_version_uidx').on(table.libraryId, table.version),
+  index('module_resource_versions_library_status_idx').on(table.libraryId, table.status)
+])
+
+export const moduleResourceDocuments = pgTable('module_resource_documents', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  libraryId: uuid('library_id').notNull().references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').notNull().references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
+  title: varchar('title', { length: 200 }).notNull(),
+  sourceType: varchar('source_type', { length: 30 }).notNull(),
+  originalFilename: varchar('original_filename', { length: 260 }),
+  mimeType: varchar('mime_type', { length: 120 }),
+  checksum: varchar('checksum', { length: 64 }).notNull(),
+  status: varchar('status', { length: 20 }).default('draft').notNull(),
+  content: text('content').notNull(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  ...timestamps
+}, table => [
+  uniqueIndex('module_resource_documents_version_checksum_uidx').on(table.versionId, table.checksum),
+  index('module_resource_documents_version_idx').on(table.versionId),
+  index('module_resource_documents_library_idx').on(table.libraryId)
+])
+
+export const moduleResourceChunks = pgTable('module_resource_chunks', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  libraryId: uuid('library_id').notNull().references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').notNull().references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
+  documentId: uuid('document_id').notNull().references(() => moduleResourceDocuments.id, { onDelete: 'cascade' }),
+  chunkIndex: integer('chunk_index').notNull(),
+  heading: varchar('heading', { length: 300 }),
+  content: text('content').notNull(),
+  tokenEstimate: integer('token_estimate').notNull(),
+  embedding: vector1024('embedding'),
+  embeddingModel: varchar('embedding_model', { length: 120 }),
+  embeddedAt: timestamp('embedded_at', { withTimezone: true }),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('module_resource_chunks_document_index_uidx').on(table.documentId, table.chunkIndex),
+  index('module_resource_chunks_version_idx').on(table.versionId),
+  index('module_resource_chunks_library_idx').on(table.libraryId),
+  index('module_resource_chunks_document_idx').on(table.documentId)
 ])
 
 export const aiModelCalls = pgTable('ai_model_calls', {

@@ -49,9 +49,12 @@ const isLocked = computed(() => Boolean(props.selectedOption))
             class="rounded-xl border border-dashed border-slate-300 px-4 py-2 text-sm font-medium text-slate-400 transition-all hover:border-slate-400 hover:bg-slate-50 hover:text-slate-600 disabled:cursor-not-allowed"
             @click="emit('done')"
           >
-            没有补充了，开始分析
+            不补充了，直接开始分析
           </button>
         </div>
+        <p v-if="!isLocked && !localSelected" class="mt-3 text-xs text-slate-400">
+          选项不完全匹配？你也可以在底部输入框用自己的话描述，越具体越好。
+        </p>
       </div>
     </div>
   </div>

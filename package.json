@@ -19,6 +19,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "resources:migrate": "tsx scripts/migrate-module-resources.ts",
     "knowledge:import": "tsx scripts/import-knowledge.ts",
     "knowledge:reindex": "tsx scripts/reindex-embeddings.ts"
   },

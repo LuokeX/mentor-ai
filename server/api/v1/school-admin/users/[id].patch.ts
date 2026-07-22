@@ -1,31 +1,25 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
-import { requireUser } from '../../../../utils/auth'
 import { useDb, schema } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
 import { issueInvitation } from '../../../../domain/invitations'
-
-const bodySchema = z.object({
-  status: z.enum(['active', 'disabled']).optional(),
-  resetMfa: z.boolean().optional(),
-  reissueInvitation: z.boolean().optional(),
-  temporaryPassword: z.string().max(200).optional()
-}).refine(value => value.status || value.resetMfa || value.reissueInvitation || value.temporaryPassword)
+import { schoolAdminUserUpdateSchema } from '../../../../../shared/contracts'
+import { requireSchoolManagement } from '../../../../domain/school-management'
 
 export default defineEventHandler(async (event) => {
-  const admin = await requireUser(event, ['school_admin'])
-  if (!admin.schoolId) throw createError({ statusCode: 400, message: '管理员未关联学校' })
+  const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'])
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
-  const body = bodySchema.parse(await readBody(event))
+  const body = schoolAdminUserUpdateSchema.parse(await readBody(event))
   const db = useDb(event)
   const [target] = await db.select().from(schema.users).where(and(
-    eq(schema.users.id, id), eq(schema.users.schoolId, admin.schoolId), inArray(schema.users.role, ['teacher', 'psychologist'])
+    eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), inArray(schema.users.role, ['teacher', 'psychologist'])
   )).limit(1)
   if (!target) throw createError({ statusCode: 404, message: '用户不存在' })
 
-  const needsActivation = Boolean(body.resetMfa || body.reissueInvitation || body.temporaryPassword)
+  const needsActivation = Boolean(body.resetMfa || body.reissueInvitation)
   await db.transaction(async (tx) => {
     await tx.update(schema.users).set({
+      name: body.name,
       status: needsActivation ? 'invited' : body.status,
       totpSecretEnc: body.resetMfa ? null : undefined,
       updatedAt: new Date()
@@ -37,15 +31,15 @@ export default defineEventHandler(async (event) => {
   let activation: { invitationId: string, activationToken: string, expiresAt: Date } | undefined
   if (needsActivation) {
     const { invitation, token } = await issueInvitation(event, {
-      schoolId: admin.schoolId, userId: target.id, name: target.name, email: target.email,
-      role: target.role as 'teacher' | 'psychologist', invitedBy: admin.id
+      schoolId, userId: target.id, name: body.name || target.name, email: target.email,
+      role: target.role as 'teacher' | 'psychologist', invitedBy: actor.id
     })
     activation = { invitationId: invitation.id, activationToken: token, expiresAt: invitation.expiresAt }
   }
   await writeAudit(event, {
-    schoolId: admin.schoolId, actorId: admin.id, action: body.resetMfa ? 'school_admin.user.mfa_reset' : 'school_admin.user.update',
+    schoolId, actorId: actor.id, action: body.resetMfa ? 'school_admin.user.mfa_reset' : 'school_admin.user.update',
     targetType: 'user', targetId: id,
-    metadata: { status: body.status, resetMfa: Boolean(body.resetMfa), invitationReissued: needsActivation }
+    metadata: { status: body.status, nameChanged: Boolean(body.name), resetMfa: Boolean(body.resetMfa), invitationReissued: needsActivation, delegatedGrantId }
   })
   return { ok: true, ...activation }
 })

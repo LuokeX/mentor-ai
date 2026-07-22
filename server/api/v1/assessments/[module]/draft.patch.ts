@@ -1,8 +1,7 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { assessmentDefinitions } from '../../../../../shared/assessments'
-import type { AssessmentDefinition } from '../../../../../shared/assessments'
 import { moduleIdSchema } from '../../../../../shared/contracts'
+import { resolveAssessmentDefinition } from '../../../../domain/module-resources'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
 
@@ -18,19 +17,7 @@ export default defineEventHandler(async (event) => {
   const body = draftSchema.parse(await readBody(event))
   const db = useDb(event)
 
-  // 动态加载题库定义（优先 content_packages，fallback 硬编码）
-  const [row] = await db
-    .select({ payload: schema.contentPackages.payload, code: schema.contentPackages.code, version: schema.contentPackages.version })
-    .from(schema.contentPackages)
-    .where(and(
-      eq(schema.contentPackages.code, `assessment-${module}`),
-      eq(schema.contentPackages.status, 'published')
-    ))
-    .orderBy(desc(schema.contentPackages.version))
-    .limit(1)
-  const definition: AssessmentDefinition = row
-    ? { ...(row.payload as unknown as AssessmentDefinition), code: (row.payload as any).code || row.code, version: (row.payload as any).version || row.version }
-    : assessmentDefinitions[module]
+  const definition = (await resolveAssessmentDefinition(event, module, user.schoolId)).payload
 
   const allowedIds = new Set(definition.questions.map(question => question.id))
   if (Object.keys(body.answers).some(id => !allowedIds.has(id))) {

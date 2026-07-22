@@ -1,31 +1,22 @@
 import argon2 from 'argon2'
 import { randomBytes } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { z } from 'zod'
-import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { writeAudit } from '../../../utils/audit'
 import { issueInvitation } from '../../../domain/invitations'
-
-const inputSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-  email: z.string().email().transform(value => value.toLowerCase()),
-  role: z.enum(['teacher', 'psychologist']),
-  // 兼容旧客户端字段；服务端不再保存或分发临时密码。
-  temporaryPassword: z.string().max(200).optional()
-})
+import { schoolAdminUserInviteSchema } from '../../../../shared/contracts'
+import { requireSchoolManagement } from '../../../domain/school-management'
 
 export default defineEventHandler(async (event) => {
-  const admin = await requireUser(event, ['school_admin'])
-  if (!admin.schoolId) throw createError({ statusCode: 400, message: '管理员未关联学校' })
-  const body = inputSchema.parse(await readBody(event))
+  const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'])
+  const body = schoolAdminUserInviteSchema.parse(await readBody(event))
   const db = useDb(event)
   const [existing] = await db.select().from(schema.users).where(eq(schema.users.email, body.email)).limit(1)
-  if (existing && (existing.schoolId !== admin.schoolId || existing.status === 'active')) {
+  if (existing && (existing.schoolId !== schoolId || existing.status === 'active')) {
     throw createError({ statusCode: 409, message: '该邮箱已绑定账号' })
   }
   const user = existing || (await db.insert(schema.users).values({
-    schoolId: admin.schoolId,
+    schoolId,
     name: body.name,
     email: body.email,
     role: body.role,
@@ -39,12 +30,12 @@ export default defineEventHandler(async (event) => {
     await db.delete(schema.sessions).where(eq(schema.sessions.userId, user.id))
   }
   const { invitation, token } = await issueInvitation(event, {
-    schoolId: admin.schoolId, userId: user.id, name: body.name, email: body.email,
-    role: body.role, invitedBy: admin.id
+    schoolId, userId: user.id, name: body.name, email: body.email,
+    role: body.role, invitedBy: actor.id
   })
   await writeAudit(event, {
-    schoolId: admin.schoolId, actorId: admin.id, action: 'school_admin.user.invite',
-    targetType: 'user', targetId: user.id, metadata: { role: body.role, invitationId: invitation.id, expiresAt: invitation.expiresAt.toISOString() }
+    schoolId, actorId: actor.id, action: 'school_admin.user.invite',
+    targetType: 'user', targetId: user.id, metadata: { role: body.role, invitationId: invitation.id, expiresAt: invitation.expiresAt.toISOString(), delegatedGrantId }
   })
   return { ok: true, id: user.id, invitationId: invitation.id, activationToken: token, expiresAt: invitation.expiresAt }
 })

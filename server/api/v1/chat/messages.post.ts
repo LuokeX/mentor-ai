@@ -3,7 +3,7 @@ import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { decryptSensitive, encryptSensitive } from '../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../domain/safety'
-import { semanticSafetySignals, streamAssistantResponse, extractPlanUpdates, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
+import { localRoute, semanticSafetySignals, streamAssistantResponse, extractPlanUpdates, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
 import { buildKnowledgeRetrievalQuery, retrieveKnowledge } from '../../../domain/knowledge'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
 import { governBusinessContext, resolveAiGovernance } from '../../../domain/ai-governance'
@@ -13,7 +13,7 @@ import { sendStream } from 'h3'
 import { and, desc, eq } from 'drizzle-orm'
 
 const CLARIFICATION_DONE_SIGNAL = '[DONE]'
-const MAX_CLARIFICATION_ROUNDS = 4
+const MAX_CLARIFICATION_ROUNDS = 3
 
 interface ClarificationState {
   phase: 'clarifying' | 'summarizing' | 'done'
@@ -111,11 +111,24 @@ export default defineEventHandler(async (event) => {
   const emit = (controller: ReadableStreamDefaultController, name: string, data: unknown) => {
     controller.enqueue(encoder.encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`))
   }
+
   const ownedSessionId = sessionId
   const clarificationState = getClarificationState(sessionMetadata)
 
   const stream = new ReadableStream({
     async start(controller) {
+      // 流式逐字输出（用于追问/总结等非 DeepSeek streaming 分支）
+      // 将文本按 2 个字符切块，逐块发送 answer_delta，块间留 15ms 间隔让前端流式渲染
+      const emitStreamedAnswer = async (text: string, answerPayload: Record<string, unknown>, mode = 'deepseek') => {
+        emit(controller, 'answer_start', { mode })
+        const chars = [...text]
+        for (let i = 0; i < chars.length; i += 2) {
+          emit(controller, 'answer_delta', { text: chars.slice(i, i + 2).join('') })
+          await new Promise(r => setTimeout(r, 15))
+        }
+        emit(controller, 'answer', answerPayload)
+      }
+
       try {
         emit(controller, 'ack', {
           sessionId: ownedSessionId,
@@ -140,7 +153,12 @@ export default defineEventHandler(async (event) => {
         }
 
         const knowledgeQuery = buildKnowledgeRetrievalQuery(body.message, history)
-        const citations = await retrieveKnowledge(event, user.schoolId!, knowledgeQuery)
+        const expectedRoute = localRoute(body.message)
+        const citations = await retrieveKnowledge(event, user.schoolId!, knowledgeQuery, 8, {
+          module: expectedRoute.primaryModule,
+          secondaryModules: expectedRoute.secondaryModules.map(item => item.module),
+          libraryTypes: ['professional_knowledge', 'sop', 'tool', 'script', 'case', 'prompt']
+        })
         const isDoneSignal = body.message.trim() === CLARIFICATION_DONE_SIGNAL
 
         // ---- 追问流程 ----
@@ -148,13 +166,15 @@ export default defineEventHandler(async (event) => {
           if (isDoneSignal) {
             // 用户表示没有补充了 → 进入总结阶段
             const combinedHistory = [...entityMemory, ...history]
+            emit(controller, 'answer_start', { mode: 'deepseek' })
             const summary = await streamClarificationSummary(event, {
               schoolId: user.schoolId!,
               ownerUserId: user.id,
               sessionId: ownedSessionId,
               history: combinedHistory,
               citations,
-              lastModuleScores: clarificationState.moduleScores
+              lastModuleScores: clarificationState.moduleScores,
+              onDelta: text => emit(controller, 'answer_delta', { text })
             })
             await db.update(schema.chatSessions).set({
               metadata: { clarificationState: { phase: 'done', round: clarificationState.round, moduleScores: summary.data.moduleProportions } },
@@ -183,13 +203,15 @@ export default defineEventHandler(async (event) => {
           // 达到上限 → 自动进入总结阶段
           if (nextRound > MAX_CLARIFICATION_ROUNDS) {
             const combinedHistory = [...entityMemory, ...history]
+            emit(controller, 'answer_start', { mode: 'deepseek' })
             const summary = await streamClarificationSummary(event, {
               schoolId: user.schoolId!,
               ownerUserId: user.id,
               sessionId: ownedSessionId,
               history: combinedHistory,
               citations,
-              lastModuleScores: clarificationState.moduleScores
+              lastModuleScores: clarificationState.moduleScores,
+              onDelta: text => emit(controller, 'answer_delta', { text })
             })
             await db.update(schema.chatSessions).set({
               metadata: { clarificationState: { phase: 'done', round: clarificationState.round, moduleScores: summary.data.moduleProportions } },
@@ -211,6 +233,7 @@ export default defineEventHandler(async (event) => {
           }
 
           const combinedHistory = [...entityMemory, ...history]
+          emit(controller, 'answer_start', { mode: 'deepseek' })
           const result = await streamClarificationRound(event, {
             schoolId: user.schoolId!,
             ownerUserId: user.id,
@@ -219,7 +242,8 @@ export default defineEventHandler(async (event) => {
             history: combinedHistory,
             citations,
             clarificationRound: nextRound,
-            previousModuleScores: clarificationState.moduleScores
+            previousModuleScores: clarificationState.moduleScores,
+            onDelta: text => emit(controller, 'answer_delta', { text })
           })
 
           // 更新会话追问状态
@@ -287,7 +311,9 @@ export default defineEventHandler(async (event) => {
           citationIds: assistant.citationIds, suggestedActions: assistant.suggestedActions,
           sources: selectedSources.map(item => ({
             chunkId: item.chunkId, documentTitle: item.documentTitle,
-            heading: item.heading, knowledgeBase: item.knowledgeBase
+            heading: item.heading, knowledgeBase: item.knowledgeBase,
+            module: item.module, libraryType: item.libraryType,
+            resourceVersionId: item.resourceVersionId, resourceTitle: item.resourceTitle
           })),
           route: { primaryModule: route.primaryModule, secondaryModules: route.secondaryModules, confidence: route.confidence, rationale: route.rationale, decisionId: decision.id }
         }

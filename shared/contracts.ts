@@ -2,8 +2,15 @@ import { z } from 'zod'
 
 export const roleSchema = z.enum(['teacher', 'psychologist', 'school_admin', 'platform_admin'])
 export const moduleIdSchema = z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem'])
+export const libraryTypeSchema = z.enum(['assessment', 'rules', 'tool', 'professional_knowledge', 'sop', 'script', 'case', 'prompt'])
+export const moduleResourceScopeSchema = z.enum(['global', 'school'])
+export const resourceStatusSchema = z.enum(['draft', 'published', 'retired'])
+export const managedRecordStatusSchema = z.enum(['active', 'archived', 'transferred', 'graduated'])
+export const departmentTypeSchema = z.enum(['administration', 'grade_group', 'subject_group', 'student_support', 'other'])
+export const delegatedManagementScopeSchema = z.enum(['users', 'teachers', 'departments', 'classes', 'students', 'guardians'])
 export const targetTypeSchema = z.enum([
-  'teacher_profile', 'assessment', 'conversation', 'student_case', 'guardian_communication', 'plan'
+  'teacher_profile', 'assessment', 'conversation', 'student_case', 'guardian_communication', 'plan',
+  'user', 'department', 'class', 'student', 'guardian', 'school', 'delegated_management_grant'
 ])
 export const reasonCategorySchema = z.enum([
   'risk_review', 'complaint_handling', 'data_correction_verification', 'school_duty', 'other'
@@ -67,6 +74,145 @@ export const knowledgeDocumentImportSchema = z.object({
 
 export const knowledgeBaseActionSchema = z.object({ action: z.enum(['publish', 'archive', 'restore']) })
 
+export const moduleResourceLibraryCreateSchema = z.object({
+  module: moduleIdSchema,
+  libraryType: libraryTypeSchema,
+  name: z.string().trim().min(2).max(160),
+  description: z.string().trim().max(1000).optional(),
+  scope: moduleResourceScopeSchema,
+  schoolId: z.string().uuid().optional()
+}).superRefine((value, context) => {
+  if (value.scope === 'school' && !value.schoolId) {
+    context.addIssue({ code: 'custom', path: ['schoolId'], message: '校本资源库必须选择学校' })
+  }
+  if (value.scope === 'global' && value.schoolId) {
+    context.addIssue({ code: 'custom', path: ['schoolId'], message: '平台资源库不能绑定学校' })
+  }
+})
+
+export const moduleResourceVersionCreateSchema = z.object({
+  libraryId: z.string().uuid(),
+  version: z.string().trim().min(1).max(40),
+  payload: z.record(z.string(), z.unknown()).default({}),
+  notes: z.string().trim().max(1000).optional()
+})
+
+export const moduleResourceVersionActionSchema = z.object({ action: z.enum(['publish', 'retire', 'rollback']) })
+
+export const moduleResourceDocumentImportSchema = knowledgeDocumentImportSchema.extend({
+  versionId: z.string().uuid()
+})
+
+export const moduleToolPayloadSchema = z.object({
+  title: z.string().trim().min(2).max(120),
+  scenario: z.string().trim().min(2).max(500),
+  steps: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
+  doNot: z.array(z.string().trim().min(1).max(500)).default([]),
+  relatedModule: moduleIdSchema,
+  sourceRefs: z.array(z.string().trim().min(1).max(120)).default([]),
+  version: z.string().trim().min(1).max(40)
+})
+
+export const paginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  q: z.string().trim().max(120).optional(),
+  status: z.union([managedRecordStatusSchema, z.literal('all')]).default('all'),
+  sort: z.string().trim().max(40).default('updatedAt'),
+  order: z.enum(['asc', 'desc']).default('desc')
+})
+
+export const schoolAdminUserInviteSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  email: z.string().trim().email().transform(value => value.toLowerCase()),
+  role: z.enum(['teacher', 'psychologist'])
+})
+
+export const schoolAdminUserUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  status: z.enum(['active', 'disabled']).optional(),
+  resetMfa: z.boolean().optional(),
+  reissueInvitation: z.boolean().optional()
+}).refine(value => value.name || value.status || value.resetMfa || value.reissueInvitation)
+
+export const schoolAdminDepartmentCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  code: z.string().trim().max(80).optional(),
+  type: departmentTypeSchema.default('other'),
+  parentId: z.string().uuid().nullable().optional(),
+  leaderUserId: z.string().uuid().nullable().optional(),
+  description: z.string().trim().max(1000).nullable().optional()
+})
+
+export const schoolAdminDepartmentUpdateSchema = schoolAdminDepartmentCreateSchema.partial().extend({
+  status: z.enum(['active', 'archived']).optional()
+}).refine(value => Object.keys(value).length > 0)
+
+export const schoolAdminDepartmentMemberSchema = z.object({
+  userId: z.string().uuid(),
+  memberRole: z.string().trim().max(80).nullable().optional()
+})
+
+export const schoolAdminClassCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  grade: z.coerce.number().int().min(1).max(12),
+  ownerUserId: z.string().uuid(),
+  departmentId: z.string().uuid().nullable().optional(),
+  externalCode: z.string().trim().max(80).optional(),
+  studentCount: z.coerce.number().int().min(0).max(1000).default(0),
+  establishedAt: z.string().datetime().optional()
+})
+
+export const schoolAdminClassUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  grade: z.coerce.number().int().min(1).max(12).optional(),
+  ownerUserId: z.string().uuid().optional(),
+  departmentId: z.string().uuid().nullable().optional(),
+  externalCode: z.string().trim().max(80).nullable().optional(),
+  studentCount: z.coerce.number().int().min(0).max(1000).optional(),
+  establishedAt: z.string().datetime().nullable().optional(),
+  status: managedRecordStatusSchema.optional(),
+  reason: z.string().trim().max(500).optional()
+}).refine(value => Object.keys(value).length > 0)
+
+export const schoolAdminStudentCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  ownerUserId: z.string().uuid().optional(),
+  classId: z.string().uuid().nullable().optional(),
+  gender: z.string().trim().max(20).nullable().optional(),
+  profile: z.string().trim().max(4000).nullable().optional(),
+  notes: z.string().trim().max(4000).nullable().optional(),
+  externalRef: z.string().trim().max(120).nullable().optional()
+})
+
+export const schoolAdminStudentUpdateSchema = schoolAdminStudentCreateSchema.partial().extend({
+  status: managedRecordStatusSchema.optional(),
+  reason: z.string().trim().max(500).optional()
+}).refine(value => Object.keys(value).length > 0)
+
+export const schoolAdminGuardianCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).nullable().optional(),
+  relation: z.string().trim().max(40).nullable().optional(),
+  externalRef: z.string().trim().max(120).nullable().optional(),
+  ownerUserId: z.string().uuid().optional()
+})
+
+export const schoolAdminStudentGuardianSchema = z.object({
+  guardianId: z.string().uuid().optional(),
+  guardian: schoolAdminGuardianCreateSchema.optional()
+}).refine(value => value.guardianId || value.guardian)
+
+export const delegatedManagementRequestSchema = z.object({
+  schoolId: z.string().uuid(),
+  scopes: z.array(delegatedManagementScopeSchema).min(1).max(6),
+  reason: z.string().trim().min(10).max(500)
+})
+
+export const delegatedManagementReviewSchema = z.object({
+  decision: z.enum(['approved', 'rejected', 'revoked'])
+})
+
 export const routeDecisionSchema = z.object({
   primaryModule: moduleIdSchema,
   secondaryModules: z.array(z.object({ module: moduleIdSchema, confidence: z.number().min(0).max(1) })).max(3),
@@ -77,7 +223,14 @@ export const routeDecisionSchema = z.object({
 })
 
 export type ModuleId = z.infer<typeof moduleIdSchema>
+export type LibraryType = z.infer<typeof libraryTypeSchema>
+export type ModuleResourceScope = z.infer<typeof moduleResourceScopeSchema>
+export type ResourceStatus = z.infer<typeof resourceStatusSchema>
+export type ManagedRecordStatus = z.infer<typeof managedRecordStatusSchema>
+export type DepartmentType = z.infer<typeof departmentTypeSchema>
+export type DelegatedManagementScope = z.infer<typeof delegatedManagementScopeSchema>
 export type RouteDecision = z.infer<typeof routeDecisionSchema>
+export type ModuleToolPayload = z.infer<typeof moduleToolPayloadSchema>
 
 // ---- AI 追问与分类机制 ----
 export const clarificationRoundSchema = z.object({

@@ -2,6 +2,7 @@
 import { moduleIdSchema } from '#shared/contracts'
 import { moduleMeta, type AssessmentDefinition } from '#shared/assessments'
 import type { AssessmentReport } from '#shared/reports'
+import type { LibraryType } from '#shared/contracts'
 
 interface ContextOption {
   id: string
@@ -22,10 +23,42 @@ interface PlanDetail {
   }>
 }
 
+interface ModuleResourceOverview {
+  assessment: {
+    title: string
+    code: string
+    version: string
+    questionCount: number
+    sourceVersions: string[]
+  }
+  tools: {
+    tools: Array<{
+      title?: string
+      scenario?: string
+      steps?: string[]
+      doNot?: string[]
+      sourceRefs?: string[]
+      version?: string
+    }>
+    sourceVersions: string[]
+  }
+  libraries: Array<{
+    id: string
+    libraryType: LibraryType
+    name: string
+    description?: string | null
+    scope: 'global' | 'school'
+    versionId: string
+    version: string
+    publishedAt?: string | null
+  }>
+}
+
 const route = useRoute()
 const moduleId = moduleIdSchema.parse(route.params.id)
 const sourceChatSessionId = computed(() => typeof route.query.sourceChatSessionId === 'string' ? route.query.sourceChatSessionId : undefined)
 const { data: definition } = await useFetch<AssessmentDefinition>(`/api/v1/assessments/${moduleId}`)
+const { data: resourceOverview } = await useFetch<ModuleResourceOverview>(`/api/v1/module-resources/${moduleId}`)
 const { data: contextOptions } = await useFetch<any>('/api/v1/chat/context-options')
 const toast = useToast()
 
@@ -79,6 +112,23 @@ const hasDraft = computed(() => Boolean(attemptId.value || answeredCount.value))
 const progress = computed(() => definition.value ? Math.round(answeredCount.value / definition.value.questions.length * 100) : 0)
 const report = computed<AssessmentReport | null>(() => output.value?.report || output.value?.result?.report || null)
 const firstAction = computed(() => planDetail.value?.actions.find(item => item.status !== 'completed') || planDetail.value?.actions[0] || null)
+const visibleTools = computed(() => resourceOverview.value?.tools.tools.slice(0, 3) || [])
+const resourceLibraries = computed(() => resourceOverview.value?.libraries || [])
+
+const libraryTypeLabels: Record<LibraryType, string> = {
+  assessment: '评估库',
+  rules: '规则库',
+  tool: '工具库',
+  professional_knowledge: '专业知识库',
+  sop: 'SOP',
+  script: '话术库',
+  case: '案例库',
+  prompt: '提示词'
+}
+
+function libraryTypeLabel(type: LibraryType) {
+  return libraryTypeLabels[type] || type
+}
 
 function formatDate(value?: string | null) {
   if (!value) return '待安排'
@@ -243,6 +293,29 @@ async function askAssistantAboutReport() {
           <div class="mt-5 rounded-2xl bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
             完成后会生成确定性评估报告、3 天行动方案和 7 天复盘节点；到期动作会进入“今日待办”。
           </div>
+        </section>
+
+        <section class="panel p-6 sm:p-7">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-semibold">模块资源中心</h2>
+              <p class="mt-1 text-xs leading-5 text-slate-500">当前评估、工具和知识来源都会优先使用校本发布版本；没有校本版本时自动回到平台基线。</p>
+            </div>
+            <UBadge v-if="resourceOverview?.assessment" color="primary" variant="soft">评估 {{ resourceOverview.assessment.version }}</UBadge>
+          </div>
+          <div v-if="resourceLibraries.length" class="mt-4 flex flex-wrap gap-2">
+            <UBadge v-for="library in resourceLibraries" :key="library.versionId" color="neutral" variant="soft">
+              {{ libraryTypeLabel(library.libraryType) }} · {{ library.scope === 'school' ? '校本' : '平台' }} v{{ library.version }}
+            </UBadge>
+          </div>
+          <div v-if="visibleTools.length" class="mt-5 grid gap-3 md:grid-cols-3">
+            <article v-for="tool in visibleTools" :key="tool.title || tool.scenario" class="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <p class="text-sm font-semibold">{{ tool.title || '工具卡' }}</p>
+              <p class="mt-2 line-clamp-3 text-xs leading-5 text-slate-500">{{ tool.scenario || tool.steps?.[0] || '已发布工具可在本模块场景中调用。' }}</p>
+            </article>
+          </div>
+          <UAlert v-else-if="resourceLibraries.length" class="mt-4" color="info" variant="soft" title="资源已发布" description="本模块已有评估或知识来源；工具卡发布后会在这里直接展示。" />
+          <UAlert v-else class="mt-4" color="warning" variant="soft" title="暂未发布模块资源" description="系统会暂时使用内置评估基线；工具、SOP、制度类建议不会让 AI 自由编造。" />
         </section>
 
         <section v-if="allowedContextTypes.length" class="panel p-6 sm:p-7">

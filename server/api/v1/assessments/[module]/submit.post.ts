@@ -1,13 +1,11 @@
 import { z } from 'zod'
 import { and, desc, eq, ne } from 'drizzle-orm'
-import { assessmentDefinitions } from '../../../../../shared/assessments'
-import type { AssessmentDefinition } from '../../../../../shared/assessments'
 import { moduleIdSchema } from '../../../../../shared/contracts'
-import type { RuleConfig } from '../../../../../shared/contracts'
 import { requireUser } from '../../../../utils/auth'
 import { useDb, schema } from '../../../../utils/db'
 import { evaluateAssessment } from '../../../../domain/rules'
 import { executeRules } from '../../../../domain/rules-executor'
+import { resolveAssessmentDefinition, resolveRuleConfig } from '../../../../domain/module-resources'
 import { encryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
 import { createPlanActions, defaultReviewAt } from '../../../../domain/plan-actions'
@@ -24,20 +22,6 @@ const bodySchema = z.object({
   sourceChatSessionId: z.string().uuid().optional()
 })
 
-// 从 content_packages 加载已发布的定义 / 规则
-async function loadPublished<T>(db: ReturnType<typeof useDb>, code: string): Promise<{ payload: T; code: string; version: string } | null> {
-  const [row] = await db
-    .select({ payload: schema.contentPackages.payload, code: schema.contentPackages.code, version: schema.contentPackages.version })
-    .from(schema.contentPackages)
-    .where(and(
-      eq(schema.contentPackages.code, code),
-      eq(schema.contentPackages.status, 'published')
-    ))
-    .orderBy(desc(schema.contentPackages.version))
-    .limit(1)
-  return row ? { payload: row.payload as unknown as T, code: row.code, version: row.version } : null
-}
-
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
@@ -46,10 +30,8 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
 
   // 动态加载题库定义（优先 content_packages，fallback 硬编码）
-  const publishedDef = await loadPublished<AssessmentDefinition>(db, `assessment-${module}`)
-  const definition: AssessmentDefinition = publishedDef
-    ? { ...publishedDef.payload, code: (publishedDef.payload as any).code || publishedDef.code, version: (publishedDef.payload as any).version || publishedDef.version }
-    : assessmentDefinitions[module]
+  const resolvedDefinition = await resolveAssessmentDefinition(event, module, user.schoolId)
+  const definition = resolvedDefinition.payload
 
   if (definition.questions.some(question => !body.answers[question.id])) {
     throw createError({ statusCode: 422, message: '请完成全部题目' })
@@ -110,7 +92,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // 动态加载规则配置（优先 content_packages，fallback 硬编码）
-  const publishedRules = await loadPublished<RuleConfig>(db, `rules-${module}`)
+  const publishedRules = await resolveRuleConfig(event, module, user.schoolId)
   const ruleConfig = publishedRules?.payload ?? null
   const result = ruleConfig
     ? executeRules(ruleConfig, body.answers, definition, { previousConsecutiveLowMeaning })
@@ -161,7 +143,7 @@ export default defineEventHandler(async (event) => {
       summaryEnc: encryptSensitive(narrative || result.reasons.join('；'), useRuntimeConfig(event).encryptionKey),
       actions: result.actions, tools: result.tools,
       report: report as unknown as Record<string, unknown>,
-      sourceVersions: [`${definition.code}@${definition.version}`, ...result.matchedRuleIds],
+      sourceVersions: [...resolvedDefinition.sourceVersions, ...(publishedRules?.sourceVersions || [`fallback-rules:${module}`]), ...result.matchedRuleIds],
       nextReviewAt: defaultReviewAt()
     }).returning({ id: schema.plans.id, createdAt: schema.plans.createdAt })
     planId = plan?.id || null

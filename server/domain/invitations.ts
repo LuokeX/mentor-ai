@@ -17,7 +17,7 @@ export async function issueInvitation(event: H3Event, input: {
   userId: string
   name: string
   email: string
-  role: 'teacher' | 'psychologist'
+  role: 'teacher' | 'psychologist' | 'school_admin'
   invitedBy: string
 }) {
   const token = createActivationToken()

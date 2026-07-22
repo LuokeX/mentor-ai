@@ -57,5 +57,10 @@ export const planReviewCreateSchema = z.object({
   completedActionIndices: z.array(z.number().int().min(0)).max(20).optional()
 })
 
+export const planActionExecutionSchema = z.object({
+  executedAt: z.string().datetime().optional(),
+  executionNote: z.string().trim().min(1).max(500).optional()
+})
+
 export type AssessmentReport = z.infer<typeof assessmentReportSchema>
 export type PlanReviewCreate = z.infer<typeof planReviewCreateSchema>
