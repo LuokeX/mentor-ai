@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { moduleMeta } from '#shared/assessments'
 
-type EventKind = 'notification' | 'action' | 'review' | 'draft' | 'assignment'
+type EventKind = 'notification' | 'action' | 'review' | 'draft' | 'assignment' | 'student_event'
 type EventFilter = 'all' | EventKind
 type EventPriority = 'P0' | 'P1' | 'P2' | 'P3'
 type EventStage = 'new' | 'todo' | 'doing' | 'done' | 'info'
@@ -34,6 +34,11 @@ const {
   refresh: refreshWorkbench,
   status: workbenchStatus
 } = await useFetch<any>('/api/v1/workbench/today', { immediate: user.value?.role === 'teacher' })
+const {
+  data: studentEventsData,
+  refresh: refreshStudentEvents,
+  status: studentEventsStatus
+} = await useFetch<any>('/api/v1/information/student-events', { immediate: user.value?.role === 'teacher' })
 
 const filterItems: Array<{ label: string, value: EventFilter, icon: string }> = [
   { label: '全部', value: 'all', icon: 'i-lucide-inbox' },
@@ -41,7 +46,8 @@ const filterItems: Array<{ label: string, value: EventFilter, icon: string }> = 
   { label: '待执行', value: 'action', icon: 'i-lucide-list-checks' },
   { label: '待复盘', value: 'review', icon: 'i-lucide-refresh-ccw' },
   { label: '草稿', value: 'draft', icon: 'i-lucide-file-clock' },
-  { label: '移交', value: 'assignment', icon: 'i-lucide-git-branch' }
+  { label: '移交', value: 'assignment', icon: 'i-lucide-git-branch' },
+  { label: '事件记录', value: 'student_event', icon: 'i-lucide-clipboard-list' }
 ]
 
 const kindMeta: Record<EventKind, { label: string, icon: string, color: any }> = {
@@ -49,7 +55,8 @@ const kindMeta: Record<EventKind, { label: string, icon: string, color: any }> =
   action: { label: '待执行', icon: 'i-lucide-list-checks', color: 'warning' },
   review: { label: '待复盘', icon: 'i-lucide-refresh-ccw', color: 'info' },
   draft: { label: '草稿', icon: 'i-lucide-file-clock', color: 'neutral' },
-  assignment: { label: '移交', icon: 'i-lucide-git-branch', color: 'success' }
+  assignment: { label: '移交', icon: 'i-lucide-git-branch', color: 'success' },
+  student_event: { label: '事件记录', icon: 'i-lucide-clipboard-list', color: 'warning' }
 }
 
 const priorityMeta: Record<EventPriority, { label: string, color: any, rank: number, description: string }> = {
@@ -68,7 +75,7 @@ const stageMeta: Record<EventStage, { label: string, color: any }> = {
 }
 
 const isTeacher = computed(() => user.value?.role === 'teacher')
-const loading = computed(() => notificationStatus.value === 'pending' || (isTeacher.value && workbenchStatus.value === 'pending'))
+const loading = computed(() => notificationStatus.value === 'pending' || (isTeacher.value && (workbenchStatus.value === 'pending' || studentEventsStatus.value === 'pending')))
 
 const notificationEvents = computed<CenterEvent[]>(() => (notifications.value || []).map((item: any) => ({
   id: `notification:${item.id}`,
@@ -144,12 +151,28 @@ const assignmentEvents = computed<CenterEvent[]>(() => (workbench.value?.recentA
   raw: item
 })))
 
+const studentEvents = computed<CenterEvent[]>(() => (studentEventsData.value?.events || []).map((item: any) => ({
+  id: `student_event:${item.id}`,
+  kind: 'student_event' as EventKind,
+  priority: (item.severity === '严重' ? 'P0' : item.severity === '高' ? 'P1' : item.severity === '中' ? 'P2' : 'P3') as EventPriority,
+  stage: (item.status === 'open' ? 'todo' : item.status === 'resolved' ? 'doing' : 'done') as EventStage,
+  title: item.title,
+  body: `${item.studentName || '未知学生'} · ${item.eventType} · ${item.description || '暂无描述'}`,
+  nextStep: item.status === 'open' ? '该事件尚未处置，请在信息中心补充处置措施。' : item.status === 'resolved' ? '事件已处置，可进入学生档案查看详情。' : '事件已关闭。',
+  time: item.occurredAt,
+  urgent: item.severity === '严重' || item.severity === '高',
+  to: `/information/students/${item.studentId}`,
+  actionLabel: '查看学生档案',
+  raw: item
+})))
+
 const allEvents = computed(() => [
   ...actionEvents.value,
   ...reviewEvents.value,
   ...notificationEvents.value,
   ...draftEvents.value,
-  ...assignmentEvents.value
+  ...assignmentEvents.value,
+  ...studentEvents.value
 ].sort((a, b) => priorityMeta[a.priority].rank - priorityMeta[b.priority].rank || eventTime(b) - eventTime(a)))
 
 const filteredEvents = computed(() =>
@@ -158,13 +181,14 @@ const filteredEvents = computed(() =>
     : allEvents.value.filter(item => item.kind === activeFilter.value)
 )
 
-const eventCounts = computed(() => ({
+const eventCounts = computed<Record<EventFilter, number>>(() => ({
   all: allEvents.value.length,
   notification: notificationEvents.value.length,
   action: actionEvents.value.length,
   review: reviewEvents.value.length,
   draft: draftEvents.value.length,
-  assignment: assignmentEvents.value.length
+  assignment: assignmentEvents.value.length,
+  student_event: studentEvents.value.length
 }))
 
 const openCount = computed(() => actionEvents.value.length + reviewEvents.value.length + draftEvents.value.length)
@@ -229,7 +253,10 @@ function selectEvent(item: CenterEvent) {
 
 async function refreshCenter() {
   await refreshNotifications()
-  if (isTeacher.value) await refreshWorkbench()
+  if (isTeacher.value) {
+    await refreshWorkbench()
+    await refreshStudentEvents()
+  }
 }
 
 async function markRead(eventItem: CenterEvent) {
@@ -319,14 +346,17 @@ async function handlePrimary(eventItem: CenterEvent) {
     <div class="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_24rem]">
       <div class="panel overflow-hidden">
         <div v-if="loading" class="p-8 text-center text-sm text-slate-500"><UIcon name="i-lucide-loader-circle" class="mr-2 animate-spin" />正在整理事件</div>
-        <button
+        <div
           v-for="item in filteredEvents"
           v-else
           :key="item.id"
-          type="button"
+          role="button"
+          tabindex="0"
           class="grid w-full gap-4 border-b border-slate-100 p-5 text-left transition last:border-0 hover:bg-slate-50 md:grid-cols-[auto_1fr_auto]"
           :class="selectedEvent?.id === item.id ? 'bg-emerald-50/70 ring-1 ring-inset ring-emerald-100' : ''"
           @click="selectEvent(item)"
+          @keydown.enter.prevent="selectEvent(item)"
+          @keydown.space.prevent="selectEvent(item)"
         >
           <div class="grid size-10 place-items-center rounded-2xl" :class="item.priority === 'P0' ? 'bg-red-100 text-red-700' : item.priority === 'P1' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'">
             <UIcon :name="kindMeta[item.kind].icon" class="size-5" />
@@ -343,9 +373,17 @@ async function handlePrimary(eventItem: CenterEvent) {
           </div>
           <div class="flex items-center gap-2 md:justify-end">
             <span v-if="item.unread" class="size-2 rounded-full bg-emerald-500" />
+            <UButton
+              v-if="item.to || (item.kind === 'notification' && item.unread)"
+              size="xs"
+              color="neutral"
+              variant="soft"
+              trailing-icon="i-lucide-arrow-right"
+              @click.stop="handlePrimary(item)"
+            >{{ item.kind === 'action' ? '查看方案' : item.actionLabel || '处理' }}</UButton>
             <UIcon name="i-lucide-chevron-right" class="text-slate-300" />
           </div>
-        </button>
+        </div>
         <div v-if="!loading && !filteredEvents.length" class="p-12 text-center text-sm text-slate-400">
           <UIcon name="i-lucide-inbox" class="mx-auto mb-3 size-8" />
           当前分类没有事件

@@ -13,11 +13,11 @@ const mobileItems = computed(() => {
   if (user.value?.role === 'teacher') return [
     { label: '工作台', icon: 'i-lucide-house', to: '/' },
     { label: '档案', icon: 'i-lucide-folder-open', to: '/information' },
-    { label: '通知', icon: 'i-lucide-bell', to: '/notifications' }
+    { label: '事件', icon: 'i-lucide-bell', to: '/notifications' }
   ]
   return [
     { label: '工作台', icon: 'i-lucide-layout-dashboard', to: roleHome.value },
-    { label: '通知', icon: 'i-lucide-bell', to: '/notifications' }
+    { label: '事件', icon: 'i-lucide-bell', to: '/notifications' }
   ]
 })
 </script>
@@ -34,8 +34,9 @@ const mobileItems = computed(() => {
           </span>
         </NuxtLink>
         <nav class="hidden items-center gap-2 md:flex">
-          <UButton v-if="user.role === 'teacher'" to="/" :variant="route.path === '/' ? 'soft' : 'ghost'" :color="route.path === '/' ? 'primary' : 'neutral'">工作台</UButton>
-          <UButton v-if="user.role === 'teacher'" to="/information" :variant="route.path.startsWith('/information') ? 'soft' : 'ghost'" :color="route.path.startsWith('/information') ? 'primary' : 'neutral'">信息中心</UButton>
+          <NuxtLink v-if="user.role === 'teacher'" to="/" :class="['inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition hover:shadow-sm', route.path === '/' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700']"><UIcon name="i-lucide-house" class="size-4" />工作台</NuxtLink>
+          <NuxtLink v-if="user.role === 'teacher'" to="/information" :class="['inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition hover:shadow-sm', route.path.startsWith('/information') ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700']"><UIcon name="i-lucide-folder-open" class="size-4" />信息中心</NuxtLink>
+          <NuxtLink v-if="user.role === 'teacher'" to="/notifications" :class="['inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition hover:shadow-sm', route.path.startsWith('/notifications') ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700']"><UIcon name="i-lucide-bell" class="size-4" />事件中心</NuxtLink>
           <UButton v-if="user.role === 'school_admin'" to="/school-admin" :variant="route.path.startsWith('/school-admin') ? 'soft' : 'ghost'" :color="route.path.startsWith('/school-admin') ? 'primary' : 'neutral'">学校管理</UButton>
           <UButton v-if="user.role === 'platform_admin'" to="/platform-admin" :variant="route.path.startsWith('/platform-admin') ? 'soft' : 'ghost'" :color="route.path.startsWith('/platform-admin') ? 'primary' : 'neutral'">平台管理</UButton>
           <UButton v-if="user.role === 'psychologist'" to="/specialist" :variant="route.path.startsWith('/specialist') ? 'soft' : 'ghost'" :color="route.path.startsWith('/specialist') ? 'primary' : 'neutral'">转介工作台</UButton>

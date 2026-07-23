@@ -273,6 +273,7 @@ export async function streamClarificationRound(event: H3Event, input: {
         model: config.deepseekGeneratorModel,
         messages,
         stream: true,
+        thinking: { type: 'disabled' },
         temperature: 0.4
       }),
       signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
@@ -455,6 +456,7 @@ export async function streamClarificationSummary(event: H3Event, input: {
         messages,
         max_tokens: 4096,
         stream: true,
+        thinking: { type: 'disabled' },
         temperature: 0.35
       }),
       signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 45000)
@@ -624,6 +626,7 @@ export async function streamAssistantResponse(event: H3Event, input: {
         model: config.deepseekGeneratorModel,
         messages: buildAssistantMessages(input, 'text'),
         stream: true,
+        thinking: { type: 'disabled' },
         temperature: 0.35
       }),
       signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 12000)

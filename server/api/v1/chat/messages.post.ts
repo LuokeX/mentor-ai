@@ -6,6 +6,7 @@ import { detectSafetySignals, createSafetyReferral } from '../../../domain/safet
 import { localRoute, semanticSafetySignals, streamAssistantResponse, extractPlanUpdates, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
 import { buildKnowledgeRetrievalQuery, retrieveKnowledge } from '../../../domain/knowledge'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
+import { composeClarificationSummaryHistory } from '../../../domain/chat-clarification'
 import { governBusinessContext, resolveAiGovernance } from '../../../domain/ai-governance'
 import { ensurePlanActions } from '../../../domain/plan-actions'
 import { trackProductEvent } from '../../../domain/product-events'
@@ -165,7 +166,12 @@ export default defineEventHandler(async (event) => {
         if (clarificationState && clarificationState.phase === 'clarifying') {
           if (isDoneSignal) {
             // 用户表示没有补充了 → 进入总结阶段
-            const combinedHistory = [...entityMemory, ...history]
+            const combinedHistory = composeClarificationSummaryHistory({
+              entityMemory,
+              history,
+              currentMessage: body.message,
+              includeCurrentMessage: false
+            })
             emit(controller, 'answer_start', { mode: 'deepseek' })
             const summary = await streamClarificationSummary(event, {
               schoolId: user.schoolId!,
@@ -202,7 +208,12 @@ export default defineEventHandler(async (event) => {
 
           // 达到上限 → 自动进入总结阶段
           if (nextRound > MAX_CLARIFICATION_ROUNDS) {
-            const combinedHistory = [...entityMemory, ...history]
+            const combinedHistory = composeClarificationSummaryHistory({
+              entityMemory,
+              history,
+              currentMessage: body.message,
+              includeCurrentMessage: true
+            })
             emit(controller, 'answer_start', { mode: 'deepseek' })
             const summary = await streamClarificationSummary(event, {
               schoolId: user.schoolId!,
