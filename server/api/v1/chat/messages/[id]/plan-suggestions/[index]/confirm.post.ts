@@ -6,13 +6,17 @@ import { ensurePlanActions } from '../../../../../../../domain/plan-actions'
 import { trackProductEvent } from '../../../../../../../domain/product-events'
 import { writeAudit } from '../../../../../../../utils/audit'
 
-type Suggestion = { planId?: string, actionId?: string, newStatus?: string, progressNote?: string, appliedAt?: string }
+type Suggestion = { planId?: string, actionId?: string, newStatus?: string, progressNote?: string, appliedAt?: string, executedAt?: string, executionNote?: string }
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const messageId = z.string().uuid().parse(getRouterParam(event, 'id'))
   const index = z.coerce.number().int().min(0).max(4).parse(getRouterParam(event, 'index'))
+  const body = z.object({
+    executedAt: z.string().datetime().optional(),
+    executionNote: z.string().min(1).max(500).optional(),
+  }).parse(await readBody(event))
   const db = useDb(event)
   const [message] = await db.select().from(schema.chatMessages).where(and(
     eq(schema.chatMessages.id, messageId), eq(schema.chatMessages.ownerUserId, user.id), eq(schema.chatMessages.role, 'assistant')
@@ -37,6 +41,8 @@ export default defineEventHandler(async (event) => {
       await tx.update(schema.planActions).set({
         status: newStatus,
         completedAt: newStatus === 'completed' ? now : null,
+        executedAt: body.executedAt ? new Date(body.executedAt) : undefined,
+        executionNote: body.executionNote || null,
         updatedAt: now
       }).where(and(eq(schema.planActions.id, action.id), eq(schema.planActions.ownerUserId, user.id)))
       const legacy = (plan.actions || []) as Array<{ title: string, detail: string, status: string }>

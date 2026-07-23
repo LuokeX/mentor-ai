@@ -30,14 +30,25 @@ export default defineEventHandler(async (event) => {
   }
   const classes = classRows
   const classById = new Map(classes.map(row => [row.id, row]))
-  const baseStudents = studentRows.map(row => ({
-    ...row,
-    name: decryptSensitive(row.nameEnc, config.encryptionKey),
-    notes: decryptSensitive(row.notesEnc, config.encryptionKey),
-    className: row.classId ? classById.get(row.classId)?.name : null,
-    nameEnc: undefined,
-    notesEnc: undefined
-  }))
+  const baseStudents = studentRows.map(row => {
+    let riskAttentionLevel: string | undefined
+    try {
+      if (row.profileEnc) {
+        const profile = JSON.parse(decryptSensitive(row.profileEnc, config.encryptionKey))
+        riskAttentionLevel = profile.riskAttentionLevel
+      }
+    } catch { /* profile parsing fail — ignore */ }
+    return {
+      ...row,
+      name: decryptSensitive(row.nameEnc, config.encryptionKey),
+      notes: decryptSensitive(row.notesEnc, config.encryptionKey),
+      className: row.classId ? classById.get(row.classId)?.name : null,
+      riskAttentionLevel: riskAttentionLevel || null,
+      nameEnc: undefined,
+      notesEnc: undefined,
+      profileEnc: undefined,
+    }
+  })
   const baseStudentById = new Map(baseStudents.map(row => [row.id, row]))
   const baseGuardians = guardianRows.map(row => ({
     ...row,

@@ -3,17 +3,20 @@ import { moduleMeta } from '#shared/assessments'
 
 const { data, refresh } = await useFetch<any>('/api/v1/information/overview')
 const { data: statsData } = await useFetch<any>('/api/v1/information/stats')
+const { data: eventsData, refresh: refreshEvents } = await useFetch<any>('/api/v1/information/student-events')
 const toast = useToast()
 const route = useRoute()
 const active = ref(String(route.query.tab || 'status'))
 const showForm = ref(false)
+const showEventForm = ref(false)
 const formType = ref<'class' | 'student' | 'guardian' | 'communication'>('class')
 const form = reactive<any>({ name: '', grade: 1, studentCount: 0, classId: '', studentId: '', guardianId: '', gender: '', notes: '', phone: '', relation: '', summary: '' })
+const eventForm = reactive({ studentId: '', eventType: '其他', severity: '低', title: '', description: '', occurredAt: '' })
 const pending = ref(false)
 const assessmentToDelete = ref<string | null>(null)
 const tabs = [
   { id: 'status', label: '我的状态', icon: 'i-lucide-heart-pulse' }, { id: 'classes', label: '负责班级', icon: 'i-lucide-school' }, { id: 'students', label: '负责学生', icon: 'i-lucide-users' },
-  { id: 'guardians', label: '关联家长', icon: 'i-lucide-contact' }, { id: 'communications', label: '家校沟通', icon: 'i-lucide-messages-square' }, { id: 'cases', label: '支持案例', icon: 'i-lucide-folder-heart' }
+  { id: 'guardians', label: '关联家长', icon: 'i-lucide-contact' }, { id: 'communications', label: '家校沟通', icon: 'i-lucide-messages-square' }, { id: 'events', label: '事件记录', icon: 'i-lucide-clipboard-list' }, { id: 'cases', label: '支持案例', icon: 'i-lucide-folder-heart' }
 ]
 function openCreate() { showForm.value = true }
 
@@ -23,6 +26,31 @@ function moduleTitle(module: string) {
 
 function switchTab(tab: string) {
   active.value = tab
+}
+
+async function submitEvent() {
+  if (!eventForm.studentId || !eventForm.title.trim()) return
+  pending.value = true
+  try {
+    await $fetch('/api/v1/information/student-events', { method: 'POST', body: eventForm })
+    Object.assign(eventForm, { studentId: '', eventType: '其他', severity: '低', title: '', description: '', occurredAt: '' })
+    showEventForm.value = false
+    await refreshEvents()
+    toast.add({ title: '事件已记录', color: 'success' })
+  } catch (err: any) {
+    toast.add({ title: err?.data?.message || '操作失败', color: 'error' })
+  } finally { pending.value = false }
+}
+
+async function deleteEvent(id: string) {
+  pending.value = true
+  try {
+    await $fetch(`/api/v1/information/student-events/${id}`, { method: 'DELETE' })
+    await refreshEvents()
+    toast.add({ title: '事件已删除', color: 'success' })
+  } catch (err: any) {
+    toast.add({ title: err?.data?.message || '操作失败', color: 'error' })
+  } finally { pending.value = false }
 }
 
 function handleAssessmentClick(item: any) {
@@ -164,9 +192,10 @@ onMounted(() => {
 </div>
 </template>
         <template v-if="active === 'classes'"><div class="flex items-center justify-between"><div><h2 class="text-xl font-semibold">当前负责班级</h2><p class="mt-1 text-sm text-slate-500">班级下直接串联学生、家长和最近沟通。</p></div><UBadge color="neutral" variant="soft">{{ data?.classTree?.length || 0 }} 个班级</UBadge></div><div class="mt-5 space-y-5"><div v-for="item in data?.classTree" :key="item.id" class="rounded-3xl border border-slate-100 bg-slate-50 p-5"><div class="flex flex-wrap justify-between gap-3"><div><strong class="text-lg">{{ item.name }}</strong><p class="mt-2 text-sm text-slate-500">{{ item.grade }} 年级 · 登记 {{ item.studentCount }} 人</p></div><div class="flex flex-wrap gap-2"><UBadge color="neutral" variant="soft">{{ item.students.length }} 学生</UBadge><UBadge color="neutral" variant="soft">{{ item.guardians.length }} 家长</UBadge><UBadge color="neutral" variant="soft">{{ item.communications.length }} 沟通</UBadge></div></div><div v-if="item.latestCommunication" class="mt-4 rounded-2xl border border-amber-100 bg-white p-4"><p class="text-xs font-semibold text-amber-700">最近沟通</p><p class="mt-2 text-sm leading-6 text-slate-600">{{ item.latestCommunication.studentName || '未关联学生' }} / {{ item.latestCommunication.guardianName || '未关联家长' }}：{{ item.latestCommunication.summary }}</p></div><div class="mt-4 grid gap-3 md:grid-cols-2"><div v-for="student in item.students" :key="student.id" class="rounded-2xl bg-white p-4"><div class="flex items-start justify-between gap-3"><div><NuxtLink :to="`/information/students/${student.id}`" class="text-sm font-semibold hover:text-emerald-700">{{ student.name }}</NuxtLink><p class="mt-1 text-xs text-slate-400">{{ student.gender || '性别未填' }} · 沟通 {{ student.communicationCount || 0 }} 次</p></div><UBadge color="neutral" variant="soft">{{ student.linkedGuardians?.length || 0 }} 家长</UBadge></div><p class="mt-3 line-clamp-2 text-xs leading-5 text-slate-500">{{ student.notes || '暂无备注' }}</p><div v-if="student.linkedGuardians?.length" class="mt-3 flex flex-wrap gap-2"><UBadge v-for="guardian in student.linkedGuardians" :key="guardian.id" color="primary" variant="soft">{{ guardian.relation || '家长' }}：{{ guardian.name }}</UBadge></div></div></div></div></div></template>
-        <template v-if="active === 'students'"><div class="flex items-center justify-between"><div><h2 class="text-xl font-semibold">当前负责学生</h2><p class="mt-1 text-sm text-slate-500">每个学生卡片展示班级、家长和沟通进展。</p></div><UBadge color="neutral" variant="soft">{{ data?.students?.length || 0 }} 名学生</UBadge></div><div class="mt-5 grid gap-4 md:grid-cols-2"><div v-for="item in data?.students" :key="item.id" class="rounded-3xl border border-slate-100 p-5"><div class="flex items-start justify-between gap-3"><div><NuxtLink :to="`/information/students/${item.id}`" class="font-semibold hover:text-emerald-700">{{ item.name }}</NuxtLink><p class="mt-1 text-xs text-slate-500">{{ item.className || '未分配班级' }} · {{ item.gender || '未填写性别' }}</p></div><UBadge color="neutral" variant="soft">沟通 {{ item.communicationCount || 0 }}</UBadge></div><p class="mt-3 text-sm leading-6 text-slate-600">{{ item.notes || '暂无备注' }}</p><div class="mt-4 rounded-2xl bg-slate-50 p-3"><p class="text-xs font-semibold text-slate-500">关联家长</p><div class="mt-2 flex flex-wrap gap-2"><UBadge v-for="guardian in item.linkedGuardians" :key="guardian.id" color="primary" variant="soft">{{ guardian.relation || '家长' }}：{{ guardian.name }}</UBadge><span v-if="!item.linkedGuardians?.length" class="text-xs text-slate-400">暂无关联家长</span></div></div><div v-if="item.latestCommunication" class="mt-3 rounded-2xl bg-amber-50 p-3"><p class="text-xs font-semibold text-amber-700">最近沟通</p><p class="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{{ item.latestCommunication.guardianName || '未关联家长' }}：{{ item.latestCommunication.summary }}</p></div></div></div></template>
+        <template v-if="active === 'students'"><div class="flex items-center justify-between"><div><h2 class="text-xl font-semibold">当前负责学生</h2><p class="mt-1 text-sm text-slate-500">每个学生卡片展示班级、家长、关注等级和沟通进展。</p></div><UBadge color="neutral" variant="soft">{{ data?.students?.length || 0 }} 名学生</UBadge></div><div class="mt-5 grid gap-4 md:grid-cols-2"><div v-for="item in data?.students" :key="item.id" class="rounded-3xl border border-slate-100 p-5"><div class="flex items-start justify-between gap-3"><div><NuxtLink :to="`/information/students/${item.id}`" class="font-semibold hover:text-emerald-700">{{ item.name }}</NuxtLink><p class="mt-1 text-xs text-slate-500">{{ item.className || '未分配班级' }} · {{ item.gender || '未填写性别' }}</p></div><div class="flex items-center gap-2"><UBadge v-if="item.riskAttentionLevel" :color="item.riskAttentionLevel === '危机' || item.riskAttentionLevel === '转介中' ? 'error' : item.riskAttentionLevel === '重点关注' ? 'warning' : item.riskAttentionLevel === '需要跟进' ? 'info' : 'neutral'" variant="soft">{{ item.riskAttentionLevel }}</UBadge><UBadge color="neutral" variant="soft">沟通 {{ item.communicationCount || 0 }}</UBadge></div></div><p class="mt-3 text-sm leading-6 text-slate-600">{{ item.notes || '暂无备注' }}</p><div class="mt-4 rounded-2xl bg-slate-50 p-3"><p class="text-xs font-semibold text-slate-500">关联家长</p><div class="mt-2 flex flex-wrap gap-2"><UBadge v-for="guardian in item.linkedGuardians" :key="guardian.id" color="primary" variant="soft">{{ guardian.relation || '家长' }}：{{ guardian.name }}</UBadge><span v-if="!item.linkedGuardians?.length" class="text-xs text-slate-400">暂无关联家长</span></div></div><div v-if="item.latestCommunication" class="mt-3 rounded-2xl bg-amber-50 p-3"><p class="text-xs font-semibold text-amber-700">最近沟通</p><p class="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{{ item.latestCommunication.guardianName || '未关联家长' }}：{{ item.latestCommunication.summary }}</p></div></div></div></template>
         <template v-if="active === 'guardians'"><div class="flex items-center justify-between"><div><h2 class="text-xl font-semibold">当前关联家长</h2><p class="mt-1 text-sm text-slate-500">家长卡片展示其关联学生、班级和沟通记录。</p></div><UBadge color="neutral" variant="soft">{{ data?.guardians?.length || 0 }} 位家长</UBadge></div><div class="mt-5 grid gap-4 md:grid-cols-2"><div v-for="item in data?.guardians" :key="item.id" class="rounded-3xl border border-slate-100 p-5"><div class="flex items-start justify-between gap-3"><div><NuxtLink :to="`/information/guardians/${item.id}`" class="font-semibold hover:text-emerald-700">{{ item.name }}</NuxtLink><p class="mt-1 text-xs text-slate-500">{{ item.relation || '关系未填写' }} · {{ item.phone || '电话未填写' }}</p></div><UBadge color="neutral" variant="soft">沟通 {{ item.communicationCount || 0 }}</UBadge></div><div class="mt-4 rounded-2xl bg-slate-50 p-3"><p class="text-xs font-semibold text-slate-500">关联学生</p><div class="mt-2 flex flex-wrap gap-2"><UBadge v-for="student in item.linkedStudents" :key="student.id" color="primary" variant="soft">{{ student.name }} · {{ student.className || '未分班' }}</UBadge><span v-if="!item.linkedStudents?.length" class="text-xs text-slate-400">暂无关联学生</span></div></div><div v-if="item.latestCommunication" class="mt-3 rounded-2xl bg-amber-50 p-3"><p class="text-xs font-semibold text-amber-700">最近沟通</p><p class="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{{ item.latestCommunication.studentName || '未关联学生' }}：{{ item.latestCommunication.summary }}</p></div></div></div></template>
         <template v-if="active === 'communications'"><div class="flex items-center justify-between"><div><h2 class="text-xl font-semibold">家校沟通档案</h2><p class="mt-1 text-sm text-slate-500">每条沟通都带班级、学生、家长和风险上下文。</p></div><UBadge color="neutral" variant="soft">{{ data?.communications?.length || 0 }} 条沟通</UBadge></div><div class="mt-5 space-y-4"><div v-for="item in data?.communications" :key="item.id" class="rounded-3xl border border-amber-100 bg-amber-50/50 p-5"><div class="flex flex-wrap gap-2"><UBadge v-if="item.className" color="neutral" variant="soft">{{ item.className }}</UBadge><UBadge v-if="item.studentName" color="neutral" variant="soft">学生：{{ item.studentName }}</UBadge><UBadge v-if="item.guardianName" color="neutral" variant="soft">{{ item.relation || '家长' }}：{{ item.guardianName }}</UBadge><UBadge v-if="item.parentType" color="warning" variant="soft">{{ item.parentType }}</UBadge><UBadge v-if="item.riskLevel" color="error" variant="soft">{{ item.riskLevel }}</UBadge></div><p class="mt-3 text-sm leading-7">{{ item.summary }}</p><p class="mt-3 text-xs text-slate-400">{{ new Date(item.occurredAt).toLocaleString('zh-CN') }}</p></div></div></template>
+        <template v-if="active === 'events'"><div class="flex items-center justify-between"><div><h2 class="text-xl font-semibold">事件记录</h2><p class="mt-1 text-sm text-slate-500">记录与学生关联的违纪、冲突等事件，支持快速录入和处置跟踪。</p></div><div class="flex items-center gap-2"><UBadge color="neutral" variant="soft">{{ eventsData?.events?.length || 0 }} 条记录</UBadge><UButton color="primary" size="sm" icon="i-lucide-plus" @click="() => { showEventForm = true }">快速录入</UButton></div></div><div class="mt-5 space-y-4"><div v-for="item in eventsData?.events" :key="item.id" class="rounded-3xl border border-slate-100 p-5"><div class="flex flex-wrap items-start justify-between gap-3"><div><div class="flex flex-wrap items-center gap-2"><strong class="text-lg">{{ item.title }}</strong><UBadge :color="item.severity === '严重' ? 'error' : item.severity === '高' ? 'warning' : item.severity === '中' ? 'info' : 'neutral'" variant="soft">{{ item.severity }}</UBadge><UBadge color="neutral" variant="soft">{{ item.eventType }}</UBadge></div><p class="mt-2 text-sm text-slate-500">{{ item.studentName }} · {{ new Date(item.occurredAt).toLocaleString('zh-CN') }}</p></div><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="deleteEvent(item.id)">删除</UButton></div><p v-if="item.description" class="mt-3 text-sm leading-7 text-slate-600">{{ item.description }}</p><p v-if="item.resolution" class="mt-3 rounded-2xl bg-green-50 p-3 text-sm leading-6 text-green-800"><strong>处置措施：</strong>{{ item.resolution }}</p></div><p v-if="!eventsData?.events?.length" class="rounded-3xl bg-slate-50 p-10 text-center text-sm text-slate-400">暂无事件记录</p></div></template>
         <template v-if="active === 'cases'">
           <div class="flex items-center justify-between">
             <div>
@@ -244,6 +273,37 @@ onMounted(() => {
         <div v-if="!data?.[active]?.length && active !== 'status'" class="grid min-h-72 place-items-center text-center text-sm text-slate-400"><div><UIcon name="i-lucide-inbox" class="mx-auto mb-3 size-8" /><p>这里还没有记录</p></div></div>
       </section>
     </div>
+
+    <UModal v-model:open="showEventForm" title="快速录入事件" description="记录与学生相关的具体事件，支持后续处置跟踪。">
+      <template #body>
+        <form class="space-y-4" @submit.prevent="submitEvent">
+          <UFormField label="关联学生" required>
+            <USelect v-model="eventForm.studentId" :items="(data?.students || []).map((s: any) => ({ label: s.name, value: s.id }))" class="w-full" />
+          </UFormField>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <UFormField label="事件类型" required>
+              <USelect v-model="eventForm.eventType" :items="['违纪', '冲突', '异常行为', '学业波动', '其他']" class="w-full" />
+            </UFormField>
+            <UFormField label="严重程度" required>
+              <USelect v-model="eventForm.severity" :items="['低', '中', '高', '严重']" class="w-full" />
+            </UFormField>
+          </div>
+          <UFormField label="事件标题" required>
+            <UInput v-model="eventForm.title" class="w-full" placeholder="简要描述事件" />
+          </UFormField>
+          <UFormField label="详细描述">
+            <UTextarea v-model="eventForm.description" :rows="4" class="w-full" placeholder="事件的具体情况和背景" />
+          </UFormField>
+          <UFormField label="发生日期">
+            <UInput v-model="eventForm.occurredAt" type="datetime-local" class="w-full" />
+          </UFormField>
+          <div class="flex justify-end gap-2 pt-2">
+            <UButton color="neutral" variant="ghost" @click="() => { showEventForm = false }">取消</UButton>
+            <UButton type="submit" :loading="pending" :disabled="!eventForm.studentId || !eventForm.title.trim()">保存事件</UButton>
+          </div>
+        </form>
+      </template>
+    </UModal>
 
     <UModal v-model:open="showForm" title="新增资料" description="资料仅用于教师工作支持和安全流程。">
       <template #body>

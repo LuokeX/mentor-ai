@@ -22,7 +22,21 @@ export default defineEventHandler(async (event) => {
     db.select().from(schema.adminAccessRequests).where(eq(schema.adminAccessRequests.requesterId, admin.id)).orderBy(desc(schema.adminAccessRequests.createdAt)),
     db.select().from(schema.adminAccessGrants).where(eq(schema.adminAccessGrants.userId, admin.id)).orderBy(desc(schema.adminAccessGrants.createdAt)),
     db.select().from(schema.delegatedManagementGrants).where(eq(schema.delegatedManagementGrants.requesterId, admin.id)).orderBy(desc(schema.delegatedManagementGrants.createdAt)),
-    db.select().from(schema.auditLogs).where(eq(schema.auditLogs.actorId, admin.id)).orderBy(desc(schema.auditLogs.createdAt)).limit(50)
+    db.select({
+      id: schema.auditLogs.id,
+      schoolId: schema.auditLogs.schoolId,
+      actorId: schema.auditLogs.actorId,
+      actorName: schema.users.name,
+      action: schema.auditLogs.action,
+      targetType: schema.auditLogs.targetType,
+      targetId: schema.auditLogs.targetId,
+      result: schema.auditLogs.result,
+      metadata: schema.auditLogs.metadata,
+      ipAddress: schema.auditLogs.ipAddress,
+      createdAt: schema.auditLogs.createdAt
+    }).from(schema.auditLogs)
+      .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.actorId))
+      .where(eq(schema.auditLogs.actorId, admin.id)).orderBy(desc(schema.auditLogs.createdAt)).limit(50)
   ])
   return { schools: schoolRows, contentPackages: packages, knowledgeBases, knowledgeDocuments, accessRequests: requests, accessGrants: grants, delegatedManagementGrants: delegatedGrants, auditLogs: audits, health: { database: 'healthy', modelConfigured: Boolean(useRuntimeConfig(event).deepseekApiKey), embeddingEnabled: Boolean(useRuntimeConfig(event).embeddingEnabled), embeddingModel: useRuntimeConfig(event).embeddingModel, smsProvider: useRuntimeConfig(event).smsProvider } }
 })

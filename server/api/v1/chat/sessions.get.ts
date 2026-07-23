@@ -1,10 +1,10 @@
 import { desc, eq } from 'drizzle-orm'
-import { requireUser } from '../../../utils/auth'
-import { schema, useDb } from '../../../utils/db'
+import { apiContext } from '../../../utils/handler'
+import { schema } from '../../../utils/db'
 
 export default defineEventHandler(async (event) => {
-  const user = await requireUser(event, ['teacher'])
-  return useDb(event).select({
+  const { user, db } = await apiContext(event, ['teacher'])
+  return db.select({
     id: schema.chatSessions.id,
     title: schema.chatSessions.title,
     contextType: schema.chatSessions.contextType,

@@ -1,14 +1,12 @@
 import { and, desc, eq, inArray } from 'drizzle-orm'
-import { z } from 'zod'
-import { requireUser } from '../../../../utils/auth'
+import { apiContext } from '../../../../utils/handler'
+import { uuidParam } from '../../../../utils/params'
 import { decryptSensitive } from '../../../../utils/crypto'
-import { schema, useDb } from '../../../../utils/db'
+import { schema } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
-  const user = await requireUser(event, ['teacher'])
-  const id = z.string().uuid().parse(getRouterParam(event, 'id'))
-  const db = useDb(event)
-  const secret = useRuntimeConfig(event).encryptionKey
+  const { user, db, secret } = await apiContext(event, ['teacher'])
+  const id = uuidParam(event, 'id')
   const [student] = await db.select().from(schema.students).where(and(
     eq(schema.students.id, id),
     eq(schema.students.ownerUserId, user.id),

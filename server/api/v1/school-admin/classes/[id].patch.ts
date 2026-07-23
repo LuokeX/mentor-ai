@@ -1,13 +1,13 @@
 import { and, eq } from 'drizzle-orm'
-import { z } from 'zod'
 import { schoolAdminClassUpdateSchema } from '../../../../../shared/contracts'
+import { uuidParam } from '../../../../utils/params'
 import { assertActiveDepartment, assertActiveTeacher, requireSchoolManagement, transferClassOwner } from '../../../../domain/school-management'
 import { writeAudit } from '../../../../utils/audit'
 import { schema, useDb } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
   const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['classes'])
-  const id = z.string().uuid().parse(getRouterParam(event, 'id'))
+  const id = uuidParam(event, 'id')
   const body = schoolAdminClassUpdateSchema.parse(await readBody(event))
   const db = useDb(event)
   const [klass] = await db.select().from(schema.classes).where(and(eq(schema.classes.id, id), eq(schema.classes.schoolId, schoolId))).limit(1)

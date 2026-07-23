@@ -64,10 +64,10 @@ async function login() {
       <div class="relative max-w-xl">
         <p class="mb-6 text-sm font-semibold uppercase tracking-[.3em] text-emerald-200">Teacher Empowerment</p>
         <h1 class="text-5xl font-semibold leading-tight">理解教师的语言，<br>守住每一次安全边界。</h1>
-        <p class="mt-6 max-w-lg text-lg leading-8 text-emerald-50/70">统一智能体入口连接自我成长、班级建设、家校沟通与学生个体支持。确定性规则负责判断，AI 负责让专业方案更容易使用。</p>
+        <p class="mt-6 max-w-lg text-lg leading-8 text-emerald-50/70">统一智能体入口连接自我成长、班级建设、家校沟通、学生个体支持与学习问题。确定性规则负责判断，AI 负责让专业方案更容易使用。</p>
       </div>
       <div class="relative grid grid-cols-3 gap-3 text-sm">
-        <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">4</strong><span class="text-emerald-100/60">专业模块</span></div>
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">5</strong><span class="text-emerald-100/60">个模块</span></div>
         <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">24h</strong><span class="text-emerald-100/60">安全守护</span></div>
         <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">100%</strong><span class="text-emerald-100/60">敏感访问审计</span></div>
       </div>

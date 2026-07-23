@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { encryptSensitive } from '../utils/crypto'
 import { useDb, schema } from '../utils/db'
@@ -67,6 +67,19 @@ export async function createSafetyReferral(event: H3Event, input: {
         schoolId: input.schoolId, userId: assignedPsychologistId, type: 'referral_assigned',
         title: '新的危机转介工单', body: `危机事件 ${safety.id.slice(0, 8)} 待确认，请立即进入工作台。`,
         targetType: 'referral', targetId: referral.id, deduplicationKey: `referral-assigned:${referral.id}`
+      })
+    }
+    // 通知学校管理员
+    const schoolAdmins = await tx.select({ id: schema.users.id })
+      .from(schema.users)
+      .where(and(eq(schema.users.schoolId, input.schoolId), eq(schema.users.role, 'school_admin')))
+    for (const admin of schoolAdmins) {
+      await tx.insert(schema.notifications).values({
+        schoolId: input.schoolId, userId: admin.id, type: 'crisis_alert',
+        title: '安全预警：危机事件触发',
+        body: `学校内发生危机事件 ${safety.id.slice(0, 8)}，请进入管理后台查看详情。`,
+        targetType: 'safety_event', targetId: safety.id,
+        deduplicationKey: `crisis-admin:${safety.id}:${admin.id}`
       })
     }
     const escalationRecipients = settings?.safetyContactRecipients?.length

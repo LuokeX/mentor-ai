@@ -28,3 +28,27 @@ export function searchableHash(value: string, secret: string) {
 export function hashToken(value: string) {
   return createHash('sha256').update(value).digest('hex')
 }
+
+/**
+ * 批量解密记录中的敏感字段，自动清理加密列。
+ *
+ * 使用方式：
+ *   const cleaned = decryptFields(row, { nameEnc: 'name', phoneEnc: 'phone' }, secret)
+ *
+ * 结果中 nameEnc / phoneEnc 会被删除，替换为 name / phone 明文。
+ */
+export function decryptFields<T extends Record<string, unknown>>(
+  record: T,
+  fieldMap: Record<string, string>,
+  secret: string
+): T {
+  const result = { ...record }
+  for (const [encField, plainField] of Object.entries(fieldMap)) {
+    const encrypted = result[encField]
+    if (typeof encrypted === 'string') {
+      ;(result as Record<string, unknown>)[plainField] = decryptSensitive(encrypted, secret)
+      delete (result as Record<string, unknown>)[encField]
+    }
+  }
+  return result
+}

@@ -12,7 +12,7 @@ const roleHome = computed(() => {
 const mobileItems = computed(() => {
   if (user.value?.role === 'teacher') return [
     { label: '工作台', icon: 'i-lucide-house', to: '/' },
-    { label: '档案', icon: 'i-lucide-folder-user', to: '/information' },
+    { label: '档案', icon: 'i-lucide-folder-open', to: '/information' },
     { label: '通知', icon: 'i-lucide-bell', to: '/notifications' }
   ]
   return [

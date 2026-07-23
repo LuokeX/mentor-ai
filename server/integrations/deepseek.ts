@@ -223,7 +223,7 @@ ${scoresContext}
 已审核知识（供参考方法论，不照搬原文）：
 ${knowledgeContext}`
     },
-    ...input.history.slice(-16).map(item => ({ role: item.role, content: item.content.slice(0, 2000) }))
+    ...input.history.slice(-10).map(item => ({ role: item.role, content: item.content.slice(0, 1200) }))
   ]
 }
 
@@ -273,7 +273,6 @@ export async function streamClarificationRound(event: H3Event, input: {
         model: config.deepseekGeneratorModel,
         messages,
         stream: true,
-        thinking: { type: 'disabled' },
         temperature: 0.4
       }),
       signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
@@ -454,11 +453,11 @@ export async function streamClarificationSummary(event: H3Event, input: {
       body: JSON.stringify({
         model: config.deepseekGeneratorModel,
         messages,
+        max_tokens: 4096,
         stream: true,
-        thinking: { type: 'disabled' },
         temperature: 0.35
       }),
-      signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 15000)
+      signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 45000)
     })
     if (!response.ok || !response.body) throw new Error(`DeepSeek ${response.status}`)
 
@@ -520,7 +519,15 @@ export async function streamClarificationSummary(event: H3Event, input: {
       }
     }
 
-    if (!answer || answer.length < 20) throw new Error('模型总结回答为空或过短')
+    if (!answer || answer.length < 20) {
+      // 模型可能未输出分隔符或把 JSON 放在了前面，回退使用完整响应文本
+      if (fullText.length >= 20) {
+        answer = fullText.trim()
+        console.warn('[clarification_summary] 解析出的 answer 过短 (length=%d)，退回到使用 fullText (length=%d)', answer.length, fullText.length)
+      } else {
+        throw new Error('模型总结回答为空或过短')
+      }
+    }
 
     let jsonMeta: { rationale?: string; primaryModule?: string; moduleProportions?: Record<string, number>; suggestedActions?: Array<{ label: string; type: string; module?: string }> } = {}
     if (jsonPart) {
@@ -617,7 +624,6 @@ export async function streamAssistantResponse(event: H3Event, input: {
         model: config.deepseekGeneratorModel,
         messages: buildAssistantMessages(input, 'text'),
         stream: true,
-        thinking: { type: 'disabled' },
         temperature: 0.35
       }),
       signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 12000)
@@ -903,7 +909,6 @@ export async function generateAssessmentReport(event: H3Event, input: {
           { role: 'user', content: `规则事实：${JSON.stringify(facts)}\n\nJSON结构示例：${format}` }
         ],
         response_format: { type: 'json_object' },
-        thinking: { type: 'disabled' },
         temperature: 0.35
       }),
       signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
@@ -1039,7 +1044,6 @@ ${aiResponse.slice(0, 2000)}
           { role: 'user', content: prompt }
         ],
         response_format: { type: 'json_object' },
-        thinking: { type: 'disabled' },
         temperature: 0
       }),
       signal: AbortSignal.timeout(3000)

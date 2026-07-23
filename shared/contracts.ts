@@ -122,18 +122,19 @@ export const paginationQuerySchema = z.object({
   order: z.enum(['asc', 'desc']).default('desc')
 })
 
-export const schoolAdminUserInviteSchema = z.object({
+export const schoolAdminUserCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().transform(value => value.toLowerCase()),
-  role: z.enum(['teacher', 'psychologist'])
+  role: z.enum(['teacher', 'psychologist']),
+  password: z.string().min(8).max(200)
 })
 
 export const schoolAdminUserUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
-  status: z.enum(['active', 'disabled']).optional(),
-  resetMfa: z.boolean().optional(),
-  reissueInvitation: z.boolean().optional()
-}).refine(value => value.name || value.status || value.resetMfa || value.reissueInvitation)
+  email: z.string().trim().email().transform(value => value.toLowerCase()).optional(),
+  role: z.enum(['teacher', 'psychologist']).optional(),
+  status: z.enum(['active', 'disabled']).optional()
+}).refine(value => value.name || value.email || value.role || value.status)
 
 export const schoolAdminDepartmentCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),

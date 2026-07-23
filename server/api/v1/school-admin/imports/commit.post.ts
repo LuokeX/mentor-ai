@@ -40,6 +40,6 @@ export default defineEventHandler(async (event) => {
   return {
     ok: true, importId: preview.id, totalRows: result.rows.length,
     created: result.created, updated: result.updated, skipped: result.skipped,
-    invitations: result.invitations
+    credentials: result.credentials
   }
 })

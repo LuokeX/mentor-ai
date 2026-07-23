@@ -25,16 +25,39 @@ export default defineEventHandler(async (event) => {
       .innerJoin(schema.users, eq(schema.users.id, schema.delegatedManagementGrants.requesterId))
       .where(and(eq(schema.delegatedManagementGrants.schoolId, schoolId), eq(schema.delegatedManagementGrants.status, 'pending')))
       .orderBy(desc(schema.delegatedManagementGrants.createdAt)),
-    db.select().from(schema.adminAccessEvents).where(eq(schema.adminAccessEvents.schoolId, schoolId)).orderBy(desc(schema.adminAccessEvents.createdAt)).limit(50),
+    db.select({
+      id: schema.adminAccessEvents.id,
+      schoolId: schema.adminAccessEvents.schoolId,
+      actorId: schema.adminAccessEvents.actorId,
+      actorName: schema.users.name,
+      grantId: schema.adminAccessEvents.grantId,
+      targetType: schema.adminAccessEvents.targetType,
+      targetId: schema.adminAccessEvents.targetId,
+      action: schema.adminAccessEvents.action,
+      path: schema.adminAccessEvents.path,
+      fields: schema.adminAccessEvents.fields,
+      metadata: schema.adminAccessEvents.metadata,
+      createdAt: schema.adminAccessEvents.createdAt
+    }).from(schema.adminAccessEvents)
+      .leftJoin(schema.users, eq(schema.users.id, schema.adminAccessEvents.actorId))
+      .where(eq(schema.adminAccessEvents.schoolId, schoolId)).orderBy(desc(schema.adminAccessEvents.createdAt)).limit(50),
     db.select({
       id: schema.referrals.id,
       safetyEventId: schema.referrals.safetyEventId,
       psychologistId: schema.referrals.psychologistId,
       status: schema.referrals.status,
+      priority: schema.referrals.priority,
+      acknowledgeDueAt: schema.referrals.acknowledgeDueAt,
+      acknowledgedAt: schema.referrals.acknowledgedAt,
       severity: schema.safetyEvents.severity,
+      sourceType: schema.safetyEvents.sourceType,
+      eventCreatedAt: schema.safetyEvents.createdAt,
+      teacherName: schema.users.name,
       createdAt: schema.referrals.createdAt,
       updatedAt: schema.referrals.updatedAt
-    }).from(schema.referrals).innerJoin(schema.safetyEvents, eq(schema.referrals.safetyEventId, schema.safetyEvents.id))
+    }).from(schema.referrals)
+      .innerJoin(schema.safetyEvents, eq(schema.referrals.safetyEventId, schema.safetyEvents.id))
+      .innerJoin(schema.users, eq(schema.safetyEvents.ownerUserId, schema.users.id))
       .where(eq(schema.referrals.schoolId, schoolId)).orderBy(desc(schema.referrals.createdAt)).limit(50)
   ])
   return { metrics: { users: userCount?.value ?? 0, activeCrises: activeCrises?.value ?? 0, assessments: assessmentCount?.value ?? 0 }, users: usersList, pendingRequests: requests, delegatedRequests, accessEvents: audits, referrals }

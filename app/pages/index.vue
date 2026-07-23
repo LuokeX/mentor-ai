@@ -50,6 +50,7 @@ const { data: sessions, refresh: refreshSessions } = await useFetch<any[]>('/api
 const { data: assistantStatus } = await useFetch<any>('/api/v1/chat/status')
 const { data: governance, refresh: refreshGovernance } = await useFetch<any>('/api/v1/chat/data-governance')
 const { data: today, refresh: refreshToday } = await useFetch<any>('/api/v1/workbench/today')
+const { data: activePlans } = await useFetch<any>('/api/v1/plans/active')
 const { data: contextOptions } = await useFetch<any>('/api/v1/chat/context-options')
 const input = ref('')
 const pending = ref(false)
@@ -64,6 +65,8 @@ const copiedMessage = ref<number | null>(null)
 const confirmingModule = ref<ModuleId | null>(null)
 const routeConfirmError = ref('')
 const selectedOptions = ref<Record<number, string>>({})
+const pendingPlanSuggestion = ref<{ item: TimelineItem, index: number } | null>(null)
+const planExecForm = reactive({ executedAt: '', executionNote: '' })
 const selectedContextKey = ref('none')
 const suppressContextWatch = ref(false)
 const contextPreview = ref<any>(null)
@@ -77,11 +80,12 @@ const snapLocked = ref(false)
 let snapUnlockTimer: number | undefined
 const toast = useToast()
 const quickPrompts = [
-  '最近工作压力很大，总觉得精力不够用',
-  '班级纪律反复，想梳理一下问题出在哪里',
-  '家长在群里公开质疑我，我该怎么沟通？',
-  '有位学生最近明显沉默，我应该先做什么？',
-  '有个学生怎么教都不会，我该怎么帮他？'
+  '小明上课经常走神，作业拖拉到半夜，数学计算经常看错符号，考前紧张到手抖，说自己就是学不好。',
+  '我们班最近死气沉沉的，学生不愿意来学校，班委也形同虚设，制定了班级公约没人执行，我每天都在救火。',
+  '有个家长经常越级投诉到校长，说我没管好，还联合其他家长在群里攻击我，沟通渠道基本断了。',
+  '我真的快扛不住了，每天都像打仗一样，回家就瘫在沙发上什么都不想干，学生犯错我现在连气都懒得生了。',
+  '班上有个女生最近经常哭，成绩突然大幅下滑，被同学孤立，说自己什么都做不好，不想活了。',
+  '我们班有个男生上课睡觉、不交作业、跟同学打架，家长也不配合还经常投诉我。'
 ]
 const contextSelectItems = computed(() => [
   { label: '不指定对象', value: 'none' },
@@ -385,10 +389,27 @@ async function submitFeedback(item: TimelineItem, rating: 'helpful' | 'not_helpf
 
 async function confirmPlanSuggestion(item: TimelineItem, index: number) {
   if (!item.messageId) return
+  pendingPlanSuggestion.value = { item, index }
+  planExecForm.executedAt = ''
+  planExecForm.executionNote = ''
+}
+
+async function submitPlanExecution() {
+  const pending = pendingPlanSuggestion.value
+  if (!pending) return
+  const { item, index } = pending
+  if (!item.messageId) return
   try {
-    await $fetch(`/api/v1/chat/messages/${item.messageId}/plan-suggestions/${index}/confirm`, { method: 'POST' })
+    await $fetch(`/api/v1/chat/messages/${item.messageId}/plan-suggestions/${index}/confirm`, {
+      method: 'POST',
+      body: {
+        executedAt: planExecForm.executedAt ? new Date(planExecForm.executedAt).toISOString() : undefined,
+        executionNote: planExecForm.executionNote.trim() || undefined,
+      }
+    })
     item.planUpdateSuggestions![index].appliedAt = new Date().toISOString()
-    toast.add({ title: '方案已按您的确认更新', color: 'success' })
+    pendingPlanSuggestion.value = null
+    toast.add({ title: '方案已更新', color: 'success' })
     await refreshToday()
   } catch (error: any) { toast.add({ title: '方案更新失败', description: error?.data?.message || '请稍后重试', color: 'error' }) }
 }
@@ -536,12 +557,23 @@ onUnmounted(() => {
         <p class="text-sm font-semibold text-emerald-700">{{ new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }) }}</p>
         <h1 class="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">{{ greeting }}<span v-if="!typingDone" class="animate-pulse text-emerald-500">|</span></h1>
         <p class="mt-4 max-w-2xl text-base leading-7 text-slate-600">把情况像对同事一样说出来。助手会结合已审核业务知识进行多轮分析，给出来源和可执行建议，再由您确认处理方向。</p>
+        <div class="mt-5 flex flex-wrap gap-3">
+          <NuxtLink to="/" class="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 hover:shadow-sm"><UIcon name="i-lucide-house" class="size-4" />工作台</NuxtLink>
+          <NuxtLink to="/information" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"><UIcon name="i-lucide-folder-open" class="size-4" />信息中心</NuxtLink>
+        </div>
       </div>
       <div class="panel flex items-center gap-4 p-5">
         <div class="grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-shield-check" class="size-7" /></div>
         <div><p class="text-sm font-semibold">安全规则正在运行</p><p class="mt-1 text-xs leading-5 text-slate-500">危机与等级由确定性规则执行；AI 只负责理解、检索和表达，不进行心理诊断。</p></div>
       </div>
     </section>
+
+    <div class="mt-4 flex justify-center lg:hidden">
+      <button class="flex flex-col items-center gap-1 text-xs text-slate-400 transition hover:text-emerald-600" @click="currentSnapPage = 1; const sections = getSnapSections(); if (sections[1]) scrollToSnapSection(sections[1], 1)">
+        <span>向下滚动查看 AI 助手与今日待办</span>
+        <UIcon name="i-lucide-chevron-down" class="size-5 animate-bounce" />
+      </button>
+    </div>
 
     <section id="chat-section" class="mt-10 grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
       <aside class="panel hidden h-[18rem] flex-col overflow-hidden lg:flex lg:h-[calc(100dvh-7rem)] lg:min-h-[34rem]">
@@ -598,6 +630,8 @@ onUnmounted(() => {
           <div class="flex flex-wrap items-center justify-between gap-2"><div class="flex items-center gap-2"><UIcon name="i-lucide-link" class="text-emerald-700" /><strong>{{ selectedContext.type === 'student' ? '咨询学生' : selectedContext.type === 'class' ? '咨询班级' : '咨询家长' }}：{{ selectedContext.label }}</strong></div><div class="flex items-center gap-3"><label class="flex items-center gap-2 text-xs text-slate-600"><USwitch v-model="withoutRecord" size="sm" />不带档案咨询</label><details class="relative"><summary class="cursor-pointer list-none text-xs font-medium text-emerald-700">本次将发送的信息</summary><div class="absolute right-0 top-7 z-30 max-h-80 w-[min(32rem,85vw)] overflow-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"><p class="text-xs leading-5 text-slate-500">数据模式：{{ contextPreview?.mode || governance?.effectiveMode }}；始终排除 {{ contextPreview?.excludedFields?.join('、') }}</p><pre class="mt-3 whitespace-pre-wrap text-xs leading-5 text-slate-600">{{ withoutRecord ? '本次不发送档案信息。' : JSON.stringify(contextPreview?.context?.snapshot || {}, null, 2) }}</pre></div></details></div></div>
         </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
+
+        <NuxtLink v-if="activePlans?.count" to="/information?tab=cases" class="mx-4 mt-2 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm transition hover:bg-emerald-100 sm:mx-6"><UIcon name="i-lucide-clipboard-list" class="size-5 text-emerald-600" /><div class="flex-1"><strong class="text-emerald-800">您有 {{ activePlans.count }} 个进行中的方案</strong><p class="text-xs text-emerald-600">点击查看之前的方案及执行情况，避免重复规划</p></div><UIcon name="i-lucide-arrow-right" class="size-4 text-emerald-400" /></NuxtLink>
 
         <div ref="messageViewport" class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/70 to-white px-4 py-6 sm:px-6" :class="{'opacity-60':loadingSession}">
           <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-7">
@@ -664,7 +698,7 @@ onUnmounted(() => {
 
         <form class="sticky bottom-0 border-t border-slate-100 bg-white px-4 py-3.5 sm:px-6" @submit.prevent="ask">
           <div class="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100">
-            <UTextarea v-model="input" :rows="1" :maxrows="5" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="描述您遇到的情况，Shift + Enter 换行……" aria-label="向 AI 赋能助手提问" @keydown.enter.exact.prevent="ask" />
+            <UTextarea v-model="input" :rows="1" :maxrows="5" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="请详细描述您的问题，包括：问题表现、涉及对象、发生频率、您的感受。系统将自动匹配关键词进行智能识别。" aria-label="向 AI 赋能助手提问" @keydown.enter.exact.prevent="ask" />
             <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
           </div>
           <div class="mt-2 flex items-center justify-between px-1 text-[11px] text-slate-400"><span>Enter 发送 · Shift + Enter 换行</span><span>{{ input.length }}/4000</span></div>
@@ -697,6 +731,23 @@ onUnmounted(() => {
     </section>
 
   </div>
+
+  <UModal :open="!!pendingPlanSuggestion" @update:open="(val) => { if (!val) pendingPlanSuggestion = null }" title="执行反馈" description="请填写本次方案执行的具体情况。">
+    <template #body>
+      <form class="space-y-4" @submit.prevent="submitPlanExecution">
+        <UFormField label="执行日期">
+          <UInput v-model="planExecForm.executedAt" type="datetime-local" class="w-full" />
+        </UFormField>
+        <UFormField label="执行结果">
+          <UTextarea v-model="planExecForm.executionNote" :rows="4" class="w-full" placeholder="这次行动的具体执行情况和取得的效果" />
+        </UFormField>
+        <div class="flex justify-end gap-2 pt-2">
+          <UButton color="neutral" variant="ghost" @click="() => { pendingPlanSuggestion = null }">取消</UButton>
+          <UButton type="submit" :loading="pending" :disabled="!planExecForm.executionNote.trim()">确认并保存</UButton>
+        </div>
+      </form>
+    </template>
+  </UModal>
 </template>
 
 <style>

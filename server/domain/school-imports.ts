@@ -2,8 +2,7 @@ import type { H3Event } from 'h3'
 import argon2 from 'argon2'
 import { createHash, randomBytes } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
-import { createActivationToken, invitationExpiresAt } from './invitations'
-import { encryptSensitive, hashToken, searchableHash } from '../utils/crypto'
+import { encryptSensitive, searchableHash } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
 
 export type SchoolImportType = 'users' | 'classes' | 'students' | 'guardians'
@@ -134,38 +133,34 @@ export async function commitSchoolImport(event: H3Event, input: {
   schoolId: string, adminId: string, type: SchoolImportType, contentBase64: string
 }) {
   const parsed = await validateSchoolImport(event, input)
-  if (parsed.errors.length) return { ...parsed, created: 0, updated: 0, skipped: 0, invitations: [] }
+  if (parsed.errors.length) return { ...parsed, created: 0, updated: 0, skipped: 0, credentials: [] }
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
   return db.transaction(async (tx) => {
     let created = 0; let updated = 0; let skipped = 0
-    const invitations: Array<{ userId: string, activationToken: string, expiresAt: Date }> = []
+    const credentials: Array<{ userId: string, email: string, name: string, password: string }> = []
     for (const row of parsed.rows) {
       if (input.type === 'users') {
         const email = row.email!.toLowerCase()
+        const password = randomBytes(16).toString('base64url')
+        const passwordHash = await argon2.hash(password, { type: argon2.argon2id })
         const [existing] = await tx.select().from(schema.users).where(eq(schema.users.email, email)).limit(1)
         if (existing?.schoolId && existing.schoolId !== input.schoolId) throw new Error('EMAIL_CROSS_SCHOOL')
         let userId = existing?.id
         if (!existing) {
           const [user] = await tx.insert(schema.users).values({
-            schoolId: input.schoolId, name: row.name!, email, role: row.role!, status: 'invited',
-            passwordHash: await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id })
+            schoolId: input.schoolId, name: row.name!, email, role: row.role!, status: 'active',
+            passwordHash
           }).returning({ id: schema.users.id })
           userId = user!.id; created++
         } else if (existing.status === 'active') {
           skipped++
           continue
         } else {
-          await tx.update(schema.users).set({ name: row.name!, role: row.role!, status: 'invited', updatedAt: new Date() }).where(eq(schema.users.id, existing.id))
+          await tx.update(schema.users).set({ name: row.name!, role: row.role!, status: 'active', passwordHash, updatedAt: new Date() }).where(eq(schema.users.id, existing.id))
           updated++
         }
-        const token = createActivationToken(); const expiresAt = invitationExpiresAt()
-        await tx.update(schema.invitations).set({ acceptedAt: new Date() }).where(and(eq(schema.invitations.userId, userId!), eq(schema.invitations.email, email)))
-        await tx.insert(schema.invitations).values({
-          schoolId: input.schoolId, userId, name: row.name!, email, role: row.role!, tokenHash: hashToken(token),
-          invitedBy: input.adminId, expiresAt
-        })
-        invitations.push({ userId: userId!, activationToken: token, expiresAt })
+        credentials.push({ userId: userId!, email, name: row.name!, password })
       } else if (input.type === 'classes') {
         const [teacher] = await tx.select().from(schema.users).where(and(eq(schema.users.schoolId, input.schoolId), eq(schema.users.email, row.teacher_email!.toLowerCase()))).limit(1)
         const [existing] = await tx.select().from(schema.classes).where(and(eq(schema.classes.schoolId, input.schoolId), eq(schema.classes.externalCode, row.class_code!))).limit(1)
@@ -200,6 +195,6 @@ export async function commitSchoolImport(event: H3Event, input: {
         await tx.insert(schema.studentGuardians).values({ studentId: student!.id, guardianId }).onConflictDoNothing()
       }
     }
-    return { ...parsed, created, updated, skipped, invitations }
+    return { ...parsed, created, updated, skipped, credentials }
   })
 }

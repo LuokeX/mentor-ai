@@ -344,6 +344,26 @@ export const moduleCases = pgTable('module_cases', {
   ...timestamps
 }, table => [index('module_cases_owner_idx').on(table.ownerUserId, table.module)])
 
+export const studentEvents = pgTable('student_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  studentId: uuid('student_id').notNull().references(() => students.id),
+  eventType: varchar('event_type', { length: 30 }).notNull(), // 违纪/冲突/异常行为/学业波动/其他
+  severity: varchar('severity', { length: 20 }).notNull(), // 低/中/高/严重
+  title: varchar('title', { length: 200 }).notNull(),
+  description: text('description'),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }),
+  resolution: text('resolution'),
+  status: varchar('status', { length: 20 }).default('open').notNull(), // open/resolved/closed
+  dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
+  ...timestamps
+}, table => [
+  index('student_events_student_idx').on(table.studentId),
+  index('student_events_owner_idx').on(table.ownerUserId),
+  index('student_events_school_idx').on(table.schoolId, table.occurredAt)
+])
+
 export const plans = pgTable('plans', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
