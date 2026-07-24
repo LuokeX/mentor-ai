@@ -88,7 +88,7 @@ async function login() {
           <UFormField v-if="needOtp && useRecoveryCode" label="一次性恢复码" help="恢复码使用后立即失效"><UInput v-model="form.recoveryCode" maxlength="13" size="xl" icon="i-lucide-key-round" class="w-full" placeholder="XXXXXX-XXXXXX" /></UFormField>
           <button v-if="needOtp" type="button" class="text-sm text-emerald-700 hover:underline" @click="useRecoveryCode = !useRecoveryCode">{{ useRecoveryCode ? '使用动态验证码' : '无法使用验证器？改用恢复码' }}</button>
           <UAlert v-if="errorMessage" color="error" variant="soft" :description="errorMessage" />
-          <UButton type="submit" block size="xl" color="primary" :loading="pending" :disabled="!hydrated">安全登录</UButton>
+          <button type="submit" class="w-full rounded-lg bg-[var(--ui-primary)] px-6 py-3.5 text-lg font-medium text-white disabled:opacity-50" :disabled="!hydrated">安全登录</button>
         </form>
         <p class="mt-5 text-center text-sm text-slate-500">收到学校邀请？<NuxtLink class="font-medium text-emerald-700 hover:underline" to="/activate">激活账号</NuxtLink></p>
         <div v-if="showDemoLogin" class="mt-8 rounded-2xl bg-slate-100/80 p-4 text-xs leading-6 text-slate-500">

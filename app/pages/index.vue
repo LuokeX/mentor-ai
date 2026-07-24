@@ -592,7 +592,7 @@ onUnmounted(() => {
     <section id="chat-section" class="mt-10 grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
       <aside class="panel hidden h-[18rem] flex-col overflow-hidden lg:flex lg:h-[calc(100dvh-7rem)] lg:min-h-[34rem]">
         <div class="border-b border-slate-100 p-4">
-          <UButton block icon="i-lucide-message-square-plus" size="lg" @click="newConversation">新对话</UButton>
+          <button type="button" class="w-full flex items-center justify-center gap-2 rounded-lg bg-[var(--ui-primary)] px-4 py-3 text-base font-medium text-white" @click="newConversation"><UIcon name="i-lucide-message-square-plus" class="size-5" />新对话</button>
         </div>
         <div class="flex items-center justify-between px-4 pb-2 pt-4">
           <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">最近对话</p>
@@ -726,62 +726,81 @@ onUnmounted(() => {
           <p class="text-sm font-semibold text-emerald-700">持续使用闭环</p>
           <h2 class="mt-1 text-2xl font-semibold">今日待办</h2>
         </div>
-        <NuxtLink to="/notifications" class="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100 hover:shadow-sm">
+        <NuxtLink to="/notifications" class="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 hover:shadow-md">
           <UIcon name="i-lucide-bell-ring" class="size-4" />
           进入事件中心
-          <UBadge :color="todayTodoMetrics.total ? 'primary' : 'neutral'" variant="soft">{{ todayTodoMetrics.total }}</UBadge>
-          <UIcon name="i-lucide-arrow-right" class="size-4 text-emerald-500" />
+          <UIcon name="i-lucide-arrow-right" class="size-4" />
         </NuxtLink>
       </div>
-      <div class="mt-5 grid gap-4 lg:grid-cols-[.8fr_1.2fr]">
-        <div class="panel p-5">
-          <h3 class="font-semibold">今日待办</h3>
-          <div class="mt-4 flex gap-3">
-            <div class="flex-1 rounded-xl bg-red-50 px-3 py-2 text-center">
-              <strong class="text-lg text-red-700">{{ todayTodoMetrics.overdueActions }}</strong>
-              <p class="text-xs text-red-500">逾期</p>
-            </div>
-            <div class="flex-1 rounded-xl bg-emerald-50 px-3 py-2 text-center">
-              <strong class="text-lg text-emerald-700">{{ todayTodoMetrics.actions - todayTodoMetrics.overdueActions }}</strong>
-              <p class="text-xs text-emerald-600">今日</p>
-            </div>
-            <div class="flex-1 rounded-xl bg-amber-50 px-3 py-2 text-center">
-              <strong class="text-lg text-amber-700">{{ todayTodoMetrics.reviews }}</strong>
-              <p class="text-xs text-amber-600">复盘</p>
-            </div>
+
+      <!-- 指标卡片 -->
+      <div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="panel flex flex-col items-center p-5 text-center transition hover:shadow-md">
+          <div class="grid size-10 place-items-center rounded-xl bg-blue-100">
+            <UIcon name="i-lucide-bell" class="size-5 text-blue-600" />
           </div>
-          <div v-if="today.reviews?.length" class="mt-4 space-y-2">
-            <p class="text-xs font-medium text-slate-500">待复盘方案</p>
-            <NuxtLink v-for="review in today.reviews.slice(0, 3)" :key="review.id" :to="`/information/plans/${review.id}`" class="flex items-center justify-between rounded-lg bg-white px-3 py-2.5 text-sm ring-1 ring-slate-100 transition hover:bg-emerald-50">
+          <strong class="mt-3 text-2xl font-bold text-slate-900">{{ todayTodoMetrics.unread }}</strong>
+          <p class="mt-0.5 text-xs text-slate-500">未读通知</p>
+        </div>
+        <div class="panel flex flex-col items-center p-5 text-center transition hover:shadow-md">
+          <div class="grid size-10 place-items-center rounded-xl" :class="todayTodoMetrics.overdueActions ? 'bg-red-100' : 'bg-emerald-100'">
+            <UIcon name="i-lucide-clipboard-check" class="size-5" :class="todayTodoMetrics.overdueActions ? 'text-red-600' : 'text-emerald-600'" />
+          </div>
+          <strong class="mt-3 text-2xl font-bold" :class="todayTodoMetrics.overdueActions ? 'text-red-700' : 'text-slate-900'">{{ todayTodoMetrics.actions }}</strong>
+          <p class="mt-0.5 text-xs text-slate-500">
+            今日动作
+            <span v-if="todayTodoMetrics.overdueActions" class="ml-0.5 text-red-500">({{ todayTodoMetrics.overdueActions }} 逾期)</span>
+          </p>
+        </div>
+        <div class="panel flex flex-col items-center p-5 text-center transition hover:shadow-md">
+          <div class="grid size-10 place-items-center rounded-xl bg-amber-100">
+            <UIcon name="i-lucide-rotate-ccw" class="size-5 text-amber-600" />
+          </div>
+          <strong class="mt-3 text-2xl font-bold text-slate-900">{{ todayTodoMetrics.reviews }}</strong>
+          <p class="mt-0.5 text-xs text-slate-500">待复盘</p>
+        </div>
+        <div class="panel flex flex-col items-center p-5 text-center transition hover:shadow-md">
+          <div class="grid size-10 place-items-center rounded-xl bg-purple-100">
+            <UIcon name="i-lucide-file-text" class="size-5 text-purple-600" />
+          </div>
+          <strong class="mt-3 text-2xl font-bold text-slate-900">{{ todayTodoMetrics.drafts + todayTodoMetrics.assignments }}</strong>
+          <p class="mt-0.5 text-xs text-slate-500">草稿/移交</p>
+        </div>
+      </div>
+
+      <!-- 待办列表：今日动作 + 待复盘 -->
+      <div class="mt-5 grid gap-4 lg:grid-cols-2">
+        <div class="panel flex flex-col p-5">
+          <div class="flex items-center justify-between">
+            <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <UIcon name="i-lucide-clipboard-check" class="size-4 text-emerald-600" />今日动作
+            </h3>
+            <NuxtLink to="/notifications?tab=actions" class="text-xs font-medium text-emerald-600 transition hover:text-emerald-800">查看全部</NuxtLink>
+          </div>
+          <div class="mt-4 flex-1 space-y-2">
+            <NuxtLink v-for="action in today.actions.slice(0, 4)" :key="action.id" :to="`/information/plans/${action.planId}`" class="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-emerald-200 hover:bg-emerald-50/50">
+              <span class="min-w-0 truncate"><strong>{{ action.title }}</strong><small class="ml-1.5 text-slate-400">{{ action.planTitle }}</small></span>
+              <UBadge :color="action.overdue ? 'error' : 'neutral'" variant="soft" class="shrink-0">{{ action.overdue ? '已逾期' : '今日' }}</UBadge>
+            </NuxtLink>
+            <p v-if="!today.actions.length" class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-sm text-slate-400">暂无到期动作</p>
+          </div>
+        </div>
+
+        <div class="panel flex flex-col p-5">
+          <div class="flex items-center justify-between">
+            <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <UIcon name="i-lucide-rotate-ccw" class="size-4 text-amber-600" />待复盘
+            </h3>
+            <span v-if="todayTodoMetrics.drafts" class="flex items-center gap-1 text-xs text-slate-400">
+              <UIcon name="i-lucide-file-clock" class="size-3" />{{ todayTodoMetrics.drafts }} 份草稿
+            </span>
+          </div>
+          <div class="mt-4 flex-1 space-y-2">
+            <NuxtLink v-for="review in today.reviews.slice(0, 4)" :key="review.id" :to="`/information/plans/${review.id}`" class="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-amber-200 hover:bg-amber-50/50">
               <span class="min-w-0 truncate"><strong>{{ review.title }}</strong><small class="ml-1.5 text-slate-400">{{ (moduleMeta as Record<string, { title: string }>)[review.module]?.title || review.module }}</small></span>
               <UIcon name="i-lucide-chevron-right" class="size-4 shrink-0 text-slate-300" />
             </NuxtLink>
-          </div>
-          <div v-if="todayTodoMetrics.drafts" class="mt-3 flex items-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
-            <UIcon name="i-lucide-file-clock" class="size-3.5" />
-            {{ todayTodoMetrics.drafts }} 份草稿待完成
-          </div>
-          <NuxtLink v-if="!today.reviews?.length && !todayTodoMetrics.drafts" to="/notifications" class="mt-4 flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100">
-            进入事件中心 <UIcon name="i-lucide-arrow-right" class="size-4" />
-          </NuxtLink>
-        </div>
-        <div class="panel p-5">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div class="flex items-center gap-2 text-sm font-semibold text-emerald-700"><UIcon name="i-lucide-list-todo" class="size-4" />事件中心</div>
-              <h3 class="mt-2 text-xl font-semibold text-slate-900">把提醒、动作和复盘集中处理</h3>
-            </div>
-            <NuxtLink to="/notifications" class="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50">去处理 <UIcon name="i-lucide-arrow-right" class="size-4" /></NuxtLink>
-          </div>
-          <div class="mt-5 grid gap-3 sm:grid-cols-4">
-            <div class="rounded-xl bg-slate-50 px-4 py-3"><p class="text-xs text-slate-400">未读通知</p><strong class="mt-1 block text-2xl">{{ todayTodoMetrics.unread }}</strong></div>
-            <div class="rounded-xl bg-slate-50 px-4 py-3"><p class="text-xs text-slate-400">今日/逾期动作</p><strong class="mt-1 block text-2xl">{{ todayTodoMetrics.actions }}</strong></div>
-            <div class="rounded-xl bg-slate-50 px-4 py-3"><p class="text-xs text-slate-400">待复盘</p><strong class="mt-1 block text-2xl">{{ todayTodoMetrics.reviews }}</strong></div>
-            <div class="rounded-xl bg-slate-50 px-4 py-3"><p class="text-xs text-slate-400">草稿/移交</p><strong class="mt-1 block text-2xl">{{ todayTodoMetrics.drafts + todayTodoMetrics.assignments }}</strong></div>
-          </div>
-          <div class="mt-5 space-y-2">
-            <NuxtLink v-for="action in today.actions.slice(0, 4)" :key="action.id" :to="`/information/plans/${action.planId}`" class="flex items-center justify-between rounded-xl bg-white px-4 py-3 text-sm ring-1 ring-slate-100 transition hover:bg-emerald-50" @click.stop><span><strong>{{ action.title }}</strong><small class="ml-2 text-slate-400">{{ action.planTitle }}</small></span><UBadge :color="action.overdue?'error':'neutral'" variant="soft">{{ action.overdue ? '已逾期' : '今日' }}</UBadge></NuxtLink>
-            <p v-if="!today.actions.length" class="rounded-xl bg-white px-4 py-3 text-center text-sm text-slate-400 ring-1 ring-slate-100">今天没有到期动作，仍可进入事件中心查看通知、草稿和复盘。</p>
+            <p v-if="!today.reviews.length" class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-sm text-slate-400">暂无待复盘方案</p>
           </div>
         </div>
       </div>

@@ -339,7 +339,7 @@ onMounted(() => {
             </div>
             <UFormField label="沟通摘要"><UTextarea v-model="form.summary" :rows="5" class="w-full" /></UFormField>
           </div>
-          <UButton block :loading="pending" @click="createEntity">保存</UButton>
+          <button type="button" class="w-full rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white" @click="createEntity">保存</button>
         </div>
       </template>
     </UModal>
