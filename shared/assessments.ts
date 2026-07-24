@@ -11,6 +11,7 @@ export interface AssessmentQuestion {
 }
 export interface AssessmentDefinition {
   code: string
+  instrumentCode?: string
   version: string
   module: ModuleId
   title: string

@@ -5,7 +5,7 @@ import { useDb, schema } from '../../../utils/db'
 import { writeAudit } from '../../../utils/audit'
 
 const schemaInput = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('create'), code: z.string().min(2).max(80), name: z.string().min(2).max(160), version: z.string().min(1).max(40), type: z.enum(['assessment', 'rules', 'tool', 'sop', 'prompt']), payload: z.record(z.string(), z.unknown()) }),
+  z.object({ action: z.literal('create'), code: z.string().min(2).max(80), name: z.string().min(2).max(160), version: z.string().min(1).max(40), type: z.enum(['assessment', 'attribution', 'tool']), payload: z.record(z.string(), z.unknown()) }),
   z.object({ action: z.enum(['publish', 'retire', 'rollback']), id: z.string().uuid() })
 ])
 

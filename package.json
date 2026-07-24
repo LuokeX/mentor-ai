@@ -10,6 +10,7 @@
     "dev": "nuxt dev",
     "build": "nuxt build",
     "preview": "nuxt preview",
+    "postinstall": "node scripts/prepare-vue-tsc-fixture.mjs",
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -19,9 +20,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
-    "resources:migrate": "tsx scripts/migrate-module-resources.ts",
-    "knowledge:import": "tsx scripts/import-knowledge.ts",
-    "knowledge:reindex": "tsx scripts/reindex-embeddings.ts"
+    "resources:reindex": "tsx scripts/reindex-module-resource-embeddings.ts",
+    "import:business-data": "tsx scripts/import-business-data/index.ts"
   },
   "dependencies": {
     "@nuxt/ui": "latest",
@@ -34,6 +34,7 @@
     "qrcode": "^1.5.4",
     "vue": "latest",
     "vue-router": "latest",
+    "xlsx": "0.18.5",
     "zod": "latest"
   },
   "devDependencies": {

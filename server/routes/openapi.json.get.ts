@@ -2,9 +2,6 @@ import { z } from 'zod'
 import {
   adminAccessRequestSchema,
   chatMessageSchema,
-  knowledgeBaseActionSchema,
-  knowledgeBaseCreateSchema,
-  knowledgeDocumentImportSchema,
   moduleIdSchema,
   reasonCategorySchema,
   roleSchema,
@@ -35,9 +32,6 @@ export default defineEventHandler(() => ({
       ReasonCategory: jsonSchema(reasonCategorySchema),
       AdminAccessRequest: jsonSchema(adminAccessRequestSchema),
       ChatMessage: jsonSchema(chatMessageSchema),
-      KnowledgeBaseCreate: jsonSchema(knowledgeBaseCreateSchema),
-      KnowledgeBaseAction: jsonSchema(knowledgeBaseActionSchema),
-      KnowledgeDocumentImport: jsonSchema(knowledgeDocumentImportSchema),
       RouteDecision: jsonSchema(routeDecisionSchema),
       AssessmentReport: jsonSchema(assessmentReportSchema),
       PlanReviewCreate: jsonSchema(planReviewCreateSchema)
@@ -50,9 +44,9 @@ export default defineEventHandler(() => ({
     '/api/v1/auth/login': { post: { security: [], summary: '账号密码登录；心理专员还需 TOTP 或一次性恢复码', responses: { 200: { description: 'Logged in' }, 428: { description: 'MFA required' } } } },
     '/api/v1/auth/activate': { get: { security: [], summary: '校验 72 小时一次性激活码', responses: { 200: { description: 'Invitation valid' }, 410: { description: 'Expired' } } }, post: { security: [], summary: '设置密码；心理专员进入 MFA 绑定步骤', responses: { 200: { description: 'Activated or MFA setup URI' } } } },
     '/api/v1/auth/activate-mfa': { post: { security: [], summary: '心理专员确认 TOTP 并一次性取得恢复码', responses: { 200: { description: 'Activated with recovery codes' } } } },
-    '/api/v1/chat/messages': { post: { summary: '安全检查、受控上下文、知识检索、流式 AI 回答、引用与模块建议（SSE）', responses: { 200: { description: 'SSE events: ack(dataGovernance), answer_start, answer_delta, answer, sources, route, plan_update_suggestions, fuse, done' }, 409: { description: 'Session context cannot be switched silently' } } } },
+    '/api/v1/chat/messages': { post: { summary: '安全检查、受控上下文和首页 AI 分诊（SSE）', responses: { 200: { description: 'SSE events: ack(dataGovernance), answer_start, answer_delta, answer, route, clarification_round, clarification_summary, fuse, done' }, 409: { description: 'Session context cannot be switched silently' } } } },
     '/api/v1/chat/context-options': { get: { summary: '取得当前教师可绑定到 AI 咨询的学生、班级和家长对象', responses: { 200: { description: 'Context options' } } } },
-    '/api/v1/chat/status': { get: { summary: '取得 DeepSeek 配置状态和可用知识库数量', responses: { 200: { description: 'Assistant status' } } } },
+    '/api/v1/chat/status': { get: { summary: '取得 AI 分诊配置状态', responses: { 200: { description: 'Triage assistant status' } } } },
     '/api/v1/chat/data-governance': { get: { summary: '取得学校 AI 数据模式、有效回退模式和教师告知状态', responses: { 200: { description: 'AI governance state' } } } },
     '/api/v1/chat/context-preview': { get: { summary: '预览本次咨询将发送的业务上下文和始终排除字段', responses: { 200: { description: 'Sanitized context preview' } } } },
     '/api/v1/chat/consent': { post: { summary: '教师确认学校完整上下文隐私告知版本', responses: { 200: { description: 'Consent recorded' } } } },
@@ -60,13 +54,6 @@ export default defineEventHandler(() => ({
     '/api/v1/chat/messages/{id}/plan-suggestions/{index}/confirm': { post: { summary: '教师确认后应用单条 AI 方案更新建议', responses: { 200: { description: 'Suggestion applied' }, 409: { description: 'Already applied' } } } },
     '/api/v1/chat/sessions': { get: { summary: '当前教师的对话历史', responses: { 200: { description: 'Owned sessions' } } } },
     '/api/v1/chat/sessions/{id}': { get: { summary: '当前教师拥有的对话及消息', responses: { 200: { description: 'Owned session detail' }, 404: { description: 'Not found or not owned' } } } },
-    '/api/v1/platform-admin/knowledge-bases': { post: { summary: '平台管理员创建全局或校级知识库草稿', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/KnowledgeBaseCreate' } } } }, responses: { 200: { description: 'Knowledge base created' } } } },
-    '/api/v1/platform-admin/knowledge-bases/{id}/documents': { post: { summary: '导入 Markdown、TXT 或 JSON 并自动分块', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/KnowledgeDocumentImport' } } } }, responses: { 200: { description: 'Document imported as draft' }, 409: { description: 'Duplicate document' } } } },
-    '/api/v1/platform-admin/knowledge-bases/{id}/documents/{documentId}': { delete: { summary: '删除离线知识库中的文档和知识片段', responses: { 200: { description: 'Document deleted' }, 409: { description: 'Published knowledge base must be archived first' } } } },
-    '/api/v1/platform-admin/knowledge-bases/{id}': {
-      get: { summary: '取得知识库、文档和知识片段预览', responses: { 200: { description: 'Knowledge base detail' } } },
-      patch: { summary: '发布、停用或恢复知识库', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/KnowledgeBaseAction' } } } }, responses: { 200: { description: 'Knowledge base updated' } } }
-    },
     '/api/v1/assessments/{module}': { get: { summary: '取得版本化问卷定义', parameters: [{ name: 'module', in: 'path', required: true, schema: { $ref: '#/components/schemas/ModuleId' } }], responses: { 200: { description: 'Definition' } } } },
     '/api/v1/assessments/{module}/draft': {
       get: { summary: '恢复当前教师的服务端草稿', responses: { 200: { description: 'Draft or null' } } },

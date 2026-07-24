@@ -1,0 +1,43 @@
+{
+  "module": "student_case",
+  "version": "1.0.0",
+  "computed": {
+    "caseRisk": "MAX(scores)"
+  },
+  "branches": [
+    {
+      "pri": 5,
+      "when": "caseRisk >= 4",
+      "level": "support",
+      "blocked": false,
+      "ruleId": "student-case-support",
+      "primaryAttribution": "学生个案支持不足",
+      "secondaryAttributions": ["情绪调节困难", "同伴关系压力"],
+      "reasons": ["量表显示学生个案需要教师持续支持，并保留必要观察记录。"],
+      "toolTags": ["student_case", "support", "emotion"]
+    },
+    {
+      "pri": 100,
+      "level": "observe",
+      "blocked": false,
+      "ruleId": "student-case-default",
+      "primaryAttribution": "个案信息待补充",
+      "secondaryAttributions": [],
+      "reasons": ["当前信息适合先进入低压观察，补齐学习、情绪和关系证据。"],
+      "toolTags": ["student_case", "observe"]
+    }
+  ],
+  "actions": [
+    {
+      "title": "建立一生一案观察记录",
+      "detail": "用事实描述记录学生近期学习、情绪、关系和家庭沟通线索。",
+      "status": "pending"
+    }
+  ],
+  "tools": [
+    {
+      "title": "低压观察记录表",
+      "content": "事实｜发生场景｜学生反应｜教师回应｜下一次观察点"
+    }
+  ]
+}

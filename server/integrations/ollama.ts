@@ -38,16 +38,16 @@ function eventOptions(event: H3Event): OllamaEmbeddingOptions {
   }
 }
 
-export async function embedKnowledgeChunks(event: H3Event, input: string[]) {
+export async function embedModuleResourceChunks(event: H3Event, input: string[]) {
   const config = useRuntimeConfig(event)
   if (!config.embeddingEnabled) return null
   return requestOllamaEmbeddings(eventOptions(event), input)
 }
 
-export async function embedKnowledgeQuery(event: H3Event, query: string) {
+export async function embedModuleResourceQuery(event: H3Event, query: string) {
   const config = useRuntimeConfig(event)
   if (!config.embeddingEnabled) return null
-  const instruction = `Instruct: 检索与教师赋能业务问题最相关的知识片段\nQuery: ${query}`
+  const instruction = `Instruct: 检索与教师赋能业务模块资源最相关的片段\nQuery: ${query}`
   const embeddings = await requestOllamaEmbeddings(eventOptions(event), [instruction])
   return embeddings[0] || null
 }

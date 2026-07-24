@@ -364,6 +364,9 @@ export function executeRules(
     reasons: matchedBranch.reasons,
     blocked,
     matchedRuleIds: [matchedBranch.ruleId],
+    primaryAttribution: matchedBranch.primaryAttribution || matchedBranch.reasons[0] || level,
+    secondaryAttributions: matchedBranch.secondaryAttributions || [],
+    toolTags: matchedBranch.toolTags || [],
     dimensions,
     actions: config.actions,
     tools: config.tools
@@ -388,6 +391,9 @@ export function evaluateWithFallback(
     reasons: result.reasons,
     blocked: result.blocked,
     matchedRuleIds: result.matchedRuleIds,
+    primaryAttribution: result.primaryAttribution,
+    secondaryAttributions: result.secondaryAttributions,
+    toolTags: result.toolTags,
     dimensions: result.dimensions,
     actions: result.actions,
     tools: result.tools

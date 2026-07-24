@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { moduleResourceDocumentImportSchema } from '../../../../../shared/contracts'
-import { chunkKnowledgeDocument, checksumKnowledgeContent, normalizeKnowledgeContent } from '../../../../domain/knowledge'
-import { embedKnowledgeChunks } from '../../../../integrations/ollama'
+import { chunkModuleResourceDocument, checksumModuleResourceContent, normalizeModuleResourceContent } from '../../../../domain/module-resource-documents'
+import { embedModuleResourceChunks } from '../../../../integrations/ollama'
 import { requireUser } from '../../../../utils/auth'
 import { writeAudit } from '../../../../utils/audit'
 import { schema, useDb } from '../../../../utils/db'
@@ -25,21 +25,21 @@ export default defineEventHandler(async (event) => {
     .where(eq(schema.moduleResourceVersions.id, body.versionId))
     .limit(1)
   if (!version) throw createError({ statusCode: 404, message: '资源版本不存在' })
-  if (!['professional_knowledge', 'sop', 'script', 'case', 'tool', 'prompt'].includes(version.libraryType)) {
+  if (!['assessment', 'attribution', 'tool'].includes(version.libraryType)) {
     throw createError({ statusCode: 422, message: '该资源类型不支持文档导入' })
   }
 
-  let content = normalizeKnowledgeContent(body.content)
+  let content = normalizeModuleResourceContent(body.content)
   if (body.sourceType === 'json') {
     try { content = JSON.stringify(JSON.parse(content), null, 2) } catch { throw createError({ statusCode: 400, message: 'JSON 文档格式不正确' }) }
   }
-  const chunks = chunkKnowledgeDocument(content)
+  const chunks = chunkModuleResourceDocument(content)
   if (!chunks.length) throw createError({ statusCode: 400, message: '文档没有可导入内容' })
 
   let embeddings: number[][] | null = null
   let embeddingError: string | null = null
   try {
-    embeddings = await embedKnowledgeChunks(event, chunks.map(chunk => `${chunk.heading ? `${chunk.heading}\n` : ''}${chunk.content}`))
+    embeddings = await embedModuleResourceChunks(event, chunks.map(chunk => `${chunk.heading ? `${chunk.heading}\n` : ''}${chunk.content}`))
   } catch (error) {
     embeddingError = error instanceof Error ? error.message.slice(0, 160) : 'embedding_failed'
   }
@@ -54,7 +54,7 @@ export default defineEventHandler(async (event) => {
         sourceType: body.sourceType,
         originalFilename: body.originalFilename,
         mimeType: body.mimeType,
-        checksum: checksumKnowledgeContent(content),
+        checksum: checksumModuleResourceContent(content),
         status: version.status === 'published' ? 'ready' : 'draft',
         content,
         metadata: {

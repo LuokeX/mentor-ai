@@ -8,11 +8,11 @@
 
 - 技术形态：Nuxt 4 + Vue 3 + Nitro 单仓全栈应用。
 - 角色：`teacher`、`psychologist`、`school_admin`、`platform_admin`。
-- 四个可执行模块：`self_growth`、`class_system`、`home_school`、`student_case`。
-- 核心能力：教师 AI 助手、确定性量表与规则、信息中心、方案跟踪、安全熔断、心理转介、学校后台、平台后台、知识库检索。
+- 五个可执行模块：`self_growth`、`class_system`、`home_school`、`student_case`、`learning_problem`。
+- 核心能力：首页 AI 分诊、确定性量表与归因规则、三库资源中心、信息中心、方案跟踪、安全熔断、心理转介、学校后台、平台后台。
 - 业务边界和当前未实现范围见 `README.md`；它是实现说明，不是完整 PRD。
 
-不要新增第五业务模块、医疗/心理诊断、自动替代人工处置或新的管理员数据权限，除非任务有明确业务依据和授权。
+不要新增第六业务模块、医疗/心理诊断、自动替代人工处置或新的管理员数据权限，除非任务有明确业务依据和授权。
 
 ## 2. 事实来源与冲突处理
 
@@ -34,7 +34,7 @@
 
 ## 3. 当前技术基线
 
-- Node.js `>=24 <25`，包管理器固定为 pnpm 11.7；不要使用 npm 或 yarn 改写锁文件。
+- Node.js `>=24 <25`，进入仓库后先执行 `nvm use 24` 再运行 pnpm 命令；若非交互 Shell 未加载 nvm，先执行 `source /home/llai01/.nvm/nvm.sh`。包管理器固定为 pnpm 11.7；不要使用 npm 或 yarn 改写锁文件。
 - Nuxt `^4.4.0`、Vue 3、Nitro、Nuxt UI、Tailwind CSS v4、Lucide Iconify 图标。
 - TypeScript `strict: true`，运行 `nuxt typecheck`。
 - PostgreSQL 18 + pgvector 0.8.5，Drizzle ORM；数据库结构集中在 `server/db/schema.ts`。
@@ -186,16 +186,17 @@ export default defineEventHandler(async (event) => {
 
 完整权限矩阵以 `docs/ROLE_MATRIX.md` 为准。
 
-## 8. AI、知识库和安全熔断
+## 8. AI 分诊、三库和安全熔断
 
 - 本地危机关键词和硬规则必须先于常规模型回答执行；语义模型只能补充识别，不能削弱本地规则。
 - 红线命中后停止常规回答，并在同一事务中创建 `safetyEvents`、`referrals`、`notificationOutbox` 和 `auditLogs`。
 - 量表计分、业务分级、危机熔断和管理员授权必须由确定性代码执行，不能交给 LLM 决定。
 - 发送给外部模型的教师输入和历史消息必须先经 `redactPii`；不要把完整电话、邮箱、姓名或未授权业务正文放入 Prompt。
 - 模型调用日志只记录必要元数据，不记录完整 Prompt 或教师原文。
-- 助手只能检索已发布知识库中的 ready 文档，并按全局/本校范围隔离。
-- 模型引用必须限制在本次检索返回的 chunk UUID 中；不得展示模型虚构来源。
-- 知识导入禁止包含真实个人业务数据。红线、计分阈值和制度要求即使存在于知识库，也必须同步到确定性规则和测试。
+- 首页 AI 只做分诊：澄清问题、推荐模块、说明理由和评估准备事项；不能生成正式方案，不能跳过量表，不能替代归因规则。
+- 三库固定为 `assessment`、`attribution`、`tool`，运行时发布版本来自 `module_resource_libraries` 和 `module_resource_versions`。
+- 量表计分、等级、主归因、次归因、工具匹配、方案结构和风险判断必须由确定性代码执行。
+- 资源导入禁止包含真实个人业务数据。红线、计分阈值和制度要求必须同步到确定性规则和测试。
 - DeepSeek 或 Ollama 不可用时保留现有本地/关键词降级路径，不得让安全规则依赖外部服务可用性。
 
 涉及这部分的修改应同时阅读 `docs/AI_ASSISTANT_AND_KNOWLEDGE.md`、`server/domain/safety.ts`、`server/domain/rules-executor.ts` 和相关测试。
@@ -240,8 +241,8 @@ pnpm db:up               # 启动数据库、Ollama、迁移和向量补全
 pnpm db:generate         # 从 Schema 生成 migration
 pnpm db:migrate          # 执行未运行的 migration
 pnpm db:seed             # 仅本地或获批测试环境的演示数据
-pnpm knowledge:import    # 受控导入知识
-pnpm knowledge:reindex   # 重建知识向量
+pnpm import:business-data # 导入三库业务数据
+pnpm resources:reindex    # 重建模块资源向量
 ```
 
 `pnpm db:up` 可能拉取镜像和约 639 MB 的 Embedding 模型，`db:seed` 会写入数据；除非任务需要并且环境合适，不要把它们当成普通验证命令自动执行。

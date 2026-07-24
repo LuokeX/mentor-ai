@@ -62,3 +62,92 @@ export async function createPlanActions(event: H3Event, input: {
     dueAt: defaultActionDueAt(createdAt, sequence)
   }))).returning()
 }
+
+// 从 moduleResourceLibraries 加载工具库，根据评估结果匹配适用的工具处方
+export async function resolveToolsForPlan(
+  event: H3Event,
+  module: string,
+  input: {
+    dimensions: Record<string, number>
+    level?: string
+    primaryAttribution?: string
+    secondaryAttributions?: string[]
+    toolTags?: string[]
+    schoolId?: string | null
+  }
+): Promise<Array<{ title: string, content: string }>> {
+  const { resolvePublishedModuleResource } = await import('./module-resources')
+  const resource = await resolvePublishedModuleResource<{ tools?: Array<Record<string, unknown>> }>(
+    event,
+    { module: module as any, libraryType: 'tool', schoolId: input.schoolId }
+  )
+  if (!resource) return []
+
+  const payload = resource.payload
+  const tools: Array<Record<string, unknown>> = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload.tools)
+      ? payload.tools as Array<Record<string, unknown>>
+      : []
+
+  if (tools.length === 0) return []
+
+  const matchedTools: Array<{ title: string, content: string }> = []
+
+  for (const tool of tools) {
+    const toolSeverity = normalize(tool.severity || tool.severity_grade || tool.level)
+    const toolDims = Array.isArray(tool.dimensions) ? tool.dimensions.map(normalize) : []
+    const toolAttributions = [
+      tool.attribution,
+      tool.primaryAttribution,
+      ...(Array.isArray(tool.attributions) ? tool.attributions : [])
+    ].map(normalize).filter(Boolean)
+    const toolTags = [
+      tool.tag,
+      ...(Array.isArray(tool.tags) ? tool.tags : []),
+      ...(Array.isArray(tool.toolTags) ? tool.toolTags : [])
+    ].map(normalize).filter(Boolean)
+
+    // 维度匹配：工具的作用维度与评估结果的薄弱维度重叠
+    const weakDims = Object.entries(input.dimensions)
+      .filter(([, score]) => score <= 2.5) // 阈值：低于2.5视为薄弱
+      .map(([dim]) => normalize(dim))
+
+    const dimMatch = toolDims.length === 0 ||
+      toolDims.some(dimension => weakDims.some(weakDimension => dimension.includes(weakDimension) || weakDimension.includes(dimension)))
+
+    // 严重度匹配
+    const level = normalize(input.level)
+    const severityMatch = !level || !toolSeverity || toolSeverity.includes(level) || level.includes(toolSeverity)
+
+    const attributionTerms = [
+      input.primaryAttribution,
+      ...(input.secondaryAttributions || [])
+    ].map(normalize).filter(Boolean)
+    const attributionMatch = toolAttributions.length === 0 ||
+      toolAttributions.some(attribution => attributionTerms.some(term => attribution.includes(term) || term.includes(attribution)))
+
+    const requestedTags = (input.toolTags || []).map(normalize).filter(Boolean)
+    const tagMatch = toolTags.length === 0 ||
+      toolTags.some(tag => requestedTags.some(requested => tag.includes(requested) || requested.includes(tag)))
+
+    if (dimMatch && severityMatch && attributionMatch && tagMatch) {
+      const steps = Array.isArray(tool.steps) ? (tool.steps as string[]).join('\n') : String(tool.steps || '')
+      const scripts = tool.scripts ? `\n\n关键话术：\n${tool.scripts}` : ''
+      const prohibitions = tool.prohibitions ? `\n\n禁止事项：\n${tool.prohibitions}` : ''
+
+      matchedTools.push({
+        title: String(tool.name || tool.title || ''),
+        content: `${steps}${scripts}${prohibitions}`
+      })
+    }
+
+    if (matchedTools.length >= 5) break // 最多推荐5个工具
+  }
+
+  return matchedTools
+}
+
+function normalize(value: unknown) {
+  return String(value || '').trim().toLowerCase()
+}

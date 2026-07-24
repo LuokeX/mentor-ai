@@ -48,9 +48,9 @@ describe('module resource visibility', () => {
     const libraries = [
       { id: 'global-tool', libraryType: 'tool', scope: 'global', schoolId: null },
       { id: 'school-tool', libraryType: 'tool', scope: 'school', schoolId: 'school-1' },
-      { id: 'global-sop', libraryType: 'sop', scope: 'global', schoolId: null },
-      { id: 'other-school-sop', libraryType: 'sop', scope: 'school', schoolId: 'school-2' }
+      { id: 'global-attribution', libraryType: 'attribution', scope: 'global', schoolId: null },
+      { id: 'other-school-attribution', libraryType: 'attribution', scope: 'school', schoolId: 'school-2' }
     ]
-    expect(filterVisiblePublishedLibraries(libraries, 'school-1').map(item => item.id)).toEqual(['school-tool', 'global-sop'])
+    expect(filterVisiblePublishedLibraries(libraries, 'school-1').map(item => item.id)).toEqual(['school-tool', 'global-attribution'])
   })
 })

@@ -5,10 +5,21 @@ import type { ModuleId } from '../../shared/contracts'
 import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
 import { assessmentDefinitions, moduleMeta } from '../../shared/assessments'
 import type { RuleOutput } from '../domain/rules'
-import type { KnowledgeCitation } from '../domain/knowledge'
 import type { AssistantBusinessContext } from '../domain/assistant-context'
 import { createTemplateAssessmentReport, validateAssessmentReport } from '../domain/reports'
 import { schema, useDb } from '../utils/db'
+
+interface KnowledgeCitation {
+  chunkId: string
+  documentTitle: string
+  heading?: string | null
+  excerpt?: string
+  knowledgeBase: string
+  module?: ModuleId
+  libraryType?: string
+  resourceTitle?: string
+  resourceVersionId?: string
+}
 
 const keywordRoutes: Array<[RouteDecision['primaryModule'], RegExp]> = [
   ['home_school', /(家长|投诉|家长群|家校|沟通)/i],

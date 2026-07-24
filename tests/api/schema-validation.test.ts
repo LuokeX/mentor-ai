@@ -4,9 +4,10 @@ import {
   loginRequestSchema,
   chatMessageSchema,
   adminAccessRequestSchema,
-  knowledgeBaseCreateSchema,
-  knowledgeDocumentImportSchema,
-  knowledgeBaseActionSchema,
+  attributionConfigSchema,
+  libraryTypeSchema,
+  moduleResourceDocumentImportSchema,
+  moduleResourceLibraryCreateSchema,
   routeDecisionSchema,
   roleSchema,
   moduleIdSchema,
@@ -107,11 +108,12 @@ describe('chatMessageSchema', () => {
 // ---- Assessments ----
 
 describe('moduleIdSchema', () => {
-  it('accepts all four module IDs', () => {
+  it('accepts all five module IDs', () => {
     expect(moduleIdSchema.parse('self_growth')).toBe('self_growth')
     expect(moduleIdSchema.parse('class_system')).toBe('class_system')
     expect(moduleIdSchema.parse('home_school')).toBe('home_school')
     expect(moduleIdSchema.parse('student_case')).toBe('student_case')
+    expect(moduleIdSchema.parse('learning_problem')).toBe('learning_problem')
   })
 
   it('rejects unknown module', () => {
@@ -171,16 +173,18 @@ describe('adminAccessRequestSchema', () => {
   })
 })
 
-// ---- Knowledge Base ----
+// ---- Module Resource Libraries ----
 
-describe('knowledgeBaseCreateSchema', () => {
-  it('accepts global knowledge base', () => {
-    const result = knowledgeBaseCreateSchema.parse({ name: '校规手册', scope: 'global' })
+describe('moduleResourceLibraryCreateSchema', () => {
+  it('accepts global assessment library', () => {
+    const result = moduleResourceLibraryCreateSchema.parse({ module: 'home_school', libraryType: 'assessment', name: '家校评估库', scope: 'global' })
     expect(result.scope).toBe('global')
   })
 
-  it('accepts school-scoped knowledge base', () => {
-    const result = knowledgeBaseCreateSchema.parse({
+  it('accepts school-scoped tool library', () => {
+    const result = moduleResourceLibraryCreateSchema.parse({
+      module: 'home_school',
+      libraryType: 'tool',
       name: '班级管理规范',
       scope: 'school',
       schoolId: '550e8400-e29b-41d4-a716-446655440000'
@@ -189,12 +193,14 @@ describe('knowledgeBaseCreateSchema', () => {
   })
 
   it('rejects school scope without schoolId', () => {
-    const result = knowledgeBaseCreateSchema.safeParse({ name: 'test', scope: 'school' })
+    const result = moduleResourceLibraryCreateSchema.safeParse({ module: 'home_school', libraryType: 'tool', name: 'test', scope: 'school' })
     expect(result.success).toBe(false)
   })
 
   it('rejects global scope with schoolId', () => {
-    const result = knowledgeBaseCreateSchema.safeParse({
+    const result = moduleResourceLibraryCreateSchema.safeParse({
+      module: 'home_school',
+      libraryType: 'tool',
       name: 'test',
       scope: 'global',
       schoolId: '550e8400-e29b-41d4-a716-446655440000'
@@ -203,9 +209,10 @@ describe('knowledgeBaseCreateSchema', () => {
   })
 })
 
-describe('knowledgeDocumentImportSchema', () => {
+describe('moduleResourceDocumentImportSchema', () => {
   it('requires confirmNoPersonalData to be true', () => {
-    expect(() => knowledgeDocumentImportSchema.parse({
+    expect(() => moduleResourceDocumentImportSchema.parse({
+      versionId: '550e8400-e29b-41d4-a716-446655440000',
       title: '文档标题',
       sourceType: 'markdown',
       content: '# Hello\n\n这是测试内容。',
@@ -214,7 +221,8 @@ describe('knowledgeDocumentImportSchema', () => {
   })
 
   it('accepts valid markdown import', () => {
-    const result = knowledgeDocumentImportSchema.parse({
+    const result = moduleResourceDocumentImportSchema.parse({
+      versionId: '550e8400-e29b-41d4-a716-446655440000',
       title: '校规第一章',
       sourceType: 'markdown',
       content: '# 第一章\n\n内容至少十个字才能通过校验。',
@@ -224,7 +232,8 @@ describe('knowledgeDocumentImportSchema', () => {
   })
 
   it('rejects content under 10 chars', () => {
-    expect(() => knowledgeDocumentImportSchema.parse({
+    expect(() => moduleResourceDocumentImportSchema.parse({
+      versionId: '550e8400-e29b-41d4-a716-446655440000',
       title: '短',
       sourceType: 'text',
       content: '123456789',
@@ -233,17 +242,36 @@ describe('knowledgeDocumentImportSchema', () => {
   })
 })
 
-describe('knowledgeBaseActionSchema', () => {
-  it('accepts publish action', () => {
-    expect(knowledgeBaseActionSchema.parse({ action: 'publish' })).toEqual({ action: 'publish' })
+describe('libraryTypeSchema', () => {
+  it('accepts only the three business library types', () => {
+    expect(libraryTypeSchema.parse('assessment')).toBe('assessment')
+    expect(libraryTypeSchema.parse('attribution')).toBe('attribution')
+    expect(libraryTypeSchema.parse('tool')).toBe('tool')
   })
 
-  it('accepts archive action', () => {
-    expect(knowledgeBaseActionSchema.parse({ action: 'archive' })).toEqual({ action: 'archive' })
+  it('rejects removed knowledge and term library types', () => {
+    expect(() => libraryTypeSchema.parse('term')).toThrow(ZodError)
+    expect(() => libraryTypeSchema.parse('professional_knowledge')).toThrow(ZodError)
   })
+})
 
-  it('rejects invalid action', () => {
-    expect(() => knowledgeBaseActionSchema.parse({ action: 'delete' })).toThrow(ZodError)
+describe('attributionConfigSchema', () => {
+  it('requires deterministic attribution output fields', () => {
+    const result = attributionConfigSchema.parse({
+      module: 'student_case',
+      version: '1.0.0',
+      branches: [{
+        pri: 1,
+        level: 'medium',
+        blocked: false,
+        ruleId: 'student-case-learning',
+        primaryAttribution: '学习支持不足',
+        secondaryAttributions: ['课堂参与下降'],
+        reasons: ['量表显示学习支持维度需要关注'],
+        toolTags: ['learning_support']
+      }]
+    })
+    expect(result.branches[0]?.toolTags).toEqual(['learning_support'])
   })
 })
 

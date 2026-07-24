@@ -117,13 +117,8 @@ const resourceLibraries = computed(() => resourceOverview.value?.libraries || []
 
 const libraryTypeLabels: Record<LibraryType, string> = {
   assessment: '评估库',
-  rules: '规则库',
-  tool: '工具库',
-  professional_knowledge: '专业知识库',
-  sop: 'SOP',
-  script: '话术库',
-  case: '案例库',
-  prompt: '提示词'
+  attribution: '归因库',
+  tool: '工具库'
 }
 
 function libraryTypeLabel(type: LibraryType) {
@@ -257,16 +252,6 @@ async function submit() {
   }
 }
 
-async function askAssistantAboutReport() {
-  if (!report.value) return
-  const actionText = firstAction.value ? `\n第一个行动：${firstAction.value.title}——${firstAction.value.detail}` : ''
-  const prompt = `我刚完成「${report.value.printMeta.moduleTitle}」评估。报告提示“${report.value.risk.label}”，主要关注是“${report.value.profile.primaryConcern}”。${actionText}\n请帮我解释这意味着什么，并把第一个行动拆成今天能完成的具体步骤；如果信息不足，只问我一个关键问题。`
-  sessionStorage.setItem('assistant-prefill', JSON.stringify({
-    prompt,
-    contextKey: selectedContext.value ? `${selectedContext.value.type}:${selectedContext.value.id}` : 'none'
-  }))
-  await navigateTo('/')
-}
 </script>
 
 <template>
@@ -299,7 +284,7 @@ async function askAssistantAboutReport() {
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 class="text-lg font-semibold">模块资源中心</h2>
-              <p class="mt-1 text-xs leading-5 text-slate-500">当前评估、工具和知识来源都会优先使用校本发布版本；没有校本版本时自动回到平台基线。</p>
+              <p class="mt-1 text-xs leading-5 text-slate-500">当前量表、归因和工具都会优先使用校本发布版本；没有校本版本时自动回到平台基线。</p>
             </div>
             <UBadge v-if="resourceOverview?.assessment" color="primary" variant="soft">评估 {{ resourceOverview.assessment.version }}</UBadge>
           </div>
@@ -314,8 +299,8 @@ async function askAssistantAboutReport() {
               <p class="mt-2 line-clamp-3 text-xs leading-5 text-slate-500">{{ tool.scenario || tool.steps?.[0] || '已发布工具可在本模块场景中调用。' }}</p>
             </article>
           </div>
-          <UAlert v-else-if="resourceLibraries.length" class="mt-4" color="info" variant="soft" title="资源已发布" description="本模块已有评估或知识来源；工具卡发布后会在这里直接展示。" />
-          <UAlert v-else class="mt-4" color="warning" variant="soft" title="暂未发布模块资源" description="系统会暂时使用内置评估基线；工具、SOP、制度类建议不会让 AI 自由编造。" />
+          <UAlert v-else-if="resourceLibraries.length" class="mt-4" color="info" variant="soft" title="资源已发布" description="本模块已有量表或归因资源；工具卡发布后会在这里直接展示。" />
+          <UAlert v-else class="mt-4" color="warning" variant="soft" title="暂未发布模块资源" description="系统会暂时使用内置评估基线；归因和工具匹配不会让 AI 自由编造。" />
         </section>
 
         <section v-if="allowedContextTypes.length" class="panel p-6 sm:p-7">
@@ -379,7 +364,7 @@ async function askAssistantAboutReport() {
         <section v-if="output.planId" class="panel border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6 sm:p-7">
           <div class="flex flex-wrap items-start justify-between gap-4"><div><p class="text-sm font-semibold text-emerald-700">评估完成 · 行动方案已创建</p><h1 class="mt-2 text-2xl font-semibold">先完成一个最小行动</h1><p class="mt-2 text-sm text-slate-600">系统已安排 3 天行动，并在 {{ formatDate(planDetail?.nextReviewAt) }} 进入复盘提醒。</p></div><UIcon name="i-lucide-circle-check-big" class="size-9 text-emerald-600" /></div>
           <div v-if="firstAction" class="mt-5 rounded-2xl border border-emerald-100 bg-white p-4"><div class="flex flex-wrap items-center justify-between gap-2"><strong>{{ firstAction.title }}</strong><UBadge color="neutral" variant="soft">{{ formatDate(firstAction.dueAt) }} 前</UBadge></div><p class="mt-2 text-sm leading-6 text-slate-600">{{ firstAction.detail }}</p></div>
-          <div class="mt-5 flex flex-wrap gap-3"><UButton :to="`/information/plans/${output.planId}`" icon="i-lucide-list-checks">开始执行第一个行动</UButton><UButton color="neutral" variant="soft" icon="i-lucide-message-circle-question" @click="askAssistantAboutReport">带着报告问助手</UButton></div>
+          <div class="mt-5 flex flex-wrap gap-3"><UButton :to="`/information/plans/${output.planId}`" icon="i-lucide-list-checks">开始执行第一个行动</UButton><UButton color="neutral" variant="soft" to="/information?tab=plans" icon="i-lucide-calendar-check">查看跟踪复盘</UButton></div>
         </section>
         <div class="print-actions flex flex-wrap justify-end gap-2"><UButton icon="i-lucide-printer" color="neutral" variant="soft" @click="printReport">打印/归档</UButton><UButton v-if="output.planId" :to="`/information/plans/${output.planId}`" icon="i-lucide-history">进入复盘记录</UButton></div>
         <div class="panel report-sheet p-7 sm:p-9">

@@ -5,10 +5,10 @@ import { requireUser } from '../../../../utils/auth'
 import { useDb, schema } from '../../../../utils/db'
 import { evaluateAssessment } from '../../../../domain/rules'
 import { executeRules } from '../../../../domain/rules-executor'
-import { resolveAssessmentDefinition, resolveRuleConfig } from '../../../../domain/module-resources'
+import { resolveAssessmentDefinition, resolveAttributionConfig } from '../../../../domain/module-resources'
 import { encryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
-import { createPlanActions, defaultReviewAt } from '../../../../domain/plan-actions'
+import { createPlanActions, defaultReviewAt, resolveToolsForPlan } from '../../../../domain/plan-actions'
 import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
 import { generateAssessmentReport } from '../../../../integrations/deepseek'
@@ -19,7 +19,8 @@ const bodySchema = z.object({
   studentId: z.string().uuid().optional(),
   classId: z.string().uuid().optional(),
   guardianId: z.string().uuid().optional(),
-  sourceChatSessionId: z.string().uuid().optional()
+  sourceChatSessionId: z.string().uuid().optional(),
+  instrumentCode: z.string().max(200).optional()
 })
 
 export default defineEventHandler(async (event) => {
@@ -29,8 +30,8 @@ export default defineEventHandler(async (event) => {
   const body = bodySchema.parse(await readBody(event))
   const db = useDb(event)
 
-  // 动态加载题库定义（优先 content_packages，fallback 硬编码）
-  const resolvedDefinition = await resolveAssessmentDefinition(event, module, user.schoolId)
+  // 动态加载题库定义（支持多 instrument）
+  const resolvedDefinition = await resolveAssessmentDefinition(event, module, user.schoolId, body.instrumentCode)
   const definition = resolvedDefinition.payload
 
   if (definition.questions.some(question => !body.answers[question.id])) {
@@ -91,11 +92,11 @@ export default defineEventHandler(async (event) => {
     else break
   }
 
-  // 动态加载规则配置（优先 content_packages，fallback 硬编码）
-  const publishedRules = await resolveRuleConfig(event, module, user.schoolId)
-  const ruleConfig = publishedRules?.payload ?? null
-  const result = ruleConfig
-    ? executeRules(ruleConfig, body.answers, definition, { previousConsecutiveLowMeaning })
+  // 动态加载归因配置；归因库承载规则引擎，不再使用独立规则库。
+  const publishedAttribution = await resolveAttributionConfig(event, module, user.schoolId)
+  const attributionConfig = publishedAttribution?.payload ?? null
+  const result = attributionConfig
+    ? executeRules(attributionConfig, body.answers, definition, { previousConsecutiveLowMeaning })
     : evaluateAssessment(module, body.answers, { previousConsecutiveLowMeaning })
 
   const report = result.blocked ? null : await generateAssessmentReport(event, {
@@ -132,6 +133,16 @@ export default defineEventHandler(async (event) => {
     })
     fuse = { eventId: referral.safety.id, referralId: referral.referral.id, crisisGuide: referral.crisisGuide }
   } else {
+    const matchedTools = await resolveToolsForPlan(event, module, {
+      dimensions: result.dimensions,
+      level: result.level,
+      primaryAttribution: result.primaryAttribution,
+      secondaryAttributions: result.secondaryAttributions,
+      toolTags: result.toolTags,
+      schoolId: user.schoolId
+    })
+    const planTools = [...result.tools, ...matchedTools]
+    const nextReviewAt = defaultReviewAt()
     const [plan] = await db.insert(schema.plans).values({
       schoolId: user.schoolId, ownerUserId: user.id, module,
       studentId: body.studentId,
@@ -141,10 +152,25 @@ export default defineEventHandler(async (event) => {
       sourceAssessmentAttemptId: attempt.id,
       title: `${definition.title}行动方案`,
       summaryEnc: encryptSensitive(narrative || result.reasons.join('；'), useRuntimeConfig(event).encryptionKey),
-      actions: result.actions, tools: result.tools,
-      report: report as unknown as Record<string, unknown>,
-      sourceVersions: [...resolvedDefinition.sourceVersions, ...(publishedRules?.sourceVersions || [`fallback-rules:${module}`]), ...result.matchedRuleIds],
-      nextReviewAt: defaultReviewAt()
+      actions: result.actions,
+      tools: planTools,
+      report: {
+        ...(report as unknown as Record<string, unknown>),
+        planStructure: {
+          summary: narrative || result.reasons.join('；'),
+          assessment: { code: definition.code, version: definition.version },
+          attribution: {
+            level: result.level,
+            primary: result.primaryAttribution,
+            secondary: result.secondaryAttributions,
+            reasons: result.reasons
+          },
+          tools: planTools.map(tool => tool.title),
+          review: { nextReviewAt: nextReviewAt.toISOString(), mode: 'periodic_with_ai_prompt' }
+        }
+      },
+      sourceVersions: [...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || [`fallback-attribution:${module}`]), ...result.matchedRuleIds],
+      nextReviewAt
     }).returning({ id: schema.plans.id, createdAt: schema.plans.createdAt })
     planId = plan?.id || null
     if (plan) {

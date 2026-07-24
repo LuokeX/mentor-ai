@@ -52,11 +52,12 @@ describe('校内试用核心不变量', () => {
     expect(JSON.stringify(result.snapshot)).not.toContain('never-send')
   })
 
-  it('聊天只产生方案建议，通知 Worker 不扩散学生信息', () => {
+  it('首页聊天只做分诊，通知 Worker 不扩散学生信息', () => {
     const chat = readFileSync(new URL('../server/api/v1/chat/messages.post.ts', import.meta.url), 'utf8')
     const worker = readFileSync(new URL('../server/plugins/notification-worker.ts', import.meta.url), 'utf8')
-    expect(chat).toContain("emit(controller, 'plan_update_suggestions'")
-    expect(chat).not.toContain('非阻塞：从 AI 回复中提取方案更新意图并执行')
+    expect(chat).toContain("emit(controller, 'route'")
+    expect(chat).toContain('AI 只推荐模块，不生成工具、方案或知识库引用')
+    expect(chat).not.toContain("emit(controller, 'plan_update_suggestions'")
     expect(worker).toContain('INSERT INTO notifications')
     expect(worker).not.toContain('studentNameEnc')
     expect(worker).not.toContain('decryptSensitive')

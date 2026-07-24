@@ -1,0 +1,43 @@
+{
+  "module": "class_system",
+  "version": "1.0.0",
+  "computed": {
+    "order": "MIN(scores)"
+  },
+  "branches": [
+    {
+      "pri": 10,
+      "when": "order <= 2",
+      "level": "high",
+      "blocked": false,
+      "ruleId": "class-system-order-high",
+      "primaryAttribution": "班级日常系统短板",
+      "secondaryAttributions": ["规则边界不清", "学生责任结构不足"],
+      "reasons": ["量表显示班级秩序和协作机制薄弱，需要先补齐稳定运行规则。"],
+      "toolTags": ["class_system", "routine", "high"]
+    },
+    {
+      "pri": 100,
+      "level": "norming",
+      "blocked": false,
+      "ruleId": "class-system-default",
+      "primaryAttribution": "班级系统可塑期",
+      "secondaryAttributions": [],
+      "reasons": ["当前班级系统处于可调整阶段，适合用小机制逐步固化。"],
+      "toolTags": ["class_system", "norming"]
+    }
+  ],
+  "actions": [
+    {
+      "title": "补齐一个日常节点机制",
+      "detail": "选择早读、课间、作业或放学中的一个节点，明确目标状态、学生责任人与异常处理方式。",
+      "status": "pending"
+    }
+  ],
+  "tools": [
+    {
+      "title": "一日节点机制表",
+      "content": "节点｜目标状态｜学生责任人｜教师观察点｜异常处理｜复盘日期"
+    }
+  ]
+}

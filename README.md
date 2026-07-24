@@ -4,13 +4,13 @@
 
 ## 已实现范围
 
-- 完整 AI 助手：本地危机规则先行、PII 脱敏、DeepSeek 多轮回答、知识检索与来源引用、Zod 校验、失败自动降级、会话历史和教师确认主模块。
-- AI 业务知识库：平台管理员导入 Markdown/TXT/JSON，自动分块、Ollama `qwen3-embedding:0.6b` 向量化、pgvector + `pg_trgm` 混合检索、草稿发布、全局/校级范围、重复校验和模型调用审计。
-- 四个业务模块：动态问卷、确定性计分/分级、行动和工具生成、方案存档；自我成长的连续四次低意义感紫色规则由历史记录计算。
+- AI 分诊助手：首页只负责澄清问题、推荐模块、说明理由和提示评估准备；本地危机规则先行、PII 脱敏、DeepSeek 分诊辅助、Zod 校验、失败自动降级、会话历史和教师确认主模块。
+- 三库资源中心：平台管理员按五模块维护 `assessment`、`attribution`、`tool` 三类库，支持 Markdown/TXT/JSON 文档分块、Ollama `qwen3-embedding:0.6b` 向量化、草稿发布、全局/校级范围、重复校验和审计。
+- 五个业务模块：动态问卷、确定性计分/分级、规则归因、工具匹配、方案生成和跟踪复盘；自我成长的连续四次低意义感紫色规则由历史记录计算。
 - 问卷草稿同时保存在浏览器和服务端，可跨会话恢复；共享 Zod 契约生成 `/openapi.json`。
 - 账号入校：72 小时一次性激活链接、心理专员自助 TOTP 绑定与单次恢复码、管理员重新邀请/MFA 重置/停用，以及 users/classes/students/guardians 四类 CSV 预检和事务导入。
 - 信息中心：状态、班级、学生、家长、沟通记录和方案记录；个人字段使用 AES-256-GCM 加密，教师可导出自己的完整 JSON 数据，管理员不能调用该导出。
-- 执行闭环：稳定 UUID 方案动作、今日/逾期待办、7 天复盘节点、个人站内通知、AI 回答反馈和需教师确认后才生效的方案建议。
+- 执行闭环：稳定 UUID 方案动作、今日/逾期待办、7 天复盘节点、个人站内通知和 AI 回答反馈；方案结论不由 AI 自动改写。
 - AI 数据治理：学校级 `local | redacted | full_context` 模式、供应商协议和学校审批门禁、教师版本化告知、发送前上下文预览和“不带档案咨询”。
 - 安全熔断：风险事件、转介、短信 Outbox 和审计在单一事务中生成；危机短信只含事件号和登录提示，支持 5 分钟确认 SLA、15 分钟升级 SLA、转派和不可变处置时间线。
 - 心理专员工作台：强制 TOTP，只能处理分配给本人的最小转介包，展示状态、优先级、SLA 倒计时、处置记录和关闭原因。
@@ -33,7 +33,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-`pnpm env:init` 会替换模板占位值、生成互不相同的随机本地密钥，并为已有 `.env` 补充新配置，不会打印密钥或覆盖已有值。`pnpm db:up` 会启动带 pgvector 的 PostgreSQL 18、Ollama、模型拉取、数据库迁移和已有知识补向量任务；首次启动需下载 Ollama 镜像和约 639 MB 的 Embedding 模型。`pnpm db:migrate`、`pnpm db:seed` 和 `pnpm dev` 会自动读取 `.env`；通知消费随 App 启动，无独立 `pnpm worker` 命令。
+`pnpm env:init` 会替换模板占位值、生成互不相同的随机本地密钥，并为已有 `.env` 补充新配置，不会打印密钥或覆盖已有值。`pnpm db:up` 会启动带 pgvector 的 PostgreSQL 18、Ollama、模型拉取和数据库迁移；首次启动需下载 Ollama 镜像和约 639 MB 的 Embedding 模型。`pnpm db:migrate`、`pnpm db:seed` 和 `pnpm dev` 会自动读取 `.env`；通知消费随 App 启动，无独立 `pnpm worker` 命令。
 
 日常开发通常只需：
 
@@ -55,7 +55,7 @@ pnpm dev
 
 心理专员演示 TOTP secret 为 `JBSWY3DPEHPK3PXP`。它只用于本地演示，部署时必须删除演示账号或重新绑定。
 
-若没有配置 `DEEPSEEK_API_KEY`，系统自动使用本地路由降级规则；Ollama 不可用时知识检索自动降级为关键词模式；`SMS_PROVIDER=mock` 时短信仅写入 App 的通知插件日志。
+若没有配置 `DEEPSEEK_API_KEY`，系统自动使用本地分诊降级规则；Ollama 不可用时模块资源向量处理会降级，不影响量表、归因和工具匹配；`SMS_PROVIDER=mock` 时短信仅写入 App 的通知插件日志。
 
 ## 校内服务器部署
 
@@ -80,7 +80,7 @@ pnpm build
 pnpm test:e2e
 ```
 
-当前单元测试覆盖四模块关键阈值、反向计分、连续四次紫色规则、危机关键词、邀请过期、方案节点、CSV 解析和 AI 数据模式；Playwright 覆盖四角色的桌面与手机视口核心路径。正式 UAT 仍需业务方提供完整题库、120 条路由黄金样本和规则黄金样本。分批准入、指标口径和演练记录见 [校内试点验收手册](docs/PILOT_ROLLOUT.md)。
+当前单元测试覆盖五模块关键阈值、反向计分、连续四次紫色规则、危机关键词、邀请过期、方案节点、CSV 解析和 AI 数据模式；Playwright 覆盖四角色的桌面与手机视口核心路径。正式 UAT 仍需业务方提供完整题库、120 条路由黄金样本和规则黄金样本。分批准入、指标口径和演练记录见 [校内试点验收手册](docs/PILOT_ROLLOUT.md)。
 
 ## 数据运维
 
@@ -98,7 +98,7 @@ CONFIRM_RESTORE=RESTORE_MENTOR_AI ./scripts/restore.sh backups/mentor-ai-YYYYMMD
 
 详细命令规范见 [数据库与应用开发、发布和运行规范](docs/DEVELOPMENT_AND_PRODUCTION.md)，事故步骤见 [运维手册](docs/OPERATIONS.md)，权限边界见 [角色权限矩阵](docs/ROLE_MATRIX.md)。
 
-AI 助手配置、知识库导入、发布状态、内容规范和当前边界见 [AI 助手与业务知识库使用说明](docs/AI_ASSISTANT_AND_KNOWLEDGE.md)。
+AI 分诊配置、三库资源、方案闭环和当前边界见 [AI 分诊与三库资源说明](docs/AI_ASSISTANT_AND_KNOWLEDGE.md)。
 
 ## 封闭试用边界
 

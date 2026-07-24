@@ -461,60 +461,6 @@ export const contentPackages = pgTable('content_packages', {
   ...timestamps
 }, table => [uniqueIndex('content_package_code_version_uidx').on(table.code, table.version)])
 
-export const knowledgeBases = pgTable('knowledge_bases', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'cascade' }),
-  name: varchar('name', { length: 160 }).notNull(),
-  description: text('description'),
-  scope: varchar('scope', { length: 20 }).default('global').notNull(),
-  status: varchar('status', { length: 20 }).default('draft').notNull(),
-  version: integer('version').default(1).notNull(),
-  createdBy: uuid('created_by').notNull().references(() => users.id),
-  publishedBy: uuid('published_by').references(() => users.id),
-  publishedAt: timestamp('published_at', { withTimezone: true }),
-  ...timestamps
-}, table => [
-  index('knowledge_bases_scope_status_idx').on(table.scope, table.status),
-  index('knowledge_bases_school_status_idx').on(table.schoolId, table.status)
-])
-
-export const knowledgeDocuments = pgTable('knowledge_documents', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  knowledgeBaseId: uuid('knowledge_base_id').notNull().references(() => knowledgeBases.id, { onDelete: 'cascade' }),
-  title: varchar('title', { length: 200 }).notNull(),
-  sourceType: varchar('source_type', { length: 30 }).notNull(),
-  originalFilename: varchar('original_filename', { length: 260 }),
-  mimeType: varchar('mime_type', { length: 120 }),
-  checksum: varchar('checksum', { length: 64 }).notNull(),
-  status: varchar('status', { length: 20 }).default('draft').notNull(),
-  content: text('content').notNull(),
-  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
-  createdBy: uuid('created_by').notNull().references(() => users.id),
-  ...timestamps
-}, table => [
-  uniqueIndex('knowledge_documents_base_checksum_uidx').on(table.knowledgeBaseId, table.checksum),
-  index('knowledge_documents_base_idx').on(table.knowledgeBaseId)
-])
-
-export const knowledgeChunks = pgTable('knowledge_chunks', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  knowledgeBaseId: uuid('knowledge_base_id').notNull().references(() => knowledgeBases.id, { onDelete: 'cascade' }),
-  documentId: uuid('document_id').notNull().references(() => knowledgeDocuments.id, { onDelete: 'cascade' }),
-  chunkIndex: integer('chunk_index').notNull(),
-  heading: varchar('heading', { length: 300 }),
-  content: text('content').notNull(),
-  tokenEstimate: integer('token_estimate').notNull(),
-  embedding: vector1024('embedding'),
-  embeddingModel: varchar('embedding_model', { length: 120 }),
-  embeddedAt: timestamp('embedded_at', { withTimezone: true }),
-  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
-}, table => [
-  uniqueIndex('knowledge_chunks_document_index_uidx').on(table.documentId, table.chunkIndex),
-  index('knowledge_chunks_base_idx').on(table.knowledgeBaseId),
-  index('knowledge_chunks_document_idx').on(table.documentId)
-])
-
 export const moduleResourceLibraries = pgTable('module_resource_libraries', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'cascade' }),
@@ -538,7 +484,6 @@ export const moduleResourceVersions = pgTable('module_resource_versions', {
   payload: jsonb('payload').$type<Record<string, unknown>>().default({}).notNull(),
   notes: text('notes'),
   sourceContentPackageId: uuid('source_content_package_id').references(() => contentPackages.id, { onDelete: 'set null' }),
-  sourceKnowledgeBaseId: uuid('source_knowledge_base_id').references(() => knowledgeBases.id, { onDelete: 'set null' }),
   createdBy: uuid('created_by').notNull().references(() => users.id),
   publishedBy: uuid('published_by').references(() => users.id),
   publishedAt: timestamp('published_at', { withTimezone: true }),

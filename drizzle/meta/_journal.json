@@ -92,6 +92,20 @@
       "when": 1784704510251,
       "tag": "0012_mighty_silver_fox",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784875542000,
+      "tag": "0013_fearless_speed_demon",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784883221000,
+      "tag": "0014_remove_legacy_knowledge",
+      "breakpoints": true
     }
   ]
 }

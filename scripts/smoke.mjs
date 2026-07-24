@@ -48,24 +48,10 @@ assert(teacherMe.data.role === 'teacher', 'teacher identity mismatch')
 assert((await teacher('/api/v1/school-admin/dashboard')).response.status === 403, 'teacher crossed into school admin API')
 
 await login(platformAdmin, 'platform.admin@demo.local')
-const knowledgeBase = await platformAdmin('/api/v1/platform-admin/knowledge-bases', {
-  method: 'POST', body: { name: `冒烟知识库-${Date.now()}`, description: '端到端检索验证', scope: 'global' }
-})
-assert(knowledgeBase.response.ok && knowledgeBase.data.id, `knowledge base create failed: ${knowledgeBase.text}`)
-const knowledgeDocument = await platformAdmin(`/api/v1/platform-admin/knowledge-bases/${knowledgeBase.data.id}/documents`, {
-  method: 'POST', body: {
-    title: '家校沟通冒烟手册', sourceType: 'markdown', originalFilename: 'family-school.md', mimeType: 'text/markdown',
-    content: '# 家长投诉处理\n\n家长在群里质疑教师时，先保存事实记录，再确认家长的核心关切，随后说明沟通边界并按照学校投诉流程升级。',
-    confirmNoPersonalData: true
-  }
-})
-assert(knowledgeDocument.response.ok && knowledgeDocument.data.chunkCount > 0, `knowledge document import failed: ${knowledgeDocument.text}`)
-const publishKnowledge = await platformAdmin(`/api/v1/platform-admin/knowledge-bases/${knowledgeBase.data.id}`, { method: 'PATCH', body: { action: 'publish' } })
-assert(publishKnowledge.response.ok && publishKnowledge.data.status === 'published', 'knowledge base publish failed')
 
 const assistant = await teacher('/api/v1/chat/messages', { method: 'POST', body: { message: '家长在群里公开质疑我，我应该怎么沟通？' } })
 assert(assistant.response.ok && assistant.text.includes('event: answer'), `assistant answer failed: ${assistant.text}`)
-assert(assistant.text.includes('event: sources') && assistant.text.includes('家校沟通冒烟手册'), 'assistant did not cite published knowledge')
+assert(assistant.text.includes('event: route') && assistant.text.includes('home_school'), 'assistant did not produce a triage route')
 const assistantSessionId = assistant.text.match(/event: ack\ndata: \{"sessionId":"([^"]+)"/)?.[1]
 assert(assistantSessionId, 'assistant session id missing')
 const sessionList = await teacher('/api/v1/chat/sessions')
@@ -151,5 +137,5 @@ assert(platformSensitive.response.ok, `approved platform read failed: ${platform
 
 process.stdout.write(JSON.stringify({
   ok: true,
-  checks: ['health and OpenAPI', 'teacher ownership and export', 'knowledge import and citation', 'multi-turn session history', 'server draft restore', 'deterministic assessment', 'crisis fuse', 'specialist assignment', 'privacy-safe pilot metrics', 'school reason grant', 'print audit', 'platform break-glass approval']
+  checks: ['health and OpenAPI', 'teacher ownership and export', 'AI triage route', 'multi-turn session history', 'server draft restore', 'deterministic assessment', 'crisis fuse', 'specialist assignment', 'privacy-safe pilot metrics', 'school reason grant', 'print audit', 'platform break-glass approval']
 }, null, 2) + '\n')

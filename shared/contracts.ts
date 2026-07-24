@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const roleSchema = z.enum(['teacher', 'psychologist', 'school_admin', 'platform_admin'])
 export const moduleIdSchema = z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem'])
-export const libraryTypeSchema = z.enum(['assessment', 'rules', 'tool', 'professional_knowledge', 'sop', 'script', 'case', 'prompt'])
+export const libraryTypeSchema = z.enum(['assessment', 'attribution', 'tool'])
 export const moduleResourceScopeSchema = z.enum(['global', 'school'])
 export const resourceStatusSchema = z.enum(['draft', 'published', 'retired'])
 export const managedRecordStatusSchema = z.enum(['active', 'archived', 'transferred', 'graduated'])
@@ -49,21 +49,7 @@ export const chatMessageSchema = z.object({
   }
 })
 
-export const knowledgeBaseCreateSchema = z.object({
-  name: z.string().trim().min(2).max(160),
-  description: z.string().trim().max(1000).optional(),
-  scope: z.enum(['global', 'school']),
-  schoolId: z.string().uuid().optional()
-}).superRefine((value, context) => {
-  if (value.scope === 'school' && !value.schoolId) {
-    context.addIssue({ code: 'custom', path: ['schoolId'], message: '校级知识库必须选择学校' })
-  }
-  if (value.scope === 'global' && value.schoolId) {
-    context.addIssue({ code: 'custom', path: ['schoolId'], message: '全局知识库不能绑定学校' })
-  }
-})
-
-export const knowledgeDocumentImportSchema = z.object({
+export const moduleResourceDocumentImportSchemaBase = z.object({
   title: z.string().trim().min(2).max(200),
   sourceType: z.enum(['markdown', 'text', 'json']),
   originalFilename: z.string().trim().max(260).optional(),
@@ -71,8 +57,6 @@ export const knowledgeDocumentImportSchema = z.object({
   content: z.string().min(10).max(1_000_000),
   confirmNoPersonalData: z.literal(true)
 })
-
-export const knowledgeBaseActionSchema = z.object({ action: z.enum(['publish', 'archive', 'restore']) })
 
 export const moduleResourceLibraryCreateSchema = z.object({
   module: moduleIdSchema,
@@ -99,9 +83,64 @@ export const moduleResourceVersionCreateSchema = z.object({
 
 export const moduleResourceVersionActionSchema = z.object({ action: z.enum(['publish', 'retire', 'rollback']) })
 
-export const moduleResourceDocumentImportSchema = knowledgeDocumentImportSchema.extend({
+export const moduleResourceDocumentImportSchema = moduleResourceDocumentImportSchemaBase.extend({
   versionId: z.string().uuid()
 })
+
+// ---- 工具库·处方型 (tool-rx) ----
+export const toolRxEntrySchema = z.object({
+  code: z.string().trim().min(1).max(40),
+  name: z.string().trim().min(1).max(200),
+  form: z.string().trim().min(1).max(100),
+  symptoms: z.string().trim().min(1).max(2000),
+  expectedEffect: z.string().trim().max(2000).optional(),
+  severity: z.string().trim().max(40).optional(),
+  level: z.string().trim().max(40).optional(),
+  attribution: z.string().trim().max(120).optional(),
+  attributions: z.array(z.string().trim().min(1).max(120)).optional(),
+  primaryAttribution: z.string().trim().max(120).optional(),
+  tags: z.array(z.string().trim().min(1).max(80)).optional(),
+  toolTags: z.array(z.string().trim().min(1).max(80)).optional(),
+  duration: z.string().trim().max(200).optional(),
+  timePerSession: z.string().trim().max(100).optional(),
+  steps: z.array(z.string().trim().min(1).max(1000)).min(1),
+  scripts: z.string().trim().max(5000).optional(),
+  prohibitions: z.string().trim().max(2000).optional(),
+  targetUsers: z.string().trim().max(200).optional(),
+  dimensions: z.array(z.string().trim().min(1).max(100)).optional()
+})
+export const toolLibraryPayloadSchema = z.object({ tools: z.array(toolRxEntrySchema).min(1) })
+export type ToolRxEntry = z.infer<typeof toolRxEntrySchema>
+
+export const attributionBranchSchema = z.object({
+  pri: z.number().int(),
+  when: z.string().trim().min(1).optional(),
+  level: z.string().trim().min(1).max(80),
+  blocked: z.boolean().default(false),
+  ruleId: z.string().trim().min(1).max(120),
+  primaryAttribution: z.string().trim().min(1).max(120),
+  secondaryAttributions: z.array(z.string().trim().min(1).max(120)).default([]),
+  reasons: z.array(z.string().trim().min(1).max(500)).min(1),
+  toolTags: z.array(z.string().trim().min(1).max(80)).default([])
+})
+
+export const attributionConfigSchema = z.object({
+  module: moduleIdSchema,
+  version: z.string().trim().min(1).max(40),
+  computed: z.record(z.string(), z.string().trim().min(1)).default({}),
+  branches: z.array(attributionBranchSchema).min(1),
+  actions: z.array(z.object({
+    title: z.string().trim().min(1).max(200),
+    detail: z.string().trim().min(1).max(1000),
+    status: z.literal('pending').default('pending')
+  })).default([]),
+  tools: z.array(z.object({
+    title: z.string().trim().min(1).max(200),
+    content: z.string().trim().min(1).max(2000)
+  })).default([]),
+  crisis: z.object({ when: z.string().trim().min(1), blocked: z.boolean() }).optional()
+})
+export type AttributionConfig = z.infer<typeof attributionConfigSchema>
 
 export const moduleToolPayloadSchema = z.object({
   title: z.string().trim().min(2).max(120),
@@ -128,6 +167,8 @@ export const schoolAdminUserCreateSchema = z.object({
   role: z.enum(['teacher', 'psychologist']),
   password: z.string().min(8).max(200)
 })
+
+export const schoolAdminUserInviteSchema = schoolAdminUserCreateSchema.omit({ password: true })
 
 export const schoolAdminUserUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
@@ -262,6 +303,7 @@ export type ClarificationSummary = z.infer<typeof clarificationSummarySchema>
 // 题库 payload 存入 content_packages (type='assessment')
 export interface AssessmentPayload {
   code: string
+  instrumentCode?: string
   version: string
   module: ModuleId
   title: string
@@ -292,6 +334,9 @@ export interface RuleConfig {
     level: string
     blocked: boolean
     ruleId: string
+    primaryAttribution?: string
+    secondaryAttributions?: string[]
+    toolTags?: string[]
     reasons: string[]
   }>
   // 输出模板
@@ -307,6 +352,9 @@ export interface RuleExecResult {
   reasons: string[]
   blocked: boolean
   matchedRuleIds: string[]
+  primaryAttribution: string
+  secondaryAttributions: string[]
+  toolTags: string[]
   dimensions: Record<string, number>
   actions: Array<{ title: string, detail: string, status: 'pending' }>
   tools: Array<{ title: string, content: string }>

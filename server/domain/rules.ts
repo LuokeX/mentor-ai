@@ -6,6 +6,9 @@ export interface RuleOutput {
   reasons: string[]
   blocked: boolean
   matchedRuleIds: string[]
+  primaryAttribution: string
+  secondaryAttributions: string[]
+  toolTags: string[]
   dimensions: Record<string, number>
   actions: Array<{ title: string, detail: string, status: 'pending' }>
   tools: Array<{ title: string, content: string }>
@@ -69,6 +72,9 @@ function selfGrowthRules(items: ReturnType<typeof scoredAnswers>, dimensions: Re
 
   return {
     level, reasons, blocked, matchedRuleIds, dimensions,
+    primaryAttribution: level === 'green' ? '状态稳定' : '教师压力与资源失衡',
+    secondaryAttributions: ['情绪状态', '意义感知'].filter(name => Number(dimensions[name] || 0) >= 3),
+    toolTags: ['self_growth', level],
     actions: [
       { title: '今天：完成一次三分钟补能', detail: '离开工作情境，完成三轮缓慢呼吸并观察身体感受。', status: 'pending' },
       { title: '本周：拆解可控事项', detail: '把最困扰的一件事拆成可控制、可影响和暂时不可控三类。', status: 'pending' }
@@ -88,6 +94,9 @@ function classSystemRules(dimensions: Record<string, number>): RuleOutput {
   const stageLabels: Record<string, string> = { survival: '生存期', norming: '规范期', operating: '运行期', mature: '成熟期' }
   return {
     level, blocked: false, dimensions, matchedRuleIds: ['CLASS-FIVE-SYSTEMS', `CLASS-STAGE-${level.toUpperCase()}`],
+    primaryAttribution: `${weakest}系统短板`,
+    secondaryAttributions: ordered.slice(1, 3).map(([dimension]) => `${dimension}系统`),
+    toolTags: ['class_system', weakest, level],
     reasons: [`当前更接近${stageLabels[level]}`, `优先建设短板系统：${weakest}`],
     actions: [
       { title: `本周聚焦“${weakest}”系统`, detail: '选一个可观察问题，明确责任人、完成标准和复盘时间。', status: 'pending' },
@@ -104,12 +113,15 @@ function homeSchoolRules(items: ReturnType<typeof scoredAnswers>, dimensions: Re
   const container = dimensions['容器'] || 1
   const p = `P${Math.max(1, Math.min(5, 6 - Math.round(cooperation)))}`
   const letters = ['E', 'D', 'C', 'B', 'A']
-  const a = letters[Math.max(0, Math.min(4, Math.round(attitude) - 1))]
+  const a = letters[Math.max(0, Math.min(4, Math.round(attitude) - 1))] || 'C'
   const containerLevel = Math.max(-4, Math.min(4, Math.round((container - 3) * 2)))
   const eSignal = (items.find(i => i.id === 'att3')?.raw || 5) <= 1
   return {
     level: eSignal ? 'E' : `${p}-${a}`, blocked: eSignal, dimensions,
     matchedRuleIds: eSignal ? ['HS-E-THREAT'] : ['HS-P-A-CONTAINER'],
+    primaryAttribution: eSignal ? '高风险家校冲突' : '家校关系容器与配合度失衡',
+    secondaryAttributions: [`配合度${p}`, `态度${a}`, `容器${containerLevel}`],
+    toolTags: ['home_school', eSignal ? 'E' : p, a, containerLevel < 0 ? 'container_low' : 'container_stable'],
     reasons: [`配合度定位 ${p}，态度定位 ${a}`, `当前关系容器 ${containerLevel >= 0 ? '+' : ''}${containerLevel}`],
     actions: eSignal ? [
       { title: '停止单独回应', detail: '保存证据，不在公开群中争辩，按学校流程上报。', status: 'pending' }
@@ -128,6 +140,9 @@ function studentCaseRules(dimensions: Record<string, number>): RuleOutput {
   const names: Record<string, string> = { 学业: '学业表现型', 行为: '行为调节型', 情绪: '情绪困扰型', 社交: '社交关系型', 适应: '环境适应型' }
   return {
     level, blocked: false, dimensions, matchedRuleIds: ['STUDENT-FIVE-CATEGORY', `STUDENT-${level}`],
+    primaryAttribution: names[primary] || primary,
+    secondaryAttributions: ordered.slice(1, 3).map(([dimension]) => names[dimension] || dimension),
+    toolTags: ['student_case', primary, level],
     reasons: [`主要表现归入${names[primary] || primary}`, `${level === 'L1' ? '可由教师先行支持' : level === 'L2' ? '建议年级协同' : '建议专业会商'}`],
     actions: level === 'L1' ? [
       { title: '完成一周结构化观察', detail: '记录发生前、行为本身、发生后结果和有效支持。', status: 'pending' },
@@ -147,6 +162,9 @@ function learningProblemRules(dimensions: Record<string, number>): RuleOutput {
   const layerNames: Record<string, string> = { '行为层': '行为层面', '认知层': '认知层面', '关系层': '关系层面' }
   return {
     level, blocked: false, dimensions, matchedRuleIds: ['LEARNING-THREE-LAYER', `LEARNING-${level}`],
+    primaryAttribution: layerNames[primary] || primary,
+    secondaryAttributions: ordered.slice(1, 3).map(([dimension]) => layerNames[dimension] || dimension),
+    toolTags: ['learning_problem', primary, level],
     reasons: [`主导因素集中在${layerNames[primary] || primary}`, `${level === 'LP1' ? '可由教师通过教学策略调整自主支持' : level === 'LP2' ? '建议做进一步诊断并匹配针对性工具' : '建议启动系统性干预方案'}`],
     actions: level === 'LP1' ? [
       { title: '完成一周学习行为观察', detail: '记录课堂参与、作业完成和测验表现的变化模式。', status: 'pending' },

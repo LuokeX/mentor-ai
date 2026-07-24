@@ -1,0 +1,43 @@
+{
+  "module": "self_growth",
+  "version": "1.0.0",
+  "computed": {
+    "pressure": "MAX(scores)"
+  },
+  "branches": [
+    {
+      "pri": 10,
+      "when": "pressure >= 4",
+      "level": "high",
+      "blocked": false,
+      "ruleId": "self-growth-pressure-high",
+      "primaryAttribution": "教师压力与资源失衡",
+      "secondaryAttributions": ["情绪恢复不足", "工作负荷偏高"],
+      "reasons": ["量表显示压力相关维度持续偏高，需要先恢复教师支持资源。"],
+      "toolTags": ["self_growth", "pressure", "high"]
+    },
+    {
+      "pri": 100,
+      "level": "stable",
+      "blocked": false,
+      "ruleId": "self-growth-stable-default",
+      "primaryAttribution": "状态稳定",
+      "secondaryAttributions": [],
+      "reasons": ["当前量表未出现需要优先处置的压力信号，可进入轻量维护。"],
+      "toolTags": ["self_growth", "stable"]
+    }
+  ],
+  "actions": [
+    {
+      "title": "建立一周能量记录",
+      "detail": "每天记录一个消耗点和一个补能动作，下次复盘时比较变化。",
+      "status": "pending"
+    }
+  ],
+  "tools": [
+    {
+      "title": "三分钟补能法",
+      "content": "暂停当前任务，完成呼吸、身体扫描和一个可执行的小行动。"
+    }
+  ]
+}

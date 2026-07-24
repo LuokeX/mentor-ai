@@ -57,12 +57,6 @@ export default defineEventHandler(async (event) => {
     await tx.delete(schema.chatSessions).where(eq(schema.chatSessions.ownerUserId, id))
     // chatMessages.sessionId 有 ON DELETE CASCADE
 
-    // ---- 知识库链 ----
-    await tx.delete(schema.knowledgeBases).where(eq(schema.knowledgeBases.createdBy, id))
-    // knowledgeDocuments 有 ON DELETE CASCADE from knowledgeBases → knowledgeChunks CASCADE
-    // 补刀：以防文档 createdBy 与 knowledgeBase 所属不同
-    await tx.delete(schema.knowledgeDocuments).where(eq(schema.knowledgeDocuments.createdBy, id))
-
     // ---- 模块资源库链 ----
     await tx.delete(schema.moduleResourceLibraries).where(eq(schema.moduleResourceLibraries.createdBy, id))
     // moduleResourceVersions 有 CASCADE → moduleResourceDocuments CASCADE → moduleResourceChunks CASCADE
@@ -104,7 +98,6 @@ export default defineEventHandler(async (event) => {
     await tx.update(schema.referralEvents).set({ actorId: NULL }).where(eq(schema.referralEvents.actorId, id))
     await tx.update(schema.contentPackages).set({ createdBy: NULL }).where(eq(schema.contentPackages.createdBy, id))
     await tx.update(schema.contentPackages).set({ publishedBy: NULL }).where(eq(schema.contentPackages.publishedBy, id))
-    await tx.update(schema.knowledgeBases).set({ publishedBy: NULL }).where(eq(schema.knowledgeBases.publishedBy, id))
     await tx.update(schema.moduleResourceVersions).set({ publishedBy: NULL }).where(eq(schema.moduleResourceVersions.publishedBy, id))
     await tx.update(schema.aiModelCalls).set({ ownerUserId: NULL }).where(eq(schema.aiModelCalls.ownerUserId, id))
 

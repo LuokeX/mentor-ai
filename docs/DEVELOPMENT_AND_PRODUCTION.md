@@ -22,12 +22,12 @@
 | 命令 | 作用 | 使用环境 |
 |---|---|---|
 | `pnpm env:init` | 为本地 `.env` 替换占位值并生成随机密钥 | 仅本地首次初始化 |
-| `pnpm db:up` | 启动 pgvector/PostgreSQL、Ollama，拉取 Embedding 模型，执行 migration 和旧知识补向量 | 本地 |
+| `pnpm db:up` | 启动 pgvector/PostgreSQL、Ollama，拉取 Embedding 模型并执行 migration | 本地 |
 | `pnpm db:generate` | 根据 Drizzle Schema 生成新 migration | 本地开发 |
 | `pnpm db:migrate` | 执行尚未执行的 migration | 本地或受控发布流程 |
 | `pnpm db:seed` | 创建演示学校、账号和种子内容 | 仅本地/专用测试环境 |
-| `pnpm knowledge:import` | 受控导入并分块 Markdown/TXT/JSON 业务知识 | 本地或经审批的正式发布流程 |
-| `pnpm knowledge:reindex` | 为缺失向量或模型版本不一致的知识片段重新生成向量 | 本地或受控发布流程 |
+| `pnpm import:business-data` | 导入三库标准数据：`assessment`、`attribution`、`tool` | 本地或经审批的正式发布流程 |
+| `pnpm resources:reindex` | 为缺失向量或模型版本不一致的模块资源片段重新生成向量 | 本地或受控发布流程 |
 | `pnpm dev` | 启动 Nuxt App 及内置通知消费者 | 仅本地 |
 | `pnpm typecheck` | TypeScript/Nuxt 类型检查 | 开发与 CI |
 | `pnpm test` | 单元及规则测试 | 开发与 CI |
@@ -125,7 +125,7 @@ pnpm build
 - 应用新旧版本可能短暂并存，因此 migration 不得立即破坏旧版本仍在读取的字段。
 - migration 必须先在全新数据库和现有数据副本上各验证一次。
 - 不在 migration 中创建演示账号或业务测试数据；正式必需的静态配置应使用可审计、幂等且经审核的专用数据迁移。
-- 知识文档不是数据库 Schema migration。知识应通过平台后台或 `pnpm knowledge:import` 导入并经过发布，禁止直接向知识表写 SQL。
+- 三库业务资料不是数据库 Schema migration。标准 JSON 应通过平台后台模块资源中心或 `pnpm import:business-data` 导入并经过发布，禁止直接向资源表写 SQL。
 
 ## 5. 应用代码变更流程
 
