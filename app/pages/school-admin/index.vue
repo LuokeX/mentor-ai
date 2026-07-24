@@ -57,6 +57,21 @@ const sensitive = ref<any>(null)
 const watermark = ref('')
 const activeGrantId = ref('')
 const archiveTab = ref('overview')
+const activeDepartmentOptions = computed(() => [
+  { label: '不挂靠部门', value: '' },
+  ...((managedDepartments.value?.rows || [])
+    .filter((department: any) => department.status === 'active')
+    .map((department: any) => ({ label: department.name, value: department.id }))),
+])
+const activeClassOptions = computed(() => [
+  { label: '暂不分班', value: '' },
+  ...((managedClasses.value?.rows || [])
+    .filter((klass: any) => klass.status === 'active')
+    .map((klass: any) => ({ label: klass.departmentName ? `${klass.name} · ${klass.departmentName}` : klass.name, value: klass.id }))),
+])
+const teacherOptions = computed(() => (
+  (schoolInfo.value?.teachers || []).map((teacher: any) => ({ label: teacher.name, value: teacher.id }))
+))
 const sensitiveStats = computed(() => {
   if (!sensitive.value) return null
   const { assessments, plans, planReviews, communications } = sensitive.value
@@ -515,6 +530,46 @@ function openUserCreate() { showUserForm.value = true }
 function openDepartmentCreate() { showDepartmentForm.value = true }
 function openClassCreate() { showClassForm.value = true }
 function openStudentCreate() { showStudentForm.value = true }
+function setUserFormOpen(value: boolean) { showUserForm.value = value }
+function closeUserForm(close?: () => void) {
+  close?.()
+  showUserForm.value = false
+}
+function setEditUserOpen(value: boolean) { showEditUser.value = value }
+function closeEditUser(close?: () => void) {
+  close?.()
+  showEditUser.value = false
+}
+function setClassFormOpen(value: boolean) { showClassForm.value = value }
+function closeClassForm(close?: () => void) {
+  close?.()
+  showClassForm.value = false
+}
+function setEditClassOpen(value: boolean) { showEditClass.value = value }
+function closeEditClass(close?: () => void) {
+  close?.()
+  showEditClass.value = false
+}
+function setDepartmentFormOpen(value: boolean) { showDepartmentForm.value = value }
+function closeDepartmentForm(close?: () => void) {
+  close?.()
+  showDepartmentForm.value = false
+}
+function setEditDepartmentOpen(value: boolean) { showEditDepartment.value = value }
+function closeEditDepartment(close?: () => void) {
+  close?.()
+  showEditDepartment.value = false
+}
+function setStudentFormOpen(value: boolean) { showStudentForm.value = value }
+function closeStudentForm(close?: () => void) {
+  close?.()
+  showStudentForm.value = false
+}
+function setEditStudentOpen(value: boolean) { showEditStudent.value = value }
+function closeEditStudent(close?: () => void) {
+  close?.()
+  showEditStudent.value = false
+}
 function openEditUser(item: any) { editUserForm.id = item.id; editUserForm.name = item.name; editUserForm.email = item.email; editUserForm._originalEmail = item.email; editUserForm.role = item.role; editUserForm._originalRole = item.role; editUserForm.status = item.status; showEditUser.value = true }
 function openEditClass(item: any) { editClassForm.id = item.id; editClassForm.name = item.name; editClassForm.grade = item.grade ?? 7; editClassForm.departmentId = item.departmentId || ''; editClassForm.ownerUserId = item.ownerUserId; editClassForm.externalCode = item.externalCode || ''; editClassForm.studentCount = item.studentCount; showEditClass.value = true }
 function openEditDepartment(item: any) { editDepartmentForm.id = item.id; editDepartmentForm.name = item.name; editDepartmentForm.code = item.code || ''; editDepartmentForm.type = item.type || 'other'; editDepartmentForm.parentId = item.parentId || ''; editDepartmentForm.leaderUserId = item.leaderUserId || ''; editDepartmentForm.description = item.description || ''; showEditDepartment.value = true }
@@ -766,17 +821,225 @@ function openEditStudent(item: any) { editStudentForm.id = item.id; editStudentF
       </section>
     </div>
 
-    <UModal v-model:open="showUserForm" title="创建校内账号"><template #body><div class="space-y-4"><UFormField label="姓名"><UInput v-model="userForm.name" class="w-full" /></UFormField><UFormField label="邮箱"><UInput v-model="userForm.email" type="email" class="w-full" /></UFormField><UFormField label="角色"><USelect v-model="userForm.role" :items="[{label:'教师',value:'teacher'},{label:'心理专员',value:'psychologist'}]" class="w-full" /></UFormField><UFormField label="登录密码" help="至少 8 位，建议混合字母、数字和符号"><UInput v-model="userForm.password" type="password" minlength="8" class="w-full" /></UFormField><UAlert color="primary" variant="soft" description="账户创建后立即激活。请将密码通过校方认可渠道发送给本人。" /><div class="flex gap-2"><button type="button" class="flex-1 rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" @click="createUser">创建账号</button><button type="button" class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" @mousedown="showUserForm = false">取消</button></div></div></template></UModal>
-    <UModal v-model:open="showEditUser" title="编辑用户"><template #body><div class="space-y-4"><UFormField label="邮箱"><UInput v-model="editUserForm.email" type="email" class="w-full" /></UFormField><UFormField label="角色"><USelect v-model="editUserForm.role" :items="[{label:'教师',value:'teacher'},{label:'心理专员',value:'psychologist'}]" class="w-full" /></UFormField><UFormField label="姓名"><UInput v-model="editUserForm.name" class="w-full" /></UFormField><UFormField label="账号状态"><div class="flex items-center gap-3"><UBadge :color="editUserForm.status==='active'?'success':'neutral'" variant="soft">{{ editUserForm.status==='active'?'已激活':'已停用' }}</UBadge><UButton v-if="editUserForm.status==='active'" size="xs" color="neutral" variant="soft" @click="toggleUserFromEdit">停用账号</UButton><UButton v-if="editUserForm.status==='disabled'" size="xs" color="primary" variant="soft" @click="toggleUserFromEdit">激活账号</UButton></div></UFormField><div class="flex gap-2"><div class="flex gap-2"><button type="button" class="flex-1 rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="!editUserForm.name.trim() || editUserForm.name.trim().length < 2" @click="updateUser">保存</button><button type="button" class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" @mousedown="showEditUser = false">取消</button><button v-if="editUserForm.status!=='active'" type="button" class="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50" @click="deleteUser(editUserForm); showEditUser=false">删除用户</button></div></div></div></template></UModal>
-    <UModal v-model:open="showEditStudent" title="编辑学生信息"><template #body><div class="space-y-4"><UFormField label="姓名"><UInput v-model="editStudentForm.name" class="w-full" /></UFormField><UFormField label="性别"><UInput v-model="editStudentForm.gender" class="w-full" /></UFormField><div class="flex gap-2"><button type="button" class="flex-1 rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="!editStudentForm.name.trim() || editStudentForm.name.trim().length < 2" @click="updateStudentName">保存</button><button type="button" class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" @mousedown="showEditStudent = false">取消</button></div></div></template></UModal>
+    <UModal v-if="showUserForm" :open="showUserForm" title="创建校内账号" @update:open="setUserFormOpen">
+      <template #body="{ close }">
+        <div class="space-y-4">
+          <UFormField label="姓名">
+            <UInput v-model="userForm.name" class="w-full" />
+          </UFormField>
+          <UFormField label="邮箱">
+            <UInput v-model="userForm.email" type="email" class="w-full" />
+          </UFormField>
+          <UFormField label="角色">
+            <ModalSelect v-model="userForm.role" :items="[{label:'教师',value:'teacher'},{label:'心理专员',value:'psychologist'}]" class="w-full" />
+          </UFormField>
+          <UFormField label="登录密码" help="至少 8 位，建议混合字母、数字和符号">
+            <UInput v-model="userForm.password" type="password" minlength="8" class="w-full" />
+          </UFormField>
+          <UAlert color="primary" variant="soft" description="账户创建后立即激活。请将密码通过校方认可渠道发送给本人。" />
+          <div class="flex justify-end gap-2">
+            <UButton color="neutral" variant="ghost" @click="closeUserForm(close)">取消</UButton>
+            <UButton :loading="pending" @click="createUser">创建账号</UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
+    <UModal v-if="showEditUser" :open="showEditUser" title="编辑用户" @update:open="setEditUserOpen">
+      <template #body="{ close }">
+        <div class="space-y-4">
+          <UFormField label="邮箱">
+            <UInput v-model="editUserForm.email" type="email" class="w-full" />
+          </UFormField>
+          <UFormField label="角色">
+            <ModalSelect v-model="editUserForm.role" :items="[{label:'教师',value:'teacher'},{label:'心理专员',value:'psychologist'}]" class="w-full" />
+          </UFormField>
+          <UFormField label="姓名">
+            <UInput v-model="editUserForm.name" class="w-full" />
+          </UFormField>
+          <UFormField label="账号状态">
+            <div class="flex items-center gap-3">
+              <UBadge :color="editUserForm.status==='active'?'success':'neutral'" variant="soft">{{ editUserForm.status==='active'?'已激活':'已停用' }}</UBadge>
+              <UButton v-if="editUserForm.status==='active'" size="xs" color="neutral" variant="soft" @click="toggleUserFromEdit">停用账号</UButton>
+              <UButton v-if="editUserForm.status==='disabled'" size="xs" color="primary" variant="soft" @click="toggleUserFromEdit">激活账号</UButton>
+            </div>
+          </UFormField>
+          <div class="flex justify-end gap-2">
+            <UButton v-if="editUserForm.status!=='active'" color="error" variant="soft" @click="deleteUser(editUserForm); closeEditUser(close)">删除用户</UButton>
+            <UButton color="neutral" variant="ghost" @click="closeEditUser(close)">取消</UButton>
+            <UButton :disabled="!editUserForm.name.trim() || editUserForm.name.trim().length < 2" :loading="pending" @click="updateUser">保存</UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
+    <UModal v-if="showEditStudent" :open="showEditStudent" title="编辑学生信息" @update:open="setEditStudentOpen">
+      <template #body="{ close }">
+        <div class="space-y-4">
+          <UFormField label="姓名">
+            <UInput v-model="editStudentForm.name" class="w-full" />
+          </UFormField>
+          <UFormField label="性别">
+            <UInput v-model="editStudentForm.gender" class="w-full" />
+          </UFormField>
+          <div class="flex gap-2">
+            <UButton color="neutral" variant="ghost" class="flex-1 justify-center" @click="closeEditStudent(close)">取消</UButton>
+            <UButton class="flex-1 justify-center" :disabled="!editStudentForm.name.trim() || editStudentForm.name.trim().length < 2" :loading="pending" @click="updateStudentName">保存</UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
 
-    <UModal v-model:open="showEditClass" title="编辑班级"><template #body><div class="space-y-4"><UFormField label="班级名称"><UInput v-model="editClassForm.name" class="w-full" /></UFormField><div class="grid grid-cols-2 gap-3"><UFormField label="年级"><USelect v-model.number="editClassForm.grade" :items="Array.from({length:12},(_,i)=>({label:`${i+1} 年级`,value:i+1}))" class="w-full" /></UFormField><UFormField label="学生容量"><UInput v-model.number="editClassForm.studentCount" type="number" min="0" class="w-full" /></UFormField></div><UFormField label="负责教师"><USelect v-model="editClassForm.ownerUserId" :items="schoolInfo?.teachers?.map((t:any)=>({label:t.name,value:t.id})) || []" class="w-full" /></UFormField><UFormField label="挂靠部门"><USelect v-model="editClassForm.departmentId" :items="[{label:'不挂靠部门',value:''}, ...(managedDepartments?.rows || []).filter((d:any)=>d.status==='active').map((d:any)=>({label:d.name,value:d.id}))]" class="w-full" /></UFormField><UFormField label="外部编号"><UInput v-model="editClassForm.externalCode" class="w-full" /></UFormField><div class="flex gap-2"><button type="button" class="flex-1 rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="!editClassForm.name.trim() || !editClassForm.ownerUserId" @click="updateClass">保存班级</button><button type="button" class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" @mousedown="showEditClass = false">取消</button></div></div></template></UModal>
+    <UModal v-if="showEditClass" :open="showEditClass" title="编辑班级" @update:open="setEditClassOpen">
+      <template #body="{ close }">
+        <div class="space-y-4">
+          <UFormField label="班级名称">
+            <UInput v-model="editClassForm.name" class="w-full" />
+          </UFormField>
+          <div class="grid grid-cols-2 gap-3">
+            <UFormField label="年级">
+              <ModalSelect v-model.number="editClassForm.grade" :items="Array.from({length:12},(_,i)=>({label:`${i+1} 年级`,value:i+1}))" class="w-full" />
+            </UFormField>
+            <UFormField label="学生容量">
+              <UInput v-model.number="editClassForm.studentCount" type="number" min="0" class="w-full" />
+            </UFormField>
+          </div>
+          <UFormField label="负责教师">
+            <ModalSelect v-model="editClassForm.ownerUserId" :items="teacherOptions" class="w-full" />
+          </UFormField>
+          <UFormField label="挂靠部门">
+            <ModalSelect v-model="editClassForm.departmentId" :items="activeDepartmentOptions" class="w-full" />
+          </UFormField>
+          <UFormField label="外部编号">
+            <UInput v-model="editClassForm.externalCode" class="w-full" />
+          </UFormField>
+          <div class="flex gap-2">
+            <UButton color="neutral" variant="ghost" class="flex-1 justify-center" @click="closeEditClass(close)">取消</UButton>
+            <UButton class="flex-1 justify-center" :disabled="!editClassForm.name.trim() || !editClassForm.ownerUserId" :loading="pending" @click="updateClass">保存班级</UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
 
-    <UModal v-model:open="showEditDepartment" title="编辑部门"><template #body><div class="space-y-4"><UFormField label="部门名称"><UInput v-model="editDepartmentForm.name" class="w-full" /></UFormField><div class="grid grid-cols-2 gap-3"><UFormField label="部门编号"><UInput v-model="editDepartmentForm.code" /></UFormField><UFormField label="类型"><USelect v-model="editDepartmentForm.type" :items="[{label:'行政部门',value:'administration'},{label:'年级组',value:'grade_group'},{label:'教研组',value:'subject_group'},{label:'学生支持',value:'student_support'},{label:'其他',value:'other'}]" /></UFormField></div><UFormField label="上级部门"><USelect v-model="editDepartmentForm.parentId" :items="[{label:'无上级部门',value:''}, ...(managedDepartments?.rows || []).filter((d:any)=>d.status==='active' && d.id !== editDepartmentForm.id).map((d:any)=>({label:d.name,value:d.id}))]" class="w-full" /></UFormField><UFormField label="部门负责人"><USelect v-model="editDepartmentForm.leaderUserId" :items="[{label:'暂不设置',value:''}, ...(schoolInfo?.teachers || []).filter((t:any)=>t.status==='active').map((t:any)=>({label:t.name,value:t.id}))]" class="w-full" /></UFormField><UFormField label="说明"><UTextarea v-model="editDepartmentForm.description" :rows="3" class="w-full" /></UFormField><div class="flex gap-2"><button type="button" class="flex-1 rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="!editDepartmentForm.name.trim()" @click="updateDepartment">保存部门</button><button type="button" class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" @mousedown="showEditDepartment = false">取消</button></div></div></template></UModal>
+    <UModal v-if="showEditDepartment" :open="showEditDepartment" title="编辑部门" @update:open="setEditDepartmentOpen">
+      <template #body="{ close }">
+        <div class="space-y-4">
+          <UFormField label="部门名称">
+            <UInput v-model="editDepartmentForm.name" class="w-full" />
+          </UFormField>
+          <div class="grid grid-cols-2 gap-3">
+            <UFormField label="部门编号">
+              <UInput v-model="editDepartmentForm.code" />
+            </UFormField>
+            <UFormField label="类型">
+              <ModalSelect v-model="editDepartmentForm.type" :items="[{label:'行政部门',value:'administration'},{label:'年级组',value:'grade_group'},{label:'教研组',value:'subject_group'},{label:'学生支持',value:'student_support'},{label:'其他',value:'other'}]" />
+            </UFormField>
+          </div>
+          <UFormField label="上级部门">
+            <ModalSelect v-model="editDepartmentForm.parentId" :items="[{label:'无上级部门',value:''}, ...(managedDepartments?.rows || []).filter((d:any)=>d.status==='active' && d.id !== editDepartmentForm.id).map((d:any)=>({label:d.name,value:d.id}))]" class="w-full" />
+          </UFormField>
+          <UFormField label="部门负责人">
+            <ModalSelect v-model="editDepartmentForm.leaderUserId" :items="[{label:'暂不设置',value:''}, ...(schoolInfo?.teachers || []).filter((t:any)=>t.status==='active').map((t:any)=>({label:t.name,value:t.id}))]" class="w-full" />
+          </UFormField>
+          <UFormField label="说明">
+            <UTextarea v-model="editDepartmentForm.description" :rows="3" class="w-full" />
+          </UFormField>
+          <div class="flex gap-2">
+            <UButton color="neutral" variant="ghost" class="flex-1 justify-center" @click="closeEditDepartment(close)">取消</UButton>
+            <UButton class="flex-1 justify-center" :disabled="!editDepartmentForm.name.trim()" :loading="pending" @click="updateDepartment">保存部门</UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
 
-    <UModal v-model:open="showDepartmentForm" title="创建部门"><template #body><div class="space-y-4"><UFormField label="部门名称"><UInput v-model="departmentForm.name" class="w-full" /></UFormField><div class="grid grid-cols-2 gap-3"><UFormField label="部门编号"><UInput v-model="departmentForm.code" /></UFormField><UFormField label="类型"><USelect v-model="departmentForm.type" :items="[{label:'行政部门',value:'administration'},{label:'年级组',value:'grade_group'},{label:'教研组',value:'subject_group'},{label:'学生支持',value:'student_support'},{label:'其他',value:'other'}]" /></UFormField></div><UFormField label="上级部门"><USelect v-model="departmentForm.parentId" :items="[{label:'无上级部门',value:''}, ...(managedDepartments?.rows || []).filter((d:any)=>d.status==='active').map((d:any)=>({label:d.name,value:d.id}))]" class="w-full" /></UFormField><UFormField label="部门负责人"><USelect v-model="departmentForm.leaderUserId" :items="[{label:'暂不设置',value:''}, ...(schoolInfo?.teachers || []).filter((t:any)=>t.status==='active').map((t:any)=>({label:t.name,value:t.id}))]" class="w-full" /></UFormField><UFormField label="说明"><UTextarea v-model="departmentForm.description" :rows="3" class="w-full" /></UFormField><div class="flex gap-2"><button type="button" class="flex-1 rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="!departmentForm.name" @click="createDepartment">创建部门</button><button type="button" class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" @mousedown="showDepartmentForm = false">取消</button></div></div></template></UModal>
-    <UModal v-model:open="showClassForm" title="创建班级"><template #body><div class="space-y-4"><UFormField label="班级名称"><UInput v-model="classForm.name" class="w-full" /></UFormField><div class="grid grid-cols-2 gap-3"><UFormField label="年级"><UInput v-model.number="classForm.grade" type="number" min="1" max="12" /></UFormField><UFormField label="登记人数"><UInput v-model.number="classForm.studentCount" type="number" min="0" /></UFormField></div><UFormField label="负责教师"><USelect v-model="classForm.ownerUserId" :items="schoolInfo?.teachers?.map((t:any)=>({label:t.name,value:t.id})) || []" class="w-full" /></UFormField><UFormField label="挂靠部门"><USelect v-model="classForm.departmentId" :items="[{label:'不挂靠部门',value:''}, ...(managedDepartments?.rows || []).filter((d:any)=>d.status==='active').map((d:any)=>({label:d.name,value:d.id}))]" class="w-full" /></UFormField><UFormField label="外部编号"><UInput v-model="classForm.externalCode" class="w-full" /></UFormField><div class="flex gap-2"><button type="button" class="flex-1 rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="!classForm.name || !classForm.ownerUserId" @click="createClass">创建班级</button><button type="button" class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" @mousedown="showClassForm = false">取消</button></div></div></template></UModal>
-    <UModal v-model:open="showStudentForm" title="创建学生"><template #body><div class="space-y-4"><UFormField label="姓名"><UInput v-model="studentForm.name" class="w-full" /></UFormField><div class="grid grid-cols-2 gap-3"><UFormField label="性别"><UInput v-model="studentForm.gender" /></UFormField><UFormField label="外部编号"><UInput v-model="studentForm.externalRef" /></UFormField></div><UFormField label="班级"><USelect v-model="studentForm.classId" :items="[{label:'暂不分班',value:''}, ...(managedClasses?.rows || []).filter((item:any)=>item.status==='active').map((item:any)=>({label:item.departmentName?`${item.name} · ${item.departmentName}`:item.name,value:item.id}))]" class="w-full" /></UFormField><UFormField label="负责教师（未分班时必填）"><USelect v-model="studentForm.ownerUserId" :items="schoolInfo?.teachers?.map((teacher:any)=>({label:teacher.name,value:teacher.id})) || []" class="w-full" /></UFormField><UFormField label="备注"><UTextarea v-model="studentForm.notes" :rows="3" class="w-full" /></UFormField><div class="flex gap-2"><button type="button" class="flex-1 rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="!studentForm.name || (!studentForm.classId && !studentForm.ownerUserId)" @click="createStudent">创建学生</button><button type="button" class="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" @mousedown="showStudentForm = false">取消</button></div></div></template></UModal>
+    <UModal v-if="showDepartmentForm" :open="showDepartmentForm" title="创建部门" @update:open="setDepartmentFormOpen">
+      <template #body="{ close }">
+        <div class="space-y-4">
+          <UFormField label="部门名称">
+            <UInput v-model="departmentForm.name" class="w-full" />
+          </UFormField>
+          <div class="grid grid-cols-2 gap-3">
+            <UFormField label="部门编号">
+              <UInput v-model="departmentForm.code" />
+            </UFormField>
+            <UFormField label="类型">
+              <ModalSelect v-model="departmentForm.type" :items="[{label:'行政部门',value:'administration'},{label:'年级组',value:'grade_group'},{label:'教研组',value:'subject_group'},{label:'学生支持',value:'student_support'},{label:'其他',value:'other'}]" />
+            </UFormField>
+          </div>
+          <UFormField label="上级部门">
+            <ModalSelect v-model="departmentForm.parentId" :items="[{label:'无上级部门',value:''}, ...(managedDepartments?.rows || []).filter((d:any)=>d.status==='active').map((d:any)=>({label:d.name,value:d.id}))]" class="w-full" />
+          </UFormField>
+          <UFormField label="部门负责人">
+            <ModalSelect v-model="departmentForm.leaderUserId" :items="[{label:'暂不设置',value:''}, ...(schoolInfo?.teachers || []).filter((t:any)=>t.status==='active').map((t:any)=>({label:t.name,value:t.id}))]" class="w-full" />
+          </UFormField>
+          <UFormField label="说明">
+            <UTextarea v-model="departmentForm.description" :rows="3" class="w-full" />
+          </UFormField>
+          <div class="flex gap-2">
+            <UButton color="neutral" variant="ghost" class="flex-1 justify-center" @click="closeDepartmentForm(close)">取消</UButton>
+            <UButton class="flex-1 justify-center" :disabled="!departmentForm.name" :loading="pending" @click="createDepartment">创建部门</UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
+    <UModal v-if="showClassForm" :open="showClassForm" title="创建班级" @update:open="setClassFormOpen">
+      <template #body="{ close }">
+        <div class="space-y-4">
+          <UFormField label="班级名称">
+            <UInput v-model="classForm.name" class="w-full" />
+          </UFormField>
+          <div class="grid grid-cols-2 gap-3">
+            <UFormField label="年级">
+              <UInput v-model.number="classForm.grade" type="number" min="1" max="12" />
+            </UFormField>
+            <UFormField label="登记人数">
+              <UInput v-model.number="classForm.studentCount" type="number" min="0" />
+            </UFormField>
+          </div>
+          <UFormField label="负责教师">
+            <ModalSelect v-model="classForm.ownerUserId" :items="teacherOptions" class="w-full" />
+          </UFormField>
+          <UFormField label="挂靠部门">
+            <ModalSelect v-model="classForm.departmentId" :items="activeDepartmentOptions" class="w-full" />
+          </UFormField>
+          <UFormField label="外部编号">
+            <UInput v-model="classForm.externalCode" class="w-full" />
+          </UFormField>
+          <div class="flex gap-2">
+            <UButton color="neutral" variant="ghost" class="flex-1 justify-center" @click="closeClassForm(close)">取消</UButton>
+            <UButton class="flex-1 justify-center" :disabled="!classForm.name || !classForm.ownerUserId" :loading="pending" @click="createClass">创建班级</UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
+    <UModal v-if="showStudentForm" :open="showStudentForm" title="创建学生" @update:open="setStudentFormOpen">
+      <template #body="{ close }">
+        <div class="space-y-4">
+          <UFormField label="姓名">
+            <UInput v-model="studentForm.name" class="w-full" />
+          </UFormField>
+          <div class="grid grid-cols-2 gap-3">
+            <UFormField label="性别">
+              <UInput v-model="studentForm.gender" />
+            </UFormField>
+            <UFormField label="外部编号">
+              <UInput v-model="studentForm.externalRef" />
+            </UFormField>
+          </div>
+          <UFormField label="班级">
+            <ModalSelect v-model="studentForm.classId" :items="activeClassOptions" class="w-full" />
+          </UFormField>
+          <UFormField label="负责教师（未分班时必填）">
+            <ModalSelect v-model="studentForm.ownerUserId" :items="teacherOptions" class="w-full" />
+          </UFormField>
+          <UFormField label="备注">
+            <UTextarea v-model="studentForm.notes" :rows="3" class="w-full" />
+          </UFormField>
+          <div class="flex gap-2">
+            <UButton color="neutral" variant="ghost" class="flex-1 justify-center" @click="closeStudentForm(close)">取消</UButton>
+            <UButton class="flex-1 justify-center" :disabled="!studentForm.name || (!studentForm.classId && !studentForm.ownerUserId)" :loading="pending" @click="createStudent">创建学生</UButton>
+          </div>
+        </div>
+      </template>
+    </UModal>
 
     <UModal :open="Boolean(accessTarget)" :title="`查看 ${accessTarget?.label || ''} 的档案`" @update:open="value => { if (!value) { accessTarget = null; sensitive = null } }"><template #body><div class="space-y-4"><template v-if="!sensitive"><div class="flex items-center justify-center gap-3 py-12"><UIcon name="i-lucide-loader-circle" class="size-5 animate-spin text-emerald-600" /><span class="text-sm text-slate-500">正在加载档案数据...</span></div></template><template v-else><div class="rounded-xl border border-slate-200 bg-white p-4"><div class="flex items-start justify-between"><div><h3 class="text-base font-semibold text-slate-900">{{ sensitive.profile?.name }}</h3><p class="mt-0.5 text-sm text-slate-500">{{ sensitive.profile?.email }}</p></div><div class="flex gap-1.5"><UBadge color="primary" variant="soft" size="sm">{{ sensitive.profile?.role==='teacher'?'教师':'心理专员' }}</UBadge><UBadge :color="sensitive.profile?.status==='active'?'success':'neutral'" variant="soft" size="sm">{{ sensitive.profile?.status==='active'?'已激活':sensitive.profile?.status==='invited'?'待激活':'已停用' }}</UBadge></div></div><div class="mt-2 flex gap-4 text-xs text-slate-400"><span>最近登录 {{ sensitive.profile?.lastLoginAt ? new Date(sensitive.profile.lastLoginAt).toLocaleString('zh-CN') : '—' }}</span><span>创建于 {{ sensitive.profile?.createdAt ? new Date(sensitive.profile.createdAt).toLocaleDateString('zh-CN') : '—' }}</span></div></div><div class="-mx-1 flex gap-0.5 overflow-x-auto border-b border-slate-200 px-1"><button v-for="t in [{id:'overview',label:'概览',n:sensitive.profile?1:0},{id:'assessments',label:'评估',n:sensitive.assessments?.length||0},{id:'conversations',label:'对话',n:sensitive.conversations?.length||0},{id:'cases',label:'个案',n:sensitive.cases?.length||0},{id:'communications',label:'沟通',n:sensitive.communications?.length||0},{id:'plans',label:'方案',n:sensitive.plans?.length||0},{id:'reviews',label:'复盘',n:sensitive.planReviews?.length||0}]" :key="t.id" class="shrink-0 rounded-t-lg px-3 py-2 text-xs font-medium transition-colors" :class="archiveTab===t.id?'border-b-2 border-emerald-600 text-emerald-700 bg-emerald-50/50':'text-slate-500 hover:text-slate-700 hover:bg-slate-50'" @click="archiveTab=t.id">{{ t.label }}<span class="ml-1 opacity-60">{{ t.n }}</span></button></div><div class="max-h-[38vh] overflow-y-auto"><div v-if="archiveTab==='overview'" class="space-y-3 py-2"><div v-if="sensitiveStats" class="grid grid-cols-2 gap-2"><div class="rounded-lg bg-emerald-50 p-2.5"><p class="text-xs text-emerald-700">评估完成率</p><p class="mt-0.5 text-lg font-semibold text-emerald-800">{{ sensitiveStats.assessTotal ? Math.round(sensitiveStats.assessSubmitted/sensitiveStats.assessTotal*100)+'%' : '—' }}</p><p class="text-xs text-emerald-600">{{ sensitiveStats.assessSubmitted }}/{{ sensitiveStats.assessTotal }}</p></div><div class="rounded-lg bg-blue-50 p-2.5"><p class="text-xs text-blue-700">方案进度</p><p class="mt-0.5 text-lg font-semibold text-blue-800">{{ sensitiveStats.plansActive }}</p><p class="text-xs text-blue-600">执行中 · {{ sensitiveStats.plansCompleted }} 已完成</p></div><div class="rounded-lg bg-amber-50 p-2.5"><p class="text-xs text-amber-700">复盘均分</p><p class="mt-0.5 text-lg font-semibold text-amber-800">{{ sensitiveStats.reviewAvg }}</p><p class="text-xs text-amber-600">满分 5.0</p></div><div class="rounded-lg bg-red-50 p-2.5"><p class="text-xs text-red-700">高风险沟通</p><p class="mt-0.5 text-lg font-semibold text-red-800">{{ sensitiveStats.highRiskComms }}</p><p class="text-xs text-red-600">条</p></div></div><div v-for="s in [{key:'assessments',label:'评估记录',items:sensitive.assessments||[],il:(i:any)=>i.assessmentCode||i.module,id:(i:any)=>new Date(i.submittedAt||i.createdAt).toLocaleDateString('zh-CN')},{key:'conversations',label:'AI 对话',items:sensitive.conversations||[],il:(i:any)=>i.title,id:(i:any)=>new Date(i.createdAt).toLocaleDateString('zh-CN')},{key:'cases',label:'学生个案',items:sensitive.cases||[],il:(i:any)=>i.title,id:(i:any)=>new Date(i.createdAt).toLocaleDateString('zh-CN')},{key:'communications',label:'家校沟通',items:sensitive.communications||[],il:(i:any)=>i.summary||'(无摘要)',id:(i:any)=>new Date(i.occurredAt||i.createdAt).toLocaleDateString('zh-CN')},{key:'plans',label:'干预方案',items:sensitive.plans||[],il:(i:any)=>i.title,id:(i:any)=>new Date(i.createdAt).toLocaleDateString('zh-CN')},{key:'reviews',label:'方案复盘',items:sensitive.planReviews||[],il:(i:any)=>i.progressNote,id:(i:any)=>new Date(i.reviewAt).toLocaleDateString('zh-CN')}]" :key="s.key" class="rounded-lg bg-slate-50 p-3"><p class="text-xs font-medium text-slate-500">{{ s.label }} · {{ s.items.length }} 条</p><div v-if="s.items.length" class="mt-2 space-y-1"><div v-for="item in s.items.slice(0,3)" :key="item.id" class="flex items-center justify-between rounded bg-white px-3 py-1.5 text-sm"><span class="truncate text-slate-700">{{ s.il(item) }}</span><span class="ml-2 shrink-0 text-xs text-slate-400">{{ s.id(item) }}</span></div></div><p v-else class="mt-1 text-xs text-slate-400">暂无记录</p></div></div><div v-else-if="archiveTab==='assessments'" class="divide-y divide-slate-100"><div v-if="!sensitive.assessments?.length" class="py-10 text-center text-sm text-slate-400">暂无评估记录</div><div v-for="item in sensitive.assessments" :key="item.id" class="px-1 py-3"><div class="flex items-start justify-between"><div class="min-w-0 flex-1"><p class="truncate text-sm font-medium text-slate-700">{{ item.assessmentCode }}</p><p class="text-xs text-slate-400">{{ item.module }} · {{ item.definitionVersion }}</p><div v-if="item.result" class="mt-2 flex flex-wrap items-center gap-1.5"><UBadge v-if="item.result.level" size="xs" :color="item.result.level==='高危'||item.result.level==='critical'?'error':item.result.level==='关注'||item.result.level==='medium'?'warning':'success'" variant="soft">{{ item.result.level }}</UBadge><span v-if="item.result.reasons?.length" class="text-xs text-slate-500">{{ item.result.reasons.slice(0,2).join('；') }}</span></div><div v-if="item.result?.dimensions" class="mt-1.5 flex flex-wrap gap-1"><span v-for="(v,k) in item.result.dimensions" :key="k" class="inline-flex items-center gap-0.5 rounded bg-slate-100 px-1.5 py-0.5 text-xs"><span class="text-slate-500">{{ k }}</span><span class="font-medium text-slate-700">{{ v }}</span></span></div></div><div class="ml-3 flex shrink-0 items-center gap-2"><UBadge size="xs" :color="item.status==='submitted'?'success':'warning'" variant="soft">{{ item.status==='submitted'?'已提交':item.status }}</UBadge><span class="text-xs text-slate-400">{{ item.submittedAt ? new Date(item.submittedAt).toLocaleDateString('zh-CN') : '—' }}</span></div></div></div></div><div v-else-if="archiveTab==='conversations'" class="divide-y divide-slate-100"><div v-if="!sensitive.conversations?.length" class="py-10 text-center text-sm text-slate-400">暂无对话记录</div><div v-for="item in sensitive.conversations" :key="item.id" class="flex items-center justify-between px-1 py-3"><div class="min-w-0 flex-1"><p class="truncate text-sm font-medium text-slate-700">{{ item.title }}</p></div><div class="ml-3 flex shrink-0 items-center gap-2"><UBadge size="xs" :color="item.status==='active'?'success':'neutral'" variant="soft">{{ item.status==='active'?'进行中':item.status==='archived'?'已归档':item.status }}</UBadge><span class="text-xs text-slate-400">{{ item.createdAt ? new Date(item.createdAt).toLocaleDateString('zh-CN') : '—' }}</span></div></div></div><div v-else-if="archiveTab==='cases'" class="divide-y divide-slate-100"><div v-if="!sensitive.cases?.length" class="py-10 text-center text-sm text-slate-400">暂无个案记录</div><div v-for="item in sensitive.cases" :key="item.id" class="px-1 py-3"><div class="flex items-start justify-between"><div class="min-w-0 flex-1"><p class="truncate text-sm font-medium text-slate-700">{{ item.title }}</p><p v-if="item.description" class="mt-1 line-clamp-2 text-xs text-slate-500">{{ item.description }}</p><div class="mt-1.5 flex flex-wrap items-center gap-1.5"><UBadge size="xs" variant="soft" color="primary">{{ item.module==='self_growth'?'自我成长':item.module==='class_system'?'班级制度':item.module==='home_school'?'家校共育':item.module==='student_case'?'学生个案':item.module }}</UBadge><span v-for="(v,k) in item.classification||{}" :key="k" class="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{{ k }}: {{ v }}</span></div></div><div class="ml-3 shrink-0 text-right"><UBadge size="xs" variant="soft" :color="item.status==='active'?'success':'neutral'">{{ item.status==='active'?'进行中':item.status==='closed'?'已关闭':item.status }}</UBadge><p class="mt-1 text-xs text-slate-400">{{ item.createdAt ? new Date(item.createdAt).toLocaleDateString('zh-CN') : '—' }}</p></div></div></div></div><div v-else-if="archiveTab==='communications'" class="divide-y divide-slate-100"><div v-if="!sensitive.communications?.length" class="py-10 text-center text-sm text-slate-400">暂无沟通记录</div><div v-for="item in sensitive.communications" :key="item.id" class="px-1 py-3"><div class="flex items-start justify-between"><div class="min-w-0 flex-1"><p v-if="item.summary" class="line-clamp-2 text-sm text-slate-700">{{ item.summary }}</p><p v-else class="text-sm text-slate-400">(无摘要)</p><div class="mt-1.5 flex flex-wrap items-center gap-1.5"><UBadge v-if="item.parentType" size="xs" variant="soft" color="primary">{{ item.parentType==='father'?'父亲':item.parentType==='mother'?'母亲':item.parentType==='guardian'?'监护人':'其他' }}</UBadge><UBadge v-if="item.attitudeType" size="xs" variant="soft" :color="item.attitudeType==='cooperative'?'success':item.attitudeType==='resistant'?'error':'warning'">{{ item.attitudeType==='cooperative'?'合作':item.attitudeType==='neutral'?'中立':'抵触' }}</UBadge><span v-if="item.containerLevel" class="text-xs text-slate-400">容纳度 <span class="font-medium" :class="item.containerLevel>=4?'text-emerald-600':item.containerLevel>=2?'text-amber-600':'text-red-600'">{{ item.containerLevel }}/5</span></span></div></div><div class="ml-3 flex shrink-0 items-center gap-1.5"><span v-if="item.riskLevel" class="text-xs" :class="item.riskLevel==='high'?'text-red-600':item.riskLevel==='medium'?'text-amber-600':'text-slate-400'">{{ item.riskLevel==='high'?'高风险':item.riskLevel==='medium'?'中风险':'低风险' }}</span><span class="text-xs text-slate-400">{{ item.occurredAt ? new Date(item.occurredAt).toLocaleDateString('zh-CN') : '—' }}</span></div></div></div></div><div v-else-if="archiveTab==='plans'" class="divide-y divide-slate-100"><div v-if="!sensitive.plans?.length" class="py-10 text-center text-sm text-slate-400">暂无方案记录</div><div v-for="item in sensitive.plans" :key="item.id" class="px-1 py-3"><div class="flex items-start justify-between"><div class="min-w-0 flex-1"><p class="text-sm font-medium text-slate-700">{{ item.title }}</p><p v-if="item.summary" class="mt-1 line-clamp-2 text-xs text-slate-500">{{ item.summary }}</p><div class="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span v-if="item.actions?.length">{{ item.actions.length }} 项行动</span><span v-if="item.tools?.length">{{ item.tools.length }} 个工具</span><span v-if="item.nextReviewAt">下次复盘 {{ new Date(item.nextReviewAt).toLocaleDateString('zh-CN') }}</span><span v-if="item.completedAt">完成于 {{ new Date(item.completedAt).toLocaleDateString('zh-CN') }}</span></div></div><div class="ml-3 shrink-0 text-right"><UBadge size="xs" :color="item.status==='active'||item.status==='in_progress'?'success':item.status==='completed'?'primary':'neutral'" variant="soft">{{ item.status==='active'||item.status==='in_progress'?'执行中':item.status==='completed'?'已完成':item.status }}</UBadge><p class="mt-1 text-xs text-slate-400">{{ item.createdAt ? new Date(item.createdAt).toLocaleDateString('zh-CN') : '—' }}</p></div></div></div></div><div v-else-if="archiveTab==='reviews'" class="divide-y divide-slate-100"><div v-if="!sensitive.planReviews?.length" class="py-10 text-center text-sm text-slate-400">暂无复盘记录</div><div v-for="item in sensitive.planReviews" :key="item.id" class="px-1 py-3"><div class="flex items-start justify-between"><div class="min-w-0 flex-1"><p class="text-sm text-slate-700">{{ item.progressNote }}</p><p class="mt-0.5 text-xs text-slate-500">下一步: {{ item.nextAction }}</p></div><div class="ml-3 shrink-0 text-right"><div class="flex items-center justify-end gap-0.5"><span v-for="s in 5" :key="s" class="size-2.5 rounded-full" :class="s<=item.effectScore?'bg-emerald-500':'bg-slate-200'" /></div><p class="mt-0.5 text-xs"><span class="font-semibold" :class="item.effectScore>=4?'text-emerald-600':item.effectScore>=2?'text-amber-600':'text-red-600'">{{ item.effectScore }}/5</span></p><p class="text-xs text-slate-400">{{ item.reviewAt ? new Date(item.reviewAt).toLocaleDateString('zh-CN') : '—' }}</p></div></div></div></div></div><div class="sensitive-watermark"><span v-for="i in 20" :key="i">{{ watermark }}</span></div></template></div></template></UModal>
   </div>

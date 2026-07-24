@@ -293,14 +293,14 @@ onMounted(() => {
       <template #body>
         <form class="space-y-4" @submit.prevent="submitEvent">
           <UFormField label="关联学生" required>
-            <USelect v-model="eventForm.studentId" :items="(data?.students || []).map((s: any) => ({ label: s.name, value: s.id }))" class="w-full" />
+            <ModalSelect v-model="eventForm.studentId" :items="(data?.students || []).map((s: any) => ({ label: s.name, value: s.id }))" class="w-full" />
           </UFormField>
           <div class="grid gap-3 sm:grid-cols-2">
             <UFormField label="事件类型" required>
-              <USelect v-model="eventForm.eventType" :items="['违纪', '冲突', '异常行为', '学业波动', '其他']" class="w-full" />
+              <ModalSelect v-model="eventForm.eventType" :items="['违纪', '冲突', '异常行为', '学业波动', '其他']" class="w-full" />
             </UFormField>
             <UFormField label="严重程度" required>
-              <USelect v-model="eventForm.severity" :items="['低', '中', '高', '严重']" class="w-full" />
+              <ModalSelect v-model="eventForm.severity" :items="['低', '中', '高', '严重']" class="w-full" />
             </UFormField>
           </div>
           <UFormField label="事件标题" required>
@@ -323,10 +323,10 @@ onMounted(() => {
     <UModal v-model:open="showForm" title="新增记录" description="记录家长档案和家校沟通内容。">
       <template #body>
         <div class="space-y-4">
-          <UFormField label="资料类型"><USelect v-model="formType" :items="[{label:'家长',value:'guardian'},{label:'沟通记录',value:'communication'}]" class="w-full" /></UFormField>
+          <UFormField label="资料类型"><ModalSelect v-model="formType" :items="[{label:'家长',value:'guardian'},{label:'沟通记录',value:'communication'}]" class="w-full" /></UFormField>
           <div v-show="formType === 'guardian'">
             <UFormField label="名称"><UInput v-model="form.name" class="w-full" /></UFormField>
-            <UFormField label="关联学生"><USelect v-model="form.studentId" :items="studentOptions" class="w-full" /></UFormField>
+            <UFormField label="关联学生"><ModalSelect v-model="form.studentId" :items="studentOptions" class="w-full" /></UFormField>
             <div class="grid grid-cols-2 gap-3">
               <UFormField label="关系"><UInput v-model="form.relation" class="w-full" /></UFormField>
               <UFormField label="电话"><UInput v-model="form.phone" class="w-full" /></UFormField>
@@ -334,8 +334,8 @@ onMounted(() => {
           </div>
           <div v-show="formType === 'communication'">
             <div class="grid gap-3 md:grid-cols-2">
-              <UFormField label="关联学生"><USelect v-model="form.studentId" :items="studentOptions" class="w-full" /></UFormField>
-              <UFormField label="关联家长"><USelect v-model="form.guardianId" :items="guardianOptions" class="w-full" /></UFormField>
+              <UFormField label="关联学生"><ModalSelect v-model="form.studentId" :items="studentOptions" class="w-full" /></UFormField>
+              <UFormField label="关联家长"><ModalSelect v-model="form.guardianId" :items="guardianOptions" class="w-full" /></UFormField>
             </div>
             <UFormField label="沟通摘要"><UTextarea v-model="form.summary" :rows="5" class="w-full" /></UFormField>
           </div>

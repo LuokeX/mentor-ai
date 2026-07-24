@@ -108,7 +108,7 @@ const levelOptions = ['green', 'blue', 'yellow', 'orange', 'red', 'purple', 'sur
     <!-- 模块 & 版本 -->
     <div class="grid gap-4 sm:grid-cols-2">
       <UFormField label="模块">
-        <USelect v-model="editing.module" :items="[
+        <ModalSelect v-model="editing.module" :items="[
           { label:'自我成长', value:'self_growth' },
           { label:'班级系统', value:'class_system' },
           { label:'家校沟通', value:'home_school' },
@@ -160,7 +160,7 @@ const levelOptions = ['green', 'blue', 'yellow', 'orange', 'red', 'purple', 'sur
               <UInput v-model="branch.ruleId" size="xs" class="w-full font-mono" @update:model-value="emitUpdate()" />
             </UFormField>
             <UFormField label="结果等级">
-              <USelect v-model="branch.level" :items="levelOptions" size="xs" class="w-full" @update:model-value="emitUpdate()" />
+              <ModalSelect v-model="branch.level" :items="levelOptions" size="xs" class="w-full" @update:model-value="emitUpdate()" />
             </UFormField>
             <UFormField label="阻断">
               <div class="mt-2"><UToggle v-model="branch.blocked" size="sm" @update:model-value="emitUpdate()" /></div>
@@ -201,7 +201,7 @@ const levelOptions = ['green', 'blue', 'yellow', 'orange', 'red', 'purple', 'sur
             </div>
             <UInput v-model="act.title" size="xs" class="w-full mb-1" placeholder="标题" @update:model-value="emitUpdate()" />
             <UTextarea v-model="act.detail" size="xs" :rows="2" class="w-full" placeholder="详细说明" @update:model-value="emitUpdate()" />
-            <USelect v-model="act.status" size="xs" :items="['pending', 'in_progress', 'done']" class="w-full mt-1" @update:model-value="emitUpdate()" />
+            <ModalSelect v-model="act.status" size="xs" :items="['pending', 'in_progress', 'done']" class="w-full mt-1" @update:model-value="emitUpdate()" />
           </div>
         </div>
       </div>

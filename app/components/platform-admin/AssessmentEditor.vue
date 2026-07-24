@@ -116,7 +116,7 @@ watch(() => editing.questions, (qs) => {
     <!-- 元数据区 -->
     <div class="grid gap-4 sm:grid-cols-4">
       <UFormField label="模块">
-        <USelect v-model="editing.module" :items="modules" class="w-full" @update:model-value="emitUpdate()" />
+        <ModalSelect v-model="editing.module" :items="modules" class="w-full" @update:model-value="emitUpdate()" />
       </UFormField>
       <UFormField label="代码">
         <UInput :model-value="code" class="w-full font-mono" @update:model-value="v => emit('update:code', String(v))" />
