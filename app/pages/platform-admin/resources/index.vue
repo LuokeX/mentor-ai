@@ -199,17 +199,10 @@ function fileToBase64(file: File) {
 </script>
 
 <template>
-  <div class="mx-auto max-w-7xl px-5 py-8">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <p class="text-sm font-semibold text-indigo-700">三库运营台</p>
-        <h1 class="mt-2 text-3xl font-semibold">资源导入、校验与发布</h1>
-        <p class="mt-2 text-sm text-slate-500">面向业务整理后的量表库、归因库和工具库；默认不读取旧原始资料。</p>
-      </div>
-      <UButton to="/platform-admin" color="neutral" variant="soft" icon="i-lucide-arrow-left">返回平台后台</UButton>
-    </div>
+  <ManagementPage title="三库运营台" description="面向业务整理后的量表库、归因库和工具库；默认不读取旧原始资料。">
+    <h2 class="text-xl font-semibold">资源导入、校验与发布</h2>
 
-    <div class="mt-6 grid gap-4 sm:grid-cols-4">
+    <div class="grid gap-4 sm:grid-cols-4">
       <div class="panel p-5"><p class="text-sm text-slate-500">资源库</p><strong class="mt-2 block text-3xl">{{ resourceData?.libraries?.length || 0 }}</strong></div>
       <div class="panel p-5"><p class="text-sm text-slate-500">版本</p><strong class="mt-2 block text-3xl">{{ resourceData?.versions?.length || 0 }}</strong></div>
       <div class="panel p-5"><p class="text-sm text-slate-500">已发布</p><strong class="mt-2 block text-3xl">{{ publishedCount }}</strong></div>
@@ -386,6 +379,5 @@ function fileToBase64(file: File) {
         <pre class="max-h-[60vh] overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100"><code>{{ JSON.stringify(projectionResult, null, 2) }}</code></pre>
       </template>
     </UModal>
-  </div>
-
+  </ManagementPage>
 </template>

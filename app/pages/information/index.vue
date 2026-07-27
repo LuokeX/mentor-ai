@@ -4,16 +4,6 @@ import { moduleMeta } from '#shared/assessments'
 const { data } = await useFetch<any>('/api/v1/information/overview')
 const { data: statsData } = await useFetch<any>('/api/v1/information/stats')
 
-const nav = [
-  { id: 'overview', label: '档案总览', icon: 'i-lucide-layout-dashboard', to: '/information' },
-  { id: 'classes', label: '负责班级', icon: 'i-lucide-school', to: '/information/classes' },
-  { id: 'students', label: '负责学生', icon: 'i-lucide-users', to: '/information/students' },
-  { id: 'guardians', label: '关联家长', icon: 'i-lucide-user-round', to: '/information/guardians' },
-  { id: 'communications', label: '家校沟通', icon: 'i-lucide-messages-square', to: '/information/communications' },
-  { id: 'events', label: '事件记录', icon: 'i-lucide-clipboard-list', to: '/information/events' },
-  { id: 'cases', label: '支持案例', icon: 'i-lucide-folder-heart', to: '/information/cases' },
-] as const
-
 function moduleTitle(module: string) {
   return (moduleMeta as Record<string, { title: string }>)[module]?.title || module
 }
@@ -42,30 +32,9 @@ const overdueCount = computed(() => statsData.value?.overduePlans?.length ?? 0)
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-5 py-10">
-    <div>
-      <p class="text-sm font-semibold text-emerald-700">教师工作空间</p>
-      <h1 class="mt-2 text-3xl font-semibold">信息中心</h1>
-      <p class="mt-2 text-sm leading-6 text-slate-500">你所负责的班级、学生、沟通和方案的档案总览。</p>
-    </div>
-
-    <!-- 导航标签 -->
-    <div class="mt-8 flex flex-wrap gap-2">
-      <UButton
-        v-for="item in nav"
-        :key="item.id"
-        :to="item.to"
-        :variant="item.id === 'overview' ? 'solid' : 'ghost'"
-        :color="item.id === 'overview' ? 'primary' : 'neutral'"
-        :icon="item.icon"
-        size="sm"
-      >
-        {{ item.label }}
-      </UButton>
-    </div>
-
+  <ManagementPage title="信息中心" description="你所负责的班级、学生、沟通和方案的档案总览。">
     <!-- 统计卡片 -->
-    <div class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <div
         v-for="card in overviewCards"
         :key="card.label"
@@ -181,5 +150,5 @@ const overdueCount = computed(() => statsData.value?.overduePlans?.length ?? 0)
         </div>
       </div>
     </div>
-  </div>
+  </ManagementPage>
 </template>

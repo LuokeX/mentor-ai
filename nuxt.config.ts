@@ -4,6 +4,8 @@ export default defineNuxtConfig({
   devServer: { host: '0.0.0.0', port: 3300 },
   modules: [['@nuxt/ui', { fonts: false }]],
   ui: { fonts: false },
+  // 目录名不参与组件名：management/TableToolbar.vue 直接以 <TableToolbar> 使用。
+  components: [{ path: '~/components', pathPrefix: false }],
   css: ['~/assets/css/main.css'],
   nitro: {
     preset: 'node-server',

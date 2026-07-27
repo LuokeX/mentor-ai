@@ -3,21 +3,6 @@
 const { data } = await useFetch<any>('/api/v1/school-admin/dashboard')
 const { data: planStats } = await useFetch<any>('/api/v1/school-admin/plan-statistics')
 
-const nav = [
-  { id: 'overview', label: '管理首页', icon: 'i-lucide-layout-dashboard', to: '/school-admin' },
-  { id: 'users', label: '用户管理', icon: 'i-lucide-users', to: '/school-admin/users' },
-  { id: 'departments', label: '部门管理', icon: 'i-lucide-building-2', to: '/school-admin/departments' },
-  { id: 'classes', label: '班级管理', icon: 'i-lucide-school', to: '/school-admin/classes' },
-  { id: 'students', label: '学生管理', icon: 'i-lucide-graduation-cap', to: '/school-admin/students' },
-  { id: 'guardians', label: '家长管理', icon: 'i-lucide-user-round', to: '/school-admin/guardians' },
-  { id: 'imports', label: '导入中心', icon: 'i-lucide-file-up', to: '/school-admin/imports' },
-  { id: 'operations', label: '方案运营', icon: 'i-lucide-activity', to: '/school-admin/operations' },
-  { id: 'referrals', label: '危机转介', icon: 'i-lucide-siren', to: '/school-admin/referrals' },
-  { id: 'approvals', label: '权限审批', icon: 'i-lucide-shield-check', to: '/school-admin/access-approvals' },
-  { id: 'audit', label: '审计日志', icon: 'i-lucide-scroll-text', to: '/school-admin/audit' },
-  { id: 'settings', label: '学校配置', icon: 'i-lucide-settings', to: '/school-admin/settings' },
-] as const
-
 const metrics = computed(() => data.value?.metrics ?? { users: 0, activeCrises: 0, assessments: 0 })
 const pendingCount = computed(() => (data.value?.pendingRequests ?? []).length)
 const referralCount = computed(() => (data.value?.referrals ?? []).length)
@@ -30,30 +15,9 @@ const topTeachers = computed(() => (planStats.value?.teacherRanking ?? []).slice
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-5 py-10">
-    <div>
-      <p class="text-sm font-semibold text-indigo-700">学校管理空间</p>
-      <h1 class="mt-2 text-3xl font-semibold">学校管理后台</h1>
-      <p class="mt-2 text-sm leading-6 text-slate-500">用户、部门、班级、学生、方案运营与风险管控总览。</p>
-    </div>
-
-    <!-- 导航标签 -->
-    <div class="mt-8 flex flex-wrap gap-2">
-      <UButton
-        v-for="item in nav"
-        :key="item.id"
-        :to="item.to"
-        :variant="item.id === 'overview' ? 'solid' : 'ghost'"
-        :color="item.id === 'overview' ? 'primary' : 'neutral'"
-        :icon="item.icon"
-        size="sm"
-      >
-        {{ item.label }}
-      </UButton>
-    </div>
-
+  <ManagementPage title="学校管理后台" description="账号、部门、班级、学生、方案运营与风险管控总览。">
     <!-- 统计卡片 -->
-    <div class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <div class="rounded-xl border border-slate-200 p-5">
         <div class="flex items-start justify-between">
           <div>
@@ -192,5 +156,5 @@ const topTeachers = computed(() => (planStats.value?.teacherRanking ?? []).slice
         <li>· 平台代管仅覆盖基础资料，不含评估、聊天和方案正文</li>
       </ul>
     </div>
-  </div>
+  </ManagementPage>
 </template>

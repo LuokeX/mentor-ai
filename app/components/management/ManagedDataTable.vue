@@ -1,10 +1,10 @@
-<script setup lang="ts">
+<script setup lang="ts" generic="T extends ManagedRowBase">
 import type { TableColumn, TableRow } from '@nuxt/ui'
-import type { ManagedColumn, ManagedRow } from '~~/shared/management'
+import type { ManagedColumn, ManagedRowBase } from '~~/shared/management'
 
 const props = defineProps<{
   columns: ManagedColumn[]
-  rows: ManagedRow[]
+  rows: T[]
   loading?: boolean
   sort?: string
   order?: 'asc' | 'desc'
@@ -12,10 +12,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'sort': [field: string]
-  'row-click': [row: ManagedRow]
+  'row-click': [row: T]
 }>()
 
-const tableColumns = computed<TableColumn<ManagedRow>[]>(() => props.columns.map(column => ({
+const tableColumns = computed<TableColumn<T>[]>(() => props.columns.map(column => ({
   accessorKey: column.key,
   header: column.label,
   enableSorting: column.sortable === true,
@@ -42,7 +42,7 @@ function onSortingChange(value: Array<{ id: string; desc: boolean }> | undefined
   if (next?.id) emit('sort', next.id)
 }
 
-function onSelect(_event: Event, row: TableRow<ManagedRow>) {
+function onSelect(_event: Event, row: TableRow<T>) {
   emit('row-click', row.original)
 }
 </script>

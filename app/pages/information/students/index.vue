@@ -90,7 +90,7 @@ function closeDrawer() {
 
 <template>
   <ManagementPage
-    title="学生管理"
+    title="我负责的学生"
     description="维护您负责班级中的学生档案；归档和跨教师移交由学校管理员处理。"
     :can-create="list.pageCapabilities.value.includes('create')"
     create-label="添加学生"

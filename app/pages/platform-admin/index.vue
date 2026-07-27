@@ -2,14 +2,6 @@
 definePageMeta({ layout: 'default' })
 const { data } = await useFetch<any>('/api/v1/platform-admin/dashboard')
 
-const nav = [
-  { id: 'overview', label: '平台总览', icon: 'i-lucide-layout-dashboard', to: '/platform-admin' },
-  { id: 'schools', label: '学校管理', icon: 'i-lucide-building-2', to: '/platform-admin/schools' },
-  { id: 'resources', label: '三库运营台', icon: 'i-lucide-library', to: '/platform-admin/resources' },
-  { id: 'delegated', label: '委托管理', icon: 'i-lucide-user-check', to: '/platform-admin/delegated-management' },
-  { id: 'audit', label: '操作审计', icon: 'i-lucide-scroll-text', to: '/platform-admin/audit' },
-] as const
-
 const stats = computed(() => [
   { label: '学校租户', value: data.value?.schools?.length || 0, color: 'bg-blue-50 text-blue-700', icon: 'i-lucide-building-2' },
   { label: '应急访问申请', value: data.value?.accessRequests?.length || 0, color: 'bg-amber-50 text-amber-700', icon: 'i-lucide-key-round' },
@@ -26,30 +18,9 @@ const health = computed(() => [
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-5 py-10">
-    <div>
-      <p class="text-sm font-semibold text-blue-700">平台运维中心</p>
-      <h1 class="mt-2 text-3xl font-semibold">平台管理后台</h1>
-      <p class="mt-2 text-sm leading-6 text-slate-500">学校租户、三库资源、委托授权、审计与系统健康总览。</p>
-    </div>
-
-    <!-- 导航标签 -->
-    <div class="mt-8 flex flex-wrap gap-2">
-      <UButton
-        v-for="item in nav"
-        :key="item.id"
-        :to="item.to"
-        :variant="item.id === 'overview' ? 'solid' : 'ghost'"
-        :color="item.id === 'overview' ? 'primary' : 'neutral'"
-        :icon="item.icon"
-        size="sm"
-      >
-        {{ item.label }}
-      </UButton>
-    </div>
-
+  <ManagementPage title="平台管理后台" description="学校租户、三库资源、委托授权、审计与系统健康总览。">
     <!-- 统计卡片 -->
-    <div class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <div
         v-for="card in stats"
         :key="card.label"
@@ -102,5 +73,5 @@ const health = computed(() => [
     <div v-else class="mt-4 rounded-lg border border-slate-100 p-8 text-center text-sm text-slate-400">
       暂无操作记录
     </div>
-  </div>
+  </ManagementPage>
 </template>

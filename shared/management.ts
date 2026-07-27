@@ -31,6 +31,15 @@ export interface ManagedRow {
   [key: string]: unknown
 }
 
+/**
+ * 管理列表行的最小约束。页面直接用自己的行类型做泛型参数，
+ * 不必为了满足 ManagedRow 的索引签名而放弃字段类型。
+ */
+export interface ManagedRowBase {
+  id: string
+  _capabilities?: Capability[]
+}
+
 // ===== 标准列表查询 =====
 export interface ManagedListQuery {
   page: number        // 1-based

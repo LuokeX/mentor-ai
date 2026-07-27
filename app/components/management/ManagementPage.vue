@@ -8,35 +8,36 @@ defineProps<{
 const emit = defineEmits<{ create: [] }>()
 
 const route = useRoute()
+// 除「总览」外，每项 label 必须与目标页面的 title 一致，否则点进去标题会“变名字”。
 const informationNav = [
   { label: '总览', to: '/information' },
-  { label: '班级', to: '/information/classes' },
-  { label: '学生', to: '/information/students' },
-  { label: '家长', to: '/information/guardians' },
-  { label: '沟通', to: '/information/communications' },
-  { label: '事件', to: '/information/events' },
-  { label: '案例', to: '/information/cases' },
+  { label: '负责班级', to: '/information/classes' },
+  { label: '我负责的学生', to: '/information/students' },
+  { label: '关联家长', to: '/information/guardians' },
+  { label: '家校沟通', to: '/information/communications' },
+  { label: '事件记录', to: '/information/events' },
+  { label: '支持案例', to: '/information/cases' },
 ]
 const schoolAdminNav = [
   { label: '总览', to: '/school-admin' },
-  { label: '账号', to: '/school-admin/users' },
-  { label: '部门', to: '/school-admin/departments' },
-  { label: '班级', to: '/school-admin/classes' },
-  { label: '学生', to: '/school-admin/students' },
-  { label: '家长', to: '/school-admin/guardians' },
-  { label: '导入', to: '/school-admin/imports' },
-  { label: '方案运营', to: '/school-admin/operations' },
-  { label: '转介', to: '/school-admin/referrals' },
-  { label: '权限审批', to: '/school-admin/access-approvals' },
-  { label: '审计', to: '/school-admin/audit' },
-  { label: '设置', to: '/school-admin/settings' },
+  { label: '账号管理', to: '/school-admin/users' },
+  { label: '部门管理', to: '/school-admin/departments' },
+  { label: '班级管理', to: '/school-admin/classes' },
+  { label: '学生管理', to: '/school-admin/students' },
+  { label: '家长管理', to: '/school-admin/guardians' },
+  { label: '导入管理', to: '/school-admin/imports' },
+  { label: '运维管理', to: '/school-admin/operations' },
+  { label: '转介管理', to: '/school-admin/referrals' },
+  { label: '授权审批', to: '/school-admin/access-approvals' },
+  { label: '审计日志', to: '/school-admin/audit' },
+  { label: '学校设置', to: '/school-admin/settings' },
 ]
 const platformNav = [
   { label: '总览', to: '/platform-admin' },
-  { label: '学校', to: '/platform-admin/schools' },
-  { label: '三库运营', to: '/platform-admin/resources' },
+  { label: '学校管理', to: '/platform-admin/schools' },
+  { label: '三库运营台', to: '/platform-admin/resources' },
   { label: '委托授权', to: '/platform-admin/delegated-management' },
-  { label: '审计', to: '/platform-admin/audit' },
+  { label: '审计日志', to: '/platform-admin/audit' },
 ]
 const contextualNav = computed(() => route.path.startsWith('/information')
   ? informationNav

@@ -134,7 +134,7 @@ function closeDrawer() {
 </script>
 
 <template>
-  <ManagementPage title="学生事件" description="记录、解决和关闭学生事件，历史记录不物理删除。" :can-create="list.pageCapabilities.value.includes('create')" create-label="新增事件" @create="openCreate">
+  <ManagementPage title="事件记录" description="记录、解决和关闭学生事件，历史记录不物理删除。" :can-create="list.pageCapabilities.value.includes('create')" create-label="新增事件" @create="openCreate">
     <TableToolbar
       :search-value="list.q.value"
       :status-filter="list.statusFilter.value"

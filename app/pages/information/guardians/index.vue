@@ -76,7 +76,7 @@ function closeDrawer() {
 
 <template>
   <ManagementPage
-    title="家长管理"
+    title="关联家长"
     description="维护与当前学生相关的家长档案和关联关系。"
     :can-create="list.pageCapabilities.value.includes('create')"
     create-label="添加家长"

@@ -23,7 +23,7 @@ const statusLabel = (s: string) => s === 'active' ? '在读' : s === 'archived' 
 
 <template>
   <ManagementPage
-    title="班级管理"
+    title="负责班级"
     description="管理您负责的班级档案"
     :can-create="false"
   >

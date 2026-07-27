@@ -8,7 +8,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   'update:page': [page: number]
-  'update:pageSize': [size: number]
+  'update:pageSize': [size: 20 | 50 | 100]
 }>()
 
 const sizeOptions = ALLOWED_PAGE_SIZES.map((s) => ({ label: `${s} 条/页`, value: s }))
@@ -23,7 +23,7 @@ const sizeOptions = ALLOWED_PAGE_SIZES.map((s) => ({ label: `${s} 条/页`, valu
         :items="sizeOptions"
         size="xs"
         class="w-28"
-        @update:model-value="(v: number) => emit('update:pageSize', v)"
+        @update:model-value="(v: 20 | 50 | 100) => emit('update:pageSize', v)"
       />
       <UPagination
         :model-value="page"
