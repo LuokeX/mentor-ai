@@ -177,6 +177,8 @@ export const departments = pgTable('departments', {
   type: varchar('type', { length: 30 }).default('other').notNull(),
   description: text('description'),
   status: varchar('status', { length: 20 }).default('active').notNull(),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
 }, table => [
   index('departments_school_status_idx').on(table.schoolId, table.status),

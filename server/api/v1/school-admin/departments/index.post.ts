@@ -18,22 +18,24 @@ export default defineEventHandler(async (event) => {
   }
   if (body.leaderUserId) await assertActiveTeacher(event, schoolId, body.leaderUserId)
   try {
-    const [created] = await db.insert(schema.departments).values({
-      schoolId,
-      parentId: body.parentId || null,
-      leaderUserId: body.leaderUserId || null,
-      name: body.name,
-      code: body.code || null,
-      type: body.type,
-      description: body.description || null
-    }).returning()
-    if (!created) throw createError({ statusCode: 500, message: '部门创建失败' })
-    await writeAudit(event, {
-      schoolId, actorId: actor.id, action: 'school_admin.department.create',
-      targetType: 'department', targetId: created.id,
-      metadata: { type: created.type, delegatedGrantId }
+    return await db.transaction(async (tx) => {
+      const [created] = await tx.insert(schema.departments).values({
+        schoolId,
+        parentId: body.parentId || null,
+        leaderUserId: body.leaderUserId || null,
+        name: body.name,
+        code: body.code || null,
+        type: body.type,
+        description: body.description || null
+      }).returning()
+      if (!created) throw createError({ statusCode: 500, message: '部门创建失败' })
+      await writeAudit(event, {
+        schoolId, actorId: actor.id, action: 'school_admin.department.create',
+        targetType: 'department', targetId: created.id,
+        metadata: { type: created.type, delegatedGrantId }
+      }, tx)
+      return created
     })
-    return created
   } catch (error: any) {
     if (error?.code === '23505') throw createError({ statusCode: 409, message: '部门编号已存在' })
     throw error

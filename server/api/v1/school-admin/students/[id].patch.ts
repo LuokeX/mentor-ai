@@ -10,10 +10,14 @@ export default defineEventHandler(async (event) => {
   const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['students'])
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = schoolAdminStudentUpdateSchema.parse(await readBody(event))
+  const expectedUpdatedAt = z.string().datetime().optional().parse(getQuery(event).expectedUpdatedAt)
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
   const [student] = await db.select().from(schema.students).where(and(eq(schema.students.id, id), eq(schema.students.schoolId, schoolId))).limit(1)
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
+  if (expectedUpdatedAt && student.updatedAt.toISOString() !== expectedUpdatedAt) {
+    throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '学生档案已被其他管理员修改，请刷新后重试' })
+  }
 
   let nextClassId = student.classId
   let nextOwnerUserId = student.ownerUserId
@@ -43,8 +47,10 @@ export default defineEventHandler(async (event) => {
       if (body.status !== undefined) patch.status = body.status
       if (body.classId !== undefined) patch.classId = nextClassId
       if (nextOwnerUserId !== student.ownerUserId) patch.ownerUserId = nextOwnerUserId
-      const [row] = await tx.update(schema.students).set(patch).where(eq(schema.students.id, id)).returning({ id: schema.students.id })
-      if (!row) throw new Error('学生更新失败')
+      const finalConditions = [eq(schema.students.id, id), eq(schema.students.schoolId, schoolId)]
+      if (expectedUpdatedAt) finalConditions.push(eq(schema.students.updatedAt, new Date(expectedUpdatedAt)))
+      const [row] = await tx.update(schema.students).set(patch).where(and(...finalConditions)).returning({ id: schema.students.id })
+      if (!row) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '学生档案已被其他管理员修改，请刷新后重试' })
       if (nextOwnerUserId !== student.ownerUserId) {
         await tx.update(schema.communications).set({ ownerUserId: nextOwnerUserId, updatedAt: new Date() }).where(and(eq(schema.communications.studentId, id), eq(schema.communications.schoolId, schoolId)))
         await transferPlans(tx as ReturnType<typeof useDb>, schoolId, nextOwnerUserId, eq(schema.plans.studentId, id))
@@ -59,12 +65,18 @@ export default defineEventHandler(async (event) => {
           metadata: { classChanged: body.classId !== undefined }
         })
       }
+      await writeAudit(event, {
+        schoolId, actorId: actor.id, action: 'school_admin.student.update',
+        targetType: 'student', targetId: id,
+        metadata: {
+          status: body.status,
+          classChanged: body.classId !== undefined,
+          ownerChanged: nextOwnerUserId !== student.ownerUserId,
+          reason: body.reason,
+          delegatedGrantId,
+        }
+      }, tx)
       return row
-    })
-    await writeAudit(event, {
-      schoolId, actorId: actor.id, action: 'school_admin.student.update',
-      targetType: 'student', targetId: id,
-      metadata: { status: body.status, classChanged: body.classId !== undefined, ownerChanged: nextOwnerUserId !== student.ownerUserId, reason: body.reason, delegatedGrantId }
     })
     return { ok: true, id: updated.id }
   } catch (error: any) {

@@ -53,17 +53,14 @@ export default defineEventHandler(async (event) => {
       departmentName: schema.departments.name,
       nameEnc: schema.students.nameEnc,
       gender: schema.students.gender,
-      profileEnc: schema.students.profileEnc,
-      notesEnc: schema.students.notesEnc,
-      externalRefEnc: schema.students.externalRefEnc,
       status: schema.students.status,
       createdAt: schema.students.createdAt,
       updatedAt: schema.students.updatedAt,
     })
       .from(schema.students)
-      .innerJoin(schema.users, eq(schema.users.id, schema.students.ownerUserId))
-      .leftJoin(schema.classes, eq(schema.classes.id, schema.students.classId))
-      .leftJoin(schema.departments, eq(schema.departments.id, schema.classes.departmentId))
+      .innerJoin(schema.users, and(eq(schema.users.id, schema.students.ownerUserId), eq(schema.users.schoolId, schoolId)))
+      .leftJoin(schema.classes, and(eq(schema.classes.id, schema.students.classId), eq(schema.classes.schoolId, schoolId)))
+      .leftJoin(schema.departments, and(eq(schema.departments.id, schema.classes.departmentId), eq(schema.departments.schoolId, schoolId)))
       .where(and(...conditions))
       .orderBy(orderFn(sortCol))
       .limit(pageSize)
@@ -94,9 +91,6 @@ export default defineEventHandler(async (event) => {
       departmentName: row.departmentName,
       name: decryptSensitive(row.nameEnc, secret),
       gender: row.gender,
-      profile: safeJson(decryptSensitive(row.profileEnc, secret)),
-      notes: decryptSensitive(row.notesEnc, secret),
-      externalRef: decryptSensitive(row.externalRefEnc, secret),
       status: row.status,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -108,8 +102,3 @@ export default defineEventHandler(async (event) => {
 
   return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: pageCapabilities } satisfies ManagedListResult<typeof rows[number]>
 })
-
-function safeJson(value: string) {
-  if (!value) return {}
-  try { return JSON.parse(value) } catch { return { text: value } }
-}

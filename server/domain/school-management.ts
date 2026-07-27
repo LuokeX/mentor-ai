@@ -58,6 +58,7 @@ export async function resolveClassOwner(event: H3Event, schoolId: string, classI
   const [klass] = await useDb(event).select({ id: schema.classes.id, ownerUserId: schema.classes.ownerUserId, status: schema.classes.status })
     .from(schema.classes).where(and(eq(schema.classes.id, classId), eq(schema.classes.schoolId, schoolId))).limit(1)
   if (!klass || klass.status !== 'active') throw createError({ statusCode: 422, message: '目标班级不存在或不可用' })
+  if (fallbackOwnerUserId) await assertActiveTeacher(event, schoolId, fallbackOwnerUserId)
   return { classId: klass.id, ownerUserId: fallbackOwnerUserId || klass.ownerUserId }
 }
 
@@ -113,7 +114,11 @@ export async function transferClassOwner(
   db: ReturnType<typeof useDb>,
   input: { schoolId: string, classId: string, fromUserId: string, toUserId: string, assignedBy: string, reason?: string }
 ) {
-  await db.update(schema.classes).set({ ownerUserId: input.toUserId, updatedAt: new Date() }).where(eq(schema.classes.id, input.classId))
+  await db.update(schema.classes).set({ ownerUserId: input.toUserId, updatedAt: new Date() }).where(and(
+    eq(schema.classes.id, input.classId),
+    eq(schema.classes.schoolId, input.schoolId),
+    eq(schema.classes.ownerUserId, input.fromUserId),
+  ))
   const students = await db.update(schema.students).set({ ownerUserId: input.toUserId, updatedAt: new Date() }).where(and(
     eq(schema.students.classId, input.classId),
     eq(schema.students.schoolId, input.schoolId)

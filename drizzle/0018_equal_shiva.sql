@@ -22,7 +22,19 @@ ALTER TABLE "users" ADD COLUMN "disabled_at" timestamp with time zone;
 ALTER TABLE "users" ADD COLUMN "disabled_by" uuid;
 ALTER TABLE "users" ADD COLUMN "disabled_reason" text;
 
-ALTER TABLE "student_guardians" ADD COLUMN "school_id" uuid NOT NULL;
+-- 既有关系先按学生所属学校回填，再收紧 NOT NULL，避免非空数据库迁移失败。
+ALTER TABLE "student_guardians" ADD COLUMN "school_id" uuid;
+UPDATE "student_guardians" AS sg
+SET "school_id" = s."school_id"
+FROM "students" AS s
+WHERE s."id" = sg."student_id" AND sg."school_id" IS NULL;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "student_guardians" WHERE "school_id" IS NULL) THEN
+    RAISE EXCEPTION 'student_guardians.school_id backfill failed';
+  END IF;
+END $$;
+ALTER TABLE "student_guardians" ALTER COLUMN "school_id" SET NOT NULL;
 ALTER TABLE "student_guardians" ADD COLUMN "status" varchar(20) DEFAULT 'active' NOT NULL;
 
 -- ========== ALTER TABLE: modify FK constraints (cascade → restrict) ==========

@@ -134,6 +134,13 @@
       "when": 1785122645411,
       "tag": "0018_equal_shiva",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785131502939,
+      "tag": "0019_lean_nightcrawler",
+      "breakpoints": true
     }
   ]
 }

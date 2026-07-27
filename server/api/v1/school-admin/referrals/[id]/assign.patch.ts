@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['school_admin'])
   if (!admin.schoolId) throw createError({ statusCode: 400, message: '管理员未关联学校' })
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
-  const body = z.object({ psychologistId: z.string().uuid(), reason: z.string().trim().min(4).max(300) }).parse(await readBody(event))
+  const body = z.object({ psychologistId: z.string().uuid(), reason: z.string().trim().min(10).max(300) }).parse(await readBody(event))
   const db = useDb(event)
   const [[psychologist], [referral]] = await Promise.all([
     db.select().from(schema.users).where(and(
@@ -22,9 +22,14 @@ export default defineEventHandler(async (event) => {
   if (referral.acknowledgedAt || referral.status === 'closed') throw createError({ statusCode: 409, message: '仅可转派尚未确认的工单' })
   const now = new Date()
   await db.transaction(async (tx) => {
-    await tx.update(schema.referrals).set({
+    const [updated] = await tx.update(schema.referrals).set({
       psychologistId: psychologist.id, assignedAt: now, status: 'created', escalatedAt: null, updatedAt: now
-    }).where(eq(schema.referrals.id, referral.id))
+    }).where(and(
+      eq(schema.referrals.id, referral.id),
+      eq(schema.referrals.schoolId, admin.schoolId!),
+      eq(schema.referrals.status, 'created'),
+    )).returning({ id: schema.referrals.id })
+    if (!updated) throw createError({ statusCode: 409, message: '工单状态已变化，请刷新后重试' })
     await tx.insert(schema.referralEvents).values({
       schoolId: admin.schoolId!, referralId: referral.id, actorId: admin.id,
       eventType: 'reassigned', fromStatus: referral.status, toStatus: 'created',
@@ -35,10 +40,18 @@ export default defineEventHandler(async (event) => {
       title: '危机转介工单已转派给你', body: `危机事件 ${referral.safetyEventId.slice(0, 8)} 待确认，请立即进入工作台。`,
       targetType: 'referral', targetId: referral.id, deduplicationKey: `referral-reassigned:${referral.id}:${now.getTime()}`
     })
-  })
-  await writeAudit(event, {
-    schoolId: admin.schoolId, actorId: admin.id, action: 'referral.reassign', targetType: 'referral', targetId: id,
-    metadata: { fromPsychologistId: referral.psychologistId, toPsychologistId: psychologist.id, reason: body.reason }
+    await writeAudit(event, {
+      schoolId: admin.schoolId,
+      actorId: admin.id,
+      action: 'referral.reassign',
+      targetType: 'referral',
+      targetId: id,
+      metadata: {
+        fromPsychologistId: referral.psychologistId,
+        toPsychologistId: psychologist.id,
+        reason: body.reason,
+      },
+    }, tx)
   })
   return { ok: true }
 })

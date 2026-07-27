@@ -10,23 +10,25 @@ export default defineEventHandler(async (event) => {
   await assertActiveDepartment(event, schoolId, body.departmentId)
   const db = useDb(event)
   try {
-    const [created] = await db.insert(schema.classes).values({
-      schoolId,
-      departmentId: body.departmentId || null,
-      ownerUserId: body.ownerUserId,
-      name: body.name,
-      grade: body.grade,
-      externalCode: body.externalCode || null,
-      studentCount: body.studentCount,
-      establishedAt: body.establishedAt ? new Date(body.establishedAt) : null
-    }).returning()
-    if (!created) throw createError({ statusCode: 500, message: '班级创建失败' })
-    await writeAudit(event, {
-      schoolId, actorId: actor.id, action: 'school_admin.class.create',
-      targetType: 'class', targetId: created.id,
-      metadata: { ownerUserId: created.ownerUserId, departmentId: created.departmentId, delegatedGrantId }
+    return await db.transaction(async (tx) => {
+      const [created] = await tx.insert(schema.classes).values({
+        schoolId,
+        departmentId: body.departmentId || null,
+        ownerUserId: body.ownerUserId,
+        name: body.name,
+        grade: body.grade,
+        externalCode: body.externalCode || null,
+        studentCount: body.studentCount,
+        establishedAt: body.establishedAt ? new Date(body.establishedAt) : null
+      }).returning()
+      if (!created) throw createError({ statusCode: 500, message: '班级创建失败' })
+      await writeAudit(event, {
+        schoolId, actorId: actor.id, action: 'school_admin.class.create',
+        targetType: 'class', targetId: created.id,
+        metadata: { ownerUserId: created.ownerUserId, departmentId: created.departmentId, delegatedGrantId }
+      }, tx)
+      return created
     })
-    return created
   } catch (error: any) {
     if (error?.code === '23505') throw createError({ statusCode: 409, message: '班级外部编号已存在' })
     throw error

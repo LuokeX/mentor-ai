@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireUser } from '../../../../utils/auth'
-import { encryptSensitive, searchableHash } from '../../../../utils/crypto'
+import { decryptSensitive, encryptSensitive, searchableHash } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
 
@@ -37,14 +37,22 @@ export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = bodySchema.parse(await readBody(event))
+  const expectedUpdatedAt = z.string().datetime().optional().parse(getQuery(event).expectedUpdatedAt)
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
-  const [student] = await db.select({ id: schema.students.id, profileEnc: schema.students.profileEnc }).from(schema.students).where(and(
+  const [student] = await db.select({
+    id: schema.students.id,
+    profileEnc: schema.students.profileEnc,
+    updatedAt: schema.students.updatedAt,
+  }).from(schema.students).where(and(
     eq(schema.students.id, id),
     eq(schema.students.ownerUserId, user.id),
     eq(schema.students.schoolId, user.schoolId!)
   )).limit(1)
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
+  if (expectedUpdatedAt && student.updatedAt.toISOString() !== expectedUpdatedAt) {
+    throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '学生档案已被其他用户修改，请刷新后重试' })
+  }
   if (body.classId) {
     const [klass] = await db.select({ id: schema.classes.id }).from(schema.classes).where(and(
       eq(schema.classes.id, body.classId),
@@ -69,7 +77,14 @@ export default defineEventHandler(async (event) => {
   }
   if (body.notes !== undefined) patch.notesEnc = body.notes ? encryptSensitive(body.notes, secret) : null
   if (body.classId !== undefined) patch.classId = body.classId
-  await db.update(schema.students).set(patch).where(eq(schema.students.id, id))
+  const finalConditions = [
+    eq(schema.students.id, id),
+    eq(schema.students.ownerUserId, user.id),
+    eq(schema.students.schoolId, user.schoolId!),
+  ]
+  if (expectedUpdatedAt) finalConditions.push(eq(schema.students.updatedAt, new Date(expectedUpdatedAt)))
+  const [updated] = await db.update(schema.students).set(patch).where(and(...finalConditions)).returning({ id: schema.students.id })
+  if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '学生档案已被其他用户修改，请刷新后重试' })
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.student.update', targetType: 'student', targetId: id })
   return { ok: true }
 })

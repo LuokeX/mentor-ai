@@ -10,8 +10,8 @@ export async function writeAudit(event: H3Event, input: {
   targetId?: string
   result?: 'success' | 'denied' | 'failure'
   metadata?: Record<string, unknown>
-}) {
-  await useDb(event).insert(schema.auditLogs).values({
+}, db = useDb(event)) {
+  await db.insert(schema.auditLogs).values({
     schoolId: input.schoolId || null,
     actorId: input.actorId || null,
     action: input.action,

@@ -7,8 +7,8 @@
 ## 核心原则
 
 - 实体管理统一采用 Excel 风格的数据表格
-- 简单字段支持行内编辑，通过"保存/取消"显式提交
-- 敏感字段、关联字段和复杂业务使用侧边抽屉编辑
+- 列表负责检索、排序、分页和发起操作；字段编辑统一通过侧边抽屉显式提交
+- 敏感字段、关联字段和复杂业务不得在表格中直接暴露或隐式保存
 - 业务数据不物理删除，使用归档和停用
 - 前端按钮权限由服务端能力语义驱动
 
@@ -61,7 +61,8 @@ interface ManagedPatch<T> {
 }
 ```
 
-记录被其他用户修改时返回 `409 EDIT_CONFLICT`。
+记录被其他用户修改时返回 `409 EDIT_CONFLICT`。写接口必须在最终
+`UPDATE` 条件中再次包含租户、归属、状态和 `expectedUpdatedAt`，不能只依赖前置查询。
 
 ## 接口约定
 
@@ -73,7 +74,7 @@ interface ManagedPatch<T> {
 | PATCH | `/resource/:id` | 修改字段 |
 | POST | `/resource/:id/archive` | 归档 |
 | POST | `/resource/:id/restore` | 恢复 |
-| POST | `/resource/:id/transfer` | 移交 |
+| POST/PATCH | `/resource/:id/transfer` | 移交（以相邻领域路由约定为准） |
 | POST | `/classes/:id/graduate` | 班级毕业 |
 | POST | `/users/:id/transfer-and-disable` | 业务移交并停用账号 |
 | DELETE | `/users/:id` | 仅允许删除未激活的邀请账号 |
@@ -91,7 +92,7 @@ interface ManagedPatch<T> {
 
 ### 生命周期服务 (`server/domain/lifecycle.ts`)
 
-- `archiveRecord()`: 通用归档操作（含并发控制）
+- `archiveRecord()`: 通用归档操作（含租户、归属和并发控制）
 - `restoreRecord()`: 通用恢复操作
 - `validateLifecycleAction()`: 校验状态流转合法性
 
@@ -127,7 +128,7 @@ archived → restore
 | Composable | 说明 |
 |------|------|
 | `useManagedList.ts` | URL 查询状态同步、请求、防抖、分页 |
-| `useRowEditor.ts` | 行草稿管理、保存、取消、冲突处理 |
+| `useRowEditor.ts` | 为确需行草稿的非敏感场景提供保存、取消和冲突处理；当前核心页面使用抽屉 |
 | `useCapabilities.ts` | 解释服务端返回的能力数组 |
 
 ## 数据生命周期
@@ -182,3 +183,16 @@ pnpm scaffold:management --area <area> --entity <entity>
 - 所有业务历史使用归档/关闭/移交，不物理删除
 - 前端按钮和服务端权限由同一能力语义驱动
 - 新管理代码不新增 `any`
+- 账号创建和批量导入只生成 72 小时激活邀请，不生成或展示临时密码
+- 学校管理员敏感档案访问授权固定为 15 分钟；平台代管授权最长 30 分钟
+- 权限验收至少覆盖四角色、跨学校、跨负责人、过期授权、状态冲突和审计原子性
+
+## 当前落地范围
+
+- 教师信息中心：班级、学生、家长、家校沟通、学生事件、个案
+- 学校后台：班级、学生、家长、部门、账号、导入、转介、授权审批、操作与审计
+- 平台后台：学校、代管申请、平台审计
+- 心理专员：转介工单列表与既有处置工作台
+
+列表统一返回 `ManagedListResult`，但不同实体的可写动作仍由各领域 API
+独立实现和校验。统一组件不是绕过业务边界的通用低代码 CRUD 引擎。

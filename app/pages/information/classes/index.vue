@@ -1,21 +1,14 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
-import { useCapabilities } from '~/composables/useCapabilities'
-import type { Capability } from '~~/shared/management'
-
-
-const { rows, total, page, pageSize, q, sort, order, loading, error, pageCapabilities, onSearch, onStatusChange, onSortChange, onPageChange, onPageSizeChange, refresh } = useManagedList<{
+const { rows, total, page, pageSize, q, statusFilter, sort, order, loading, error, onSearch, onStatusChange, onSortChange, onPageChange, onPageSizeChange, refresh } = useManagedList<{
   id: string; name: string; grade: number; studentCount: number; status: string; externalCode: string | null; updatedAt: string
 }>('/api/v1/information/classes')
-
-const { can } = useCapabilities()
 
 const columns = [
   { key: 'name', label: '班级名称', sortable: true },
   { key: 'grade', label: '年级', sortable: true },
   { key: 'studentCount', label: '学生数', sortable: true },
   { key: 'status', label: '状态', sortable: true },
-  { key: 'actions', label: '操作' },
 ]
 
 const statusOptions = [
@@ -32,12 +25,11 @@ const statusLabel = (s: string) => s === 'active' ? '在读' : s === 'archived' 
   <ManagementPage
     title="班级管理"
     description="管理您负责的班级档案"
-    :can-create="can('create', pageCapabilities)"
-    create-label="创建班级"
+    :can-create="false"
   >
     <TableToolbar
       :search-value="q"
-      :status-filter="'all'"
+      :status-filter="statusFilter"
       :status-options="statusOptions"
       search-placeholder="搜索班级名称..."
       :loading="loading"
@@ -58,12 +50,6 @@ const statusLabel = (s: string) => s === 'active' ? '在读' : s === 'archived' 
         <UBadge :color="row.status === 'active' ? 'success' : row.status === 'archived' ? 'neutral' : 'info'" variant="subtle" size="xs">
           {{ statusLabel(row.status) }}
         </UBadge>
-      </template>
-      <template #actions-data="{ row }">
-        <RowActions
-          :capabilities="row._capabilities"
-          :row-id="row.id"
-        />
       </template>
     </ManagedDataTable>
 

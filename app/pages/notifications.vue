@@ -152,7 +152,7 @@ const assignmentEvents = computed<CenterEvent[]>(() => (workbench.value?.recentA
   raw: item
 })))
 
-const studentEvents = computed<CenterEvent[]>(() => (studentEventsData.value?.events || []).map((item: any) => ({
+const studentEvents = computed<CenterEvent[]>(() => (studentEventsData.value?.rows || []).map((item: any) => ({
   id: `student_event:${item.id}`,
   kind: 'student_event' as EventKind,
   priority: (item.severity === '严重' ? 'P0' : item.severity === '高' ? 'P1' : item.severity === '中' ? 'P2' : 'P3') as EventPriority,

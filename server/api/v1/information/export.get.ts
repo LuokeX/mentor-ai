@@ -1,4 +1,4 @@
-import { desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
@@ -12,7 +12,10 @@ export default defineEventHandler(async (event) => {
     db.select().from(schema.classes).where(eq(schema.classes.ownerUserId, user.id)).orderBy(desc(schema.classes.updatedAt)),
     db.select().from(schema.students).where(eq(schema.students.ownerUserId, user.id)).orderBy(desc(schema.students.updatedAt)),
     db.select().from(schema.guardians).where(eq(schema.guardians.ownerUserId, user.id)).orderBy(desc(schema.guardians.updatedAt)),
-    db.select().from(schema.studentGuardians),
+    db.select().from(schema.studentGuardians).where(and(
+      eq(schema.studentGuardians.schoolId, user.schoolId!),
+      eq(schema.studentGuardians.status, 'active'),
+    )),
     db.select().from(schema.communications).where(eq(schema.communications.ownerUserId, user.id)).orderBy(desc(schema.communications.occurredAt)),
     db.select().from(schema.plans).where(eq(schema.plans.ownerUserId, user.id)).orderBy(desc(schema.plans.updatedAt)),
     db.select().from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.ownerUserId, user.id)).orderBy(desc(schema.assessmentAttempts.updatedAt)),

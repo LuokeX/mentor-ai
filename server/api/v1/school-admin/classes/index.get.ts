@@ -49,8 +49,8 @@ export default defineEventHandler(async (event) => {
       updatedAt: schema.classes.updatedAt,
     })
       .from(schema.classes)
-      .innerJoin(schema.users, eq(schema.users.id, schema.classes.ownerUserId))
-      .leftJoin(schema.departments, eq(schema.departments.id, schema.classes.departmentId))
+      .innerJoin(schema.users, and(eq(schema.users.id, schema.classes.ownerUserId), eq(schema.users.schoolId, schoolId)))
+      .leftJoin(schema.departments, and(eq(schema.departments.id, schema.classes.departmentId), eq(schema.departments.schoolId, schoolId)))
       .leftJoin(schema.students, and(eq(schema.students.classId, schema.classes.id), eq(schema.students.schoolId, schoolId), eq(schema.students.status, 'active')))
       .where(and(...conditions))
       .groupBy(schema.classes.id, schema.users.name, schema.departments.name)

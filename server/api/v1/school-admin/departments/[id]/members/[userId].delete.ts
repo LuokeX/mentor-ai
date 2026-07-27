@@ -24,7 +24,8 @@ export default defineEventHandler(async (event) => {
   await db.update(schema.departmentMembers).set({ status: 'removed' }).where(and(
     eq(schema.departmentMembers.departmentId, id),
     eq(schema.departmentMembers.userId, userId),
-    eq(schema.departmentMembers.schoolId, schoolId)
+    eq(schema.departmentMembers.schoolId, schoolId),
+    eq(schema.departmentMembers.status, 'active'),
   ))
 
   await writeAudit(event, {

@@ -49,13 +49,12 @@ export default defineEventHandler(async (event) => {
         nameEnc: schema.guardians.nameEnc,
         phoneEnc: schema.guardians.phoneEnc,
         relation: schema.guardians.relation,
-        externalRefEnc: schema.guardians.externalRefEnc,
         status: schema.guardians.status,
         createdAt: schema.guardians.createdAt,
         updatedAt: schema.guardians.updatedAt,
       })
         .from(schema.guardians)
-        .innerJoin(schema.users, eq(schema.users.id, schema.guardians.ownerUserId))
+        .innerJoin(schema.users, and(eq(schema.users.id, schema.guardians.ownerUserId), eq(schema.users.schoolId, schoolId)))
         .where(and(...conditions))
         .orderBy(orderFn(sortCol))
         .limit(pageSize)
@@ -64,7 +63,10 @@ export default defineEventHandler(async (event) => {
       page,
       pageSize,
     }),
-    db.select().from(schema.studentGuardians),
+    db.select().from(schema.studentGuardians).where(and(
+      eq(schema.studentGuardians.schoolId, schoolId),
+      eq(schema.studentGuardians.status, 'active'),
+    )),
     db.select({ id: schema.students.id, nameEnc: schema.students.nameEnc, classId: schema.students.classId })
       .from(schema.students).where(eq(schema.students.schoolId, schoolId)),
   ])
@@ -87,9 +89,11 @@ export default defineEventHandler(async (event) => {
       ownerUserId: row.ownerUserId,
       ownerName: row.ownerName,
       name: decryptSensitive(row.nameEnc, secret),
-      phone: decryptSensitive(row.phoneEnc, secret),
+      phoneMasked: (() => {
+        const phone = decryptSensitive(row.phoneEnc, secret)
+        return phone ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : null
+      })(),
       relation: row.relation,
-      externalRef: decryptSensitive(row.externalRefEnc, secret),
       status: row.status,
       linkedStudents: relations
         .filter(r => r.guardianId === row.id)

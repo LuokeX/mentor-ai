@@ -15,8 +15,16 @@ export default defineEventHandler(async (event) => {
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
 
   const [klass, relations, communications, classOptions, guardianOptions, plans] = await Promise.all([
-    student.classId ? db.select().from(schema.classes).where(eq(schema.classes.id, student.classId)).limit(1) : Promise.resolve([]),
-    db.select().from(schema.studentGuardians).where(eq(schema.studentGuardians.studentId, id)),
+    student.classId ? db.select().from(schema.classes).where(and(
+      eq(schema.classes.id, student.classId),
+      eq(schema.classes.schoolId, user.schoolId!),
+      eq(schema.classes.ownerUserId, user.id),
+    )).limit(1) : Promise.resolve([]),
+    db.select().from(schema.studentGuardians).where(and(
+      eq(schema.studentGuardians.studentId, id),
+      eq(schema.studentGuardians.schoolId, user.schoolId!),
+      eq(schema.studentGuardians.status, 'active'),
+    )),
     db.select().from(schema.communications).where(and(eq(schema.communications.studentId, id), eq(schema.communications.schoolId, user.schoolId!))).orderBy(desc(schema.communications.occurredAt)),
     db.select({ id: schema.classes.id, name: schema.classes.name, grade: schema.classes.grade }).from(schema.classes).where(and(eq(schema.classes.ownerUserId, user.id), eq(schema.classes.schoolId, user.schoolId!))).orderBy(schema.classes.name),
     db.select().from(schema.guardians).where(and(eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId!))).orderBy(desc(schema.guardians.updatedAt)),
@@ -24,7 +32,11 @@ export default defineEventHandler(async (event) => {
   ])
   const guardianIds = relations.map(relation => relation.guardianId)
   const linkedGuardians = guardianIds.length
-    ? await db.select().from(schema.guardians).where(inArray(schema.guardians.id, guardianIds))
+    ? await db.select().from(schema.guardians).where(and(
+        inArray(schema.guardians.id, guardianIds),
+        eq(schema.guardians.schoolId, user.schoolId!),
+        eq(schema.guardians.ownerUserId, user.id),
+      ))
     : []
   const guardianById = new Map([...linkedGuardians, ...guardianOptions].map(row => [row.id, row]))
   const profileText = decryptSensitive(student.profileEnc, secret)

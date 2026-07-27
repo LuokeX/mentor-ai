@@ -34,10 +34,9 @@ test.describe('四角色核心路径', () => {
     await expect(page.getByRole('heading', { name: '班主任状态五问' })).toBeVisible()
     await expect(page.getByText('完成后会生成确定性评估报告、3 天行动方案和 7 天复盘节点；到期动作会进入“今日待办”。')).toBeVisible()
 
-    await expect(page.getByText('正在检查未完成草稿……')).toBeHidden()
-    const start = page.getByRole('button', { name: '开始完整评估' })
-    if (await start.isVisible()) await start.click()
-    else await page.getByRole('button', { name: '重新开始' }).click()
+    const start = page.getByRole('button', { name: /^(开始完整评估|重新开始)$/ })
+    await expect(start).toBeVisible()
+    await start.click()
 
     for (let questionIndex = 0; questionIndex < 5; questionIndex++) {
       await expect(page.getByText(`${questionIndex + 1} / 5`, { exact: true })).toBeVisible()
@@ -77,20 +76,148 @@ test.describe('四角色核心路径', () => {
     await expect(page.getByText('1 次反馈')).toBeVisible()
   })
 
-  test('学校管理员创建教师账号并查看方案运营看板', async ({ page }) => {
+  test('学校管理员邀请并激活教师账号', async ({ page }) => {
     await login(page, 'school.admin@demo.local')
     await expect(page.getByRole('heading', { name: '学校管理后台' })).toBeVisible()
     const email = `pilot-${Date.now()}@demo.local`
     const response = await page.request.post('/api/v1/school-admin/users', {
-      data: { name: '试点教师', email, role: 'teacher', password: 'PilotTeacher@2026' }
+      data: { name: '试点教师', email, role: 'teacher' }
     })
     expect(response.ok()).toBeTruthy()
-    await page.goto('/school-admin?tab=operations')
-    await expect(page.getByRole('heading', { name: '方案运营看板' })).toBeVisible()
-    await expect(page.getByRole('columnheader', { name: '待确认' })).toBeVisible()
+    const invitation = await response.json()
+    expect(invitation.activationToken).toBeTruthy()
+    const activation = await page.request.post('/api/v1/auth/activate', {
+      data: { token: invitation.activationToken, password: 'PilotTeacher@2026' }
+    })
+    expect(activation.ok()).toBeTruthy()
     await page.getByRole('button', { name: '退出' }).click()
     await login(page, email, { password: 'PilotTeacher@2026' })
     await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()
+  })
+
+  test('统一管理表格 CRUD、并发控制、生命周期与负责人权限', async ({ page }, testInfo) => {
+    await login(page, 'school.admin@demo.local')
+    const suffix = `${Date.now()}-${testInfo.project.name.replace(/\W+/g, '-')}`
+    const teachersResponse = await page.request.get('/api/v1/school-admin/teachers?page=1&pageSize=100&status=active')
+    expect(teachersResponse.ok()).toBeTruthy()
+    const teachers = await teachersResponse.json() as { rows: Array<{ id: string, email: string }> }
+    const teacher = teachers.rows.find(item => item.email === 'teacher@demo.local')
+    expect(teacher).toBeTruthy()
+
+    const className = `验收班级-${suffix}`
+    const classResponse = await page.request.post('/api/v1/school-admin/classes', {
+      data: {
+        name: className,
+        grade: 7,
+        ownerUserId: teacher!.id,
+        externalCode: `E2E-C-${suffix}`,
+        studentCount: 0,
+      },
+    })
+    expect(classResponse.ok()).toBeTruthy()
+    const createdClass = await classResponse.json() as { id: string, updatedAt: string }
+
+    const studentName = `验收学生-${suffix}`
+    const studentResponse = await page.request.post('/api/v1/school-admin/students', {
+      data: {
+        name: studentName,
+        classId: createdClass.id,
+        ownerUserId: teacher!.id,
+        gender: 'unknown',
+        externalRef: `E2E-S-${suffix}`,
+      },
+    })
+    expect(studentResponse.ok()).toBeTruthy()
+    const createdStudent = await studentResponse.json() as { id: string }
+
+    const guardianName = `验收家长-${suffix}`
+    const guardianResponse = await page.request.post('/api/v1/school-admin/guardians', {
+      data: {
+        name: guardianName,
+        phone: '13800000000',
+        relation: '监护人',
+        externalRef: `E2E-G-${suffix}`,
+        ownerUserId: teacher!.id,
+      },
+    })
+    expect(guardianResponse.ok()).toBeTruthy()
+    const createdGuardian = await guardianResponse.json() as { id: string }
+
+    const classListResponse = await page.request.get(`/api/v1/school-admin/classes?page=1&pageSize=20&q=${encodeURIComponent(className)}`)
+    const classList = await classListResponse.json() as { rows: Array<{ id: string, _capabilities: string[] }> }
+    expect(classList.rows.find(item => item.id === createdClass.id)?._capabilities).toEqual(expect.arrayContaining(['edit', 'archive', 'transfer']))
+
+    const studentListResponse = await page.request.get(`/api/v1/school-admin/students?page=1&pageSize=20&q=${encodeURIComponent(studentName)}`)
+    const studentList = await studentListResponse.json() as { rows: Array<{ id: string, updatedAt: string, _capabilities: string[] }> }
+    const listedStudent = studentList.rows.find(item => item.id === createdStudent.id)
+    expect(listedStudent?._capabilities).toEqual(expect.arrayContaining(['edit', 'archive', 'transfer']))
+
+    const guardianListResponse = await page.request.get(`/api/v1/school-admin/guardians?page=1&pageSize=20&q=${encodeURIComponent(guardianName)}`)
+    const guardianList = await guardianListResponse.json() as { rows: Array<{ id: string, updatedAt: string, phoneMasked: string, _capabilities: string[] }> }
+    const listedGuardian = guardianList.rows.find(item => item.id === createdGuardian.id)
+    expect(listedGuardian?.phoneMasked).toBe('138****0000')
+    expect(listedGuardian?._capabilities).toEqual(expect.arrayContaining(['edit', 'archive', 'transfer']))
+
+    await page.goto(`/school-admin/classes?q=${encodeURIComponent(className)}`)
+    await expect(page.getByRole('heading', { name: '班级管理' })).toBeVisible()
+    await expect(page.getByRole('table')).toBeVisible()
+    await expect(page.getByText(className, { exact: true })).toBeVisible()
+
+    await login(page, 'teacher@demo.local')
+    await page.goto(`/information/students?q=${encodeURIComponent(studentName)}`)
+    await expect(page.getByRole('heading', { name: '我负责的学生' })).toBeVisible()
+    await expect(page.getByText(studentName, { exact: true })).toBeVisible()
+    const forbidden = await page.request.get('/api/v1/school-admin/classes?page=1&pageSize=20')
+    expect(forbidden.status()).toBe(403)
+
+    await login(page, 'school.admin@demo.local')
+    const updatedClassName = `${className}-已更新`
+    const updateClass = await page.request.patch(`/api/v1/school-admin/classes/${createdClass.id}?expectedUpdatedAt=${encodeURIComponent(createdClass.updatedAt)}`, {
+      data: { name: updatedClassName },
+    })
+    expect(updateClass.ok()).toBeTruthy()
+    const updatedClass = await updateClass.json() as { updatedAt: string }
+    const staleUpdate = await page.request.patch(`/api/v1/school-admin/classes/${createdClass.id}?expectedUpdatedAt=${encodeURIComponent(createdClass.updatedAt)}`, {
+      data: { name: `${updatedClassName}-冲突写入` },
+    })
+    expect(staleUpdate.status()).toBe(409)
+
+    const updatedStudentName = `${studentName}-已更新`
+    const updateStudent = await page.request.patch(`/api/v1/school-admin/students/${createdStudent.id}?expectedUpdatedAt=${encodeURIComponent(listedStudent!.updatedAt)}`, {
+      data: { name: updatedStudentName },
+    })
+    expect(updateStudent.ok()).toBeTruthy()
+    const refreshedStudentsResponse = await page.request.get(`/api/v1/school-admin/students?page=1&pageSize=20&q=${encodeURIComponent(updatedStudentName)}`)
+    const refreshedStudents = await refreshedStudentsResponse.json() as { rows: Array<{ id: string, updatedAt: string }> }
+    const refreshedStudent = refreshedStudents.rows.find(item => item.id === createdStudent.id)
+    expect(refreshedStudent).toBeTruthy()
+
+    const updateGuardian = await page.request.patch(`/api/v1/school-admin/guardians/${createdGuardian.id}?expectedUpdatedAt=${encodeURIComponent(listedGuardian!.updatedAt)}`, {
+      data: { relation: '父亲' },
+    })
+    expect(updateGuardian.ok()).toBeTruthy()
+    const refreshedGuardiansResponse = await page.request.get(`/api/v1/school-admin/guardians?page=1&pageSize=20&q=${encodeURIComponent(guardianName)}`)
+    const refreshedGuardians = await refreshedGuardiansResponse.json() as { rows: Array<{ id: string, updatedAt: string }> }
+    const refreshedGuardian = refreshedGuardians.rows.find(item => item.id === createdGuardian.id)
+    expect(refreshedGuardian).toBeTruthy()
+
+    const reason = '端到端验收完成后归档测试数据'
+    const archiveStudent = await page.request.post(`/api/v1/school-admin/students/${createdStudent.id}/archive`, {
+      data: { expectedUpdatedAt: refreshedStudent!.updatedAt, reason },
+    })
+    expect(archiveStudent.ok()).toBeTruthy()
+    const archiveGuardian = await page.request.post(`/api/v1/school-admin/guardians/${createdGuardian.id}/archive`, {
+      data: { expectedUpdatedAt: refreshedGuardian!.updatedAt, reason },
+    })
+    expect(archiveGuardian.ok()).toBeTruthy()
+    const archiveClass = await page.request.post(`/api/v1/school-admin/classes/${createdClass.id}/archive`, {
+      data: { expectedUpdatedAt: updatedClass.updatedAt, reason },
+    })
+    expect(archiveClass.ok()).toBeTruthy()
+
+    const archivedClassResponse = await page.request.get(`/api/v1/school-admin/classes?page=1&pageSize=20&status=archived&q=${encodeURIComponent(updatedClassName)}`)
+    const archivedClassList = await archivedClassResponse.json() as { rows: Array<{ id: string, _capabilities: string[] }> }
+    expect(archivedClassList.rows.find(item => item.id === createdClass.id)?._capabilities).toEqual(expect.arrayContaining(['view', 'restore']))
   })
 
   test('心理专员 MFA 登录并查看 SLA 工作台', async ({ page }) => {

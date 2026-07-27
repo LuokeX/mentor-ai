@@ -7,12 +7,12 @@ const emit = defineEmits<{ close: [] }>()
 </script>
 
 <template>
-  <USlideover :open="open" @close="emit('close')">
+  <USlideover :open="open" @update:open="value => { if (!value) emit('close') }">
     <template #header>
       <h2 class="text-lg font-semibold">{{ title }}</h2>
     </template>
-    <div class="p-4">
+    <template #body>
       <slot />
-    </div>
+    </template>
   </USlideover>
 </template>

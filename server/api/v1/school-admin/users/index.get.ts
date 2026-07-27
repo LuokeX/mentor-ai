@@ -64,6 +64,7 @@ export default defineEventHandler(async (event) => {
       user,
       recordSchoolId: schoolId,
       recordStatus: row.status,
+      activatedAt: row.activatedAt,
       targetType: 'user',
       targetId: row.id,
       delegatedGrantId,

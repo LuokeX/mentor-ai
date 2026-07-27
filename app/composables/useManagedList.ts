@@ -23,48 +23,60 @@ export function useManagedList<T>(baseUrl: string) {
   const sort = ref((route.query.sort as string) || 'updatedAt')
   const order = ref<'asc' | 'desc'>((route.query.order as 'asc' | 'desc') || 'desc')
 
-  const rows = ref<Array<T & { _capabilities: Capability[] }>>([])
-  const total = ref(0)
-  const pageCapabilities = ref<Capability[]>([])
-  const loading = ref(false)
-  const error = ref<string | null>(null)
-
   let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
   function syncUrl() {
-    const query: Record<string, string> = {
+    const query: Record<string, string | undefined> = {
+      ...Object.fromEntries(Object.entries(route.query).map(([key, value]) => [
+        key,
+        Array.isArray(value) ? value[0] : value,
+      ])),
       page: String(page.value),
       pageSize: String(pageSize.value),
       sort: sort.value,
       order: order.value,
     }
-    if (q.value) query.q = q.value
-    if (statusFilter.value !== 'all') query.status = statusFilter.value
-    router.replace({ query })
+    query.q = q.value || undefined
+    query.status = statusFilter.value !== 'all' ? statusFilter.value : undefined
+    void router.replace({ query })
   }
 
-  async function fetchList() {
-    loading.value = true
-    error.value = null
-    try {
-      const params = new URLSearchParams({
+  const requestQuery = computed(() => {
+    const query: Record<string, string> = {
         page: String(page.value),
         pageSize: String(pageSize.value),
         sort: sort.value,
         order: order.value,
-      })
-      if (q.value) params.set('q', q.value)
-      if (statusFilter.value !== 'all') params.set('status', statusFilter.value)
-
-      const result = await $fetch<ManagedListResult<T>>(`${baseUrl}?${params}`)
-      rows.value = result.rows
-      total.value = result.total
-      pageCapabilities.value = result.capabilities
-    } catch (e: any) {
-      error.value = e?.data?.message || '加载失败，请重试'
-    } finally {
-      loading.value = false
     }
+    if (q.value) query.q = q.value
+    if (statusFilter.value !== 'all') query.status = statusFilter.value
+    return query
+  })
+
+  const { data, pending, error: requestError, refresh: refreshRequest } = useFetch<ManagedListResult<T>>(baseUrl, {
+    query: requestQuery,
+    watch: false,
+    default: () => ({
+      rows: [],
+      page: page.value,
+      pageSize: pageSize.value,
+      total: 0,
+      capabilities: [],
+    }),
+  })
+
+  const rows = computed(() => data.value?.rows || [])
+  const total = computed(() => data.value?.total || 0)
+  const pageCapabilities = computed<Capability[]>(() => data.value?.capabilities || [])
+  const error = computed(() => {
+    const value = requestError.value
+    return value
+      ? (value.data as { message?: string } | undefined)?.message || value.message || '加载失败，请重试'
+      : null
+  })
+
+  function fetchList() {
+    return refreshRequest()
   }
 
   function onSearch(val: string) {
@@ -110,13 +122,8 @@ export function useManagedList<T>(baseUrl: string) {
   }
 
   function refresh() {
-    fetchList()
+    return fetchList()
   }
-
-  // 挂载时自动请求，URL 参数作为初始条件
-  onMounted(() => {
-    fetchList()
-  })
 
   return {
     rows,
@@ -127,8 +134,8 @@ export function useManagedList<T>(baseUrl: string) {
     statusFilter: readonly(statusFilter),
     sort: readonly(sort),
     order: readonly(order),
-    pageCapabilities,
-    loading: readonly(loading),
+    pageCapabilities: readonly(pageCapabilities),
+    loading: readonly(pending),
     error: readonly(error),
     onSearch,
     onStatusChange,

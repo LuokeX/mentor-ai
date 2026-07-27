@@ -25,25 +25,35 @@ export default defineEventHandler(async (event) => {
     targetOwnerUserId = klass.ownerUserId
     targetClassId = klass.id
   }
-  await db.update(schema.students).set({ classId: targetClassId, ownerUserId: targetOwnerUserId, updatedAt: new Date() }).where(eq(schema.students.id, id))
-  await db.update(schema.communications).set({ ownerUserId: targetOwnerUserId, updatedAt: new Date() }).where(and(eq(schema.communications.studentId, id), eq(schema.communications.schoolId, schoolId)))
-  await db.insert(schema.recordAssignments).values({
-    schoolId,
-    targetType: 'student',
-    targetId: id,
-    fromUserId: student.ownerUserId,
-    toUserId: targetOwnerUserId,
-    assignedBy: admin.id,
-    reason: body.reason,
-    metadata: { action: 'student_class_transfer', fromClassId: student.classId, toClassId: targetClassId }
-  })
-  await writeAudit(event, {
-    schoolId,
-    actorId: admin.id,
-    action: 'school_admin.student.class.update',
-    targetType: 'student',
-    targetId: id,
-    metadata: { fromClassId: student.classId, toClassId: targetClassId, ownerUserId: targetOwnerUserId, reason: body.reason }
+  await db.transaction(async (tx) => {
+    const [updated] = await tx.update(schema.students).set({
+      classId: targetClassId,
+      ownerUserId: targetOwnerUserId,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(schema.students.id, id),
+      eq(schema.students.schoolId, schoolId),
+    )).returning({ id: schema.students.id })
+    if (!updated) throw createError({ statusCode: 409, message: '学生状态已变化，请刷新后重试' })
+    await tx.update(schema.communications).set({ ownerUserId: targetOwnerUserId, updatedAt: new Date() }).where(and(eq(schema.communications.studentId, id), eq(schema.communications.schoolId, schoolId)))
+    await tx.insert(schema.recordAssignments).values({
+      schoolId,
+      targetType: 'student',
+      targetId: id,
+      fromUserId: student.ownerUserId,
+      toUserId: targetOwnerUserId,
+      assignedBy: admin.id,
+      reason: body.reason,
+      metadata: { action: 'student_class_transfer', fromClassId: student.classId, toClassId: targetClassId }
+    })
+    await writeAudit(event, {
+      schoolId,
+      actorId: admin.id,
+      action: 'school_admin.student.class.update',
+      targetType: 'student',
+      targetId: id,
+      metadata: { fromClassId: student.classId, toClassId: targetClassId, ownerUserId: targetOwnerUserId, reason: body.reason }
+    }, tx)
   })
   return { ok: true, ownerUserId: targetOwnerUserId, classId: targetClassId }
 })

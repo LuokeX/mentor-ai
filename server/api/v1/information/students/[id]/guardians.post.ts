@@ -15,7 +15,12 @@ export default defineEventHandler(async (event) => {
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
   const [guardian] = await db.select({ id: schema.guardians.id }).from(schema.guardians).where(and(eq(schema.guardians.id, body.guardianId), eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId!))).limit(1)
   if (!guardian) throw createError({ statusCode: 422, message: '家长不存在或不属于当前教师' })
-  await db.insert(schema.studentGuardians).values({ studentId: id, guardianId: body.guardianId, schoolId: user.schoolId! }).onConflictDoNothing()
+  await db.insert(schema.studentGuardians)
+    .values({ studentId: id, guardianId: body.guardianId, schoolId: user.schoolId! })
+    .onConflictDoUpdate({
+      target: [schema.studentGuardians.studentId, schema.studentGuardians.guardianId],
+      set: { status: 'active', schoolId: user.schoolId! },
+    })
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.student.guardian.link', targetType: 'student', targetId: id, metadata: { guardianId: body.guardianId } })
   return { ok: true }
 })

@@ -3,7 +3,6 @@ import { z } from 'zod'
 import { commitSchoolImport, parseImportFile } from '../../../../domain/school-imports'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
-import { writeAudit } from '../../../../utils/audit'
 
 const bodySchema = z.object({
   previewId: z.string().uuid(),
@@ -26,20 +25,17 @@ export default defineEventHandler(async (event) => {
   try { actualChecksum = parseImportFile(body.type, body.contentBase64).checksum }
   catch { throw createError({ statusCode: 422, message: '文件编码或格式不正确' }) }
   if (actualChecksum !== body.checksum) throw createError({ statusCode: 409, message: '文件在预检后发生变化，请重新预检' })
-  const result = await commitSchoolImport(event, { schoolId: admin.schoolId, adminId: admin.id, type: body.type, contentBase64: body.contentBase64 })
-  if (result.errors.length) throw createError({ statusCode: 422, message: '文件内容已不满足导入条件，请重新预检', data: { errors: result.errors } })
-  await db.update(schema.schoolImports).set({
-    status: 'committed', createdRows: result.created, updatedRows: result.updated,
-    skippedRows: result.skipped, errorCount: 0
-  }).where(eq(schema.schoolImports.id, preview.id))
-  await writeAudit(event, {
-    schoolId: admin.schoolId, actorId: admin.id, action: 'school_admin.import.commit',
-    targetType: 'school_import', targetId: preview.id,
-    metadata: { type: body.type, totalRows: result.rows.length, created: result.created, updated: result.updated, skipped: result.skipped }
+  const result = await commitSchoolImport(event, {
+    schoolId: admin.schoolId,
+    adminId: admin.id,
+    previewId: preview.id,
+    type: body.type,
+    contentBase64: body.contentBase64,
   })
+  if (result.errors.length) throw createError({ statusCode: 422, message: '文件内容已不满足导入条件，请重新预检', data: { errors: result.errors } })
   return {
     ok: true, importId: preview.id, totalRows: result.rows.length,
     created: result.created, updated: result.updated, skipped: result.skipped,
-    credentials: result.credentials
+    invitations: result.invitations
   }
 })

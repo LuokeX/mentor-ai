@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb, schema } from '../../../../../utils/db'
 import { writeAudit } from '../../../../../utils/audit'
@@ -27,13 +27,22 @@ export default defineEventHandler(async (event) => {
   // 2. 验证接收人
   if (body.toUserId === id) throw createError({ statusCode: 422, message: '不能将业务移交给同一个账号' })
   await assertActiveTeacher(event, schoolId, body.toUserId)
+  if (body.newPsychologistId) {
+    const [psychologist] = await db.select({ id: schema.users.id }).from(schema.users).where(and(
+      eq(schema.users.id, body.newPsychologistId),
+      eq(schema.users.schoolId, schoolId),
+      eq(schema.users.role, 'psychologist'),
+      eq(schema.users.status, 'active'),
+    )).limit(1)
+    if (!psychologist) throw createError({ statusCode: 422, message: '新的心理专员不存在或不可用' })
+  }
 
   // 3. 检查心理转介：如果是心理专员且存在未完成转介
   if (target.role === 'psychologist') {
     const [openReferral] = await db.select({ id: schema.referrals.id }).from(schema.referrals).where(and(
       eq(schema.referrals.psychologistId, id),
       eq(schema.referrals.schoolId, schoolId),
-      inArray(schema.referrals.status, ['created', 'acknowledged', 'in_progress'])
+      inArray(schema.referrals.status, ['created', 'acknowledged', 'offline_handling', 'escalated'])
     )).limit(1)
     if (openReferral && !body.newPsychologistId) {
       throw createError({ statusCode: 422, message: '该心理专员存在未完成的转介工单，请指定新的心理专员' })
@@ -105,38 +114,73 @@ export default defineEventHandler(async (event) => {
     await tx.update(schema.moduleCases).set({ ownerUserId: body.toUserId, updatedAt: new Date() })
       .where(and(eq(schema.moduleCases.schoolId, schoolId), eq(schema.moduleCases.ownerUserId, id)))
 
-    // 10. 移交方案行动（planActions 有独立的 ownerUserId）
+    // 10. 移交测评、学生事件和方案完整责任链
+    await tx.update(schema.assessmentAttempts).set({ ownerUserId: body.toUserId, updatedAt: new Date() })
+      .where(and(eq(schema.assessmentAttempts.schoolId, schoolId), eq(schema.assessmentAttempts.ownerUserId, id)))
+    await tx.update(schema.studentEvents).set({ ownerUserId: body.toUserId, updatedAt: new Date() })
+      .where(and(eq(schema.studentEvents.schoolId, schoolId), eq(schema.studentEvents.ownerUserId, id)))
     await tx.update(schema.planActions).set({ ownerUserId: body.toUserId, updatedAt: new Date() })
       .where(and(eq(schema.planActions.schoolId, schoolId), eq(schema.planActions.ownerUserId, id)))
+    await tx.update(schema.planReviews).set({ ownerUserId: body.toUserId })
+      .where(and(eq(schema.planReviews.schoolId, schoolId), eq(schema.planReviews.ownerUserId, id)))
+    await tx.update(schema.planFeedback).set({ ownerUserId: body.toUserId })
+      .where(and(eq(schema.planFeedback.schoolId, schoolId), eq(schema.planFeedback.ownerUserId, id)))
+    await tx.update(schema.planOperationEvents).set({ ownerUserId: body.toUserId })
+      .where(and(eq(schema.planOperationEvents.schoolId, schoolId), eq(schema.planOperationEvents.ownerUserId, id)))
 
-    // 11. 移交心理转介（如果指定了新专员）
+    // 11. 移交会话和危机责任，保留原始审计操作者不变
+    await tx.update(schema.chatSessions).set({ ownerUserId: body.toUserId, updatedAt: new Date() })
+      .where(and(eq(schema.chatSessions.schoolId, schoolId), eq(schema.chatSessions.ownerUserId, id)))
+    await tx.update(schema.chatMessages).set({ ownerUserId: body.toUserId })
+      .where(and(eq(schema.chatMessages.schoolId, schoolId), eq(schema.chatMessages.ownerUserId, id)))
+    await tx.update(schema.routingDecisions).set({ ownerUserId: body.toUserId })
+      .where(and(eq(schema.routingDecisions.schoolId, schoolId), eq(schema.routingDecisions.ownerUserId, id)))
+    await tx.update(schema.safetyEvents).set({ ownerUserId: body.toUserId, updatedAt: new Date() })
+      .where(and(eq(schema.safetyEvents.schoolId, schoolId), eq(schema.safetyEvents.ownerUserId, id)))
+    await tx.update(schema.notifications).set({ userId: body.toUserId })
+      .where(and(
+        eq(schema.notifications.schoolId, schoolId),
+        eq(schema.notifications.userId, id),
+        isNull(schema.notifications.readAt),
+      ))
+
+    // 12. 移交心理转介（如果指定了新专员）
     if (body.newPsychologistId) {
       await tx.update(schema.referrals).set({ psychologistId: body.newPsychologistId, updatedAt: new Date() })
-        .where(and(eq(schema.referrals.psychologistId, id), eq(schema.referrals.schoolId, schoolId), inArray(schema.referrals.status, ['created', 'acknowledged', 'in_progress'])))
+        .where(and(
+          eq(schema.referrals.psychologistId, id),
+          eq(schema.referrals.schoolId, schoolId),
+          inArray(schema.referrals.status, ['created', 'acknowledged', 'offline_handling', 'escalated']),
+        ))
     }
 
-    // 12. 撤销会话和恢复码
+    // 13. 撤销登录会话和恢复码
     await tx.delete(schema.sessions).where(eq(schema.sessions.userId, id))
     await tx.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, id))
 
-    // 13. 将账号设为 disabled
-    await tx.update(schema.users).set({
+    // 14. 将账号设为 disabled
+    const [disabled] = await tx.update(schema.users).set({
       status: 'disabled',
       disabledAt: new Date(),
       disabledBy: actor.id,
       disabledReason: body.reason,
       updatedAt: new Date()
-    }).where(eq(schema.users.id, id))
-  })
+    }).where(and(
+      eq(schema.users.id, id),
+      eq(schema.users.schoolId, schoolId),
+      inArray(schema.users.role, ['teacher', 'psychologist']),
+    )).returning({ id: schema.users.id })
+    if (!disabled) throw createError({ statusCode: 409, message: '账号状态已变化，请刷新后重试' })
 
-  await writeAudit(event, {
-    schoolId, actorId: actor.id,
-    action: 'school_admin.user.transfer_and_disable',
-    targetType: 'user', targetId: id,
-    metadata: {
-      toUserId: body.toUserId, reason: body.reason,
-      newPsychologistId: body.newPsychologistId, delegatedGrantId
-    }
+    await writeAudit(event, {
+      schoolId, actorId: actor.id,
+      action: 'school_admin.user.transfer_and_disable',
+      targetType: 'user', targetId: id,
+      metadata: {
+        toUserId: body.toUserId, reason: body.reason,
+        newPsychologistId: body.newPsychologistId, delegatedGrantId
+      }
+    }, tx)
   })
 
   return { ok: true }

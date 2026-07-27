@@ -19,13 +19,18 @@ export default defineEventHandler(async (event) => {
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = updateSchema.parse(await readBody(event))
+  const expectedUpdatedAt = z.string().datetime().parse(getQuery(event).expectedUpdatedAt)
   const db = useDb(event)
 
   const [record] = await db.select().from(schema.studentEvents).where(and(
     eq(schema.studentEvents.id, id),
-    eq(schema.studentEvents.ownerUserId, user.id)
+    eq(schema.studentEvents.ownerUserId, user.id),
+    eq(schema.studentEvents.schoolId, user.schoolId),
   )).limit(1)
   if (!record) throw createError({ statusCode: 404, message: '事件不存在' })
+  if (record.updatedAt.toISOString() !== expectedUpdatedAt) {
+    throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '事件记录已被其他用户修改，请刷新后重试' })
+  }
 
   const updates: Record<string, unknown> = {}
   if (body.eventType !== undefined) updates.eventType = body.eventType
@@ -38,8 +43,14 @@ export default defineEventHandler(async (event) => {
   updates.updatedAt = new Date()
 
   const [updated] = await db.update(schema.studentEvents).set(updates)
-    .where(eq(schema.studentEvents.id, id))
+    .where(and(
+      eq(schema.studentEvents.id, id),
+      eq(schema.studentEvents.ownerUserId, user.id),
+      eq(schema.studentEvents.schoolId, user.schoolId),
+      eq(schema.studentEvents.updatedAt, new Date(expectedUpdatedAt)),
+    ))
     .returning()
+  if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '事件记录已被其他用户修改，请刷新后重试' })
 
   await writeAudit(event, {
     schoolId: user.schoolId,

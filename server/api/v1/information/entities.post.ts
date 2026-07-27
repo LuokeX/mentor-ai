@@ -6,6 +6,13 @@ import { encryptSensitive, searchableHash } from '../../../utils/crypto'
 import { writeAudit } from '../../../utils/audit'
 
 const entitySchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('student'),
+    name: z.string().trim().min(1).max(80),
+    classId: z.string().uuid(),
+    gender: z.string().trim().max(20).optional(),
+    notes: z.string().trim().max(1000).optional(),
+  }),
   z.object({ type: z.literal('guardian'), name: z.string().trim().min(1).max(80), phone: z.string().max(40).optional(), relation: z.string().max(40).optional(), studentIds: z.array(z.string().uuid()).max(6).optional() }),
   z.object({
     type: z.literal('communication'), summary: z.string().trim().min(5).max(3000), guardianId: z.string().uuid().optional(), studentId: z.string().uuid().optional(),
@@ -19,6 +26,16 @@ export default defineEventHandler(async (event) => {
   const body = entitySchema.parse(await readBody(event))
   const config = useRuntimeConfig(event)
   const db = useDb(event)
+
+  if (body.type === 'student') {
+    const [ownedClass] = await db.select({ id: schema.classes.id }).from(schema.classes).where(and(
+      eq(schema.classes.id, body.classId),
+      eq(schema.classes.ownerUserId, user.id),
+      eq(schema.classes.schoolId, user.schoolId),
+      eq(schema.classes.status, 'active'),
+    )).limit(1)
+    if (!ownedClass) throw createError({ statusCode: 422, message: '只能向当前负责的有效班级添加学生' })
+  }
 
   if (body.type === 'communication') {
     if (body.guardianId) {
@@ -42,7 +59,17 @@ export default defineEventHandler(async (event) => {
   }
 
   let record: { id: string } | undefined
-  if (body.type === 'guardian') {
+  if (body.type === 'student') {
+    [record] = await db.insert(schema.students).values({
+      schoolId: user.schoolId,
+      ownerUserId: user.id,
+      classId: body.classId,
+      nameEnc: encryptSensitive(body.name, config.encryptionKey),
+      nameSearch: searchableHash(body.name, config.encryptionKey),
+      gender: body.gender || null,
+      notesEnc: body.notes ? encryptSensitive(body.notes, config.encryptionKey) : null,
+    }).returning({ id: schema.students.id })
+  } else if (body.type === 'guardian') {
     [record] = await db.insert(schema.guardians).values({
       schoolId: user.schoolId, ownerUserId: user.id,
       nameEnc: encryptSensitive(body.name, config.encryptionKey), nameSearch: searchableHash(body.name, config.encryptionKey),

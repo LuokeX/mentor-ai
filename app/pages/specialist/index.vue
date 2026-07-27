@@ -1,8 +1,9 @@
 <script setup lang="ts">
 const statusFilter = ref('all')
-const { data, refresh } = await useFetch<any[]>('/api/v1/specialist/referrals', {
-  query: computed(() => statusFilter.value === 'all' ? {} : { status: statusFilter.value })
+const { data: referralData, refresh } = await useFetch<{ rows: any[] }>('/api/v1/specialist/referrals', {
+  query: computed(() => ({ page: 1, pageSize: 100, status: statusFilter.value }))
 })
+const data = computed(() => referralData.value?.rows || [])
 const note = reactive<Record<string,string>>({})
 const closureReason = reactive<Record<string,string>>({})
 const details = reactive<Record<string, any>>({})

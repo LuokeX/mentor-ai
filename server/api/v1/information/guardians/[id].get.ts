@@ -16,7 +16,11 @@ export default defineEventHandler(async (event) => {
   )).limit(1)
   if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
   const [relations, communications, studentOptions, plans] = await Promise.all([
-    db.select().from(schema.studentGuardians).where(eq(schema.studentGuardians.guardianId, id)),
+    db.select().from(schema.studentGuardians).where(and(
+      eq(schema.studentGuardians.guardianId, id),
+      eq(schema.studentGuardians.schoolId, user.schoolId!),
+      eq(schema.studentGuardians.status, 'active'),
+    )),
     db.select().from(schema.communications).where(and(eq(schema.communications.guardianId, id), eq(schema.communications.schoolId, user.schoolId!))).orderBy(desc(schema.communications.occurredAt)),
     db.select().from(schema.students).where(and(eq(schema.students.ownerUserId, user.id), eq(schema.students.schoolId, user.schoolId!))).orderBy(desc(schema.students.updatedAt)),
     db.select().from(schema.plans).where(and(eq(schema.plans.guardianId, id), eq(schema.plans.ownerUserId, user.id), eq(schema.plans.schoolId, user.schoolId!))).orderBy(desc(schema.plans.updatedAt)).limit(20)

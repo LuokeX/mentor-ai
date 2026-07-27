@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
@@ -23,7 +23,12 @@ export default defineEventHandler(async (event) => {
   // 验证学生属于当前教师
   const [student] = await db.select({ id: schema.students.id })
     .from(schema.students)
-    .where(eq(schema.students.id, body.studentId))
+    .where(and(
+      eq(schema.students.id, body.studentId),
+      eq(schema.students.schoolId, user.schoolId),
+      eq(schema.students.ownerUserId, user.id),
+      eq(schema.students.status, 'active'),
+    ))
     .limit(1)
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
 

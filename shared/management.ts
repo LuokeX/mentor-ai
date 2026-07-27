@@ -16,6 +16,21 @@ export type Capability =
   | 'delete'         // 仅限从未激活的邀请账号
   | 'disable'        // 停用账号
 
+export interface ManagedColumn {
+  key: string
+  label: string
+  sortable?: boolean
+  /** 移动端低优先级列会隐藏，完整内容仍可在详情抽屉查看。 */
+  mobileHidden?: boolean
+  class?: string
+}
+
+export interface ManagedRow {
+  id: string
+  _capabilities: Capability[]
+  [key: string]: unknown
+}
+
 // ===== 标准列表查询 =====
 export interface ManagedListQuery {
   page: number        // 1-based

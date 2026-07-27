@@ -1,7 +1,7 @@
 /**
  * 教师端学生列表 API
  */
-import { and, asc, desc, eq, ilike, or } from 'drizzle-orm'
+import { and, asc, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
@@ -10,6 +10,7 @@ import { useDb, schema } from '../../../../utils/db'
 import { countSql, offsetFrom } from '../../../../domain/school-management'
 import { resolveCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
+import { decryptSensitive, searchableHash } from '../../../../utils/crypto'
 
 const SORT_WHITELIST = createSortWhitelist('name', 'gender', 'status', 'updatedAt', 'createdAt')
 
@@ -36,7 +37,9 @@ export default defineEventHandler(async (event) => {
   ]
   if (query.status !== 'all') conditions.push(eq(schema.students.status, query.status))
   if (query.classId) conditions.push(eq(schema.students.classId, query.classId))
-  if (query.q) conditions.push(or(ilike(schema.students.nameSearch, `%${query.q}%`))!)
+  if (query.q) {
+    conditions.push(eq(schema.students.nameSearch, searchableHash(query.q, useRuntimeConfig(event).encryptionKey)))
+  }
 
   const validSort = validateSort(query.sort, SORT_WHITELIST, 'updatedAt')
   const sortCol = validSort === 'name' ? schema.students.nameSearch
@@ -48,20 +51,31 @@ export default defineEventHandler(async (event) => {
 
   const result = await paginateResult({
     dataQuery: db.select({
-      id: schema.students.id, classId: schema.students.classId,
+      id: schema.students.id, classId: schema.students.classId, className: schema.classes.name,
+      nameEnc: schema.students.nameEnc,
       gender: schema.students.gender, status: schema.students.status,
       ownerUserId: schema.students.ownerUserId, schoolId: schema.students.schoolId,
       createdAt: schema.students.createdAt, updatedAt: schema.students.updatedAt,
-    }).from(schema.students).where(and(...conditions)).orderBy(orderFn(sortCol))
+    }).from(schema.students)
+      .leftJoin(schema.classes, and(
+        eq(schema.classes.id, schema.students.classId),
+        eq(schema.classes.schoolId, user.schoolId),
+      ))
+      .where(and(...conditions)).orderBy(orderFn(sortCol))
       .limit(query.pageSize).offset(offsetFrom(query.page, query.pageSize)),
     countQuery: db.select({ value: countSql }).from(schema.students).where(and(...conditions)),
     page: query.page, pageSize: query.pageSize,
   })
 
-  const rows = await Promise.all(result.rows.map(async (row) => {
-    const caps = await resolveCapabilities({ user, recordSchoolId: row.schoolId, recordOwnerUserId: row.ownerUserId, recordStatus: row.status, targetType: 'student', targetId: row.id })
-    return { ...row, name: '***', _capabilities: caps }
-  }))
+  const secret = useRuntimeConfig(event).encryptionKey
+  const rows = result.rows.map((row) => {
+    const { nameEnc, ...safeRow } = row
+    return {
+      ...safeRow,
+      name: decryptSensitive(nameEnc, secret),
+      _capabilities: resolveCapabilities({ user, recordSchoolId: row.schoolId, recordOwnerUserId: row.ownerUserId, recordStatus: row.status, targetType: 'student', targetId: row.id }),
+    }
+  })
 
-  return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: ['view', 'create'] as Capability[] } satisfies ManagedListResult<typeof result.rows[number]>
+  return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: ['view', 'create'] as Capability[] } satisfies ManagedListResult<(typeof rows)[number]>
 })

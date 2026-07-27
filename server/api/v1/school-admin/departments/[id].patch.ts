@@ -9,9 +9,13 @@ export default defineEventHandler(async (event) => {
   const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['departments'])
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = schoolAdminDepartmentUpdateSchema.parse(await readBody(event))
+  const expectedUpdatedAt = z.string().datetime().optional().parse(getQuery(event).expectedUpdatedAt)
   const db = useDb(event)
   const [department] = await db.select().from(schema.departments).where(and(eq(schema.departments.id, id), eq(schema.departments.schoolId, schoolId))).limit(1)
   if (!department) throw createError({ statusCode: 404, message: '部门不存在' })
+  if (expectedUpdatedAt && department.updatedAt.toISOString() !== expectedUpdatedAt) {
+    throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '部门已被其他管理员修改，请刷新后重试' })
+  }
   if (body.parentId === id) throw createError({ statusCode: 422, message: '上级部门不能选择自己' })
   if (body.parentId) {
     const [parent] = await db.select({ id: schema.departments.id }).from(schema.departments).where(and(
@@ -31,14 +35,18 @@ export default defineEventHandler(async (event) => {
     if (body.leaderUserId !== undefined) patch.leaderUserId = body.leaderUserId || null
     if (body.description !== undefined) patch.description = body.description || null
     if (body.status !== undefined) patch.status = body.status
-    const [updated] = await db.update(schema.departments).set(patch).where(eq(schema.departments.id, id)).returning()
-    if (!updated) throw createError({ statusCode: 500, message: '部门更新失败' })
-    await writeAudit(event, {
-      schoolId, actorId: actor.id, action: 'school_admin.department.update',
-      targetType: 'department', targetId: id,
-      metadata: { status: body.status, delegatedGrantId }
+    const finalConditions = [eq(schema.departments.id, id), eq(schema.departments.schoolId, schoolId)]
+    if (expectedUpdatedAt) finalConditions.push(eq(schema.departments.updatedAt, new Date(expectedUpdatedAt)))
+    return await db.transaction(async (tx) => {
+      const [updated] = await tx.update(schema.departments).set(patch).where(and(...finalConditions)).returning()
+      if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '部门已被其他管理员修改，请刷新后重试' })
+      await writeAudit(event, {
+        schoolId, actorId: actor.id, action: 'school_admin.department.update',
+        targetType: 'department', targetId: id,
+        metadata: { status: body.status, delegatedGrantId }
+      }, tx)
+      return updated
     })
-    return updated
   } catch (error: any) {
     if (error?.code === '23505') throw createError({ statusCode: 409, message: '部门编号已存在' })
     throw error

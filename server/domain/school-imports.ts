@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import { encryptSensitive, searchableHash } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
+import { issueInvitation } from './invitations'
 
 export type SchoolImportType = 'users' | 'classes' | 'students' | 'guardians'
 export type ImportError = { row: number, code: string, message: string }
@@ -130,37 +131,54 @@ export async function validateSchoolImport(event: H3Event, input: {
 }
 
 export async function commitSchoolImport(event: H3Event, input: {
-  schoolId: string, adminId: string, type: SchoolImportType, contentBase64: string
+  schoolId: string, adminId: string, previewId: string, type: SchoolImportType, contentBase64: string
 }) {
   const parsed = await validateSchoolImport(event, input)
-  if (parsed.errors.length) return { ...parsed, created: 0, updated: 0, skipped: 0, credentials: [] }
+  if (parsed.errors.length) return { ...parsed, created: 0, updated: 0, skipped: 0, invitations: [] }
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
   return db.transaction(async (tx) => {
     let created = 0; let updated = 0; let skipped = 0
-    const credentials: Array<{ userId: string, email: string, name: string, password: string }> = []
+    const invitations: Array<{ userId: string, email: string, name: string, activationToken: string, expiresAt: Date }> = []
     for (const row of parsed.rows) {
       if (input.type === 'users') {
         const email = row.email!.toLowerCase()
-        const password = randomBytes(16).toString('base64url')
-        const passwordHash = await argon2.hash(password, { type: argon2.argon2id })
         const [existing] = await tx.select().from(schema.users).where(eq(schema.users.email, email)).limit(1)
         if (existing?.schoolId && existing.schoolId !== input.schoolId) throw new Error('EMAIL_CROSS_SCHOOL')
         let userId = existing?.id
         if (!existing) {
+          const placeholderHash = await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id })
           const [user] = await tx.insert(schema.users).values({
-            schoolId: input.schoolId, name: row.name!, email, role: row.role!, status: 'active',
-            passwordHash
+            schoolId: input.schoolId, name: row.name!, email, role: row.role!, status: 'invited',
+            passwordHash: placeholderHash
           }).returning({ id: schema.users.id })
           userId = user!.id; created++
-        } else if (existing.status === 'active') {
+        } else if (existing.status !== 'invited') {
           skipped++
           continue
         } else {
-          await tx.update(schema.users).set({ name: row.name!, role: row.role!, status: 'active', passwordHash, updatedAt: new Date() }).where(eq(schema.users.id, existing.id))
+          await tx.update(schema.users).set({ name: row.name!, role: row.role!, updatedAt: new Date() }).where(and(
+            eq(schema.users.id, existing.id),
+            eq(schema.users.schoolId, input.schoolId),
+            eq(schema.users.status, 'invited'),
+          ))
           updated++
         }
-        credentials.push({ userId: userId!, email, name: row.name!, password })
+        const { invitation, token } = await issueInvitation(event, {
+          schoolId: input.schoolId,
+          userId: userId!,
+          name: row.name!,
+          email,
+          role: row.role as 'teacher' | 'psychologist',
+          invitedBy: input.adminId,
+        }, tx as ReturnType<typeof useDb>)
+        invitations.push({
+          userId: userId!,
+          email,
+          name: row.name!,
+          activationToken: token,
+          expiresAt: invitation.expiresAt,
+        })
       } else if (input.type === 'classes') {
         const [teacher] = await tx.select().from(schema.users).where(and(eq(schema.users.schoolId, input.schoolId), eq(schema.users.email, row.teacher_email!.toLowerCase()))).limit(1)
         const [existing] = await tx.select().from(schema.classes).where(and(eq(schema.classes.schoolId, input.schoolId), eq(schema.classes.externalCode, row.class_code!))).limit(1)
@@ -195,6 +213,27 @@ export async function commitSchoolImport(event: H3Event, input: {
         await tx.insert(schema.studentGuardians).values({ studentId: student!.id, guardianId, schoolId: input.schoolId }).onConflictDoNothing()
       }
     }
-    return { ...parsed, created, updated, skipped, credentials }
+    const [committed] = await tx.update(schema.schoolImports).set({
+      status: 'committed',
+      createdRows: created,
+      updatedRows: updated,
+      skippedRows: skipped,
+      errorCount: 0,
+    }).where(and(
+      eq(schema.schoolImports.id, input.previewId),
+      eq(schema.schoolImports.schoolId, input.schoolId),
+      eq(schema.schoolImports.status, 'previewed'),
+      eq(schema.schoolImports.checksum, parsed.checksum),
+    )).returning({ id: schema.schoolImports.id })
+    if (!committed) throw createError({ statusCode: 409, message: '预检记录已提交或状态发生变化' })
+    await tx.insert(schema.auditLogs).values({
+      schoolId: input.schoolId,
+      actorId: input.adminId,
+      action: 'school_admin.import.commit',
+      targetType: 'school_import',
+      targetId: input.previewId,
+      metadata: { type: input.type, totalRows: parsed.rows.length, created, updated, skipped },
+    })
+    return { ...parsed, created, updated, skipped, invitations }
   })
 }

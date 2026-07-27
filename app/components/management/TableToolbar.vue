@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   searchValue?: string
   searchPlaceholder?: string
   statusFilter?: string
@@ -11,12 +11,17 @@ const emit = defineEmits<{
   'update:statusFilter': [value: string]
   refresh: []
 }>()
+
+const searchDraft = ref(props.searchValue || '')
+watch(() => props.searchValue, value => {
+  if (value !== searchDraft.value) searchDraft.value = value || ''
+})
 </script>
 
 <template>
   <div class="flex flex-col sm:flex-row sm:items-center gap-3">
     <UInput
-      :model-value="searchValue"
+      v-model="searchDraft"
       :placeholder="searchPlaceholder || '搜索...'"
       icon="i-lucide-search"
       size="sm"

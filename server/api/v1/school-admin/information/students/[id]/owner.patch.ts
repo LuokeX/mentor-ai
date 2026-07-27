@@ -19,25 +19,31 @@ export default defineEventHandler(async (event) => {
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
   const [teacher] = await db.select({ id: schema.users.id }).from(schema.users).where(and(eq(schema.users.id, body.ownerUserId), eq(schema.users.schoolId, schoolId), eq(schema.users.role, 'teacher'), eq(schema.users.status, 'active'))).limit(1)
   if (!teacher) throw createError({ statusCode: 422, message: '目标教师不存在或不可用' })
-  await db.update(schema.students).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.students.id, id))
-  await db.update(schema.communications).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(eq(schema.communications.studentId, id), eq(schema.communications.schoolId, schoolId)))
-  await db.insert(schema.recordAssignments).values({
-    schoolId,
-    targetType: 'student',
-    targetId: id,
-    fromUserId: student.ownerUserId,
-    toUserId: body.ownerUserId,
-    assignedBy: admin.id,
-    reason: body.reason,
-    metadata: { action: 'student_owner_update' }
-  })
-  await writeAudit(event, {
-    schoolId,
-    actorId: admin.id,
-    action: 'school_admin.student.owner.update',
-    targetType: 'student',
-    targetId: id,
-    metadata: { fromUserId: student.ownerUserId, toUserId: body.ownerUserId, reason: body.reason }
+  await db.transaction(async (tx) => {
+    const [updated] = await tx.update(schema.students).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(
+      eq(schema.students.id, id),
+      eq(schema.students.schoolId, schoolId),
+    )).returning({ id: schema.students.id })
+    if (!updated) throw createError({ statusCode: 409, message: '学生状态已变化，请刷新后重试' })
+    await tx.update(schema.communications).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(eq(schema.communications.studentId, id), eq(schema.communications.schoolId, schoolId)))
+    await tx.insert(schema.recordAssignments).values({
+      schoolId,
+      targetType: 'student',
+      targetId: id,
+      fromUserId: student.ownerUserId,
+      toUserId: body.ownerUserId,
+      assignedBy: admin.id,
+      reason: body.reason,
+      metadata: { action: 'student_owner_update' }
+    })
+    await writeAudit(event, {
+      schoolId,
+      actorId: admin.id,
+      action: 'school_admin.student.owner.update',
+      targetType: 'student',
+      targetId: id,
+      metadata: { fromUserId: student.ownerUserId, toUserId: body.ownerUserId, reason: body.reason }
+    }, tx)
   })
   return { ok: true }
 })

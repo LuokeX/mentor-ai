@@ -68,13 +68,18 @@ export default defineEventHandler(async (event) => {
   )).limit(1)
   if (!teacher) throw createError({ statusCode: 422, message: '目标教师不存在或不可用' })
 
-  if (body.targetType === 'class') {
+  return await db.transaction(async (tx) => {
+    const db = tx as ReturnType<typeof useDb>
+    if (body.targetType === 'class') {
     const [before] = await db.select({ id: schema.classes.id, ownerUserId: schema.classes.ownerUserId }).from(schema.classes).where(and(
       eq(schema.classes.id, body.targetId),
       eq(schema.classes.schoolId, schoolId)
     )).limit(1)
     if (!before) throw createError({ statusCode: 404, message: '班级不存在' })
-    await db.update(schema.classes).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.classes.id, body.targetId))
+    await db.update(schema.classes).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(
+      eq(schema.classes.id, body.targetId),
+      eq(schema.classes.schoolId, schoolId),
+    ))
     const students = await db.update(schema.students).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(
       eq(schema.students.classId, body.targetId),
       eq(schema.students.schoolId, schoolId)
@@ -86,7 +91,11 @@ export default defineEventHandler(async (event) => {
         inArray(schema.communications.studentId, studentIds),
         eq(schema.communications.schoolId, schoolId)
       ))
-      const relations = await db.select().from(schema.studentGuardians).where(inArray(schema.studentGuardians.studentId, studentIds))
+      const relations = await db.select().from(schema.studentGuardians).where(and(
+        inArray(schema.studentGuardians.studentId, studentIds),
+        eq(schema.studentGuardians.schoolId, schoolId),
+        eq(schema.studentGuardians.status, 'active'),
+      ))
       const guardianIds = [...new Set(relations.map(relation => relation.guardianId))]
       if (guardianIds.length) {
         await db.update(schema.guardians).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(
@@ -120,13 +129,16 @@ export default defineEventHandler(async (event) => {
         metadata: { cascadedStudents: 0, cascadedGuardians: 0 }
       })
     }
-  } else if (body.targetType === 'student') {
+    } else if (body.targetType === 'student') {
     const [student] = await db.select({ id: schema.students.id, ownerUserId: schema.students.ownerUserId }).from(schema.students).where(and(
       eq(schema.students.id, body.targetId),
       eq(schema.students.schoolId, schoolId)
     )).limit(1)
     if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
-    await db.update(schema.students).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.students.id, body.targetId))
+    await db.update(schema.students).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(
+      eq(schema.students.id, body.targetId),
+      eq(schema.students.schoolId, schoolId),
+    ))
     await db.update(schema.communications).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(eq(schema.communications.studentId, body.targetId), eq(schema.communications.schoolId, schoolId)))
     await transferPlans(db, schoolId, body.ownerUserId, eq(schema.plans.studentId, body.targetId))
     await writeAssignment(db, {
@@ -139,13 +151,16 @@ export default defineEventHandler(async (event) => {
       reason: body.reason,
       metadata: { cascadedCommunications: true }
     })
-  } else if (body.targetType === 'guardian') {
+    } else if (body.targetType === 'guardian') {
     const [guardian] = await db.select({ id: schema.guardians.id, ownerUserId: schema.guardians.ownerUserId }).from(schema.guardians).where(and(
       eq(schema.guardians.id, body.targetId),
       eq(schema.guardians.schoolId, schoolId)
     )).limit(1)
     if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
-    await db.update(schema.guardians).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.guardians.id, body.targetId))
+    await db.update(schema.guardians).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(
+      eq(schema.guardians.id, body.targetId),
+      eq(schema.guardians.schoolId, schoolId),
+    ))
     await db.update(schema.communications).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(eq(schema.communications.guardianId, body.targetId), eq(schema.communications.schoolId, schoolId)))
     await transferPlans(db, schoolId, body.ownerUserId, eq(schema.plans.guardianId, body.targetId))
     await writeAssignment(db, {
@@ -158,13 +173,16 @@ export default defineEventHandler(async (event) => {
       reason: body.reason,
       metadata: { cascadedCommunications: true }
     })
-  } else if (body.targetType === 'communication') {
+    } else if (body.targetType === 'communication') {
     const [communication] = await db.select({ id: schema.communications.id, ownerUserId: schema.communications.ownerUserId }).from(schema.communications).where(and(
       eq(schema.communications.id, body.targetId),
       eq(schema.communications.schoolId, schoolId)
     )).limit(1)
     if (!communication) throw createError({ statusCode: 404, message: '沟通记录不存在' })
-    await db.update(schema.communications).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.communications.id, body.targetId))
+    await db.update(schema.communications).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(
+      eq(schema.communications.id, body.targetId),
+      eq(schema.communications.schoolId, schoolId),
+    ))
     await writeAssignment(db, {
       schoolId,
       targetType: 'communication',
@@ -174,13 +192,16 @@ export default defineEventHandler(async (event) => {
       assignedBy: admin.id,
       reason: body.reason
     })
-  } else {
+    } else {
     const [plan] = await db.select({ id: schema.plans.id, ownerUserId: schema.plans.ownerUserId }).from(schema.plans).where(and(
       eq(schema.plans.id, body.targetId),
       eq(schema.plans.schoolId, schoolId)
     )).limit(1)
     if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
-    await db.update(schema.plans).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.plans.id, body.targetId))
+    await db.update(schema.plans).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(
+      eq(schema.plans.id, body.targetId),
+      eq(schema.plans.schoolId, schoolId),
+    ))
     await db.update(schema.planActions).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(eq(schema.planActions.planId, body.targetId))
     await db.update(schema.notifications).set({ userId: body.ownerUserId }).where(and(eq(schema.notifications.targetType, 'plan'), eq(schema.notifications.targetId, body.targetId)))
     await writeAssignment(db, {
@@ -192,15 +213,16 @@ export default defineEventHandler(async (event) => {
       assignedBy: admin.id,
       reason: body.reason
     })
-  }
+    }
 
-  await writeAudit(event, {
-    schoolId,
-    actorId: admin.id,
-    action: 'school_admin.information.assign',
-    targetType: body.targetType,
-    targetId: body.targetId,
-    metadata: { currentResponsibleUserId: body.ownerUserId, reason: body.reason }
+    await writeAudit(event, {
+      schoolId,
+      actorId: admin.id,
+      action: 'school_admin.information.assign',
+      targetType: body.targetType,
+      targetId: body.targetId,
+      metadata: { currentResponsibleUserId: body.ownerUserId, reason: body.reason }
+    }, db)
+    return { ok: true }
   })
-  return { ok: true }
 })

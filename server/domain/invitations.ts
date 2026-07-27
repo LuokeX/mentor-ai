@@ -19,9 +19,9 @@ export async function issueInvitation(event: H3Event, input: {
   email: string
   role: 'teacher' | 'psychologist' | 'school_admin'
   invitedBy: string
-}) {
+}, database: ReturnType<typeof useDb> = useDb(event)) {
   const token = createActivationToken()
-  const db = useDb(event)
+  const db = database
   await db.update(schema.invitations).set({ acceptedAt: new Date() }).where(and(
     eq(schema.invitations.userId, input.userId), isNull(schema.invitations.acceptedAt)
   ))

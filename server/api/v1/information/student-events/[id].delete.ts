@@ -22,12 +22,17 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, message: '事件已归档' })
   }
 
-  await db.update(schema.studentEvents).set({
+  const [updated] = await db.update(schema.studentEvents).set({
     status: 'archived',
     archivedAt: new Date(),
     archivedBy: user.id,
     updatedAt: new Date(),
-  }).where(eq(schema.studentEvents.id, id))
+  }).where(and(
+    eq(schema.studentEvents.id, id),
+    eq(schema.studentEvents.schoolId, user.schoolId),
+    eq(schema.studentEvents.ownerUserId, user.id),
+  )).returning({ id: schema.studentEvents.id })
+  if (!updated) throw createError({ statusCode: 409, message: '事件状态已变化，请刷新后重试' })
 
   await writeAudit(event, {
     schoolId: user.schoolId,

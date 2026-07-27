@@ -65,8 +65,8 @@ export default defineEventHandler(async (event) => {
   })
 
   // 为每行注入能力
-  const rows = await Promise.all(result.rows.map(async (row) => {
-    const capabilities: Capability[] = await resolveCapabilities({
+  const rows = result.rows.map((row) => {
+    const capabilities: Capability[] = resolveCapabilities({
       user,
       recordSchoolId: row.schoolId,
       recordOwnerUserId: row.ownerUserId,
@@ -75,9 +75,9 @@ export default defineEventHandler(async (event) => {
       targetId: row.id,
     })
     return { ...row, _capabilities: capabilities }
-  }))
+  })
 
-  const pageCapabilities: Capability[] = ['view', 'create']
+  const pageCapabilities: Capability[] = ['view']
 
   return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: pageCapabilities } satisfies ManagedListResult<typeof result.rows[number]>
 })

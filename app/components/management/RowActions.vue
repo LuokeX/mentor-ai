@@ -11,6 +11,9 @@ const emit = defineEmits<{
   archive: [id: string]
   restore: [id: string]
   transfer: [id: string]
+  graduate: [id: string]
+  disable: [id: string]
+  delete: [id: string]
 }>()
 </script>
 
@@ -30,6 +33,15 @@ const emit = defineEmits<{
     </UTooltip>
     <UTooltip v-if="capabilities.includes('transfer')" text="移交">
       <UButton icon="i-lucide-user-switch" variant="ghost" size="xs" @click="emit('transfer', rowId)" />
+    </UTooltip>
+    <UTooltip v-if="capabilities.includes('graduate')" text="设为毕业班">
+      <UButton icon="i-lucide-graduation-cap" variant="ghost" size="xs" @click="emit('graduate', rowId)" />
+    </UTooltip>
+    <UTooltip v-if="capabilities.includes('disable')" text="移交并停用">
+      <UButton icon="i-lucide-user-x" variant="ghost" size="xs" @click="emit('disable', rowId)" />
+    </UTooltip>
+    <UTooltip v-if="capabilities.includes('delete')" text="删除未激活邀请">
+      <UButton icon="i-lucide-trash-2" color="error" variant="ghost" size="xs" @click="emit('delete', rowId)" />
     </UTooltip>
   </div>
 </template>

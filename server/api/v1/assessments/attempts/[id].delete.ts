@@ -4,12 +4,17 @@ import { schema, useDb } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
+  if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const id = getRouterParam(event, 'id') || ''
   const db = useDb(event)
 
   const [attempt] = await db.select({ id: schema.assessmentAttempts.id, status: schema.assessmentAttempts.status })
     .from(schema.assessmentAttempts)
-    .where(and(eq(schema.assessmentAttempts.id, id), eq(schema.assessmentAttempts.ownerUserId, user.id)))
+    .where(and(
+      eq(schema.assessmentAttempts.id, id),
+      eq(schema.assessmentAttempts.ownerUserId, user.id),
+      eq(schema.assessmentAttempts.schoolId, user.schoolId),
+    ))
     .limit(1)
 
   if (!attempt) throw createError({ statusCode: 404, message: '评估记录不存在' })
@@ -22,7 +27,11 @@ export default defineEventHandler(async (event) => {
   // 草稿评估标记为归档
   await db.update(schema.assessmentAttempts)
     .set({ status: 'archived', updatedAt: new Date() })
-    .where(and(eq(schema.assessmentAttempts.id, id), eq(schema.assessmentAttempts.ownerUserId, user.id)))
+    .where(and(
+      eq(schema.assessmentAttempts.id, id),
+      eq(schema.assessmentAttempts.ownerUserId, user.id),
+      eq(schema.assessmentAttempts.schoolId, user.schoolId),
+    ))
 
   return { archived: true }
 })
