@@ -10,6 +10,7 @@ test-results
 *.log
 .DS_Store
 backups/*.sql*
+.understand-anything/
 infra/certs/*.pem
 infra/certs/*.key
 infra/certs/*.crt
