@@ -7,15 +7,22 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id') || ''
   const db = useDb(event)
 
-  const [attempt] = await db.select({ id: schema.assessmentAttempts.id })
+  const [attempt] = await db.select({ id: schema.assessmentAttempts.id, status: schema.assessmentAttempts.status })
     .from(schema.assessmentAttempts)
     .where(and(eq(schema.assessmentAttempts.id, id), eq(schema.assessmentAttempts.ownerUserId, user.id)))
     .limit(1)
 
   if (!attempt) throw createError({ statusCode: 404, message: '评估记录不存在' })
 
-  await db.delete(schema.assessmentAttempts)
+  // 已提交的评估不允许物理删除或归档
+  if (attempt.status === 'submitted') {
+    throw createError({ statusCode: 409, message: '已提交的评估不支持删除，如需弃用请联系管理员处理' })
+  }
+
+  // 草稿评估标记为归档
+  await db.update(schema.assessmentAttempts)
+    .set({ status: 'archived', updatedAt: new Date() })
     .where(and(eq(schema.assessmentAttempts.id, id), eq(schema.assessmentAttempts.ownerUserId, user.id)))
 
-  return { deleted: true }
+  return { archived: true }
 })

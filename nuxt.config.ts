@@ -34,7 +34,8 @@ export default defineNuxtConfig({
   routeRules: {
     '/school-admin/**': { headers: { 'cache-control': 'no-store, private' } },
     '/platform-admin/**': { headers: { 'cache-control': 'no-store, private' } },
-    '/specialist/**': { headers: { 'cache-control': 'no-store, private' } }
+    '/specialist/**': { headers: { 'cache-control': 'no-store, private' } },
+    '/information/**': { headers: { 'cache-control': 'no-store, private' } }
   },
   typescript: {
     strict: true,

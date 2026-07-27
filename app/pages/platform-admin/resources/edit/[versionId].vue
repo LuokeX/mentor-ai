@@ -9,7 +9,7 @@ const { moduleLabel, libraryTypeLabel, actionStatusLabel } = useDisplayLabels()
 const { data: resourceData, refresh: refreshResources } = await useFetch<any>('/api/v1/platform-admin/module-resources')
 const { refresh: refreshResourceQuality } = await useFetch<any>('/api/v1/platform-admin/resource-quality')
 
-const levelOptions = ['green', 'blue', 'yellow', 'orange', 'red', 'purple', 'survival', 'norming', 'operating', 'mature', 'L1', 'L2', 'L3', 'E']
+const levelOptions = ['success', 'info', 'warning', 'orange', 'error', 'purple', 'survival', 'norming', 'operating', 'mature', 'L1', 'L2', 'L3', 'E']
 const actionStatusOptions = ['pending', 'in_progress', 'done'].map(value => ({ label: actionStatusLabel(value), value }))
 
 // ---- 查找版本和库 ----

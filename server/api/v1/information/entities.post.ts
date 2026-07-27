@@ -49,7 +49,7 @@ export default defineEventHandler(async (event) => {
       phoneEnc: body.phone ? encryptSensitive(body.phone, config.encryptionKey) : null, relation: body.relation
     }).returning({ id: schema.guardians.id })
     if (record && body.studentIds?.length) {
-      await db.insert(schema.studentGuardians).values(body.studentIds.map(studentId => ({ studentId, guardianId: record!.id }))).onConflictDoNothing()
+      await db.insert(schema.studentGuardians).values(body.studentIds.map(studentId => ({ studentId, guardianId: record!.id, schoolId: user.schoolId! }))).onConflictDoNothing()
     }
   } else {
     [record] = await db.insert(schema.communications).values({

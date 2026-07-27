@@ -192,7 +192,7 @@ export async function commitSchoolImport(event: H3Event, input: {
         let guardianId: string
         if (existing) { await tx.update(schema.guardians).set(values).where(eq(schema.guardians.id, existing.id)); guardianId = existing.id; updated++ }
         else { const [guardian] = await tx.insert(schema.guardians).values({ schoolId: input.schoolId, ...values }).returning({ id: schema.guardians.id }); guardianId = guardian!.id; created++ }
-        await tx.insert(schema.studentGuardians).values({ studentId: student!.id, guardianId }).onConflictDoNothing()
+        await tx.insert(schema.studentGuardians).values({ studentId: student!.id, guardianId, schoolId: input.schoolId }).onConflictDoNothing()
       }
     }
     return { ...parsed, created, updated, skipped, credentials }

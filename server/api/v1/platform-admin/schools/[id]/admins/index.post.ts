@@ -21,14 +21,20 @@ export default defineEventHandler(async (event) => {
   if (!school) throw createError({ statusCode: 404, message: '学校不存在' })
   const [existing] = await db.select().from(schema.users).where(eq(schema.users.email, body.email)).limit(1)
   if (existing && (existing.schoolId !== schoolId || existing.status === 'active')) throw createError({ statusCode: 409, message: '该邮箱已绑定账号' })
-  const user = existing || (await db.insert(schema.users).values({
-    schoolId,
-    name: body.name,
-    email: body.email,
-    role: 'school_admin',
-    status: 'invited',
-    passwordHash: await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id })
-  }).returning())[0]
+  let user: typeof schema.users.$inferSelect | undefined
+  if (existing) {
+    user = existing
+  } else {
+    const inserted = await db.insert(schema.users).values({
+      schoolId,
+      name: body.name,
+      email: body.email,
+      role: 'school_admin',
+      status: 'invited',
+      passwordHash: await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id })
+    }).returning() as any
+    user = inserted?.[0]
+  }
   if (!user) throw createError({ statusCode: 500, message: '学校管理员创建失败' })
   if (existing) await db.update(schema.users).set({ name: body.name, role: 'school_admin', status: 'invited', updatedAt: new Date() }).where(eq(schema.users.id, user.id))
   const { invitation, token } = await issueInvitation(event, {

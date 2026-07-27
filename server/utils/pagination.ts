@@ -14,15 +14,15 @@
  */
 export async function paginateResult<T>(opts: {
   dataQuery: Promise<T[]>
-  countQuery: Promise<[{ value: number }?]>
+  countQuery: Promise<{ value: number }[]>
   page: number
   pageSize: number
 }): Promise<{ rows: T[]; page: number; pageSize: number; total: number }> {
-  const [rows, [countRow]] = await Promise.all([opts.dataQuery, opts.countQuery])
+  const [rows, countRows] = await Promise.all([opts.dataQuery, opts.countQuery])
   return {
     rows,
     page: opts.page,
     pageSize: opts.pageSize,
-    total: countRow?.value ?? 0,
+    total: countRows[0]?.value ?? 0,
   }
 }

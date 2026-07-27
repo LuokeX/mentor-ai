@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
     guardianId = created.id
   }
   if (!guardianId) throw createError({ statusCode: 422, message: '家长信息不完整' })
-  await db.insert(schema.studentGuardians).values({ studentId, guardianId }).onConflictDoNothing()
+  await db.insert(schema.studentGuardians).values({ studentId, guardianId, schoolId }).onConflictDoNothing()
   await writeAudit(event, {
     schoolId, actorId: actor.id, action: 'school_admin.student_guardian.link',
     targetType: 'student', targetId: studentId,

@@ -1,33 +1,49 @@
-import { and, desc, eq, isNull, or } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, or } from 'drizzle-orm'
 import { z } from 'zod'
+import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
+import type { ManagedListResult, Capability } from '../../../../../shared/management'
 import { managedRecordStatusSchema } from '../../../../../shared/contracts'
 import { countSql, offsetFrom, requireSchoolManagement } from '../../../../domain/school-management'
+import { resolveCapabilities } from '../../../../domain/capabilities'
+import { paginateResult } from '../../../../utils/pagination'
 import { decryptSensitive, searchableHash } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 
+const SORT_WHITELIST = createSortWhitelist('name', 'classId', 'status', 'updatedAt', 'createdAt')
+
 export default defineEventHandler(async (event) => {
-  const { schoolId } = await requireSchoolManagement(event, ['students'])
-  const parsed = z.object({
-    page: z.coerce.number().int().min(1).default(1),
-    pageSize: z.coerce.number().int().min(1).max(100).default(20),
-    q: z.string().trim().max(120).optional(),
-    status: managedRecordStatusSchema.or(z.literal('all')).default('all'),
-    classId: z.string().uuid().or(z.literal('all')).or(z.literal('none')).default('all'),
-    ownerUserId: z.string().uuid().or(z.literal('all')).default('all')
-  }).parse(getQuery(event))
+  const { schoolId, actor: user, delegatedGrantId } = await requireSchoolManagement(event, ['students'])
+  const query = getQuery(event)
+  const page = Number(query.page) || 1
+  const pageSize = ([20, 50, 100].includes(Number(query.pageSize)) ? Number(query.pageSize) : DEFAULT_PAGE_SIZE) as 20 | 50 | 100
+  const q = (query.q as string)?.trim().slice(0, 120) || ''
+  const status = managedRecordStatusSchema.or(z.literal('all')).default('all').parse(query.status)
+  const classId = (query.classId as string) || 'all'
+  const ownerUserId = (query.ownerUserId as string) || 'all'
+  const sort = validateSort((query.sort as string) || 'updatedAt', SORT_WHITELIST, 'updatedAt')
+  const order = (query.order === 'asc' ? 'asc' : 'desc') as 'asc' | 'desc'
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
+
   const conditions = [eq(schema.students.schoolId, schoolId)]
-  if (parsed.status !== 'all') conditions.push(eq(schema.students.status, parsed.status))
-  if (parsed.classId === 'none') conditions.push(isNull(schema.students.classId))
-  else if (parsed.classId !== 'all') conditions.push(eq(schema.students.classId, parsed.classId))
-  if (parsed.ownerUserId !== 'all') conditions.push(eq(schema.students.ownerUserId, parsed.ownerUserId))
-  if (parsed.q) {
-    const hash = searchableHash(parsed.q, secret)
+  if (status !== 'all') conditions.push(eq(schema.students.status, status))
+  if (classId === 'none') conditions.push(isNull(schema.students.classId))
+  else if (classId !== 'all') conditions.push(eq(schema.students.classId, classId))
+  if (ownerUserId !== 'all') conditions.push(eq(schema.students.ownerUserId, ownerUserId))
+  if (q) {
+    const hash = searchableHash(q, secret)
     conditions.push(or(eq(schema.students.nameSearch, hash), eq(schema.students.externalRefSearch, hash))!)
   }
-  const [rows, [total]] = await Promise.all([
-    db.select({
+
+  const sortCol = sort === 'name' ? schema.students.nameSearch
+    : sort === 'classId' ? schema.students.classId
+    : sort === 'status' ? schema.students.status
+    : sort === 'createdAt' ? schema.students.createdAt
+    : schema.students.updatedAt
+  const orderFn = order === 'asc' ? asc : desc
+
+  const result = await paginateResult({
+    dataQuery: db.select({
       id: schema.students.id,
       ownerUserId: schema.students.ownerUserId,
       ownerName: schema.users.name,
@@ -42,34 +58,55 @@ export default defineEventHandler(async (event) => {
       externalRefEnc: schema.students.externalRefEnc,
       status: schema.students.status,
       createdAt: schema.students.createdAt,
-      updatedAt: schema.students.updatedAt
+      updatedAt: schema.students.updatedAt,
     })
       .from(schema.students)
       .innerJoin(schema.users, eq(schema.users.id, schema.students.ownerUserId))
       .leftJoin(schema.classes, eq(schema.classes.id, schema.students.classId))
       .leftJoin(schema.departments, eq(schema.departments.id, schema.classes.departmentId))
       .where(and(...conditions))
-      .orderBy(desc(schema.students.updatedAt))
-      .limit(parsed.pageSize)
-      .offset(offsetFrom(parsed.page, parsed.pageSize)),
-    db.select({ value: countSql }).from(schema.students).where(and(...conditions))
-  ])
-  return {
-    rows: rows.map(row => ({
-      ...row,
+      .orderBy(orderFn(sortCol))
+      .limit(pageSize)
+      .offset(offsetFrom(page, pageSize)),
+    countQuery: db.select({ value: countSql }).from(schema.students).where(and(...conditions)),
+    page,
+    pageSize,
+  })
+
+  // 解密敏感字段 + 注入能力
+  const rows = await Promise.all(result.rows.map(async (row) => {
+    const capabilities: Capability[] = await resolveCapabilities({
+      user,
+      recordSchoolId: schoolId,
+      recordOwnerUserId: row.ownerUserId,
+      recordStatus: row.status,
+      targetType: 'student',
+      targetId: row.id,
+      delegatedGrantId,
+    })
+    return {
+      id: row.id,
+      ownerUserId: row.ownerUserId,
+      ownerName: row.ownerName,
+      classId: row.classId,
+      className: row.className,
+      departmentId: row.departmentId,
+      departmentName: row.departmentName,
       name: decryptSensitive(row.nameEnc, secret),
+      gender: row.gender,
       profile: safeJson(decryptSensitive(row.profileEnc, secret)),
       notes: decryptSensitive(row.notesEnc, secret),
       externalRef: decryptSensitive(row.externalRefEnc, secret),
-      nameEnc: undefined,
-      profileEnc: undefined,
-      notesEnc: undefined,
-      externalRefEnc: undefined
-    })),
-    page: parsed.page,
-    pageSize: parsed.pageSize,
-    total: total?.value || 0
-  }
+      status: row.status,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      _capabilities: capabilities,
+    }
+  }))
+
+  const pageCapabilities: Capability[] = ['view', 'create', 'edit', 'archive', 'restore', 'transfer']
+
+  return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: pageCapabilities } satisfies ManagedListResult<typeof rows[number]>
 })
 
 function safeJson(value: string) {

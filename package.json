@@ -21,7 +21,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "resources:reindex": "tsx scripts/reindex-module-resource-embeddings.ts",
-    "import:business-data": "tsx scripts/import-business-data/index.ts"
+    "import:business-data": "tsx scripts/import-business-data/index.ts",
+    "scaffold:management": "tsx scripts/scaffold-management.ts"
   },
   "dependencies": {
     "@nuxt/ui": "latest",

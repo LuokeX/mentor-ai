@@ -42,10 +42,14 @@ export const users = pgTable('users', {
   totpSecretEnc: text('totp_secret_enc'),
   activatedAt: timestamp('activated_at', { withTimezone: true }),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  disabledAt: timestamp('disabled_at', { withTimezone: true }),
+  disabledBy: uuid('disabled_by').references((): any => users.id),
+  disabledReason: text('disabled_reason'),
   ...timestamps
 }, table => [
   uniqueIndex('users_email_uidx').on(table.email),
-  index('users_school_role_idx').on(table.schoolId, table.role)
+  index('users_school_role_idx').on(table.schoolId, table.role),
+  index('users_school_role_status_idx').on(table.schoolId, table.role, table.status)
 ])
 
 export const sessions = pgTable('sessions', {
@@ -185,9 +189,10 @@ export const departmentMembers = pgTable('department_members', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'restrict' }),
   memberRole: varchar('member_role', { length: 80 }),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [
-  uniqueIndex('department_member_uidx').on(table.departmentId, table.userId),
+  uniqueIndex('department_member_uidx').on(table.departmentId, table.userId, table.status),
   index('department_members_user_idx').on(table.schoolId, table.userId)
 ])
 
@@ -220,10 +225,13 @@ export const classes = pgTable('classes', {
   establishedAt: timestamp('established_at', { withTimezone: true }),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('sensitive').notNull(),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
 }, table => [
   index('classes_department_idx').on(table.schoolId, table.departmentId),
   index('classes_owner_idx').on(table.ownerUserId),
+  index('classes_school_owner_status_updated_idx').on(table.schoolId, table.ownerUserId, table.status, table.updatedAt),
   uniqueIndex('classes_school_external_code_uidx').on(table.schoolId, table.externalCode)
 ])
 
@@ -242,10 +250,13 @@ export const students = pgTable('students', {
   externalRefSearch: varchar('external_ref_search', { length: 64 }),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
 }, table => [
   index('students_owner_idx').on(table.ownerUserId),
   index('students_name_search_idx').on(table.nameSearch),
+  index('students_school_owner_status_updated_idx').on(table.schoolId, table.ownerUserId, table.status, table.updatedAt),
   uniqueIndex('students_school_external_ref_uidx').on(table.schoolId, table.externalRefSearch)
 ])
 
@@ -262,17 +273,25 @@ export const guardians = pgTable('guardians', {
   relation: varchar('relation', { length: 40 }),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
 }, table => [
   index('guardians_owner_idx').on(table.ownerUserId),
+  index('guardians_school_owner_status_updated_idx').on(table.schoolId, table.ownerUserId, table.status, table.updatedAt),
   uniqueIndex('guardians_school_external_ref_uidx').on(table.schoolId, table.externalRefSearch)
 ])
 
 export const studentGuardians = pgTable('student_guardians', {
-  studentId: uuid('student_id').notNull().references(() => students.id, { onDelete: 'cascade' }),
-  guardianId: uuid('guardian_id').notNull().references(() => guardians.id, { onDelete: 'cascade' }),
+  studentId: uuid('student_id').notNull().references(() => students.id, { onDelete: 'restrict' }),
+  guardianId: uuid('guardian_id').notNull().references(() => guardians.id, { onDelete: 'restrict' }),
+  schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'restrict' }),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
-}, table => [uniqueIndex('student_guardian_uidx').on(table.studentId, table.guardianId)])
+}, table => [
+  uniqueIndex('student_guardian_uidx').on(table.studentId, table.guardianId),
+  index('student_guardians_school_idx').on(table.schoolId)
+])
 
 export const chatSessions = pgTable('chat_sessions', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -282,6 +301,8 @@ export const chatSessions = pgTable('chat_sessions', {
   contextType: varchar('context_type', { length: 30 }).default('none').notNull(),
   contextId: uuid('context_id'),
   status: varchar('status', { length: 20 }).default('active').notNull(),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
   ...timestamps
 }, table => [
@@ -293,7 +314,7 @@ export const chatMessages = pgTable('chat_messages', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
-  sessionId: uuid('session_id').notNull().references(() => chatSessions.id, { onDelete: 'cascade' }),
+  sessionId: uuid('session_id').notNull().references(() => chatSessions.id, { onDelete: 'restrict' }),
   role: varchar('role', { length: 20 }).notNull(),
   contentEnc: text('content_enc').notNull(),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
@@ -356,6 +377,8 @@ export const studentEvents = pgTable('student_events', {
   occurredAt: timestamp('occurred_at', { withTimezone: true }),
   resolution: text('resolution'),
   status: varchar('status', { length: 20 }).default('open').notNull(), // open/resolved/closed
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
 }, table => [
@@ -405,7 +428,7 @@ export const plans = pgTable('plans', {
 export const planActions = pgTable('plan_actions', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
-  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'restrict' }),
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   sequence: integer('sequence').notNull(),
   title: varchar('title', { length: 200 }).notNull(),
@@ -431,7 +454,7 @@ export const planActions = pgTable('plan_actions', {
 export const planReviews = pgTable('plan_reviews', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
-  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'restrict' }),
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   reviewAt: timestamp('review_at', { withTimezone: true }).defaultNow().notNull(),
   effectScore: integer('effect_score').notNull(),
@@ -448,7 +471,7 @@ export const planReviews = pgTable('plan_reviews', {
 export const planFeedback = pgTable('plan_feedback', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
-  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'restrict' }),
   actionId: uuid('action_id').references(() => planActions.id, { onDelete: 'set null' }),
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   module: varchar('module', { length: 40 }),
@@ -473,7 +496,7 @@ export const planFeedback = pgTable('plan_feedback', {
 export const planOperationEvents = pgTable('plan_operation_events', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
-  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'restrict' }),
   actionId: uuid('action_id').references(() => planActions.id, { onDelete: 'set null' }),
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   eventType: varchar('event_type', { length: 60 }).notNull(),
@@ -495,10 +518,15 @@ export const communications = pgTable('communications', {
   attitudeType: varchar('attitude_type', { length: 20 }),
   containerLevel: integer('container_level'),
   riskLevel: varchar('risk_level', { length: 20 }),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
   occurredAt: timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
-})
+}, table => [
+  index('communications_school_owner_status_updated_idx').on(table.schoolId, table.ownerUserId, table.status, table.updatedAt)
+])
 
 export const contentPackages = pgTable('content_packages', {
   id: uuid('id').defaultRandom().primaryKey(),

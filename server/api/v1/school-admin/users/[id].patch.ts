@@ -9,11 +9,19 @@ export default defineEventHandler(async (event) => {
   const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'])
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = schoolAdminUserUpdateSchema.parse(await readBody(event))
+  const expectedUpdatedAt = getQuery(event).expectedUpdatedAt
+    ? z.string().datetime().parse(getQuery(event).expectedUpdatedAt)
+    : undefined
   const db = useDb(event)
   const [target] = await db.select().from(schema.users).where(and(
     eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), inArray(schema.users.role, ['teacher', 'psychologist'])
   )).limit(1)
   if (!target) throw createError({ statusCode: 404, message: '用户不存在' })
+
+  // 并发冲突检查
+  if (expectedUpdatedAt && target.updatedAt.toISOString() !== expectedUpdatedAt) {
+    throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '该记录已被其他用户修改，请刷新后重试' })
+  }
 
   // 邮箱变更时检查同校唯一性
   if (body.email && body.email !== target.email) {
@@ -35,8 +43,21 @@ export default defineEventHandler(async (event) => {
     if (body.email) setValues.email = body.email
     if (body.role) setValues.role = body.role
     if (body.status) setValues.status = body.status
+    // 如果停用，记录停用信息
+    if (body.status === 'disabled') {
+      setValues.disabledAt = new Date()
+      setValues.disabledBy = actor.id
+      setValues.disabledReason = '管理员直接停用'
+      await tx.delete(schema.sessions).where(eq(schema.sessions.userId, target.id))
+      await tx.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, target.id))
+    }
+    // 如果重新启用，清除停用标记
+    if (body.status === 'active' && target.status === 'disabled') {
+      setValues.disabledAt = null
+      setValues.disabledBy = null
+      setValues.disabledReason = null
+    }
     await tx.update(schema.users).set(setValues).where(eq(schema.users.id, target.id))
-    if (body.status === 'disabled') await tx.delete(schema.sessions).where(eq(schema.sessions.userId, target.id))
   })
 
   await writeAudit(event, {

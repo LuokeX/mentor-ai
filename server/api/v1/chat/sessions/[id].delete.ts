@@ -7,19 +7,25 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id') || ''
   const db = useDb(event)
 
-  const [session] = await db.select({ id: schema.chatSessions.id })
+  const [session] = await db.select({ id: schema.chatSessions.id, status: schema.chatSessions.status })
     .from(schema.chatSessions)
     .where(and(eq(schema.chatSessions.id, id), eq(schema.chatSessions.ownerUserId, user.id)))
     .limit(1)
 
   if (!session) throw createError({ statusCode: 404, message: '对话不存在' })
 
-  // routing_decisions 外键没有 CASCADE，需要先删
-  await db.delete(schema.routingDecisions)
-    .where(eq(schema.routingDecisions.sessionId, id))
+  if (session.status === 'archived') {
+    throw createError({ statusCode: 409, message: '对话已归档' })
+  }
 
-  await db.delete(schema.chatSessions)
-    .where(and(eq(schema.chatSessions.id, id), eq(schema.chatSessions.ownerUserId, user.id)))
+  // 对话会话改为归档，不物理删除（保留关联消息）
+  // chatMessages 的 onDelete 已是 restrict，不级联删除
+  await db.update(schema.chatSessions).set({
+    status: 'archived',
+    archivedAt: new Date(),
+    archivedBy: user.id,
+    updatedAt: new Date(),
+  }).where(and(eq(schema.chatSessions.id, id), eq(schema.chatSessions.ownerUserId, user.id)))
 
-  return { deleted: true }
+  return { archived: true }
 })

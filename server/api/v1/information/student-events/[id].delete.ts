@@ -12,18 +12,30 @@ export default defineEventHandler(async (event) => {
 
   const [record] = await db.select().from(schema.studentEvents).where(and(
     eq(schema.studentEvents.id, id),
+    eq(schema.studentEvents.schoolId, user.schoolId),
     eq(schema.studentEvents.ownerUserId, user.id)
   )).limit(1)
   if (!record) throw createError({ statusCode: 404, message: '事件不存在' })
 
-  await db.delete(schema.studentEvents).where(eq(schema.studentEvents.id, id))
+  // 学生事件禁止物理删除，只能归档
+  if (record.status === 'archived') {
+    throw createError({ statusCode: 409, message: '事件已归档' })
+  }
+
+  await db.update(schema.studentEvents).set({
+    status: 'archived',
+    archivedAt: new Date(),
+    archivedBy: user.id,
+    updatedAt: new Date(),
+  }).where(eq(schema.studentEvents.id, id))
 
   await writeAudit(event, {
     schoolId: user.schoolId,
     actorId: user.id,
-    action: 'student_event.delete',
+    action: 'student_event.archive',
     targetType: 'student_event',
-    targetId: id
+    targetId: id,
+    metadata: { previousStatus: record.status }
   })
 
   return { ok: true }

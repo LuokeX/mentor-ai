@@ -14,15 +14,18 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, message: '该邮箱已绑定活跃账号' })
   }
   const passwordHash = await argon2.hash(body.password, { type: argon2.argon2id })
-  const user = existing
-    ? (await db.update(schema.users).set({
-        schoolId, name: body.name, email: body.email, role: body.role,
-        status: 'active', passwordHash, totpSecretEnc: null, updatedAt: new Date()
-      }).where(eq(schema.users.id, existing.id)).returning())[0]
-    : (await db.insert(schema.users).values({
-        schoolId, name: body.name, email: body.email, role: body.role,
-        status: 'active', passwordHash
-      }).returning())[0]
+  let user: typeof schema.users.$inferSelect | undefined
+  if (existing) {
+    [user] = await db.update(schema.users).set({
+      schoolId, name: body.name, email: body.email, role: body.role,
+      status: 'active', passwordHash, totpSecretEnc: null, updatedAt: new Date()
+    }).where(eq(schema.users.id, existing.id)).returning()
+  } else {
+    [user] = await db.insert(schema.users).values({
+      schoolId, name: body.name, email: body.email, role: body.role,
+      status: 'active', passwordHash
+    }).returning()
+  }
   if (!user) throw createError({ statusCode: 500, message: '用户创建失败' })
   if (existing) {
     await db.delete(schema.sessions).where(eq(schema.sessions.userId, user.id))
