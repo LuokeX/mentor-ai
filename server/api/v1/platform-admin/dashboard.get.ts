@@ -5,9 +5,8 @@ import { useDb, schema } from '../../../utils/db'
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['platform_admin'])
   const db = useDb(event)
-  const [schoolRows, packages, requests, grants, delegatedGrants, audits] = await Promise.all([
+  const [schoolRows, requests, grants, delegatedGrants, audits] = await Promise.all([
     db.select().from(schema.schools).orderBy(desc(schema.schools.createdAt)),
-    db.select().from(schema.contentPackages).orderBy(desc(schema.contentPackages.createdAt)),
     db.select().from(schema.adminAccessRequests).where(eq(schema.adminAccessRequests.requesterId, admin.id)).orderBy(desc(schema.adminAccessRequests.createdAt)),
     db.select().from(schema.adminAccessGrants).where(eq(schema.adminAccessGrants.userId, admin.id)).orderBy(desc(schema.adminAccessGrants.createdAt)),
     db.select().from(schema.delegatedManagementGrants).where(eq(schema.delegatedManagementGrants.requesterId, admin.id)).orderBy(desc(schema.delegatedManagementGrants.createdAt)),
@@ -27,5 +26,5 @@ export default defineEventHandler(async (event) => {
       .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.actorId))
       .where(eq(schema.auditLogs.actorId, admin.id)).orderBy(desc(schema.auditLogs.createdAt)).limit(50)
   ])
-  return { schools: schoolRows, contentPackages: packages, accessRequests: requests, accessGrants: grants, delegatedManagementGrants: delegatedGrants, auditLogs: audits, health: { database: 'healthy', modelConfigured: Boolean(useRuntimeConfig(event).deepseekApiKey), embeddingEnabled: Boolean(useRuntimeConfig(event).embeddingEnabled), embeddingModel: useRuntimeConfig(event).embeddingModel, smsProvider: useRuntimeConfig(event).smsProvider } }
+  return { schools: schoolRows, accessRequests: requests, accessGrants: grants, delegatedManagementGrants: delegatedGrants, auditLogs: audits, health: { database: 'healthy', modelConfigured: Boolean(useRuntimeConfig(event).deepseekApiKey), embeddingEnabled: Boolean(useRuntimeConfig(event).embeddingEnabled), embeddingModel: useRuntimeConfig(event).embeddingModel, smsProvider: useRuntimeConfig(event).smsProvider } }
 })

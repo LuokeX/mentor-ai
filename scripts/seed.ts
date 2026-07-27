@@ -5,7 +5,6 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import {
   classes,
   communications,
-  contentPackages,
   guardians,
   schools,
   schoolSettings,
@@ -43,12 +42,6 @@ const [psych] = await db.select({ id: users.id }).from(users).where(eq(users.ema
 await db.insert(schoolSettings).values({
   schoolId: school.id, helpPhone: '022-00000000', smsRecipients: ['13800000000'], referralPsychologistId: psych?.id
 }).onConflictDoUpdate({ target: schoolSettings.schoolId, set: { referralPsychologistId: psych?.id, updatedAt: new Date() } })
-
-const [content] = await db.select({ id: contentPackages.id }).from(contentPackages).where(eq(contentPackages.code, 'core-library-baseline')).limit(1)
-if (!content) await db.insert(contentPackages).values({
-  code: 'core-library-baseline', name: '五模块三库核心基线', version: '3.0.0', type: 'assessment', status: 'published',
-  payload: { modules: ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem'], libraries: ['assessment', 'attribution', 'tool'], note: '封闭试用版种子内容' }, publishedAt: new Date()
-})
 
 const [teacherLi] = await db.select({ id: users.id }).from(users).where(eq(users.email, 'teacher@demo.local')).limit(1)
 const [teacherZhang] = await db.select({ id: users.id }).from(users).where(eq(users.email, 'teacher.zhang@demo.local')).limit(1)
