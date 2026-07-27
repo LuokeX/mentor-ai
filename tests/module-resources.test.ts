@@ -293,7 +293,7 @@ describe('module resource file import parser', () => {
         name: '归因规则',
         rows: [
           ['module', 'version', 'priority', 'when', 'level', 'blocked', 'ruleId', 'primaryAttribution', 'reasons', 'toolTags'],
-          ['home_school', '1.0.0', '10', 'conflict >= 4', 'high', '否', 'hs-high', '家校沟通冲突升级', '冲突题项偏高', 'conflict;script'],
+          ['home_school', '1.0.0', '10', 'conflict >= 4', 'high', '是', 'hs-high', '家校沟通冲突升级', '冲突题项偏高', 'conflict;script'],
           ['home_school', '1.0.0', '100', '', 'stable', '否', 'hs-default', '沟通结构待澄清', '进入常规维护', 'stable']
         ]
       }])

@@ -22,6 +22,7 @@ interface ImportTask {
 }
 
 const MODULES: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
+// 核心三库（向后兼容旧 import:business-data；output_template/keyword_route 按需导入）
 const LIBRARY_TYPES: LibraryType[] = ['assessment', 'attribution', 'tool']
 
 const LEGACY_RAW_TASKS: ImportTask[] = [

@@ -1,6 +1,7 @@
 import type { H3Event } from 'h3'
 import { and, asc, eq } from 'drizzle-orm'
 import { schema, useDb } from '../utils/db'
+import type { ToolStructuredStep, ToolContraindicationRule } from '../../shared/contracts'
 
 type LegacyAction = { title: string, detail: string, status: string }
 
@@ -132,15 +133,48 @@ export async function resolveToolsForPlan(
       toolTags.some(tag => requestedTags.some(requested => tag.includes(requested) || requested.includes(tag)))
 
     if (dimMatch && severityMatch && attributionMatch && tagMatch) {
-      const steps = Array.isArray(tool.steps) ? (tool.steps as string[]).join('\n') : String(tool.steps || '')
-      const scripts = tool.scripts ? `\n\n关键话术：\n${tool.scripts}` : ''
-      const prohibitions = tool.prohibitions ? `\n\n禁止事项：\n${tool.prohibitions}` : ''
+      // V2: 禁忌规则硬过滤
+      const contraRules = Array.isArray(tool.contraindicationRules)
+        ? (tool.contraindicationRules as ToolContraindicationRule[])
+        : []
+      const blockContra = contraRules.find(r => r.type === 'block')
+      if (blockContra) continue // 命中 block 型禁忌，跳过该工具
+
+      // V2: 结构化步骤优先
+      const structuredSteps = Array.isArray(tool.structuredSteps)
+        ? (tool.structuredSteps as ToolStructuredStep[])
+        : []
+
+      let content: string
+      if (structuredSteps.length > 0) {
+        // 按 seq 排序后组装为富文本
+        const sorted = [...structuredSteps].sort((a, b) => a.seq - b.seq)
+        const stepLines = sorted.map((s, idx) => {
+          const parts = [`${idx + 1}. ${s.title}: ${s.description}`]
+          if (s.keyTip) parts.push(`   提示：${s.keyTip}`)
+          if (s.scriptTemplate) parts.push(`   话术：${s.scriptTemplate}`)
+          if (s.successCriteria) parts.push(`   达标：${s.successCriteria}`)
+          return parts.join('\n')
+        })
+        content = stepLines.join('\n\n')
+        // 附加上警告标记（如果有 warn 型禁忌）
+        const warnContras = contraRules.filter(r => r.type === 'warn')
+        if (warnContras.length > 0) {
+          content += '\n\n⚠ 注意事项：\n' + warnContras.map(r => `- ${r.description}`).join('\n')
+        }
+      } else {
+        // 旧格式回退
+        const steps = Array.isArray(tool.steps) ? (tool.steps as string[]).join('\n') : String(tool.steps || '')
+        const scripts = tool.scripts ? `\n\n关键话术：\n${tool.scripts}` : ''
+        const prohibitions = tool.prohibitions ? `\n\n禁止事项：\n${tool.prohibitions}` : ''
+        content = `${steps}${scripts}${prohibitions}`
+      }
 
       matchedTools.push({
         title: String(tool.name || tool.title || ''),
         code: String(tool.code || '').trim() || undefined,
         sourceVersionId: resource.versionId,
-        content: `${steps}${scripts}${prohibitions}`
+        content
       })
     }
 

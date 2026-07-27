@@ -98,6 +98,17 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
         scoringRows: Object.entries(instrument.scoring || {}).map(([key, expression]) => ({
           key,
           expression: String(expression)
+        })),
+        // V2: 维度定义
+        dimensionDefs: (instrument.dimensionDefs || []).map((dim: any) => ({
+          code: dim.code || '',
+          name: dim.name || '',
+          questionIdsText: listText(dim.questionIds),
+          calcMethod: dim.calcMethod || 'mean',
+          weight: dim.weight != null ? String(dim.weight) : '',
+          description: dim.description || '',
+          highInterpretation: dim.highInterpretation || '',
+          lowInterpretation: dim.lowInterpretation || ''
         }))
       }))
     }
@@ -117,7 +128,11 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
         primaryAttribution: branch.primaryAttribution || '',
         secondaryAttributionsText: listText(branch.secondaryAttributions),
         reasonsText: listText(branch.reasons),
-        toolTagsText: listText(branch.toolTags)
+        toolTagsText: listText(branch.toolTags),
+        // V2: 升级/复评
+        escalationCondition: branch.escalationCondition || '',
+        escalationTarget: branch.escalationTarget || '',
+        reEvaluationTrigger: branch.reEvaluationTrigger || ''
       })),
       actions: (source.actions || []).map((action: any) => ({
         title: action.title || '',
@@ -128,7 +143,15 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
         content: tool.content || ''
       })),
       crisisWhen: source.crisis?.when || '',
-      crisisBlocked: Boolean(source.crisis?.blocked)
+      crisisBlocked: Boolean(source.crisis?.blocked),
+      // V2: 红线熔断规则
+      redLines: (source.redLines || []).map((rl: any) => ({
+        module: rl.module || module,
+        condition: rl.condition || '',
+        description: rl.description || '',
+        scope: rl.scope || 'module',
+        actionsText: listText(rl.actions)
+      }))
     }
   }
 
@@ -151,7 +174,27 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
       scripts: tool.scripts || '',
       prohibitions: tool.prohibitions || '',
       targetUsers: tool.targetUsers || '',
-      dimensionsText: listText(tool.dimensions)
+      dimensionsText: listText(tool.dimensions),
+      // V2: 结构化步骤、禁忌规则、证据等级
+      evidenceLevel: tool.evidenceLevel || '',
+      crossModuleTagsText: listText(tool.crossModuleTags),
+      structuredSteps: (tool.structuredSteps || []).map((s: any) => ({
+        seq: s.seq || 1,
+        title: s.title || '',
+        description: s.description || '',
+        estimatedTime: s.estimatedTime || '',
+        materials: s.materials || '',
+        keyTip: s.keyTip || '',
+        scriptTemplate: s.scriptTemplate || '',
+        successCriteria: s.successCriteria || '',
+        commonIssues: s.commonIssues || ''
+      })),
+      contraindicationRules: (tool.contraindicationRules || []).map((r: any) => ({
+        condition: r.condition || '',
+        type: r.type || 'warn',
+        description: r.description || '',
+        alternativeSuggestion: r.alternativeSuggestion || ''
+      }))
     }))
   }
 }
@@ -179,7 +222,20 @@ function buildVisualPayload() {
         })),
         scoring: Object.fromEntries((instrument.scoringRows || [])
           .filter((row: any) => row.key && row.expression)
-          .map((row: any) => [row.key, row.expression]))
+          .map((row: any) => [row.key, row.expression])),
+        // V2: 维度定义
+        dimensionDefs: (instrument.dimensionDefs || [])
+          .filter((dim: any) => dim.code && dim.name)
+          .map((dim: any) => ({
+            code: dim.code,
+            name: dim.name,
+            questionIds: splitList(dim.questionIdsText),
+            calcMethod: dim.calcMethod || 'mean',
+            weight: dim.weight ? Number(dim.weight) : undefined,
+            description: dim.description || undefined,
+            highInterpretation: dim.highInterpretation || undefined,
+            lowInterpretation: dim.lowInterpretation || undefined
+          }))
       }))
     }
   }
@@ -200,7 +256,11 @@ function buildVisualPayload() {
         primaryAttribution: branch.primaryAttribution,
         secondaryAttributions: splitList(branch.secondaryAttributionsText),
         reasons: splitList(branch.reasonsText),
-        toolTags: splitList(branch.toolTagsText)
+        toolTags: splitList(branch.toolTagsText),
+        // V2
+        escalationCondition: branch.escalationCondition || undefined,
+        escalationTarget: branch.escalationTarget || undefined,
+        reEvaluationTrigger: branch.reEvaluationTrigger || undefined
       })),
       actions: (editStructured.value.actions || []).filter((action: any) => action.title && action.detail)
         .map((action: any) => ({ title: action.title, detail: action.detail, status: 'pending' })),
@@ -208,7 +268,17 @@ function buildVisualPayload() {
         .map((tool: any) => ({ title: tool.title, content: tool.content })),
       crisis: editStructured.value.crisisWhen
         ? { when: editStructured.value.crisisWhen, blocked: Boolean(editStructured.value.crisisBlocked) }
-        : undefined
+        : undefined,
+      // V2: 红线熔断
+      redLines: (editStructured.value.redLines || [])
+        .filter((rl: any) => rl.condition && rl.description)
+        .map((rl: any) => ({
+          module: rl.module || editForm.module,
+          condition: rl.condition,
+          description: rl.description,
+          scope: rl.scope || 'module',
+          actions: splitList(rl.actionsText)
+        }))
     }
   }
 
@@ -231,7 +301,31 @@ function buildVisualPayload() {
       scripts: tool.scripts,
       prohibitions: tool.prohibitions,
       targetUsers: tool.targetUsers,
-      dimensions: splitList(tool.dimensionsText)
+      dimensions: splitList(tool.dimensionsText),
+      // V2
+      evidenceLevel: tool.evidenceLevel || undefined,
+      crossModuleTags: splitList(tool.crossModuleTagsText).length ? splitList(tool.crossModuleTagsText) : undefined,
+      structuredSteps: (tool.structuredSteps || [])
+        .filter((s: any) => s.title && s.description)
+        .map((s: any) => ({
+          seq: Number(s.seq || 1),
+          title: s.title,
+          description: s.description,
+          estimatedTime: s.estimatedTime || undefined,
+          materials: s.materials || undefined,
+          keyTip: s.keyTip || undefined,
+          scriptTemplate: s.scriptTemplate || undefined,
+          successCriteria: s.successCriteria || undefined,
+          commonIssues: s.commonIssues || undefined
+        })),
+      contraindicationRules: (tool.contraindicationRules || [])
+        .filter((r: any) => r.condition && r.type)
+        .map((r: any) => ({
+          condition: r.condition,
+          type: r.type,
+          description: r.description || r.condition,
+          alternativeSuggestion: r.alternativeSuggestion || undefined
+        }))
     }))
   }
 }
@@ -322,7 +416,47 @@ function addToolItem() {
     severity: '', level: '', attribution: '',
     attributionsText: '', tagsText: '', toolTagsText: '',
     duration: '', timePerSession: '', stepsText: '',
-    scripts: '', prohibitions: '', targetUsers: '', dimensionsText: ''
+    scripts: '', prohibitions: '', targetUsers: '', dimensionsText: '',
+    // V2
+    evidenceLevel: '', crossModuleTagsText: '',
+    structuredSteps: [], contraindicationRules: []
+  })
+}
+
+// ---- V2 维度定义操作 ----
+function addDimensionDef(instrument: any) {
+  if (!instrument.dimensionDefs) instrument.dimensionDefs = []
+  instrument.dimensionDefs.push({
+    code: '', name: '', questionIdsText: '', calcMethod: 'mean',
+    weight: '', description: '', highInterpretation: '', lowInterpretation: ''
+  })
+}
+
+// ---- V2 红线操作 ----
+function addRedLine() {
+  if (!editStructured.value.redLines) editStructured.value.redLines = []
+  editStructured.value.redLines.push({
+    module: editForm.module, condition: '', description: '',
+    scope: 'module', actionsText: ''
+  })
+}
+
+// ---- V2 结构化步骤操作 ----
+function addStructuredStep(tool: any) {
+  if (!tool.structuredSteps) tool.structuredSteps = []
+  tool.structuredSteps.push({
+    seq: tool.structuredSteps.length + 1,
+    title: '', description: '', estimatedTime: '',
+    materials: '', keyTip: '', scriptTemplate: '',
+    successCriteria: '', commonIssues: ''
+  })
+}
+
+// ---- V2 禁忌规则操作 ----
+function addContraindicationRule(tool: any) {
+  if (!tool.contraindicationRules) tool.contraindicationRules = []
+  tool.contraindicationRules.push({
+    condition: '', type: 'warn', description: '', alternativeSuggestion: ''
   })
 }
 
@@ -482,6 +616,39 @@ async function saveEditedVersion() {
               </tbody>
             </table>
           </div>
+
+          <!-- V2: 维度定义编辑器 -->
+          <div class="flex items-center justify-between gap-3 mt-5">
+            <h4 class="text-sm font-semibold">维度定义 (V2)</h4>
+            <UButton size="xs" color="primary" variant="soft" icon="i-lucide-plus" @click="addDimensionDef(instrument)">新增维度</UButton>
+          </div>
+          <div v-if="(instrument.dimensionDefs || []).length" class="overflow-x-auto rounded-lg border border-slate-200 mt-2">
+            <table class="min-w-[1280px] w-full text-left text-xs">
+              <thead class="bg-slate-50 text-slate-500">
+                <tr>
+                  <th class="p-2">编码</th><th class="p-2">名称</th><th class="p-2">题号</th>
+                  <th class="p-2">计算方式</th><th class="p-2">权重</th>
+                  <th class="p-2">高分解释</th><th class="p-2">低分解释</th>
+                  <th class="p-2">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(dim, dIndex) in instrument.dimensionDefs" :key="dIndex" class="border-t border-slate-100 align-top">
+                  <td class="p-2"><UInput v-model="dim.code" size="xs" /></td>
+                  <td class="p-2"><UInput v-model="dim.name" size="xs" /></td>
+                  <td class="p-2"><UInput v-model="dim.questionIdsText" size="xs" placeholder="逗号分隔" /></td>
+                  <td class="p-2">
+                    <USelect v-model="dim.calcMethod" size="xs" :items="['mean', 'sum', 'weighted', 'count']" class="w-24" />
+                  </td>
+                  <td class="p-2"><UInput v-model="dim.weight" size="xs" type="number" class="w-16" /></td>
+                  <td class="p-2"><UTextarea v-model="dim.highInterpretation" :rows="1" size="xs" /></td>
+                  <td class="p-2"><UTextarea v-model="dim.lowInterpretation" :rows="1" size="xs" /></td>
+                  <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="instrument.dimensionDefs.splice(dIndex, 1)" /></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-else class="mt-2 text-xs text-slate-400">暂无维度定义；题项的 dimension 字段会在运行时自动聚合。</p>
         </div>
       </div>
 
@@ -514,7 +681,7 @@ async function saveEditedVersion() {
           <div class="overflow-x-auto rounded-lg border border-slate-200">
             <table class="min-w-[1560px] w-full text-left text-xs">
               <thead class="bg-slate-50 text-slate-500">
-                <tr><th class="p-2">规则编码</th><th class="p-2">优先级</th><th class="p-2">触发条件</th><th class="p-2">等级</th><th class="p-2">主归因</th><th class="p-2">次归因</th><th class="p-2">原因说明</th><th class="p-2">工具标签</th><th class="p-2">阻断</th><th class="p-2">操作</th></tr>
+                <tr><th class="p-2">规则编码</th><th class="p-2">优先级</th><th class="p-2">触发条件</th><th class="p-2">等级</th><th class="p-2">主归因</th><th class="p-2">次归因</th><th class="p-2">原因说明</th><th class="p-2">工具标签</th><th class="p-2">阻断</th><th class="p-2 w-16">升级条件</th><th class="p-2 w-16">升级目标</th><th class="p-2">操作</th></tr>
               </thead>
               <tbody>
                 <tr v-for="(branch, branchIndex) in editStructured.branches || []" :key="branchIndex" class="border-t border-slate-100 align-top">
@@ -527,6 +694,8 @@ async function saveEditedVersion() {
                   <td class="p-2"><UTextarea v-model="branch.reasonsText" :rows="2" size="xs" /></td>
                   <td class="p-2"><UTextarea v-model="branch.toolTagsText" :rows="2" size="xs" /></td>
                   <td class="p-2"><UCheckbox v-model="branch.blocked" /></td>
+                  <td class="p-2"><UInput v-model="branch.escalationCondition" size="xs" placeholder="如 score >= 5" /></td>
+                  <td class="p-2"><UInput v-model="branch.escalationTarget" size="xs" placeholder="如 心理老师" /></td>
                   <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.branches.splice(branchIndex, 1)" /></td>
                 </tr>
               </tbody>
@@ -542,6 +711,37 @@ async function saveEditedVersion() {
               <tbody><tr class="border-t border-slate-100"><td class="p-2"><UInput v-model="editStructured.crisisWhen" size="xs" /></td><td class="p-2"><UCheckbox v-model="editStructured.crisisBlocked" /></td></tr></tbody>
             </table>
           </div>
+        </div>
+
+        <!-- V2: 红线熔断规则编辑器 -->
+        <div class="panel p-6">
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <h2 class="text-xl font-semibold">红线熔断规则 (V2)</h2>
+            <UButton size="sm" color="primary" variant="soft" icon="i-lucide-plus" @click="addRedLine">新增红线</UButton>
+          </div>
+          <div v-if="(editStructured.redLines || []).length" class="overflow-x-auto rounded-lg border border-slate-200">
+            <table class="min-w-[1200px] w-full text-left text-xs">
+              <thead class="bg-slate-50 text-slate-500">
+                <tr>
+                  <th class="p-2">触发条件</th><th class="p-2">说明</th>
+                  <th class="p-2">范围</th><th class="p-2">动作列表</th>
+                  <th class="p-2">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(rl, rlIndex) in editStructured.redLines" :key="rlIndex" class="border-t border-slate-100 align-top">
+                  <td class="p-2"><UInput v-model="rl.condition" size="xs" placeholder="如: SCORE(q1) >= 5" /></td>
+                  <td class="p-2"><UTextarea v-model="rl.description" :rows="2" size="xs" /></td>
+                  <td class="p-2">
+                    <USelect v-model="rl.scope" size="xs" :items="['instrument', 'module', 'system']" class="w-28" />
+                  </td>
+                  <td class="p-2"><UTextarea v-model="rl.actionsText" :rows="2" size="xs" placeholder="每行一个动作" /></td>
+                  <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.redLines.splice(rlIndex, 1)" /></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-else class="text-sm text-slate-400">暂无红线规则；crisis 条件可提供基础的熔断能力。</p>
         </div>
 
         <div class="grid gap-6 xl:grid-cols-2">
@@ -601,6 +801,7 @@ async function saveEditedVersion() {
                 <th class="p-2">维度</th><th class="p-2">适用情形</th><th class="p-2">预期效果</th>
                 <th class="p-2">步骤</th><th class="p-2">话术</th><th class="p-2">禁忌</th>
                 <th class="p-2">周期</th><th class="p-2">单次时长</th><th class="p-2">对象</th>
+                <th class="p-2 w-14">证据</th><th class="p-2 w-20">跨模块</th>
                 <th class="p-2">操作</th>
               </tr>
             </thead>
@@ -624,10 +825,84 @@ async function saveEditedVersion() {
                 <td class="p-2"><UInput v-model="tool.duration" size="xs" /></td>
                 <td class="p-2"><UInput v-model="tool.timePerSession" size="xs" /></td>
                 <td class="p-2"><UInput v-model="tool.targetUsers" size="xs" /></td>
+                <td class="p-2">
+                  <USelect v-model="tool.evidenceLevel" size="xs" :items="['', 'A', 'B', 'C', 'D']" class="w-14" />
+                </td>
+                <td class="p-2"><UInput v-model="tool.crossModuleTagsText" size="xs" placeholder="逗号分隔" /></td>
                 <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.tools.splice(toolIndex, 1)" /></td>
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- V2: 工具结构化步骤与禁忌规则 -->
+      <div v-if="editForm.libraryType === 'tool' && editStructured.tools?.some((t: any) => (t.structuredSteps || []).length || (t.contraindicationRules || []).length)" class="mt-6 space-y-4">
+        <h2 class="text-xl font-semibold">V2 详情：结构化步骤与禁忌规则</h2>
+        <div v-for="(tool, toolIndex) in editStructured.tools" :key="`v2-${toolIndex}`">
+          <div v-if="tool.code && ((tool.structuredSteps || []).length || (tool.contraindicationRules || []).length)" class="panel p-5">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <h3 class="font-semibold">工具 {{ tool.code }} · {{ tool.name }}</h3>
+            </div>
+
+            <!-- structuredSteps -->
+            <div v-if="(tool.structuredSteps || []).length" class="mb-4">
+              <div class="flex items-center justify-between gap-3 mb-2">
+                <p class="text-sm font-medium text-slate-600">结构化步骤</p>
+                <UButton size="xs" color="primary" variant="soft" icon="i-lucide-plus" @click="addStructuredStep(tool)">新增步骤</UButton>
+              </div>
+              <div class="space-y-2">
+                <div v-for="(step, sIndex) in tool.structuredSteps" :key="sIndex" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                  <div class="grid gap-2 sm:grid-cols-[60px_1fr]">
+                    <div class="flex gap-1">
+                      <UInput v-model.number="step.seq" type="number" size="xs" class="w-14" />
+                      <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="tool.structuredSteps.splice(sIndex, 1)" />
+                    </div>
+                    <div class="space-y-2">
+                      <div class="grid gap-2 sm:grid-cols-3">
+                        <UInput v-model="step.title" size="xs" placeholder="步骤标题" />
+                        <UInput v-model="step.estimatedTime" size="xs" placeholder="预计耗时" />
+                        <UInput v-model="step.materials" size="xs" placeholder="所需材料" />
+                      </div>
+                      <UTextarea v-model="step.description" :rows="2" size="xs" placeholder="步骤说明" />
+                      <UTextarea v-model="step.keyTip" :rows="1" size="xs" placeholder="关键提示" />
+                      <UTextarea v-model="step.scriptTemplate" :rows="1" size="xs" placeholder="话术模板" />
+                      <div class="grid gap-2 sm:grid-cols-2">
+                        <UInput v-model="step.successCriteria" size="xs" placeholder="成功标准" />
+                        <UInput v-model="step.commonIssues" size="xs" placeholder="常见问题" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- contraindicationRules -->
+            <div v-if="(tool.contraindicationRules || []).length">
+              <div class="flex items-center justify-between gap-3 mb-2">
+                <p class="text-sm font-medium text-slate-600">禁忌规则</p>
+                <UButton size="xs" color="primary" variant="soft" icon="i-lucide-plus" @click="addContraindicationRule(tool)">新增规则</UButton>
+              </div>
+              <div class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="min-w-[800px] w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500">
+                    <tr><th class="p-2">条件</th><th class="p-2">类型</th><th class="p-2">说明</th><th class="p-2">替代建议</th><th class="p-2">操作</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(rule, rIndex) in tool.contraindicationRules" :key="rIndex" class="border-t border-slate-100">
+                      <td class="p-2"><UInput v-model="rule.condition" size="xs" /></td>
+                      <td class="p-2">
+                        <USelect v-model="rule.type" size="xs" :items="['block', 'warn']" class="w-20" />
+                      </td>
+                      <td class="p-2"><UTextarea v-model="rule.description" :rows="1" size="xs" /></td>
+                      <td class="p-2"><UInput v-model="rule.alternativeSuggestion" size="xs" /></td>
+                      <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="tool.contraindicationRules.splice(rIndex, 1)" /></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

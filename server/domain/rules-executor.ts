@@ -1,4 +1,4 @@
-import type { RuleConfig, RuleExecResult, ModuleId } from '../../shared/contracts'
+import type { RuleConfig, RuleExecResult, ModuleId, AssessmentDimensionDef, RedLineConfig } from '../../shared/contracts'
 import { assessmentDefinitions } from '../../shared/assessments'
 import type { AssessmentDefinition } from '../../shared/assessments'
 
@@ -177,6 +177,8 @@ interface EvalContext {
   vars: Record<string, number>
   items: Array<{ id: string; dimension: string; raw: number; score: number }>
   ctx: Record<string, number>
+  /** 维度均值。班级短板、家校 P×A、学生五类、学习三层的归因规则都建立在维度上。 */
+  dimensions: Record<string, number>
 }
 
 function evaluate(node: ASTNode, env: EvalContext): number | string | boolean {
@@ -223,7 +225,21 @@ function evaluate(node: ASTNode, env: EvalContext): number | string | boolean {
   }
 }
 
-function evalBuiltin(name: string, args: ASTNode[], env: EvalContext): number {
+/** 取函数实参里的维度名，支持 DIM('情绪状态') 与 DIM(情绪状态) 两种写法。 */
+function dimensionArgName(args: ASTNode[], fnName: string): string {
+  const arg0 = args[0]
+  if (args.length !== 1 || !arg0) throw new Error(`${fnName} expects exactly one dimension name`)
+  if (arg0.type === 'string') return arg0.value
+  if (arg0.type === 'var') return arg0.name
+  throw new Error(`${fnName} expects a dimension name`)
+}
+
+/** 按均值排序维度；并列时按名称排序，保证同样的作答永远得到同样的归因。 */
+function rankedDimensions(env: EvalContext): Array<[string, number]> {
+  return Object.entries(env.dimensions).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+}
+
+function evalBuiltin(name: string, args: ASTNode[], env: EvalContext): number | string {
   switch (name) {
     case 'SUM': {
       // SUM(scores) — 参数必须是标识符 "scores"
@@ -232,6 +248,29 @@ function evalBuiltin(name: string, args: ASTNode[], env: EvalContext): number {
         return env.items.reduce((s, i) => s + i.score, 0)
       }
       throw new Error('SUM(scores) expects "scores" as argument')
+    }
+    case 'AVG': {
+      const arg0 = args[0]
+      if (args.length === 1 && arg0?.type === 'var' && arg0.name === 'scores') {
+        return env.items.length ? Number((env.items.reduce((s, i) => s + i.score, 0) / env.items.length).toFixed(4)) : 0
+      }
+      throw new Error('AVG(scores) expects "scores" as argument')
+    }
+    case 'DIM': {
+      const dimension = dimensionArgName(args, 'DIM')
+      const value = env.dimensions[dimension]
+      if (value === undefined) throw new Error(`DIM: unknown dimension '${dimension}'`)
+      return value
+    }
+    // 主导维度／短板维度。用于“五类十五型的主类”“五系统的短板”这类归因。
+    case 'TOP_DIM': {
+      if (args.length) throw new Error('TOP_DIM() takes no argument')
+      return rankedDimensions(env)[0]?.[0] ?? ''
+    }
+    case 'BOTTOM_DIM': {
+      if (args.length) throw new Error('BOTTOM_DIM() takes no argument')
+      const ranked = rankedDimensions(env)
+      return ranked[ranked.length - 1]?.[0] ?? ''
     }
     case 'MAX': {
       const arg0 = args[0]
@@ -297,6 +336,53 @@ function evalWhen(expr: string | undefined, env: EvalContext): boolean {
 
 // ---- 主入口: 执行规则 ----
 
+/** 维度计算：优先使用 payload.dimensionDefs，fallback 到旧分组逻辑 */
+function computeDimensions(
+  items: Array<{ id: string; dimension: string; raw: number; score: number }>,
+  dimensionDefs?: AssessmentDimensionDef[]
+): Record<string, number> {
+  // V2: 使用 dimensionDefs 精确定义维度→题号映射和计算方式
+  if (dimensionDefs && dimensionDefs.length > 0) {
+    const dims: Record<string, number> = {}
+    for (const def of dimensionDefs) {
+      const matched = items.filter(item => def.questionIds.includes(item.id))
+      if (matched.length === 0) continue
+      const values = matched.map(item => item.score)
+      let value: number
+      switch (def.calcMethod) {
+        case 'sum':
+          value = Number(values.reduce((a, b) => a + b, 0).toFixed(1))
+          break
+        case 'weighted':
+          value = Number((values.reduce((sum, v, idx) => sum + v * (def.weight || 1), 0) / matched.length).toFixed(1))
+          break
+        case 'mean':
+        default:
+          value = Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(1))
+      }
+      dims[def.code] = value
+    }
+    return dims
+  }
+
+  // Fallback: 按 question.dimension 分组平均
+  const buckets: Record<string, number[]> = {}
+  for (const item of items) (buckets[item.dimension] ||= []).push(item.score)
+  return Object.fromEntries(
+    Object.entries(buckets).map(([key, values]) => [key, Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(1))])
+  )
+}
+
+/** 评估单条红线条件 */
+function evalRedLine(redLine: RedLineConfig, env: EvalContext): boolean {
+  try {
+    return evalWhen(redLine.condition, env)
+  } catch (err) {
+    // 红线表达式求值失败不阻断规则执行，仅记录
+    return false
+  }
+}
+
 /**
  * 根据规则配置 DSL 执行评估。
  */
@@ -316,18 +402,14 @@ export function executeRules(
 
   if (items.some(item => item.raw < 1 || item.raw > 5)) throw new Error('所有题目都必须作答')
 
-  // 2. 计算维度平均值
-  const buckets: Record<string, number[]> = {}
-  for (const item of items) (buckets[item.dimension] ||= []).push(item.score)
-  const dimensions = Object.fromEntries(
-    Object.entries(buckets).map(([key, values]) => [key, Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(1))])
-  )
+  // 2. 计算维度（V2：优先使用 dimensionDefs）
+  const dimensions = computeDimensions(items, definition.dimensionDefs)
 
   // 3. 计算 computed 变量
   // 将 ctx 上下文变量也暴露到 vars 中（用 ctx_ 前缀，避免 tokenizer 点号问题）
   const ctxVars: Record<string, number> = {}
   for (const [k, v] of Object.entries(ctx)) { ctxVars[`ctx_${k}`] = v }
-  const env: EvalContext = { vars: { ...ctxVars }, items, ctx }
+  const env: EvalContext = { vars: { ...ctxVars }, items, ctx, dimensions }
   for (const [name, expr] of Object.entries(config.computed)) {
     try {
       const tokens = tokenize(expr)
@@ -351,11 +433,23 @@ export function executeRules(
   }
   if (!matchedBranch) throw new Error('No rule branch matched')
 
-  // 5. 检查 crisis 红线
+  // 5. 检查 crisis 红线 + V2 redLines
   let blocked = matchedBranch.blocked
   const level = matchedBranch.level
+  const matchedRedLines: RedLineConfig[] = []
+
   if (config.crisis && evalWhen(config.crisis.when, env)) {
     blocked = true
+  }
+
+  // V2: 遍历多条独立红线
+  if (config.redLines) {
+    for (const redLine of config.redLines) {
+      if (evalRedLine(redLine, env)) {
+        blocked = true
+        matchedRedLines.push(redLine)
+      }
+    }
   }
 
   // 6. 生成输出
@@ -369,7 +463,8 @@ export function executeRules(
     toolTags: matchedBranch.toolTags || [],
     dimensions,
     actions: config.actions,
-    tools: config.tools
+    tools: config.tools,
+    matchedRedLines: matchedRedLines.length > 0 ? matchedRedLines : undefined
   }
 }
 

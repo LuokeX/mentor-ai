@@ -10,34 +10,34 @@ const emit = defineEmits<{ create: [] }>()
 const route = useRoute()
 // 除「总览」外，每项 label 必须与目标页面的 title 一致，否则点进去标题会“变名字”。
 const informationNav = [
-  { label: '总览', to: '/information' },
-  { label: '负责班级', to: '/information/classes' },
-  { label: '我负责的学生', to: '/information/students' },
-  { label: '关联家长', to: '/information/guardians' },
-  { label: '家校沟通', to: '/information/communications' },
-  { label: '事件记录', to: '/information/events' },
-  { label: '支持案例', to: '/information/cases' },
+  { label: '总览', to: '/information', icon: 'i-lucide-layout-dashboard' },
+  { label: '负责班级', to: '/information/classes', icon: 'i-lucide-school' },
+  { label: '我负责的学生', to: '/information/students', icon: 'i-lucide-users' },
+  { label: '关联家长', to: '/information/guardians', icon: 'i-lucide-user-round' },
+  { label: '家校沟通', to: '/information/communications', icon: 'i-lucide-messages-square' },
+  { label: '事件记录', to: '/information/events', icon: 'i-lucide-clipboard-list' },
+  { label: '支持案例', to: '/information/cases', icon: 'i-lucide-folder-open' },
 ]
 const schoolAdminNav = [
-  { label: '总览', to: '/school-admin' },
-  { label: '账号管理', to: '/school-admin/users' },
-  { label: '部门管理', to: '/school-admin/departments' },
-  { label: '班级管理', to: '/school-admin/classes' },
-  { label: '学生管理', to: '/school-admin/students' },
-  { label: '家长管理', to: '/school-admin/guardians' },
-  { label: '导入管理', to: '/school-admin/imports' },
-  { label: '运维管理', to: '/school-admin/operations' },
-  { label: '转介管理', to: '/school-admin/referrals' },
-  { label: '授权审批', to: '/school-admin/access-approvals' },
-  { label: '审计日志', to: '/school-admin/audit' },
-  { label: '学校设置', to: '/school-admin/settings' },
+  { label: '总览', to: '/school-admin', icon: 'i-lucide-layout-dashboard' },
+  { label: '账号管理', to: '/school-admin/users', icon: 'i-lucide-user-cog' },
+  { label: '部门管理', to: '/school-admin/departments', icon: 'i-lucide-building' },
+  { label: '班级管理', to: '/school-admin/classes', icon: 'i-lucide-school' },
+  { label: '学生管理', to: '/school-admin/students', icon: 'i-lucide-graduation-cap' },
+  { label: '家长管理', to: '/school-admin/guardians', icon: 'i-lucide-users' },
+  { label: '导入管理', to: '/school-admin/imports', icon: 'i-lucide-upload' },
+  { label: '运维管理', to: '/school-admin/operations', icon: 'i-lucide-server' },
+  { label: '转介管理', to: '/school-admin/referrals', icon: 'i-lucide-share-2' },
+  { label: '授权审批', to: '/school-admin/access-approvals', icon: 'i-lucide-shield-check' },
+  { label: '审计日志', to: '/school-admin/audit', icon: 'i-lucide-list-checks' },
+  { label: '学校设置', to: '/school-admin/settings', icon: 'i-lucide-settings' },
 ]
 const platformNav = [
-  { label: '总览', to: '/platform-admin' },
-  { label: '学校管理', to: '/platform-admin/schools' },
-  { label: '三库运营台', to: '/platform-admin/resources' },
-  { label: '委托授权', to: '/platform-admin/delegated-management' },
-  { label: '审计日志', to: '/platform-admin/audit' },
+  { label: '总览', to: '/platform-admin', icon: 'i-lucide-layout-dashboard' },
+  { label: '学校管理', to: '/platform-admin/schools', icon: 'i-lucide-building-2' },
+  { label: '三库运营台', to: '/platform-admin/resources', icon: 'i-lucide-library' },
+  { label: '委托授权', to: '/platform-admin/delegated-management', icon: 'i-lucide-shield' },
+  { label: '审计日志', to: '/platform-admin/audit', icon: 'i-lucide-list-checks' },
 ]
 const contextualNav = computed(() => route.path.startsWith('/information')
   ? informationNav
@@ -55,9 +55,10 @@ const contextualNav = computed(() => route.path.startsWith('/information')
         v-for="item in contextualNav"
         :key="item.to"
         :to="item.to"
+        :icon="item.icon"
         :variant="route.path === item.to ? 'soft' : 'ghost'"
         :color="route.path === item.to ? 'primary' : 'neutral'"
-        size="sm"
+        size="md"
         class="shrink-0"
       >
         {{ item.label }}
@@ -65,8 +66,8 @@ const contextualNav = computed(() => route.path.startsWith('/information')
     </nav>
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
       <div>
-        <h1 class="text-xl font-semibold text-gray-900">{{ title }}</h1>
-        <p v-if="description" class="mt-1 text-sm text-gray-500">{{ description }}</p>
+        <h1 class="text-2xl font-semibold text-gray-900">{{ title }}</h1>
+        <p v-if="description" class="mt-1 text-base text-gray-500">{{ description }}</p>
       </div>
       <UButton
         v-if="canCreate && createLabel"

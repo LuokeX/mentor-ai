@@ -1,4 +1,5 @@
 import type { ModuleId } from './contracts'
+import type { AssessmentDimensionDef } from './contracts'
 
 export interface AssessmentOption { label: string, value: number }
 export interface AssessmentQuestion {
@@ -18,6 +19,8 @@ export interface AssessmentDefinition {
   description: string
   estimatedMinutes: number
   questions: AssessmentQuestion[]
+  // V2: 维度定义（从 ④c 量表-维度定义 导入）
+  dimensionDefs?: AssessmentDimensionDef[]
 }
 
 const fivePoint: AssessmentOption[] = [

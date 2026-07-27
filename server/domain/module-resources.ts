@@ -3,6 +3,7 @@ import type { H3Event } from 'h3'
 import { assessmentDefinitions } from '../../shared/assessments'
 import type { AssessmentDefinition } from '../../shared/assessments'
 import type { AttributionConfig, LibraryType, ModuleId } from '../../shared/contracts'
+import type { ModuleResourceCounterpart } from './module-resource-validation'
 import { schema, useDb } from '../utils/db'
 
 export const documentLibraryTypes: LibraryType[] = ['assessment', 'attribution', 'tool']
@@ -261,4 +262,23 @@ function normalizeAssessmentDefinition(resource: ResolvedModuleResource<Assessme
       version: payload.version || resource.sourceVersions[0]?.split(':').pop() || '1.0.0'
     }
   }
+}
+
+/**
+ * 解析同模块另一侧的生效资源，供发布前交叉校验和运营台预览使用。
+ * 发布量表时要拿到现行归因库，发布归因库时要拿到现行量表 —— 两者必须成对自洽。
+ */
+export async function resolveModuleResourceCounterpart(
+  event: H3Event,
+  input: { module: ModuleId, libraryType: LibraryType, schoolId?: string | null }
+): Promise<ModuleResourceCounterpart> {
+  if (input.libraryType === 'attribution') {
+    const assessment = await resolveAssessmentDefinition(event, input.module, input.schoolId)
+    return { assessmentDefinition: assessment.payload }
+  }
+  if (input.libraryType === 'assessment') {
+    const attribution = await resolveAttributionConfig(event, input.module, input.schoolId)
+    return { attributionConfig: attribution?.payload ?? null }
+  }
+  return {}
 }

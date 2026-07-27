@@ -58,8 +58,8 @@ function onSelect(_event: Event, row: TableRow<T>) {
       sticky="header"
       :get-row-id="row => row.id"
       :ui="{
-        th: 'whitespace-nowrap bg-gray-50/95 text-xs font-semibold text-gray-600',
-        td: 'whitespace-nowrap text-sm text-gray-700',
+        th: 'whitespace-nowrap bg-gray-50/95 text-sm font-semibold text-gray-600',
+        td: 'whitespace-nowrap text-base text-gray-700',
         tr: 'hover:bg-primary-50/40',
       }"
       @update:sorting="onSortingChange"
@@ -79,7 +79,7 @@ function onSelect(_event: Event, row: TableRow<T>) {
         </slot>
       </template>
       <template #empty>
-        <div class="py-12 text-center text-gray-500 text-sm">暂无数据</div>
+        <div class="py-12 text-center text-gray-500 text-base">暂无数据</div>
       </template>
     </UTable>
   </div>

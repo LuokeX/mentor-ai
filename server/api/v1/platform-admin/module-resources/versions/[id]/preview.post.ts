@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { requireUser } from '../../../../../../utils/auth'
 import { schema, useDb } from '../../../../../../utils/db'
 import { previewModuleResourcePayload, validateModuleResourcePayload } from '../../../../../../domain/module-resource-validation'
+import { resolveModuleResourceCounterpart } from '../../../../../../domain/module-resources'
 
 export default defineEventHandler(async (event) => {
   await requireUser(event, ['platform_admin'])
@@ -10,7 +11,8 @@ export default defineEventHandler(async (event) => {
     id: schema.moduleResourceVersions.id,
     payload: schema.moduleResourceVersions.payload,
     module: schema.moduleResourceLibraries.module,
-    libraryType: schema.moduleResourceLibraries.libraryType
+    libraryType: schema.moduleResourceLibraries.libraryType,
+    schoolId: schema.moduleResourceLibraries.schoolId
   })
     .from(schema.moduleResourceVersions)
     .innerJoin(schema.moduleResourceLibraries, eq(schema.moduleResourceVersions.libraryId, schema.moduleResourceLibraries.id))
@@ -21,7 +23,12 @@ export default defineEventHandler(async (event) => {
   const input = {
     module: version.module as any,
     libraryType: version.libraryType as any,
-    payload: version.payload as Record<string, unknown>
+    payload: version.payload as Record<string, unknown>,
+    counterpart: await resolveModuleResourceCounterpart(event, {
+      module: version.module as any,
+      libraryType: version.libraryType as any,
+      schoolId: version.schoolId
+    })
   }
   const validation = validateModuleResourcePayload(input)
   return {

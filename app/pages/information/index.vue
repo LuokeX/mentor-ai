@@ -38,16 +38,16 @@ const overdueCount = computed(() => statsData.value?.overduePlans?.length ?? 0)
       <div
         v-for="card in overviewCards"
         :key="card.label"
-        class="rounded-xl border border-slate-200 p-5"
+        class="rounded-xl border border-slate-200 bg-white p-6"
       >
         <div class="flex items-start justify-between">
           <div>
-            <p class="text-2xl font-semibold">{{ card.value }}</p>
-            <p class="mt-1 text-sm font-medium text-slate-600">{{ card.label }}</p>
-            <p v-if="card.hint" class="mt-0.5 text-xs text-slate-400">{{ card.hint }}</p>
+            <p class="text-3xl font-semibold">{{ card.value }}</p>
+            <p class="mt-1 text-base font-medium text-slate-600">{{ card.label }}</p>
+            <p v-if="card.hint" class="mt-0.5 text-sm text-slate-400">{{ card.hint }}</p>
           </div>
-          <span class="grid size-9 place-items-center rounded-lg" :class="card.color">
-            <UIcon :name="card.icon" />
+          <span class="grid size-10 place-items-center rounded-lg" :class="card.color">
+            <UIcon :name="card.icon" class="size-5" />
           </span>
         </div>
       </div>
@@ -56,29 +56,29 @@ const overdueCount = computed(() => statsData.value?.overduePlans?.length ?? 0)
     <!-- 趋势与统计 -->
     <div class="mt-10 grid grid-cols-1 gap-6 lg:grid-cols-2">
       <!-- 方案完成率 -->
-      <div class="rounded-xl border border-slate-200 p-6">
-        <h3 class="text-sm font-semibold">方案完成率</h3>
+      <div class="rounded-xl border border-slate-200 bg-white p-6">
+        <h3 class="text-base font-semibold">方案完成率</h3>
         <div class="mt-4 flex items-baseline gap-2">
-          <span class="text-3xl font-bold">{{ planCompletion }}</span>
-          <span class="text-sm" :class="statsData?.planCompletion?.rate >= 50 ? 'text-green-600' : 'text-amber-600'">
+          <span class="text-4xl font-bold">{{ planCompletion }}</span>
+          <span class="text-base" :class="statsData?.planCompletion?.rate >= 50 ? 'text-green-600' : 'text-amber-600'">
             {{ planRate }}
           </span>
         </div>
-        <p class="mt-1 text-xs text-slate-400">已完成 / 全部方案</p>
+        <p class="mt-1 text-sm text-slate-400">已完成 / 全部方案</p>
       </div>
 
       <!-- 超期方案 -->
-      <div class="rounded-xl border border-slate-200 p-6">
-        <h3 class="text-sm font-semibold">需关注</h3>
+      <div class="rounded-xl border border-slate-200 bg-white p-6">
+        <h3 class="text-base font-semibold">需关注</h3>
         <div class="mt-4">
-          <p class="text-3xl font-bold" :class="overdueCount > 0 ? 'text-red-600' : 'text-green-600'">{{ overdueCount }}</p>
-          <p class="mt-1 text-xs text-slate-400">超期未更新的方案</p>
+          <p class="text-4xl font-bold" :class="overdueCount > 0 ? 'text-red-600' : 'text-green-600'">{{ overdueCount }}</p>
+          <p class="mt-1 text-sm text-slate-400">超期未更新的方案</p>
         </div>
         <div v-if="statsData?.overduePlans?.length" class="mt-4 space-y-2">
           <div
             v-for="plan in statsData.overduePlans.slice(0, 5)"
             :key="plan.id"
-            class="flex items-center justify-between rounded bg-red-50 px-3 py-1.5 text-xs"
+            class="flex items-center justify-between rounded bg-red-50 px-3 py-1.5 text-sm"
           >
             <span class="font-medium text-red-700 truncate max-w-[200px]">{{ plan.title }}</span>
             <span class="text-red-500">{{ plan.daysSinceUpdate }}天</span>
@@ -89,11 +89,11 @@ const overdueCount = computed(() => statsData.value?.overduePlans?.length ?? 0)
 
     <!-- 评估与沟通趋势 -->
     <div v-if="statsData?.monthlyAssessments?.length || statsData?.monthlyCommunications?.length" class="mt-10">
-      <h2 class="text-lg font-semibold">近6个月趋势</h2>
-      <div class="mt-4 rounded-xl border border-slate-200 p-6">
+      <h2 class="text-xl font-semibold">近6个月趋势</h2>
+      <div class="mt-4 rounded-xl border border-slate-200 bg-white p-6">
         <div class="flex flex-wrap gap-8">
           <div v-if="statsData?.monthlyAssessments?.length">
-            <p class="text-xs font-medium text-slate-500 mb-2">评估次数</p>
+            <p class="text-sm font-medium text-slate-500 mb-2">评估次数</p>
             <div class="flex items-end gap-2">
               <div
                 v-for="(item, i) in statsData.monthlyAssessments"
@@ -104,12 +104,12 @@ const overdueCount = computed(() => statsData.value?.overduePlans?.length ?? 0)
                      :style="{ height: `${Math.max(4, (item.count / Math.max(...statsData.monthlyAssessments.map((m: any) => m.count), 1)) * 80)}px` }"
                      :title="`${item.month}: ${item.count}`"
                 />
-                <p class="mt-1 text-center text-[10px] text-slate-400">{{ item.month.slice(5) }}</p>
+                <p class="mt-1 text-center text-xs text-slate-400">{{ item.month.slice(5) }}</p>
               </div>
             </div>
           </div>
           <div v-if="statsData?.monthlyCommunications?.length">
-            <p class="text-xs font-medium text-slate-500 mb-2">沟通次数</p>
+            <p class="text-sm font-medium text-slate-500 mb-2">沟通次数</p>
             <div class="flex items-end gap-2">
               <div
                 v-for="(item, i) in statsData.monthlyCommunications"
@@ -120,7 +120,7 @@ const overdueCount = computed(() => statsData.value?.overduePlans?.length ?? 0)
                      :style="{ height: `${Math.max(4, (item.count / Math.max(...statsData.monthlyCommunications.map((m: any) => m.count), 1)) * 80)}px` }"
                      :title="`${item.month}: ${item.count}`"
                 />
-                <p class="mt-1 text-center text-[10px] text-slate-400">{{ item.month.slice(5) }}</p>
+                <p class="mt-1 text-center text-xs text-slate-400">{{ item.month.slice(5) }}</p>
               </div>
             </div>
           </div>
@@ -130,16 +130,16 @@ const overdueCount = computed(() => statsData.value?.overduePlans?.length ?? 0)
 
     <!-- 最近评估 -->
     <div v-if="data?.assessments?.length" class="mt-10">
-      <h2 class="text-lg font-semibold">最近评估</h2>
+      <h2 class="text-xl font-semibold">最近评估</h2>
       <div class="mt-4 space-y-2">
         <div
           v-for="a in data.assessments.slice(0, 5)"
           :key="a.id"
-          class="flex items-center justify-between rounded-lg border border-slate-100 px-4 py-3"
+          class="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-4 py-3"
         >
           <div>
-            <p class="text-sm font-medium">{{ moduleTitle(a.module) }}</p>
-            <p class="text-xs text-slate-400">
+            <p class="text-base font-medium">{{ moduleTitle(a.module) }}</p>
+            <p class="text-sm text-slate-400">
               {{ a.submittedAt ? new Date(a.submittedAt).toLocaleString('zh-CN') : '未提交' }}
               <span v-if="a.planId" class="ml-2 text-green-600">已有方案</span>
             </p>

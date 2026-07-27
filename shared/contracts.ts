@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const roleSchema = z.enum(['teacher', 'psychologist', 'school_admin', 'platform_admin'])
 export const moduleIdSchema = z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem'])
-export const libraryTypeSchema = z.enum(['assessment', 'attribution', 'tool'])
+export const libraryTypeSchema = z.enum(['assessment', 'attribution', 'tool', 'output_template', 'keyword_route'])
 export const moduleResourceScopeSchema = z.enum(['global', 'school'])
 export const resourceStatusSchema = z.enum(['draft', 'published', 'retired'])
 export const managedRecordStatusSchema = z.enum(['active', 'archived', 'transferred', 'graduated'])
@@ -115,7 +115,30 @@ export const moduleResourceFileImportSchema = z.object({
 export type ModuleResourceFileImport = z.infer<typeof moduleResourceFileImportSchema>
 
 // ---- 工具库·处方型 (tool-rx) ----
+// V2 字段映射: ⑦ 工具-处方总表 + ⑦b 工具-步骤明细 + ⑧ 工具-禁忌规则
+export const toolContraindicationRuleSchema = z.object({
+  condition: z.string().trim().min(1).max(500),
+  type: z.enum(['block', 'warn']),
+  description: z.string().trim().min(1).max(1000),
+  alternativeSuggestion: z.string().trim().max(1000).optional(),
+  applicableTeacherGroup: z.string().trim().max(200).optional(),
+  reference: z.string().trim().max(500).optional()
+})
+
+export const toolStructuredStepSchema = z.object({
+  seq: z.number().int().min(1),
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(2000),
+  estimatedTime: z.string().trim().max(100).optional(),
+  materials: z.string().trim().max(500).optional(),
+  keyTip: z.string().trim().max(1000).optional(),
+  scriptTemplate: z.string().trim().max(3000).optional(),
+  successCriteria: z.string().trim().max(1000).optional(),
+  commonIssues: z.string().trim().max(1000).optional()
+})
+
 export const toolRxEntrySchema = z.object({
+  // ---- 已有字段 (兼容 V1) ----
   code: z.string().trim().min(1).max(40),
   name: z.string().trim().min(1).max(200),
   form: z.string().trim().min(1).max(100),
@@ -134,11 +157,67 @@ export const toolRxEntrySchema = z.object({
   scripts: z.string().trim().max(5000).optional(),
   prohibitions: z.string().trim().max(2000).optional(),
   targetUsers: z.string().trim().max(200).optional(),
-  dimensions: z.array(z.string().trim().min(1).max(100)).optional()
+  dimensions: z.array(z.string().trim().min(1).max(100)).optional(),
+  // ---- V2 新增字段 ----
+  shortName: z.string().trim().max(80).optional(),
+  prerequisiteToolCode: z.string().trim().max(40).optional(),
+  alternativeToolCode: z.string().trim().max(40).optional(),
+  advancedToolCode: z.string().trim().max(40).optional(),
+  evidenceLevel: z.enum(['A', 'B', 'C', 'D']).optional(),
+  evidenceSource: z.string().trim().max(1000).optional(),
+  outcomeIndicators: z.string().trim().max(1000).optional(),
+  failureCriteria: z.string().trim().max(1000).optional(),
+  preparationNeeded: z.string().trim().max(1000).optional(),
+  materialsRequired: z.string().trim().max(1000).optional(),
+  outputArtifact: z.string().trim().max(500).optional(),
+  collaborativeToolCodes: z.array(z.string().trim().min(1).max(40)).optional(),
+  crossModuleTags: z.array(z.string().trim().min(1).max(80)).optional(),
+  sourceRef: z.string().trim().max(500).optional(),
+  structuredSteps: z.array(toolStructuredStepSchema).optional(),
+  contraindicationRules: z.array(toolContraindicationRuleSchema).optional()
 })
 export const toolLibraryPayloadSchema = z.object({ tools: z.array(toolRxEntrySchema).min(1) })
 export type ToolRxEntry = z.infer<typeof toolRxEntrySchema>
+export type ToolStructuredStep = z.infer<typeof toolStructuredStepSchema>
+export type ToolContraindicationRule = z.infer<typeof toolContraindicationRuleSchema>
 
+// ---- V2 新增: 方案输出模板 (output_template) ----
+// V2 字段映射: ⑩ 方案输出模板
+export const outputTemplateEntrySchema = z.object({
+  code: z.string().trim().min(1).max(40),
+  module: moduleIdSchema,
+  attributionLevel: z.string().trim().min(1).max(80),  // 命中归因等级
+  type: z.enum(['summary', 'conclusion', 'attribution', 'goal', 'action', 'tool', 'caution', 'review']),
+  content: z.string().trim().min(1).max(5000),          // 含 ${占位符} 的模板文本
+  placeholders: z.string().trim().max(2000).optional(),  // 占位符说明
+  order: z.number().int().min(0)
+})
+export const outputTemplateLibraryPayloadSchema = z.object({ templates: z.array(outputTemplateEntrySchema).min(1) })
+export type OutputTemplateEntry = z.infer<typeof outputTemplateEntrySchema>
+
+// ---- V2 新增: 关键词-路由 (keyword_route) ----
+// V2 字段映射: ⑨ 关键词-路由
+export const keywordRouteEntrySchema = z.object({
+  code: z.string().trim().min(1).max(40),
+  coreKeywords: z.string().trim().min(1).max(500),       // 核心触发词（逗号分隔）
+  expandedKeywords: z.string().trim().max(2000).optional(), // 扩展词与近义表达
+  exclusionKeywords: z.array(z.string().trim().min(1).max(100)).optional(),
+  module: moduleIdSchema,
+  matchPriority: z.number().int().min(0),
+  matchMode: z.enum(['exact', 'fuzzy', 'regex']).default('fuzzy'),
+  riskLevel: z.string().trim().min(1).max(40),
+  semanticCategory: z.string().trim().max(200).optional(),
+  linkedAssessmentCode: z.string().trim().max(40).optional(),
+  linkedToolCode: z.string().trim().max(40).optional(),
+  contextConstraint: z.string().trim().max(1000).optional(), // 情境限定
+  routeWeight: z.number().min(0).max(1).optional(),
+  temporalValidity: z.enum(['always', 'pre_term', 'pre_exam', 'holiday']).default('always'),
+  description: z.string().trim().max(2000).optional()        // 场景描述
+})
+export const keywordRouteLibraryPayloadSchema = z.object({ routes: z.array(keywordRouteEntrySchema).min(1) })
+export type KeywordRouteEntry = z.infer<typeof keywordRouteEntrySchema>
+
+// ---- 归因规则库 (attribution) ----
 export const attributionBranchSchema = z.object({
   pri: z.number().int(),
   when: z.string().trim().min(1).optional(),
@@ -148,7 +227,28 @@ export const attributionBranchSchema = z.object({
   primaryAttribution: z.string().trim().min(1).max(120),
   secondaryAttributions: z.array(z.string().trim().min(1).max(120)).default([]),
   reasons: z.array(z.string().trim().min(1).max(500)).min(1),
-  toolTags: z.array(z.string().trim().min(1).max(80)).default([])
+  toolTags: z.array(z.string().trim().min(1).max(80)).default([]),
+  // V2 新增
+  outputActionSummary: z.string().trim().max(1000).optional(),
+  outputToolSummary: z.string().trim().max(1000).optional(),
+  escalationCondition: z.string().trim().max(1000).optional(),
+  escalationTarget: z.string().trim().max(200).optional(),
+  reEvaluationTrigger: z.string().trim().max(1000).optional(),
+  sourceRef: z.string().trim().max(500).optional()
+})
+
+// V2 字段映射: ⑤b 归因-计算变量 + ⑤c 归因-分级规则 + ⑥ 归因-红线熔断
+export const redLineRuleSchema = z.object({
+  module: moduleIdSchema,
+  condition: z.string().trim().min(1),
+  description: z.string().trim().min(1).max(2000),
+  scope: z.enum(['instrument', 'module', 'system']),
+  requiredActions: z.string().trim().min(1).max(2000),
+  actions: z.array(z.string().trim().min(1).max(1000)).default([]),
+  recoveryCondition: z.string().trim().max(1000).optional(),
+  responsibleRole: z.string().trim().max(200).optional(),
+  notificationTemplate: z.string().trim().max(2000).optional(),
+  sourceRef: z.string().trim().max(500).optional()
 })
 
 export const attributionConfigSchema = z.object({
@@ -165,7 +265,9 @@ export const attributionConfigSchema = z.object({
     title: z.string().trim().min(1).max(200),
     content: z.string().trim().min(1).max(2000)
   })).default([]),
-  crisis: z.object({ when: z.string().trim().min(1), blocked: z.boolean() }).optional()
+  crisis: z.object({ when: z.string().trim().min(1), blocked: z.boolean() }).optional(),
+  // V2 新增: 红线熔断规则列表
+  redLines: z.array(redLineRuleSchema).default([])
 })
 export type AttributionConfig = z.infer<typeof attributionConfigSchema>
 
@@ -327,7 +429,22 @@ export type ClarificationRound = z.infer<typeof clarificationRoundSchema>
 export type ClarificationSummary = z.infer<typeof clarificationSummarySchema>
 
 // ---- 评估系统可配置化 ----
+// V2 字段映射: ③ 量表-清单 + ④ 量表-题目 + ④b 量表-选项组 + ④c 量表-维度定义
 // 题库 payload 存入 content_packages (type='assessment')
+
+export interface AssessmentDimensionDef {
+  code: string
+  name: string
+  questionIds: string[]        // 所属题号列表
+  calcMethod: 'mean' | 'sum' | 'weighted'
+  weight?: number
+  description?: string
+  highInterpretation?: string
+  lowInterpretation?: string
+  normMean?: number
+  normStd?: number
+}
+
 export interface AssessmentPayload {
   code: string
   instrumentCode?: string
@@ -340,15 +457,64 @@ export interface AssessmentPayload {
     id: string
     text: string
     dimension: string
+    subDimension?: string
     help?: string
     reverse?: boolean
+    required?: boolean
+    weight?: number
+    displayCondition?: string
+    dataUsage?: string
+    questionNote?: string
+    example?: string
     options: Array<{ label: string, value: number }>
   }>
+  // ---- V2 新增: 量表元数据 ----
+  shortName?: string
+  applicableGrades?: number[]
+  applicableSubjects?: string[]
+  targetAudience?: string       // 施测对象
+  formType?: string             // 施测形式
+  triggerMethod?: 'manual' | 'auto' | 'scheduled'
+  frequency?: 'once' | 'daily' | 'weekly' | 'monthly' | 'per_case' | 'semester'
+  isRequired?: boolean
+  timeLimitMinutes?: number
+  minQuestions?: number
+  usageTiming?: string          // 使用时机
+  reAssessmentIntervalDays?: number
+  prerequisiteCodes?: string[]
+  exclusiveCodes?: string[]
+  resultVisibility?: 'teacher_only' | 'teacher_and_student' | 'psychologist'
+  responsibleRole?: string
+  dataSensitivity?: string      // 数据敏感级
+  sourceType?: string           // 来源属性
+  externalAuthorizationNote?: string
+  sourceRef?: string            // 手册出处
+  normReference?: string
+  reliabilityNote?: string
+  validityNote?: string
+  privacyNotice?: string
+  applicabilityPreconditions?: string
+  contraindications?: string
+  postAssessmentActions?: string
+  // ---- V2 新增: 维度定义 ----
+  dimensionDefs?: AssessmentDimensionDef[]
 }
 
 // 受限表达式语言 —— 规则 DSL 的 when 条件
 // 支持: 变量引用、比较运算(>/</>=/<=/==/!=)、逻辑运算(&&/||)、括号分组
 // 不支持: 函数调用、循环、赋值
+export interface RedLineConfig {
+  module: ModuleId
+  condition: string
+  description: string
+  scope: 'instrument' | 'module' | 'system'
+  actions: string[]
+  recoveryCondition?: string
+  responsibleRole?: string
+  notificationTemplate?: string
+  sourceRef?: string
+}
+
 export interface RuleConfig {
   module: ModuleId
   version: string
@@ -365,12 +531,20 @@ export interface RuleConfig {
     secondaryAttributions?: string[]
     toolTags?: string[]
     reasons: string[]
+    // V2 新增
+    outputActionSummary?: string
+    outputToolSummary?: string
+    escalationCondition?: string
+    escalationTarget?: string
+    reEvaluationTrigger?: string
+    sourceRef?: string
   }>
   // 输出模板
   actions: Array<{ title: string, detail: string, status: 'pending' }>
   tools: Array<{ title: string, content: string }>
-  // 安全红线（可选）
+  // 安全红线（V2 扩展: 支持多条独立红线）
   crisis?: { when: string, blocked: boolean }
+  redLines?: RedLineConfig[]
 }
 
 // 规则执行结果（与现有 RuleOutput 一致）
@@ -385,4 +559,6 @@ export interface RuleExecResult {
   dimensions: Record<string, number>
   actions: Array<{ title: string, detail: string, status: 'pending' }>
   tools: Array<{ title: string, content: string }>
+  // V2 新增: 命中的红线信息
+  matchedRedLines?: RedLineConfig[]
 }

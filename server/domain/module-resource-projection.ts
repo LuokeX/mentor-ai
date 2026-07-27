@@ -3,6 +3,8 @@ import type { AssessmentDefinition } from '../../shared/assessments'
 import {
   attributionConfigSchema,
   toolLibraryPayloadSchema,
+  outputTemplateLibraryPayloadSchema,
+  keywordRouteLibraryPayloadSchema,
   type LibraryType,
   type ModuleId
 } from '../../shared/contracts'
@@ -74,10 +76,43 @@ export interface ToolProjection {
   metadata: Record<string, unknown>
 }
 
+// V2 新增投影类型
+export interface OutputTemplateProjection {
+  libraryId: string
+  versionId: string
+  module: ModuleId
+  scope: Scope
+  schoolId: string | null
+  templateCode: string
+  attributionLevel: string
+  type: string
+  order: number
+  hasPlaceholders: boolean
+  metadata: Record<string, unknown>
+}
+
+export interface KeywordRouteProjection {
+  libraryId: string
+  versionId: string
+  module: ModuleId
+  scope: Scope
+  schoolId: string | null
+  routeCode: string
+  coreKeywords: string
+  matchPriority: number
+  riskLevel: string
+  matchMode: string
+  hasExclusionKeywords: boolean
+  metadata: Record<string, unknown>
+}
+
 export interface ModuleResourceProjection {
   assessments: AssessmentProjection[]
   attributionRules: AttributionProjection[]
   tools: ToolProjection[]
+  // V2 新增
+  outputTemplates: OutputTemplateProjection[]
+  keywordRoutes: KeywordRouteProjection[]
 }
 
 export function projectModuleResourcePayload(
@@ -99,13 +134,15 @@ export function projectModuleResourcePayload(
         .map((item, index) => projectAssessmentItem(base, item as Partial<AssessmentDefinition>, index))
         .filter((item): item is AssessmentProjection => Boolean(item)),
       attributionRules: [],
-      tools: []
+      tools: [],
+      outputTemplates: [],
+      keywordRoutes: []
     }
   }
 
   if (context.libraryType === 'attribution') {
     const parsed = attributionConfigSchema.safeParse(payload)
-    if (!parsed.success) return { assessments: [], attributionRules: [], tools: [] }
+    if (!parsed.success) return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
     return {
       assessments: [],
       attributionRules: parsed.data.branches.map(branch => ({
@@ -123,41 +160,119 @@ export function projectModuleResourcePayload(
           hasCrisisConfig: Boolean(parsed.data.crisis),
           computedKeys: Object.keys(parsed.data.computed),
           actionCount: parsed.data.actions.length,
-          toolCount: parsed.data.tools.length
+          toolCount: parsed.data.tools.length,
+          // V2 新增
+          redLineCount: (parsed.data.redLines || []).length,
+          hasEscalation: parsed.data.branches.some(b => b.escalationCondition),
+          hasReEvaluation: parsed.data.branches.some(b => b.reEvaluationTrigger)
         }
       })),
-      tools: []
+      tools: [],
+      outputTemplates: [],
+      keywordRoutes: []
     }
   }
 
   const parsed = toolLibraryPayloadSchema.safeParse(payload)
-  if (!parsed.success) return { assessments: [], attributionRules: [], tools: [] }
-  return {
-    assessments: [],
-    attributionRules: [],
-    tools: parsed.data.tools.map(tool => ({
-      ...base,
-      toolCode: tool.code,
-      name: tool.name,
-      form: tool.form,
-      severity: tool.severity || null,
-      level: tool.level || null,
-      primaryAttribution: tool.primaryAttribution || tool.attribution || null,
-      attributions: compactUnique([tool.attribution, tool.primaryAttribution, ...(tool.attributions || [])]),
-      tags: compactUnique(tool.tags || []),
-      toolTags: compactUnique(tool.toolTags || []),
-      dimensions: compactUnique(tool.dimensions || []),
-      stepCount: tool.steps.length,
-      hasScript: Boolean(tool.scripts),
-      hasProhibitions: Boolean(tool.prohibitions),
-      hasExpectedEffect: Boolean(tool.expectedEffect),
-      metadata: {
-        duration: tool.duration,
-        timePerSession: tool.timePerSession,
-        targetUsers: tool.targetUsers
-      }
-    }))
+  if (!parsed.success) return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
+
+  // 工具库
+  if (context.libraryType === 'tool') {
+    return {
+      assessments: [],
+      attributionRules: [],
+      tools: parsed.data.tools.map(tool => ({
+        ...base,
+        toolCode: tool.code,
+        name: tool.name,
+        form: tool.form,
+        severity: tool.severity || null,
+        level: tool.level || null,
+        primaryAttribution: tool.primaryAttribution || tool.attribution || null,
+        attributions: compactUnique([tool.attribution, tool.primaryAttribution, ...(tool.attributions || [])]),
+        tags: compactUnique(tool.tags || []),
+        toolTags: compactUnique(tool.toolTags || []),
+        dimensions: compactUnique(tool.dimensions || []),
+        stepCount: tool.steps.length,
+        hasScript: Boolean(tool.scripts),
+        hasProhibitions: Boolean(tool.prohibitions) || (tool.contraindicationRules || []).length > 0,
+        hasExpectedEffect: Boolean(tool.expectedEffect),
+        metadata: {
+          duration: tool.duration,
+          timePerSession: tool.timePerSession,
+          targetUsers: tool.targetUsers,
+          // V2 新增
+          hasStructuredSteps: Boolean(tool.structuredSteps && tool.structuredSteps.length),
+          structuredStepCount: tool.structuredSteps ? tool.structuredSteps.length : 0,
+          evidenceLevel: tool.evidenceLevel || null,
+          evidenceSource: tool.evidenceSource || null,
+          contraindicationRuleCount: (tool.contraindicationRules || []).length,
+          blockRuleCount: (tool.contraindicationRules || []).filter(r => r.type === 'block').length,
+          warnRuleCount: (tool.contraindicationRules || []).filter(r => r.type === 'warn').length,
+          crossModuleTags: tool.crossModuleTags || [],
+          hasScriptTemplate: tool.structuredSteps ? tool.structuredSteps.some(s => s.scriptTemplate) : false
+        }
+      })),
+      outputTemplates: [],
+      keywordRoutes: []
+    }
   }
+
+  // V2 新增: output_template 投影
+  if (context.libraryType === 'output_template') {
+    const parsedTemplate = outputTemplateLibraryPayloadSchema.safeParse(payload)
+    if (!parsedTemplate.success) return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
+    return {
+      assessments: [],
+      attributionRules: [],
+      tools: [],
+      outputTemplates: parsedTemplate.data.templates.map(t => ({
+        ...base,
+        templateCode: t.code,
+        attributionLevel: t.attributionLevel,
+        type: t.type,
+        order: t.order,
+        hasPlaceholders: /\$\{[^}]+\}/.test(t.content),
+        metadata: {
+          contentTypeCharCount: t.content.length,
+          hasPlaceholderDoc: Boolean(t.placeholders)
+        }
+      })),
+      keywordRoutes: []
+    }
+  }
+
+  // V2 新增: keyword_route 投影
+  if (context.libraryType === 'keyword_route') {
+    const parsedRoute = keywordRouteLibraryPayloadSchema.safeParse(payload)
+    if (!parsedRoute.success) return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
+    return {
+      assessments: [],
+      attributionRules: [],
+      tools: [],
+      outputTemplates: [],
+      keywordRoutes: parsedRoute.data.routes.map(r => ({
+        ...base,
+        routeCode: r.code,
+        coreKeywords: r.coreKeywords,
+        matchPriority: r.matchPriority,
+        riskLevel: r.riskLevel,
+        matchMode: r.matchMode,
+        hasExclusionKeywords: (r.exclusionKeywords || []).length > 0,
+        metadata: {
+          hasExpandedKeywords: Boolean(r.expandedKeywords),
+          hasContextConstraint: Boolean(r.contextConstraint),
+          linkedAssessmentCode: r.linkedAssessmentCode || null,
+          linkedToolCode: r.linkedToolCode || null,
+          routeWeight: r.routeWeight ?? null,
+          temporalValidity: r.temporalValidity
+        }
+      }))
+    }
+  }
+
+  // Fallback: 无法识别的类型返回空结果
+  return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
 }
 
 export async function rebuildModuleResourceProjection(
@@ -205,7 +320,18 @@ function projectAssessmentItem(
     metadata: {
       version: instrument.version,
       module: instrument.module,
-      hasInterpretation: Boolean((instrument as { interpretations?: unknown }).interpretations)
+      hasInterpretation: Boolean((instrument as { interpretations?: unknown }).interpretations),
+      // V2 新增
+      applicableGrades: (instrument as { applicableGrades?: number[] }).applicableGrades || null,
+      applicableSubjects: (instrument as { applicableSubjects?: string[] }).applicableSubjects || null,
+      triggerMethod: (instrument as { triggerMethod?: string }).triggerMethod || null,
+      frequency: (instrument as { frequency?: string }).frequency || null,
+      isRequired: Boolean((instrument as { isRequired?: boolean }).isRequired),
+      hasDimensionDefs: Boolean((instrument as { dimensionDefs?: unknown[] }).dimensionDefs?.length),
+      dimensionDefCount: ((instrument as { dimensionDefs?: unknown[] }).dimensionDefs || []).length,
+      resultVisibility: (instrument as { resultVisibility?: string }).resultVisibility || null,
+      estimatedMinutes: (instrument as { estimatedMinutes?: number }).estimatedMinutes ?? null,
+      normReference: (instrument as { normReference?: string }).normReference || null
     }
   }
 }

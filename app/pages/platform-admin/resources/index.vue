@@ -17,7 +17,9 @@ const moduleOptions = [
 const libraryTypeOptions = [
   { label: '量表库', value: 'assessment' },
   { label: '归因库', value: 'attribution' },
-  { label: '工具库', value: 'tool' }
+  { label: '工具库', value: 'tool' },
+  { label: '输出模板', value: 'output_template' },
+  { label: '关键词路由', value: 'keyword_route' }
 ]
 const scopeOptions = [
   { label: '平台默认', value: 'global' },
@@ -309,6 +311,24 @@ function fileToBase64(file: File) {
             <div class="rounded-lg bg-slate-50 p-4 text-sm">规则 <strong class="block text-2xl">{{ previewResult.projection.attributionRuleCount }}</strong></div>
             <div class="rounded-lg bg-slate-50 p-4 text-sm">工具 <strong class="block text-2xl">{{ previewResult.projection.toolCount }}</strong></div>
           </div>
+          <!-- V2: 新增类型计数 -->
+          <div v-if="previewResult.projection.templateCount || previewResult.projection.routeCount" class="mt-3 grid gap-3 sm:grid-cols-2">
+            <div v-if="previewResult.projection.templateCount" class="rounded-lg bg-indigo-50 p-4 text-sm">
+              输出模板 <strong class="block text-2xl">{{ previewResult.projection.templateCount }}</strong>
+            </div>
+            <div v-if="previewResult.projection.routeCount" class="rounded-lg bg-sky-50 p-4 text-sm">
+              关键词路由 <strong class="block text-2xl">{{ previewResult.projection.routeCount }}</strong>
+            </div>
+          </div>
+          <!-- V2: 校验错误分组展示 -->
+          <div v-if="previewResult.validation.v2Metrics" class="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+            <p class="font-medium">V2 质量指标</p>
+            <div class="mt-2 grid gap-2 sm:grid-cols-3">
+              <span>维度定义覆盖率：<strong>{{ previewResult.validation.v2Metrics.dimensionDefCoverage ?? '-' }}</strong></span>
+              <span>红线覆盖：<strong>{{ previewResult.validation.v2Metrics.redLineCount ?? '-' }} 条</strong></span>
+              <span>结构化步骤：<strong>{{ previewResult.validation.v2Metrics.structuredStepRatio ?? '-' }}</strong></span>
+            </div>
+          </div>
           <div v-if="previewResult.validation.errors?.length" class="rounded-lg border border-red-200 bg-red-50 p-4">
             <p class="text-sm font-semibold text-red-700">错误</p>
             <p v-for="issue in previewResult.validation.errors" :key="`${issue.path}:${issue.message}`" class="mt-2 text-xs text-red-700">{{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}</p>
@@ -375,6 +395,10 @@ function fileToBase64(file: File) {
           <div class="rounded-lg bg-slate-50 p-4 text-sm">量表 <strong class="block text-2xl">{{ projectionResult?.summary?.assessmentCount || 0 }}</strong></div>
           <div class="rounded-lg bg-slate-50 p-4 text-sm">规则 <strong class="block text-2xl">{{ projectionResult?.summary?.attributionRuleCount || 0 }}</strong></div>
           <div class="rounded-lg bg-slate-50 p-4 text-sm">工具 <strong class="block text-2xl">{{ projectionResult?.summary?.toolCount || 0 }}</strong></div>
+        </div>
+        <div v-if="projectionResult?.summary?.templateCount || projectionResult?.summary?.routeCount" class="mb-4 grid gap-3 sm:grid-cols-2">
+          <div v-if="projectionResult?.summary?.templateCount" class="rounded-lg bg-indigo-50 p-4 text-sm">输出模板 <strong class="block text-2xl">{{ projectionResult.summary.templateCount }}</strong></div>
+          <div v-if="projectionResult?.summary?.routeCount" class="rounded-lg bg-sky-50 p-4 text-sm">关键词路由 <strong class="block text-2xl">{{ projectionResult.summary.routeCount }}</strong></div>
         </div>
         <pre class="max-h-[60vh] overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100"><code>{{ JSON.stringify(projectionResult, null, 2) }}</code></pre>
       </template>

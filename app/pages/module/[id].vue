@@ -118,7 +118,9 @@ const resourceLibraries = computed(() => resourceOverview.value?.libraries || []
 const libraryTypeLabels: Record<LibraryType, string> = {
   assessment: '评估库',
   attribution: '归因库',
-  tool: '工具库'
+  tool: '工具库',
+  output_template: '输出模板库',
+  keyword_route: '关键词路由库'
 }
 
 function libraryTypeLabel(type: LibraryType) {

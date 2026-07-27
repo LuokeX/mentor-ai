@@ -4,6 +4,7 @@ import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
 import { schema, useDb } from '../../../../../utils/db'
 import { validateModuleResourcePayload } from '../../../../../domain/module-resource-validation'
+import { resolveModuleResourceCounterpart } from '../../../../../domain/module-resources'
 import { rebuildModuleResourceProjection } from '../../../../../domain/module-resource-projection'
 
 export default defineEventHandler(async (event) => {
@@ -33,7 +34,12 @@ export default defineEventHandler(async (event) => {
     const validation = validateModuleResourcePayload({
       module: version.module as any,
       libraryType: version.libraryType as any,
-      payload: version.payload as Record<string, unknown>
+      payload: version.payload as Record<string, unknown>,
+      counterpart: await resolveModuleResourceCounterpart(event, {
+        module: version.module as any,
+        libraryType: version.libraryType as any,
+        schoolId: version.schoolId
+      })
     })
     if (!validation.ok) {
       throw createError({

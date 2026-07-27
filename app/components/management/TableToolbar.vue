@@ -24,23 +24,23 @@ watch(() => props.searchValue, value => {
       v-model="searchDraft"
       :placeholder="searchPlaceholder || '搜索...'"
       icon="i-lucide-search"
-      size="sm"
-      class="w-full sm:w-64"
+      size="md"
+      class="w-full sm:w-72"
       @update:model-value="(v: string) => emit('search', v)"
     />
     <USelect
       v-if="statusOptions"
       :model-value="statusFilter"
       :items="statusOptions"
-      size="sm"
-      class="w-32"
+      size="md"
+      class="w-36"
       @update:model-value="(v: string) => emit('update:statusFilter', v)"
     />
     <div class="flex-1" />
     <UButton
       icon="i-lucide-refresh-cw"
       variant="ghost"
-      size="sm"
+      size="md"
       :loading="loading"
       @click="emit('refresh')"
     >

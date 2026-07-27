@@ -1,10 +1,149 @@
 // 工具库 transformer：将各种格式的工具 xlsx → ToolRxEntry[]
-import type { ToolRxEntry } from '../../../shared/contracts'
-import { readXlsxFile, extractValue } from '../xlsx-reader'
+// V2 支持：⑦ 工具-处方总表 + ⑦b 工具-步骤明细 + ⑧ 工具-禁忌规则
+import type { ToolRxEntry, ToolStructuredStep, ToolContraindicationRule } from '../../../shared/contracts'
+import { readXlsxFile, extractValue, type SheetData } from '../xlsx-reader'
+
+function splitList(value: string | undefined): string[] {
+  return (value || '')
+    .split(/[,，、;；\n]/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function parseStringList(value: string | undefined): string[] | undefined {
+  if (!value) return undefined
+  const result = splitList(value)
+  return result.length > 0 ? result : undefined
+}
 
 /**
- * 处方总表格式 (self_growth, student_case):
- *   编号, 处方名称, 处方形式, 适用症状/场景, 预期效果, 严重度分级, 疗程与频次, 单次耗时, 操作步骤（详细）, 关键话术, 禁止事项, 适用对象, 作用维度
+ * V2 格式解析：从 ⑦ 工具-处方总表 + ⑦b 工具-步骤明细 + ⑧ 工具-禁忌规则 组装
+ */
+function parseToolFileV2(sheets: SheetData[]): ToolRxEntry[] {
+  const mainSheet = sheets.find(s => /⑦[^b]|处方总表|工具-处方/.test(s.name))
+  const stepSheet = sheets.find(s => /⑦b|步骤明细/.test(s.name))
+  const contraSheet = sheets.find(s => /⑧|禁忌规则/.test(s.name))
+
+  if (!mainSheet) return []
+
+  // 预解析结构化步骤和禁忌规则，按 toolCode 分组
+  const stepsByCode = parseStructuredSteps(stepSheet)
+  const contraindicationsByCode = parseContraindicationRules(contraSheet)
+
+  const entries: ToolRxEntry[] = []
+
+  for (const row of mainSheet.rows) {
+    const code = extractValue(row, ['工具编码', '工具ID', '编号', 'code'])
+    const name = extractValue(row, ['工具名称', '处方名称', 'name'])
+    if (!code || !name) continue
+
+    const stepsRaw = extractValue(row, ['操作步骤摘要', '执行步骤', '操作步骤'])
+    const steps = splitList(stepsRaw)
+
+    entries.push({
+      code,
+      name,
+      form: extractValue(row, ['工具形式', '处方形式', '工具类型', 'form']) || '',
+      symptoms: extractValue(row, ['适用症状场景', '适用症状/场景', '适用问题/场景', 'symptoms']) || '',
+      expectedEffect: extractValue(row, ['预期效果', 'expectedEffect']),
+      severity: extractValue(row, ['严重度', '严重度分级', 'severity']),
+      level: extractValue(row, ['严重度', 'level']),
+      attribution: extractValue(row, ['对应归因', 'attribution']),
+      primaryAttribution: extractValue(row, ['对应归因', 'primaryAttribution']),
+      tags: parseStringList(extractValue(row, ['tags', '场景标签', '标签'])),
+      toolTags: parseStringList(extractValue(row, ['工具标签', '匹配标签', 'toolTags'])),
+      duration: extractValue(row, ['疗程与频次', 'duration']),
+      timePerSession: extractValue(row, ['单次耗时', 'timePerSession']),
+      steps: steps.length > 0 ? steps : ['详见结构化步骤'],
+      scripts: extractValue(row, ['关键话术', 'scripts']),
+      prohibitions: extractValue(row, ['禁止事项', '禁忌说明', 'prohibitions']),
+      targetUsers: extractValue(row, ['适用对象', 'targetUsers']),
+      dimensions: parseStringList(extractValue(row, ['作用维度', '维度', 'dimensions'])),
+      // V2 新增
+      shortName: extractValue(row, ['工具简称']),
+      prerequisiteToolCode: extractValue(row, ['前置工具编码']),
+      alternativeToolCode: extractValue(row, ['替代工具编码']),
+      advancedToolCode: extractValue(row, ['进阶工具编码']),
+      evidenceLevel: extractValue(row, ['证据等级']) as ToolRxEntry['evidenceLevel'],
+      evidenceSource: extractValue(row, ['证据来源']),
+      outcomeIndicators: extractValue(row, ['效果指标']),
+      failureCriteria: extractValue(row, ['失败标准']),
+      preparationNeeded: extractValue(row, ['准备事项']),
+      materialsRequired: extractValue(row, ['所需材料']),
+      outputArtifact: extractValue(row, ['输出物']),
+      collaborativeToolCodes: parseStringList(extractValue(row, ['协同工具编码'])),
+      crossModuleTags: parseStringList(extractValue(row, ['跨模块标签'])),
+      sourceRef: extractValue(row, ['手册出处']),
+      structuredSteps: stepsByCode[code],
+      contraindicationRules: contraindicationsByCode[code],
+    })
+  }
+
+  return entries
+}
+
+/** 解析 ⑦b 工具-步骤明细，按工具编码分组 */
+function parseStructuredSteps(sheet: SheetData | undefined): Record<string, ToolStructuredStep[]> {
+  const result: Record<string, ToolStructuredStep[]> = {}
+  if (!sheet) return result
+
+  for (const row of sheet.rows) {
+    const toolCode = extractValue(row, ['工具编码'])
+    const seq = Number(extractValue(row, ['步骤序号']))
+    if (!toolCode || !Number.isFinite(seq)) continue
+
+    if (!result[toolCode]) result[toolCode] = []
+
+    result[toolCode]!.push({
+      seq,
+      title: extractValue(row, ['步骤标题']) || '',
+      description: extractValue(row, ['步骤说明']) || '',
+      estimatedTime: extractValue(row, ['预计耗时']),
+      materials: extractValue(row, ['所需材料']),
+      keyTip: extractValue(row, ['关键提示']),
+      scriptTemplate: extractValue(row, ['话术模板']),
+      successCriteria: extractValue(row, ['成功标准']),
+      commonIssues: extractValue(row, ['常见问题']),
+    })
+  }
+
+  // 按 seq 排序
+  for (const key of Object.keys(result)) {
+    result[key]!.sort((a, b) => a.seq - b.seq)
+  }
+
+  return result
+}
+
+/** 解析 ⑧ 工具-禁忌规则，按工具编码分组 */
+function parseContraindicationRules(sheet: SheetData | undefined): Record<string, ToolContraindicationRule[]> {
+  const result: Record<string, ToolContraindicationRule[]> = {}
+  if (!sheet) return result
+
+  for (const row of sheet.rows) {
+    const toolCode = extractValue(row, ['工具编码'])
+    const condition = extractValue(row, ['禁忌条件', 'condition'])
+    if (!toolCode || !condition) continue
+
+    if (!result[toolCode]) result[toolCode] = []
+
+    result[toolCode]!.push({
+      condition,
+      type: (extractValue(row, ['禁忌类型', 'type']) || 'warn') as 'block' | 'warn',
+      description: extractValue(row, ['禁忌说明', 'description']) || '',
+      alternativeSuggestion: extractValue(row, ['替代建议', 'alternativeSuggestion']),
+      applicableTeacherGroup: extractValue(row, ['适用教师群体']),
+      reference: extractValue(row, ['依据', 'reference']),
+    })
+  }
+
+  return result
+}
+
+// ========== 旧格式解析器（保持向后兼容） ==========
+
+/**
+ * 处方总表格式 (self_growth, student_case)
  */
 function parseRxFormat(filePath: string): ToolRxEntry[] {
   const sheets = readXlsxFile(filePath, { sheetFilter: name => name.includes('总表') || name.includes('处方') })
@@ -20,8 +159,7 @@ function parseRxFormat(filePath: string): ToolRxEntry[] {
       const steps = stepsRaw.split(/[;；\n]/).map(s => s.trim()).filter(Boolean)
 
       entries.push({
-        code,
-        name,
+        code, name,
         form: row['处方形式'] || row['工具类型'] || '',
         symptoms: row['适用症状/场景'] || row['适用问题/场景'] || '',
         expectedEffect: row['预期效果'] || undefined,
@@ -41,8 +179,7 @@ function parseRxFormat(filePath: string): ToolRxEntry[] {
 }
 
 /**
- * 班级系统工具索引格式 (class_system):
- *   工具ID, 工具名称, 所属模块, 适用问题/场景, 核心操作(摘要), 手册出处, 配套评估ID, 平台入口标识, 整理状态
+ * 班级系统工具索引格式 (class_system)
  */
 function parseClassSystemFormat(filePath: string): ToolRxEntry[] {
   const sheets = readXlsxFile(filePath, { sheetFilter: name => name.includes('索引') || name.includes('工具') })
@@ -58,8 +195,7 @@ function parseClassSystemFormat(filePath: string): ToolRxEntry[] {
       const steps = stepsRaw.split(/[;；\n]/).map(s => s.trim()).filter(Boolean)
 
       entries.push({
-        code,
-        name,
+        code, name,
         form: row['所属模块'] || row['模块'] || '',
         symptoms: row['适用问题/场景'] || row['适用场景'] || '',
         steps,
@@ -74,8 +210,7 @@ function parseClassSystemFormat(filePath: string): ToolRxEntry[] {
 }
 
 /**
- * 家校沟通工具库格式 (home_school):
- *   模块编码, 模块名称, 所属类别, 模块说明, 解决处理路径, 核心方法_工具, 关联技术标签, 适用场景_触发条件, 责任角色, 输出物, 来源手册章节
+ * 家校沟通工具库格式 (home_school)
  */
 function parseHomeSchoolFormat(filePath: string): ToolRxEntry[] {
   const sheets = readXlsxFile(filePath, { headerRowIndex: 1, sheetFilter: name => name.includes('工具库') && !name.includes('说明') })
@@ -91,8 +226,7 @@ function parseHomeSchoolFormat(filePath: string): ToolRxEntry[] {
       const steps = stepsRaw.split(/[;；]/).map(s => s.trim()).filter(Boolean)
 
       entries.push({
-        code,
-        name,
+        code, name,
         form: row['所属类别'] || '',
         symptoms: row['适用场景_触发条件'] || row['模块说明'] || '',
         steps,
@@ -109,7 +243,6 @@ function parseHomeSchoolFormat(filePath: string): ToolRxEntry[] {
 
 /**
  * 学习问题工具库格式 (learning_problem): 多 Sheet，每 Sheet 一个流程阶段
- *   工具ID, 工具名称, 子维度, 工具类型, 适用人群, 适用学段, 触发情景（调用条件）, 工具说明（可直接使用）, 具体操作步骤, 输出物, 关联/协同工具
  */
 function parseLearningProblemFormat(filePath: string): ToolRxEntry[] {
   const sheets = readXlsxFile(filePath, { sheetFilter: name => !name.includes('说明') && !name.includes('总表') })
@@ -125,8 +258,7 @@ function parseLearningProblemFormat(filePath: string): ToolRxEntry[] {
       const steps = stepsRaw.split(/[;；\n]/).map(s => s.trim()).filter(Boolean)
 
       entries.push({
-        code,
-        name,
+        code, name,
         form: row['工具类型'] || '',
         symptoms: row['触发情景（调用条件）'] || row['触发情景'] || row['工具说明'] || '',
         expectedEffect: row['输出物'] || undefined,
@@ -154,10 +286,17 @@ export function parseToolFile(filePath: string, format: ToolFileFormat): ToolRxE
 }
 
 export function parseStandardToolFile(filePath: string): ToolRxEntry[] {
-  const sheets = readXlsxFile(filePath, { sheetFilter: name => !name.includes('说明') && !name.includes('模板') })
+  const sheets = readXlsxFile(filePath)
+
+  // 检测 V2 格式
+  const isV2 = sheets.some(s => /⑦|处方总表|工具-处方/.test(s.name))
+  if (isV2) return parseToolFileV2(sheets)
+
+  // 旧格式回退
+  const filtered = sheets.filter(s => !s.name.includes('说明') && !s.name.includes('模板'))
   const entries: ToolRxEntry[] = []
 
-  for (const sheet of sheets) {
+  for (const sheet of filtered) {
     for (const row of sheet.rows) {
       const code = extractValue(row, ['code', '工具编码', '工具ID', '编号'])
       const name = extractValue(row, ['name', '工具名称', '处方名称'])
@@ -167,8 +306,7 @@ export function parseStandardToolFile(filePath: string): ToolRxEntry[] {
       if (!steps.length) continue
 
       entries.push({
-        code,
-        name,
+        code, name,
         form: extractValue(row, ['form', '工具形式', '处方形式', '工具类型']) || '',
         symptoms: extractValue(row, ['symptoms', '适用症状/场景', '适用问题/场景', '适用场景', '触发情景']) || '',
         expectedEffect: extractValue(row, ['expectedEffect', '预期输出或效果', '预期效果', '输出物']),
@@ -191,11 +329,4 @@ export function parseStandardToolFile(filePath: string): ToolRxEntry[] {
   }
 
   return entries
-}
-
-function splitList(value: string | undefined): string[] {
-  return (value || '')
-    .split(/[,，、;；\n]/)
-    .map(item => item.trim())
-    .filter(Boolean)
 }

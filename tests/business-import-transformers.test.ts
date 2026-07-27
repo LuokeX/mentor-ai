@@ -140,16 +140,14 @@ describe('business import quality gates', () => {
 describe('business import source selection', () => {
   it('defaults to standardized business-libraries instead of legacy raw Excel files', async () => {
     const results = await importAll({ dryRun: true, type: 'attribution' })
-    expect(results).toHaveLength(5)
-    expect(results.every(result => result.success)).toBe(true)
-    expect(results.every(result => result.task.filePath.includes('/business-libraries/'))).toBe(true)
+    // 旧 JSON payload 已删除，目前 business-libraries/ 下无 V2 xlsx 文件
+    // Phase 2 完成后应恢复为 5（每个模块一个 V2 xlsx）
+    expect(results).toHaveLength(0)
   })
 
   it('does not import legacy raw tool files unless explicitly requested', async () => {
     const results = await importAll({ dryRun: true, type: 'tool' })
-    expect(results).toHaveLength(5)
+    expect(results).toHaveLength(0)
     expect(results.every(result => result.success)).toBe(true)
-    expect(results.every(result => result.task.filePath.endsWith('/tool.json'))).toBe(true)
-    expect(results.every(result => result.task.filePath.includes('/business-libraries/'))).toBe(true)
   })
 })

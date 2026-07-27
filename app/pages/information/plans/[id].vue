@@ -138,15 +138,34 @@ const supportGoal = computed(() => report.value?.supportGoal || {
   avoidGoal: '不要把目标设成一次性解决所有问题。'
 })
 const firstAction = computed(() => report.value?.firstAction || activeActions.value[0] || null)
-const toolPrescriptions = computed(() => report.value?.toolPrescriptions || (data.value?.tools || []).map((tool: any) => ({
+const toolPrescriptions = computed(() => report.value?.toolPrescriptions || (data.value?.tools || []).map((tool: any) => {
+  // V2: 优先使用 structuredSteps，fallback 到 content 文本拆分
+  const hasStructuredSteps = tool.structuredSteps && tool.structuredSteps.length > 0
+  return {
   title: tool.title,
   applicableWhen: planStructure.value?.attribution?.primary ? `适用于“${planStructure.value.attribution.primary}”相关场景。` : '适用于当前方案对应场景。',
-  steps: String(tool.content || '').split(/\n|[;；。]/).map((item: string) => item.trim()).filter(Boolean).slice(0, 6),
-  script: '',
-  prohibitions: [],
-  outputArtifact: '执行记录或沟通/观察纪要',
-  estimatedTime: '本周内完成一次并记录结果'
-})))
+  steps: hasStructuredSteps ? [] : String(tool.content || '').split(/\n|[;；。]/).map((item: string) => item.trim()).filter(Boolean).slice(0, 6),
+  script: tool.scriptTemplate || tool.script || '',
+  prohibitions: tool.prohibitions || [],
+  outputArtifact: tool.outputArtifact || '执行记录或沟通/观察纪要',
+  estimatedTime: tool.estimatedTime || tool.timePerSession || '本周内完成一次并记录结果',
+  // V2: 结构化步骤详情
+  _hasStructuredSteps: hasStructuredSteps,
+  _structuredSteps: hasStructuredSteps ? tool.structuredSteps.map((s: any) => {
+    return {
+      seq: s.seq,
+      title: s.title,
+      description: s.description,
+      estimatedTime: s.estimatedTime || '',
+      materials: s.materials || '',
+      keyTip: s.keyTip || '',
+      scriptTemplate: s.scriptTemplate || '',
+      successCriteria: s.successCriteria || '',
+      commonIssues: s.commonIssues || ''
+    }
+  }) : null
+}
+}))
 const escalationConditions = computed(() => report.value?.escalationConditions || report.value?.sevenDayFollowUp?.escalationSignals || [])
 const successCriteria = computed(() => report.value?.successCriteria || report.value?.sevenDayFollowUp?.observationPoints || [])
 
@@ -735,14 +754,37 @@ useHead({ title: () => data.value?.title || '方案详情' })
             <div v-for="tool in toolPrescriptions" :key="tool.title" class="rounded-xl border border-amber-100 bg-white p-4">
               <p class="text-sm font-semibold text-slate-800">{{ tool.title }}</p>
               <p class="mt-2 text-xs leading-5 text-amber-700">{{ tool.applicableWhen }}</p>
-              <ol class="mt-3 space-y-1 text-xs leading-5 text-slate-600">
+
+              <!-- V2: 结构化步骤 (优先) -->
+              <div v-if="tool._hasStructuredSteps && tool._structuredSteps" class="mt-3 space-y-3">
+                <p class="text-xs font-medium text-slate-500">操作步骤</p>
+                <div v-for="step in tool._structuredSteps" :key="step.seq" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                  <div class="flex items-center gap-2">
+                    <span class="flex size-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">{{ step.seq }}</span>
+                    <strong class="text-xs text-slate-800">{{ step.title }}</strong>
+                    <span v-if="step.estimatedTime" class="text-xs text-slate-400">{{ step.estimatedTime }}</span>
+                  </div>
+                  <p class="mt-1.5 text-xs leading-5 text-slate-600">{{ step.description }}</p>
+                  <div v-if="step.keyTip" class="mt-2 rounded bg-amber-50 p-2 text-xs leading-5 text-amber-800">
+                    <span class="font-medium">关键提示：</span>{{ step.keyTip }}
+                  </div>
+                  <p v-if="step.successCriteria" class="mt-1.5 text-xs text-emerald-700">
+                    <span class="font-medium">成功标准：</span>{{ step.successCriteria }}
+                  </p>
+                  <div v-if="step.materials" class="mt-1.5 text-xs text-slate-400">材料：{{ step.materials }}</div>
+                </div>
+              </div>
+
+              <!-- V1: 传统步骤列表 (fallback) -->
+              <ol v-else-if="tool.steps.length" class="mt-3 space-y-1 text-xs leading-5 text-slate-600">
                 <li v-for="(step, index) in tool.steps" :key="index">{{ Number(index) + 1 }}. {{ step }}</li>
               </ol>
+
               <p v-if="tool.script" class="mt-3 rounded-lg bg-emerald-50 p-2 text-xs leading-5 text-emerald-900">话术：{{ tool.script }}</p>
               <p v-if="tool.outputArtifact" class="mt-2 text-xs text-slate-500">输出物：{{ tool.outputArtifact }}</p>
               <p v-if="tool.estimatedTime" class="mt-1 text-xs text-slate-500">建议耗时：{{ tool.estimatedTime }}</p>
               <div v-if="tool.prohibitions?.length" class="mt-3 rounded-lg bg-red-50 p-2 text-xs leading-5 text-red-800">
-                禁忌：{{ tool.prohibitions.join('；') }}
+                禁忌：{{ Array.isArray(tool.prohibitions) ? tool.prohibitions.join('；') : tool.prohibitions }}
               </div>
             </div>
           </div>
