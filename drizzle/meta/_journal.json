@@ -106,6 +106,27 @@
       "when": 1784883221000,
       "tag": "0014_remove_legacy_knowledge",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1785052800000,
+      "tag": "0015_plan_feedback",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785056400000,
+      "tag": "0016_module_resource_projection",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785060000000,
+      "tag": "0017_plan_operation_loop",
+      "breakpoints": true
     }
   ]
 }

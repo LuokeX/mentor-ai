@@ -5,6 +5,9 @@ type PlanAction = {
   id: string; sequence: number; title: string; detail: string;
   status: string; dueAt: string | null; completedAt: string | null;
   executedAt: string | null; executionNote: string | null;
+  startedAt?: string | null; blockedAt?: string | null; blockReason?: string | null;
+  blockNote?: string | null; evidenceType?: string | null; evidenceSummary?: string | null;
+  teacherConfidence?: number | null;
 }
 
 const route = useRoute()
@@ -14,19 +17,58 @@ const pending = ref(false)
 const actionPendingId = ref<string | null>(null)
 const sourceExpanded = ref(false)
 const expandedActionId = ref<string | null>(null)
+const acceptancePending = ref(false)
+
+const acceptanceForm = reactive({
+  reason: ''
+})
 
 // 执行反馈表单状态
 const execForm = reactive({
   executedAt: '',
   executionNote: '',
+  blockReason: '',
+  blockNote: '',
+  evidenceType: 'none',
+  evidenceSummary: '',
+  teacherConfidence: 3,
 })
 
 const reviewForm = reactive({
   effectScore: 3,
   progressNote: '',
   nextAction: '',
+  decision: 'continue_plan',
   completedActionIds: [] as string[],
 })
+const feedbackForm = reactive({
+  attributionAccuracy: 4,
+  toolUsability: 4,
+  scriptNaturalness: 4,
+  actionDifficulty: 3,
+  reviewUsefulness: 4,
+  tags: [] as string[],
+  note: '',
+})
+const feedbackPending = ref(false)
+const feedbackTags = ['归因准确', '工具可用', '话术自然', '行动过难', '需要人工协同', '场景不匹配', '复盘有效']
+const blockReasonOptions = [
+  { label: '时间不足', value: 'time_limited' },
+  { label: '学生暂不可用', value: 'student_unavailable' },
+  { label: '家长不配合', value: 'guardian_uncooperative' },
+  { label: '工具不适用', value: 'tool_not_applicable' },
+  { label: '行动过难', value: 'action_too_hard' },
+  { label: '风险升级', value: 'risk_escalated' },
+  { label: '需要协同', value: 'need_collaboration' },
+  { label: '其他', value: 'other' }
+]
+const reviewDecisionOptions = [
+  { label: '继续原方案', value: 'continue_plan' },
+  { label: '调整动作', value: 'adjust_actions' },
+  { label: '需要协同', value: 'need_collaboration' },
+  { label: '目标达成并关闭', value: 'close_success' },
+  { label: '场景变化关闭', value: 'close_no_longer_needed' }
+]
 
 function moduleTitle(module: string) {
   return (moduleMeta as Record<string, { title: string }>)[module]?.title || module
@@ -40,15 +82,45 @@ function riskVariant(level: string): 'error' | 'warning' | 'success' | 'neutral'
 }
 
 function statusText(status: string) {
-  const map: Record<string, string> = { in_progress: '进行中', completed: '已完成', archived: '已归档' }
+  const map: Record<string, string> = {
+    pending_acceptance: '待确认',
+    accepted: '已接受',
+    in_progress: '进行中',
+    review_due: '待复盘',
+    adjustment_needed: '需调整',
+    escalated: '需协同',
+    completed: '已完成',
+    closed: '已关闭',
+    archived: '已归档'
+  }
   return map[status] || status
 }
 
-function statusVariant(status: string): 'info' | 'success' | 'neutral' {
-  const map: Record<string, 'info' | 'success' | 'neutral'> = {
-    in_progress: 'info', completed: 'success', archived: 'neutral',
+function statusVariant(status: string): 'info' | 'success' | 'neutral' | 'warning' | 'error' {
+  const map: Record<string, 'info' | 'success' | 'neutral' | 'warning' | 'error'> = {
+    pending_acceptance: 'warning',
+    accepted: 'info',
+    in_progress: 'info',
+    review_due: 'warning',
+    adjustment_needed: 'warning',
+    escalated: 'error',
+    completed: 'success',
+    closed: 'neutral',
+    archived: 'neutral',
   }
   return map[status] || 'neutral'
+}
+
+function actionStatusText(status: string) {
+  const map: Record<string, string> = {
+    pending: '未开始',
+    in_progress: '进行中',
+    completed: '已完成',
+    blocked: '受阻',
+    skipped: '已跳过',
+    cancelled: '已取消'
+  }
+  return map[status] || status
 }
 
 const activeActions = computed<PlanAction[]>(() => {
@@ -58,6 +130,25 @@ const activeActions = computed<PlanAction[]>(() => {
 const completedActionCount = computed(() =>
   activeActions.value.filter(a => a.status === 'completed').length
 )
+const report = computed(() => data.value?.report || {})
+const planStructure = computed(() => report.value?.planStructure || {})
+const supportGoal = computed(() => report.value?.supportGoal || {
+  weeklyGoal: planStructure.value?.summary || data.value?.summary || '围绕当前问题先完成一个可观察、可复盘的小目标。',
+  observableChange: report.value?.sevenDayFollowUp?.observationPoints?.[0] || '一周内能观察到行为、沟通或状态上的具体变化。',
+  avoidGoal: '不要把目标设成一次性解决所有问题。'
+})
+const firstAction = computed(() => report.value?.firstAction || activeActions.value[0] || null)
+const toolPrescriptions = computed(() => report.value?.toolPrescriptions || (data.value?.tools || []).map((tool: any) => ({
+  title: tool.title,
+  applicableWhen: planStructure.value?.attribution?.primary ? `适用于“${planStructure.value.attribution.primary}”相关场景。` : '适用于当前方案对应场景。',
+  steps: String(tool.content || '').split(/\n|[;；。]/).map((item: string) => item.trim()).filter(Boolean).slice(0, 6),
+  script: '',
+  prohibitions: [],
+  outputArtifact: '执行记录或沟通/观察纪要',
+  estimatedTime: '本周内完成一次并记录结果'
+})))
+const escalationConditions = computed(() => report.value?.escalationConditions || report.value?.sevenDayFollowUp?.escalationSignals || [])
+const successCriteria = computed(() => report.value?.successCriteria || report.value?.sevenDayFollowUp?.observationPoints || [])
 
 // 展开/折叠某个动作的反馈区域
 function toggleExpand(actionId: string) {
@@ -71,29 +162,67 @@ function toggleExpand(actionId: string) {
     expandedActionId.value = actionId
     execForm.executedAt = new Date().toISOString().slice(0, 16) // YYYY-MM-DDTHH:mm
     execForm.executionNote = ''
+    execForm.blockReason = ''
+    execForm.blockNote = ''
+    execForm.evidenceType = 'none'
+    execForm.evidenceSummary = ''
+    execForm.teacherConfidence = 3
   } else {
     expandedActionId.value = null
   }
 }
 
-// 提交执行反馈并标记完成
-async function submitExecution(actionId: string) {
+async function updateAcceptance(decision: 'accepted' | 'deferred' | 'not_applicable') {
+  if (!data.value) return
+  acceptancePending.value = true
+  try {
+    await $fetch(`/api/v1/plans/${data.value.id}/acceptance`, {
+      method: 'PATCH',
+      body: {
+        decision,
+        reason: decision === 'accepted' ? undefined : acceptanceForm.reason.trim()
+      }
+    })
+    acceptanceForm.reason = ''
+    await refresh()
+  } finally {
+    acceptancePending.value = false
+  }
+}
+
+async function updateActionStatus(actionId: string, status: string, extra: Record<string, unknown> = {}) {
   actionPendingId.value = actionId
   try {
     await $fetch(`/api/v1/plans/${data.value!.id}/actions`, {
       method: 'PATCH',
-      body: {
-        actionId,
-        status: 'completed',
-        executedAt: execForm.executedAt ? new Date(execForm.executedAt).toISOString() : undefined,
-        executionNote: execForm.executionNote.trim() || undefined,
-      },
+      body: { actionId, status, ...extra },
     })
     expandedActionId.value = null
     await refresh()
   } finally {
     actionPendingId.value = null
   }
+}
+
+// 提交执行反馈并标记完成
+async function submitExecution(actionId: string) {
+  await updateActionStatus(actionId, 'completed', {
+    executedAt: execForm.executedAt ? new Date(execForm.executedAt).toISOString() : undefined,
+    executionNote: execForm.executionNote.trim() || undefined,
+    evidenceType: execForm.evidenceType,
+    evidenceSummary: execForm.evidenceSummary.trim() || undefined,
+    teacherConfidence: Number(execForm.teacherConfidence)
+  })
+}
+
+async function submitBlocked(actionId: string) {
+  await updateActionStatus(actionId, 'blocked', {
+    blockReason: execForm.blockReason,
+    blockNote: execForm.blockNote.trim() || undefined,
+    evidenceType: execForm.evidenceType,
+    evidenceSummary: execForm.evidenceSummary.trim() || undefined,
+    teacherConfidence: Number(execForm.teacherConfidence)
+  })
 }
 
 // 简单 toggle（撤销完成或标记未完成时直接切换）
@@ -106,17 +235,7 @@ async function toggleAction(actionId: string, currentStatus: string) {
     return
   }
 
-  // 撤销完成 → 直接切换
-  actionPendingId.value = actionId
-  try {
-    await $fetch(`/api/v1/plans/${data.value!.id}/actions`, {
-      method: 'PATCH',
-      body: { actionId, status: next },
-    })
-    await refresh()
-  } finally {
-    actionPendingId.value = null
-  }
+  await updateActionStatus(actionId, next)
 }
 
 function formatDate(dateStr: string | null) {
@@ -139,16 +258,56 @@ async function createReview() {
         effectScore: Number(reviewForm.effectScore),
         progressNote: reviewForm.progressNote,
         nextAction: reviewForm.nextAction,
+        decision: reviewForm.decision,
         completedActionIds:
           reviewForm.completedActionIds.length ? reviewForm.completedActionIds : undefined,
       },
     })
     Object.assign(reviewForm, {
-      effectScore: 3, progressNote: '', nextAction: '', completedActionIds: [],
+      effectScore: 3, progressNote: '', nextAction: '', decision: 'continue_plan', completedActionIds: [],
     })
     await refresh()
   } finally {
     pending.value = false
+  }
+}
+
+async function submitFeedback() {
+  if (!data.value) return
+  feedbackPending.value = true
+  try {
+    await $fetch(`/api/v1/plans/${data.value.id}/feedback`, {
+      method: 'POST',
+      body: {
+        attributionAccuracy: Number(feedbackForm.attributionAccuracy),
+        toolUsability: Number(feedbackForm.toolUsability),
+        scriptNaturalness: Number(feedbackForm.scriptNaturalness),
+        actionDifficulty: Number(feedbackForm.actionDifficulty),
+        reviewUsefulness: Number(feedbackForm.reviewUsefulness),
+        tags: feedbackForm.tags,
+        note: feedbackForm.note.trim() || undefined,
+      },
+    })
+    Object.assign(feedbackForm, {
+      attributionAccuracy: 4,
+      toolUsability: 4,
+      scriptNaturalness: 4,
+      actionDifficulty: 3,
+      reviewUsefulness: 4,
+      tags: [],
+      note: '',
+    })
+    await refresh()
+  } finally {
+    feedbackPending.value = false
+  }
+}
+
+function toggleFeedbackTag(tag: string, checked: boolean | string) {
+  if (checked) {
+    if (!feedbackForm.tags.includes(tag)) feedbackForm.tags.push(tag)
+  } else {
+    feedbackForm.tags = feedbackForm.tags.filter(item => item !== tag)
   }
 }
 
@@ -207,6 +366,30 @@ useHead({ title: () => data.value?.title || '方案详情' })
               {{ statusText(data.status) }}
             </UBadge>
           </div>
+        </div>
+      </section>
+
+      <section
+        v-if="['pending_acceptance', 'adjustment_needed'].includes(data.status)"
+        class="rounded-2xl border border-amber-200 bg-amber-50 p-5"
+      >
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p class="text-sm font-semibold text-amber-900">方案确认</p>
+            <p class="mt-1 text-sm leading-6 text-amber-800">
+              请先确认这份方案是否适合当前场景。不适用或暂不执行会进入学校后台运营清单，便于后续协同和三库优化。
+            </p>
+          </div>
+          <UButton color="success" icon="i-lucide-check" :loading="acceptancePending" @click="updateAcceptance('accepted')">
+            接受执行
+          </UButton>
+        </div>
+        <UFormField class="mt-4" label="暂不执行或不适用原因">
+          <UTextarea v-model="acceptanceForm.reason" :rows="2" class="w-full" placeholder="例如：当前对象不适合、需要先与年级组确认、方案动作暂时过难" />
+        </UFormField>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <UButton color="neutral" variant="soft" :disabled="acceptanceForm.reason.trim().length < 4" :loading="acceptancePending" @click="updateAcceptance('deferred')">暂不执行</UButton>
+          <UButton color="warning" variant="soft" :disabled="acceptanceForm.reason.trim().length < 4" :loading="acceptancePending" @click="updateAcceptance('not_applicable')">标记不适用</UButton>
         </div>
       </section>
 
@@ -302,8 +485,18 @@ useHead({ title: () => data.value?.title || '方案详情' })
                 <p v-if="action.dueAt" class="mt-1 text-xs text-amber-600">
                   截止：{{ formatDate(action.dueAt) }}
                 </p>
+                <p v-if="action.blockReason" class="mt-1 text-xs text-red-600">
+                  受阻原因：{{ blockReasonOptions.find(item => item.value === action.blockReason)?.label || action.blockReason }}
+                </p>
               </div>
               <div class="flex shrink-0 items-center gap-2">
+                <UBadge
+                  :color="action.status === 'completed' ? 'success' : action.status === 'blocked' ? 'error' : action.status === 'in_progress' ? 'info' : action.status === 'skipped' ? 'neutral' : 'warning'"
+                  variant="soft"
+                  size="xs"
+                >
+                  {{ actionStatusText(action.status) }}
+                </UBadge>
                 <!-- 已完成且有反馈: 显示反馈摘要 -->
                 <span
                   v-if="action.status === 'completed' && action.executionNote"
@@ -336,18 +529,34 @@ useHead({ title: () => data.value?.title || '方案详情' })
               v-if="expandedActionId === action.id"
               class="-mt-px rounded-b-xl border border-t-0 border-slate-100 bg-slate-50 p-4"
             >
-              <!-- 已完成动作 → 展示已记录的反馈 -->
-              <template v-if="action.status === 'completed'">
+              <!-- 已完成/受阻/跳过动作 → 展示已记录的反馈 -->
+              <template v-if="['completed', 'blocked', 'skipped'].includes(action.status)">
                 <div class="grid gap-3 text-sm">
                   <div>
+                    <span class="text-xs text-slate-400">状态</span>
+                    <p class="mt-0.5 font-medium text-slate-700">{{ actionStatusText(action.status) }}</p>
+                  </div>
+                  <div v-if="action.executedAt">
                     <span class="text-xs text-slate-400">执行时间</span>
                     <p class="mt-0.5 font-medium text-slate-700">{{ formatDate(action.executedAt) }}</p>
+                  </div>
+                  <div v-if="action.blockReason">
+                    <span class="text-xs text-slate-400">受阻原因</span>
+                    <p class="mt-0.5 text-red-700">{{ blockReasonOptions.find(item => item.value === action.blockReason)?.label || action.blockReason }}</p>
+                  </div>
+                  <div v-if="action.blockNote">
+                    <span class="text-xs text-slate-400">受阻说明</span>
+                    <p class="mt-0.5 leading-6 text-slate-700">{{ action.blockNote }}</p>
                   </div>
                   <div v-if="action.executionNote">
                     <span class="text-xs text-slate-400">执行结果</span>
                     <p class="mt-0.5 leading-6 text-slate-700">{{ action.executionNote }}</p>
                   </div>
-                  <div v-else>
+                  <div v-if="action.evidenceSummary">
+                    <span class="text-xs text-slate-400">证据摘要</span>
+                    <p class="mt-0.5 leading-6 text-slate-700">{{ action.evidenceSummary }}</p>
+                  </div>
+                  <div v-if="action.status === 'completed' && !action.executionNote">
                     <p class="text-xs text-amber-600">
                       <UIcon name="i-lucide-info" class="mr-1 inline size-3" />
                       尚未记录执行反馈，可点击勾选框撤销后重新标记完成。
@@ -376,6 +585,53 @@ useHead({ title: () => data.value?.title || '方案详情' })
                     placeholder="这次行动的具体执行情况和结果（如观察到的变化、遇到的困难等）"
                   />
                 </UFormField>
+                <div class="mt-3 grid gap-3 md:grid-cols-3">
+                  <UFormField label="证据类型">
+                    <USelect
+                      v-model="execForm.evidenceType"
+                      :items="[
+                        { label: '无', value: 'none' },
+                        { label: '观察记录', value: 'observation' },
+                        { label: '沟通纪要', value: 'communication' },
+                        { label: '执行产物', value: 'artifact' }
+                      ]"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField label="把握度">
+                    <USelect v-model="execForm.teacherConfidence" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v} / 5`, value: v }))" class="w-full" />
+                  </UFormField>
+                  <div class="flex items-end">
+                    <UButton color="primary" variant="soft" block :loading="actionPendingId === action.id" @click="updateActionStatus(action.id, 'in_progress')">
+                      标记进行中
+                    </UButton>
+                  </div>
+                </div>
+                <UFormField class="mt-3" label="证据摘要">
+                  <UInput v-model="execForm.evidenceSummary" class="w-full" placeholder="例如：已完成一次观察记录；不要填写完整敏感正文" />
+                </UFormField>
+                <div class="mt-4 rounded-xl border border-red-100 bg-white p-3">
+                  <div class="grid gap-3 md:grid-cols-[12rem_1fr]">
+                    <UFormField label="受阻原因">
+                      <USelect v-model="execForm.blockReason" :items="blockReasonOptions" class="w-full" />
+                    </UFormField>
+                    <UFormField label="受阻说明">
+                      <UInput v-model="execForm.blockNote" class="w-full" placeholder="说明卡点，便于学校后台协同" />
+                    </UFormField>
+                  </div>
+                  <div class="mt-3 flex justify-end">
+                    <UButton
+                      color="error"
+                      variant="soft"
+                      size="sm"
+                      :disabled="!execForm.blockReason || (execForm.blockReason === 'other' && execForm.blockNote.trim().length < 2)"
+                      :loading="actionPendingId === action.id"
+                      @click="submitBlocked(action.id)"
+                    >
+                      标记受阻
+                    </UButton>
+                  </div>
+                </div>
                 <div class="mt-3 flex justify-end gap-2">
                   <UButton
                     color="neutral"
@@ -384,6 +640,9 @@ useHead({ title: () => data.value?.title || '方案详情' })
                     @click="() => { expandedActionId = null }"
                   >
                     取消
+                  </UButton>
+                  <UButton color="neutral" variant="soft" size="sm" :loading="actionPendingId === action.id" @click="updateActionStatus(action.id, 'skipped')">
+                    跳过
                   </UButton>
                   <UButton
                     color="success"
@@ -400,43 +659,56 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
       </section>
 
-      <!-- ══════════ 4. 工具资源 ══════════ -->
-      <section v-if="data.tools?.length" class="rounded-2xl border border-slate-200 bg-white p-5">
-        <h3 class="flex items-center gap-2 font-semibold text-slate-800">
-          <UIcon name="i-lucide-wrench" class="size-4 text-amber-600" />
-          工具资源
-        </h3>
-        <div class="mt-4 grid gap-3 md:grid-cols-2">
-          <div
-            v-for="(tool, i) in data.tools"
-            :key="i"
-            class="rounded-xl border border-amber-100 bg-amber-50/50 p-4"
-          >
-            <p class="text-sm font-semibold text-slate-800">{{ tool.title }}</p>
-            <p class="mt-2 text-xs leading-6 text-slate-600">{{ tool.content }}</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- ══════════ 5. AI 报告 ══════════ -->
+      <!-- ══════════ 4. 专业方案工作单 ══════════ -->
       <section v-if="data.report?.profile" class="rounded-2xl bg-slate-50 p-6">
-        <p class="text-xs font-semibold text-emerald-700">AI 评估报告</p>
+        <p class="text-xs font-semibold text-emerald-700">专业方案工作单</p>
         <h3 class="mt-1 text-lg font-semibold">{{ data.report.profile.title }}</h3>
         <p class="mt-3 text-sm leading-7 text-slate-600">{{ data.report.profile.summary }}</p>
 
-        <!-- 证据项 -->
-        <div v-if="data.report.evidence?.length" class="mt-4 grid gap-3 md:grid-cols-2">
-          <div
-            v-for="item in data.report.evidence"
-            :key="item.title + item.detail"
-            class="rounded-xl bg-white p-3"
-          >
-            <p class="text-sm font-semibold">{{ item.title }}</p>
-            <p class="mt-1 text-xs leading-5 text-slate-500">{{ item.detail }}</p>
+        <div class="mt-5 grid gap-3 md:grid-cols-3">
+          <div class="rounded-xl border border-emerald-100 bg-white p-4">
+            <p class="text-xs font-semibold text-emerald-700">主归因</p>
+            <p class="mt-2 text-sm font-semibold text-slate-800">{{ planStructure?.attribution?.primary || data.report.profile.primaryConcern }}</p>
+            <p v-if="planStructure?.attribution?.secondary?.length" class="mt-2 text-xs leading-5 text-slate-500">
+              次归因：{{ planStructure.attribution.secondary.join('、') }}
+            </p>
+          </div>
+          <div class="rounded-xl border border-sky-100 bg-white p-4">
+            <p class="text-xs font-semibold text-sky-700">本周支持目标</p>
+            <p class="mt-2 text-sm leading-6 text-slate-700">{{ supportGoal.weeklyGoal }}</p>
+          </div>
+          <div class="rounded-xl border border-amber-100 bg-white p-4">
+            <p class="text-xs font-semibold text-amber-700">今天第一步</p>
+            <p class="mt-2 text-sm font-semibold text-slate-800">{{ firstAction?.title || '完成一个最小行动' }}</p>
+            <p class="mt-1 text-xs leading-5 text-slate-500">{{ firstAction?.detail || '先记录当前事实和一个可执行动作。' }}</p>
           </div>
         </div>
 
-        <!-- 3 天方案 -->
+        <div class="mt-5 grid gap-3 md:grid-cols-2">
+          <div class="rounded-xl bg-white p-4">
+            <p class="text-sm font-semibold text-slate-700">可观察变化</p>
+            <p class="mt-2 text-xs leading-6 text-slate-600">{{ supportGoal.observableChange }}</p>
+          </div>
+          <div class="rounded-xl bg-white p-4">
+            <p class="text-sm font-semibold text-slate-700">暂不追求</p>
+            <p class="mt-2 text-xs leading-6 text-slate-600">{{ supportGoal.avoidGoal }}</p>
+          </div>
+        </div>
+
+        <div v-if="data.report.evidence?.length" class="mt-5">
+          <h4 class="text-sm font-semibold text-slate-700">归因依据</h4>
+          <div class="mt-3 grid gap-3 md:grid-cols-2">
+            <div
+              v-for="item in data.report.evidence"
+              :key="item.title + item.detail"
+              class="rounded-xl bg-white p-3"
+            >
+              <p class="text-sm font-semibold">{{ item.title }}</p>
+              <p class="mt-1 text-xs leading-5 text-slate-500">{{ item.detail }}</p>
+            </div>
+          </div>
+        </div>
+
         <div v-if="data.report.threeDayPlan?.length" class="mt-5">
           <h4 class="text-sm font-semibold text-slate-700">3 天行动方案</h4>
           <div class="mt-3 grid gap-3 md:grid-cols-3">
@@ -456,9 +728,43 @@ useHead({ title: () => data.value?.title || '方案详情' })
             </div>
           </div>
         </div>
+
+        <div v-if="toolPrescriptions.length" class="mt-5">
+          <h4 class="text-sm font-semibold text-slate-700">工具处方</h4>
+          <div class="mt-3 grid gap-3 md:grid-cols-2">
+            <div v-for="tool in toolPrescriptions" :key="tool.title" class="rounded-xl border border-amber-100 bg-white p-4">
+              <p class="text-sm font-semibold text-slate-800">{{ tool.title }}</p>
+              <p class="mt-2 text-xs leading-5 text-amber-700">{{ tool.applicableWhen }}</p>
+              <ol class="mt-3 space-y-1 text-xs leading-5 text-slate-600">
+                <li v-for="(step, index) in tool.steps" :key="index">{{ Number(index) + 1 }}. {{ step }}</li>
+              </ol>
+              <p v-if="tool.script" class="mt-3 rounded-lg bg-emerald-50 p-2 text-xs leading-5 text-emerald-900">话术：{{ tool.script }}</p>
+              <p v-if="tool.outputArtifact" class="mt-2 text-xs text-slate-500">输出物：{{ tool.outputArtifact }}</p>
+              <p v-if="tool.estimatedTime" class="mt-1 text-xs text-slate-500">建议耗时：{{ tool.estimatedTime }}</p>
+              <div v-if="tool.prohibitions?.length" class="mt-3 rounded-lg bg-red-50 p-2 text-xs leading-5 text-red-800">
+                禁忌：{{ tool.prohibitions.join('；') }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-5 grid gap-3 md:grid-cols-2">
+          <div v-if="successCriteria.length" class="rounded-xl bg-white p-4">
+            <p class="text-sm font-semibold text-slate-700">成功标准</p>
+            <ul class="mt-2 space-y-1 text-xs leading-5 text-slate-600">
+              <li v-for="item in successCriteria" :key="item">· {{ item }}</li>
+            </ul>
+          </div>
+          <div v-if="escalationConditions.length" class="rounded-xl border border-red-100 bg-red-50/60 p-4">
+            <p class="text-sm font-semibold text-red-800">升级条件</p>
+            <ul class="mt-2 space-y-1 text-xs leading-5 text-red-800">
+              <li v-for="item in escalationConditions" :key="item">· {{ item }}</li>
+            </ul>
+          </div>
+        </div>
       </section>
 
-      <!-- ══════════ 6. 复盘时间线 ══════════ -->
+      <!-- ══════════ 5. 复盘时间线 ══════════ -->
       <section class="rounded-2xl border border-slate-200 bg-white p-5">
         <h3 class="flex items-center gap-2 font-semibold text-slate-800">
           <UIcon name="i-lucide-clock" class="size-4 text-slate-600" />
@@ -489,14 +795,14 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
       </section>
 
-      <!-- ══════════ 7. 新增复盘 ══════════ -->
+      <!-- ══════════ 6. 新增复盘 ══════════ -->
       <section class="rounded-2xl border border-slate-200 bg-white p-5">
         <h3 class="flex items-center gap-2 font-semibold text-slate-800">
           <UIcon name="i-lucide-plus-circle" class="size-4 text-emerald-600" />
           新增复盘
         </h3>
 
-        <div class="mt-4 grid gap-4 md:grid-cols-[8rem_1fr]">
+        <div class="mt-4 grid gap-4 md:grid-cols-[8rem_1fr_12rem]">
           <UFormField label="效果评分">
             <USelect
               v-model="reviewForm.effectScore"
@@ -506,6 +812,9 @@ useHead({ title: () => data.value?.title || '方案详情' })
           </UFormField>
           <UFormField label="下一步动作">
             <UInput v-model="reviewForm.nextAction" class="w-full" placeholder="后续跟进计划" />
+          </UFormField>
+          <UFormField label="复盘决策">
+            <USelect v-model="reviewForm.decision" :items="reviewDecisionOptions" class="w-full" />
           </UFormField>
         </div>
 
@@ -553,6 +862,60 @@ useHead({ title: () => data.value?.title || '方案详情' })
           >
             保存复盘
           </UButton>
+        </div>
+      </section>
+
+      <!-- ══════════ 7. 方案质量反馈 ══════════ -->
+      <section class="rounded-2xl border border-slate-200 bg-white p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h3 class="flex items-center gap-2 font-semibold text-slate-800">
+            <UIcon name="i-lucide-message-square-check" class="size-4 text-sky-600" />
+            方案质量反馈
+          </h3>
+          <UBadge color="neutral" variant="soft">{{ data.feedback?.length || 0 }} 次反馈</UBadge>
+        </div>
+
+        <div v-if="data.feedback?.length" class="mt-4 rounded-xl bg-sky-50 p-3 text-xs leading-5 text-sky-900">
+          最近反馈：归因 {{ data.feedback[0].attributionAccuracy }}/5 · 工具 {{ data.feedback[0].toolUsability }}/5 · 复盘 {{ data.feedback[0].reviewUsefulness }}/5
+        </div>
+
+        <div class="mt-4 grid gap-3 md:grid-cols-5">
+          <UFormField label="归因准确">
+            <USelect v-model="feedbackForm.attributionAccuracy" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v}`, value: v }))" class="w-full" />
+          </UFormField>
+          <UFormField label="工具可用">
+            <USelect v-model="feedbackForm.toolUsability" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v}`, value: v }))" class="w-full" />
+          </UFormField>
+          <UFormField label="话术自然">
+            <USelect v-model="feedbackForm.scriptNaturalness" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v}`, value: v }))" class="w-full" />
+          </UFormField>
+          <UFormField label="行动难度">
+            <USelect v-model="feedbackForm.actionDifficulty" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v}`, value: v }))" class="w-full" />
+          </UFormField>
+          <UFormField label="复盘有效">
+            <USelect v-model="feedbackForm.reviewUsefulness" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v}`, value: v }))" class="w-full" />
+          </UFormField>
+        </div>
+
+        <div class="mt-4">
+          <p class="mb-2 text-xs font-medium text-slate-500">反馈标签</p>
+          <div class="flex flex-wrap gap-2">
+            <label v-for="tag in feedbackTags" :key="tag" class="flex cursor-pointer items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs">
+              <UCheckbox
+                :model-value="feedbackForm.tags.includes(tag)"
+                @update:model-value="checked => toggleFeedbackTag(tag, checked)"
+              />
+              <span>{{ tag }}</span>
+            </label>
+          </div>
+        </div>
+
+        <UFormField class="mt-4" label="补充说明">
+          <UTextarea v-model="feedbackForm.note" :rows="3" class="w-full" placeholder="可简单说明哪里有用、哪里不贴合；不要填写完整敏感正文。" />
+        </UFormField>
+
+        <div class="mt-4 flex justify-end">
+          <UButton :loading="feedbackPending" @click="submitFeedback">提交质量反馈</UButton>
         </div>
       </section>
     </div>

@@ -3,6 +3,8 @@ import { moduleResourceVersionCreateSchema } from '../../../../../shared/contrac
 import { requireUser } from '../../../../utils/auth'
 import { writeAudit } from '../../../../utils/audit'
 import { schema, useDb } from '../../../../utils/db'
+import { rebuildModuleResourceProjection } from '../../../../domain/module-resource-projection'
+import { validateModuleResourcePayload } from '../../../../domain/module-resource-validation'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['platform_admin'])
@@ -12,14 +14,34 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
   const [library] = await db.select().from(schema.moduleResourceLibraries).where(eq(schema.moduleResourceLibraries.id, body.libraryId)).limit(1)
   if (!library) throw createError({ statusCode: 404, message: '模块资源库不存在' })
+  const validation = validateModuleResourcePayload({
+    module: library.module as any,
+    libraryType: library.libraryType as any,
+    payload: body.payload
+  })
+  if (!validation.ok) {
+    throw createError({ statusCode: 400, message: validation.errors[0]?.message || '资源内容不符合三库规范' })
+  }
   try {
-    const [created] = await db.insert(schema.moduleResourceVersions).values({
-      libraryId: library.id,
-      version: body.version,
-      payload: body.payload,
-      notes: body.notes,
-      createdBy: admin.id
-    }).returning()
+    const created = await db.transaction(async (tx) => {
+      const [row] = await tx.insert(schema.moduleResourceVersions).values({
+        libraryId: library.id,
+        version: body.version,
+        payload: body.payload,
+        notes: body.notes,
+        createdBy: admin.id
+      }).returning()
+      if (!row) throw createError({ statusCode: 500, message: '资源版本创建失败' })
+      await rebuildModuleResourceProjection(tx, {
+        libraryId: library.id,
+        versionId: row.id,
+        module: library.module as any,
+        libraryType: library.libraryType as any,
+        scope: library.scope as any,
+        schoolId: library.schoolId
+      }, body.payload)
+      return row
+    })
     if (!created) throw createError({ statusCode: 500, message: '资源版本创建失败' })
     await writeAudit(event, {
       actorId: admin.id,

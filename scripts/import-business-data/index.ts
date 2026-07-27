@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 导入脚本主入口
-// 用法: node scripts/import-business-data/index.ts [--dry-run] [--publish] [--module=xxx] [--type=xxx]
+// 用法: node scripts/import-business-data/index.ts [--dry-run] [--publish] [--strict-quality] [--require-complete] [--include-legacy-raw] [--module=xxx] [--type=xxx]
 import { importAll } from './importers/index'
 
 async function main() {
@@ -8,6 +8,9 @@ async function main() {
 
   const dryRun = args.includes('--dry-run')
   const publish = args.includes('--publish')
+  const strictQuality = args.includes('--strict-quality')
+  const requireComplete = args.includes('--require-complete')
+  const includeLegacyRaw = args.includes('--include-legacy-raw')
   const moduleArg = args.find(a => a.startsWith('--module='))
   const typeArg = args.find(a => a.startsWith('--type='))
 
@@ -30,10 +33,10 @@ async function main() {
   }
 
   console.log('=== 业务数据导入工具 ===')
-  console.log(`Options: dryRun=${dryRun}, publish=${publish}, module=${module || 'all'}, type=${type || 'all'}`)
+  console.log(`Options: dryRun=${dryRun}, publish=${publish}, strictQuality=${strictQuality}, requireComplete=${requireComplete}, includeLegacyRaw=${includeLegacyRaw}, module=${module || 'all'}, type=${type || 'all'}`)
   console.log()
 
-  const results = await importAll({ dryRun, publish, module, type })
+  const results = await importAll({ dryRun, publish, strictQuality, requireComplete, includeLegacyRaw, module, type })
   if (results.some(result => !result.success)) process.exit(1)
 }
 

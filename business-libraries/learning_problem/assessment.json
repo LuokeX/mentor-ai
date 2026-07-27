@@ -1,0 +1,56 @@
+{
+  "instruments": [
+    {
+      "code": "LP_SAMPLE_ASSESS_001",
+      "instrumentCode": "LP_SAMPLE_ASSESS_001",
+      "version": "1.0.0",
+      "module": "learning_problem",
+      "title": "学习问题样例量表",
+      "description": "用于三库运营台演示的学习动机、策略和任务启动快速评估。",
+      "estimatedMinutes": 3,
+      "questions": [
+        {
+          "id": "lp_q1",
+          "text": "学生面对学习任务时经常拖延或难以启动。",
+          "dimension": "initiation",
+          "options": [
+            { "label": "完全不符合", "value": 1 },
+            { "label": "比较不符合", "value": 2 },
+            { "label": "一般", "value": 3 },
+            { "label": "比较符合", "value": 4 },
+            { "label": "非常符合", "value": 5 }
+          ]
+        },
+        {
+          "id": "lp_q2",
+          "text": "学生能说出自己常用的学习策略或检查方法。",
+          "dimension": "strategy",
+          "reverse": true,
+          "options": [
+            { "label": "完全不符合", "value": 5 },
+            { "label": "比较不符合", "value": 4 },
+            { "label": "一般", "value": 3 },
+            { "label": "比较符合", "value": 2 },
+            { "label": "非常符合", "value": 1 }
+          ]
+        },
+        {
+          "id": "lp_q3",
+          "text": "学生遇到困难后容易直接放弃或回避。",
+          "dimension": "persistence",
+          "options": [
+            { "label": "完全不符合", "value": 1 },
+            { "label": "比较不符合", "value": 2 },
+            { "label": "一般", "value": 3 },
+            { "label": "比较符合", "value": 4 },
+            { "label": "非常符合", "value": 5 }
+          ]
+        }
+      ],
+      "scoring": {
+        "learningRisk": "MAX(scores)",
+        "summary": "任务启动、策略和坚持度综合观察"
+      }
+    }
+  ]
+}

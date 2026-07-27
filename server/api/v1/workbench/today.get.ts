@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
   const tomorrow = new Date(); tomorrow.setHours(24, 0, 0, 0)
   const plans = await db.select({ id: schema.plans.id }).from(schema.plans).where(and(
-    eq(schema.plans.ownerUserId, user.id), eq(schema.plans.status, 'in_progress')
+    eq(schema.plans.ownerUserId, user.id), inArray(schema.plans.status, ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated'])
   )).limit(100)
   await Promise.all(plans.map(plan => ensurePlanActions(event, plan.id, user.id)))
 
@@ -25,7 +25,9 @@ export default defineEventHandler(async (event) => {
       )).orderBy(schema.planActions.dueAt).limit(20),
     db.select({ id: schema.plans.id, module: schema.plans.module, title: schema.plans.title, nextReviewAt: schema.plans.nextReviewAt })
       .from(schema.plans).where(and(
-        eq(schema.plans.ownerUserId, user.id), eq(schema.plans.status, 'in_progress'), lte(schema.plans.nextReviewAt, tomorrow)
+        eq(schema.plans.ownerUserId, user.id),
+        inArray(schema.plans.status, ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated']),
+        lte(schema.plans.nextReviewAt, tomorrow)
       )).orderBy(schema.plans.nextReviewAt).limit(10),
     db.select().from(schema.recordAssignments).where(eq(schema.recordAssignments.toUserId, user.id))
       .orderBy(desc(schema.recordAssignments.createdAt)).limit(10),

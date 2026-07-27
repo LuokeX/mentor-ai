@@ -53,9 +53,9 @@ EMBEDDING_TIMEOUT_MS=8000
 
 如需重建模块资源向量，使用 `pnpm resources:reindex`。
 
-## 4. 三库资源中心
+## 4. 三库运营台
 
-平台后台“模块资源中心”按 `module + libraryType + scope` 管理资源库。`libraryType` 固定为：
+平台后台“三库运营台”按 `module + libraryType + scope` 管理模块资源库。`libraryType` 固定为：
 
 | 类型 | 回答的问题 | 运行职责 |
 | --- | --- | --- |
@@ -82,7 +82,26 @@ pnpm import:business-data --dry-run
 pnpm import:business-data --publish
 pnpm import:business-data --module=home_school --publish
 pnpm import:business-data --type=attribution --publish
+pnpm import:business-data --dry-run --strict-quality
+pnpm import:business-data --dry-run --require-complete
 ```
+
+导入流程默认只读取 `business-libraries/[module]/assessment|attribution|tool.(xlsx|json)` 中按模板整理后的标准资源。旧 `业务需求/` 原始 Excel 不再作为默认发布来源；确需历史排查时才使用 `--include-legacy-raw`。
+
+导入流程会在写库前输出质量报告。错误会阻断导入；警告默认允许导入，但会显示评分、投影统计和前 5 条问题。发布前需要零错误；试点验收或正式发版前建议使用 `--strict-quality`，把警告也作为阻断项处理，并用 `--require-complete` 确认 5 个模块 × 3 类资源齐全。
+
+质量报告重点看：
+
+- 量表：量表数、平均题量、维度覆盖率。
+- 归因：规则数、兜底规则数、阻断规则数、带工具标签规则比例。
+- 工具：工具数、匹配提示覆盖率、话术覆盖率、禁忌覆盖率、预期效果覆盖率。
+
+学校后台“试点指标”页签提供验收面板。汇报时建议按四层说明：
+
+- 使用启动：账号激活率、10 分钟首任务率、周活跃教师。
+- 业务闭环：方案执行率、复盘率、方案质量反馈数。
+- 专业质量：归因准确性、工具可用性、方案工作单完整率、三库发布和投影就绪率。
+- 安全治理：AI 失败率、来源不足/降级次数、危机转介 SLA。
 
 ## 6. 方案与复盘
 

@@ -2,7 +2,7 @@
 // 每个 Sheet 作为一个独立的量表 instrument
 import type { AssessmentPayload } from '../../../shared/contracts'
 import type { ModuleId } from '../../../shared/contracts'
-import { readXlsxFile } from '../xlsx-reader'
+import { extractValue, readXlsxFile } from '../xlsx-reader'
 
 export interface AssessmentInstrument {
   code: string           // 量表编码，如 'class_system/A01'
@@ -73,8 +73,8 @@ export function parseAssessmentFile(filePath: string, moduleCode: ModuleId): Ass
 
 /** 从 Sheet 名中提取编号（如 A01, B03） */
 function extractInstrumentCode(sheetName: string): string | null {
-  const match = sheetName.match(/([A-Z]+\d+)/i)
-  return match ? match[1].toUpperCase() : null
+  const match = sheetName.match(/([A-Z]+\d+(?:[-_][A-Z])?)/i)
+  return match ? match[1].replace('_', '-').toUpperCase() : null
 }
 
 /** 从行数据中提取题目列表 */
@@ -83,6 +83,7 @@ function extractQuestions(
   headers: string[]
 ): AssessmentInstrument['questions'] {
   const questions: AssessmentInstrument['questions'] = []
+  const seenIds = new Set<string>()
   let qid = 0
 
   for (const row of rows) {
@@ -92,33 +93,45 @@ function extractQuestions(
     let itemId = ''
 
     // 策略1: 找到"题目"或"题项"列
-    const textCols = ['题目', '题项', '问题', '内容', '陈述', '问卷条目', '条目', '评估提问']
-    for (const col of textCols) {
-      if (row[col]) { text = row[col]; break }
-    }
+    text = extractValue(row, [
+      '题目',
+      '题项',
+      '题项内容',
+      '题干',
+      '问题',
+      '内容',
+      '陈述',
+      '问卷条目',
+      '条目',
+      '评估提问',
+      '评估条目',
+      '核心问题',
+      '具体指标',
+      '评估名称',
+      '评估文件_量表',
+      '维度说明',
+      '使用端评估提问1'
+    ]) || ''
 
     // 策略2: 找维度列
-    const dimCols = ['维度', '所属维度', '分类', '子量表']
-    for (const col of dimCols) {
-      if (row[col]) { dimension = row[col]; break }
-    }
+    dimension = extractValue(row, ['维度', '所属维度', '维度/量表', '评估维度', '分类', '子量表', '子维度', '类别', '量表名称', '指标类别']) || ''
 
     // 策略3: 找编号列
-    const idCols = ['题号', '编号', '序号', '条目编号', 'ID']
-    for (const col of idCols) {
-      if (row[col]) { itemId = row[col]; break }
-    }
+    itemId = extractValue(row, ['题号', '编号', '序号', '条目编号', '评估编码', '评估ID', '维度编码', '量表ID', '指标编号', '分类代码', '级别编号', '类型编号', '杠杆编号', '响应级别', '层级编号', 'ID']) || ''
 
     // 策略4: 如果上述策略都失败，尝试使用最后一列或最长的文本列
     if (!text) {
-      const allVals = Object.values(row).filter(v => v && v.length >= 5)
+      const allVals = Object.values(row).filter(v => v && v.length >= 5 && !isMetadataValue(v))
       text = allVals.length > 0 ? allVals.reduce((a, b) => (b?.length ?? 0) > (a?.length ?? 0) ? b : a, allVals[0]) ?? '' : ''
     }
 
-    if (!text || text.length < 3) continue
+    if (!text || text.length < 3 || isNonQuestionRow(row, headers, text, itemId)) continue
+    itemId = normalizeQuestionId(itemId, qid + 1)
+    if (seenIds.has(itemId)) itemId = `${itemId}-${qid + 1}`
+    seenIds.add(itemId)
 
     questions.push({
-      id: itemId || `q${qid + 1}`,
+      id: itemId,
       text,
       dimension: dimension || undefined,
       options: defaultAgree,
@@ -127,6 +140,39 @@ function extractQuestions(
   }
 
   return questions
+}
+
+function normalizeQuestionId(value: string | undefined, fallbackIndex: number) {
+  const raw = (value || '').trim()
+  if (!raw || isMetadataValue(raw)) return `q${fallbackIndex}`
+  return raw.replace(/\s+/g, '-').slice(0, 60)
+}
+
+function isNonQuestionRow(
+  row: Record<string, string | undefined>,
+  headers: string[],
+  text: string,
+  itemId: string
+) {
+  const values = Object.values(row).map(value => value?.trim()).filter(Boolean) as string[]
+  if (values.length === 0) return true
+  const normalizedText = text.trim()
+  const normalizedId = itemId.trim()
+  const headerSet = new Set(headers.map(header => header.trim()))
+  if (values.filter(value => headerSet.has(value)).length >= Math.min(2, values.length)) return true
+  if (isMetadataValue(normalizedText) || isMetadataValue(normalizedId)) return true
+  if (normalizedText === normalizedId && normalizedText.length <= 12) return true
+  return false
+}
+
+function isMetadataValue(value: string) {
+  const normalized = value.trim()
+  if (!normalized) return true
+  if (/^(评分规则|评分标准|计分规则|结果判读|阈值分级|使用说明|来源|指导语|适用学段|用法|编制目的|科学性与局限|三步走)$/i.test(normalized)) return true
+  if (/^【?(评分规则|评分标准|计分规则|阈值分级|结果判读|维度解释|说明|备注)】?$/.test(normalized)) return true
+  if (/^(一|二|三|四|五|六|七|八|九|十)[、.．]/.test(normalized) && normalized.length < 40) return true
+  if (/^第[一二三四五六七八九十\d]+部分/.test(normalized)) return true
+  return false
 }
 
 /**

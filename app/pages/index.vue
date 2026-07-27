@@ -78,6 +78,7 @@ const currentSnapPage = ref(0) // 0: 欢迎区, 1: 聊天面板, 2: 使用闭环
 const snapLocked = ref(false)
 let snapUnlockTimer: number | undefined
 const toast = useToast()
+const { moduleLabel, libraryTypeLabel, actionStatusLabel } = useDisplayLabels()
 const quickPrompts = [
   '小明上课经常走神，作业拖拉到半夜，数学计算经常看错符号，考前紧张到手抖，说自己就是学不好。',
   '我们班最近死气沉沉的，学生不愿意来学校，班委也形同虚设，制定了班级公约没人执行，我每天都在救火。',
@@ -688,11 +689,11 @@ onUnmounted(() => {
                   <div class="space-y-2 border-t border-emerald-100 px-3 py-3">
                     <div v-for="(source, sourceIndex) in item.sources" :key="source.chunkId" class="rounded-lg bg-white/80 p-3">
                       <p class="font-medium text-slate-700"><span class="mr-1 text-emerald-600">{{ sourceIndex + 1 }}.</span>{{ source.documentTitle }}<span v-if="source.heading" class="font-normal text-slate-400"> · {{ source.heading }}</span></p>
-                      <p class="mt-1 text-[11px] text-emerald-700/70">{{ source.resourceTitle || '模块资源' }}<template v-if="source.module || source.libraryType"> · {{ source.module || '通用' }} / {{ source.libraryType || 'resource' }}</template></p><p v-if="source.excerpt" class="mt-1.5 line-clamp-3 leading-5 text-slate-500">{{ source.excerpt }}</p>
+                      <p class="mt-1 text-[11px] text-emerald-700/70">{{ source.resourceTitle || '模块资源' }}<template v-if="source.module || source.libraryType"> · {{ source.module ? moduleLabel(source.module) : '通用' }} / {{ source.libraryType ? libraryTypeLabel(source.libraryType) : '资源' }}</template></p><p v-if="source.excerpt" class="mt-1.5 line-clamp-3 leading-5 text-slate-500">{{ source.excerpt }}</p>
                     </div>
                   </div>
                 </details>
-                <div v-if="item.role === 'assistant' && item.planUpdateSuggestions?.length" class="mt-7 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><p class="font-semibold text-amber-900">AI 建议更新方案（尚未写入）</p><div v-for="(suggestion, suggestionIndex) in item.planUpdateSuggestions" :key="suggestionIndex" class="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><span class="text-slate-600">{{ suggestion.actionTitle || '新增复盘' }}<template v-if="suggestion.newStatus"> → {{ suggestion.newStatus }}</template><span v-if="suggestion.progressNote" class="mt-1 block text-slate-400">{{ suggestion.progressNote }}</span></span><UButton size="xs" :disabled="Boolean(suggestion.appliedAt)" @click="confirmPlanSuggestion(item, suggestionIndex)">{{ suggestion.appliedAt ? '已确认' : '确认应用' }}</UButton></div></div>
+                <div v-if="item.role === 'assistant' && item.planUpdateSuggestions?.length" class="mt-7 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><p class="font-semibold text-amber-900">AI 建议更新方案（尚未写入）</p><div v-for="(suggestion, suggestionIndex) in item.planUpdateSuggestions" :key="suggestionIndex" class="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><span class="text-slate-600">{{ suggestion.actionTitle || '新增复盘' }}<template v-if="suggestion.newStatus"> → {{ actionStatusLabel(suggestion.newStatus) }}</template><span v-if="suggestion.progressNote" class="mt-1 block text-slate-400">{{ suggestion.progressNote }}</span></span><UButton size="xs" :disabled="Boolean(suggestion.appliedAt)" @click="confirmPlanSuggestion(item, suggestionIndex)">{{ suggestion.appliedAt ? '已确认' : '确认应用' }}</UButton></div></div>
                 <div v-if="item.role === 'assistant' && item.messageId" class="mt-7 flex items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton></div>
               </div>
             </div>

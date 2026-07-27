@@ -61,11 +61,22 @@
 
 ## 导入命令
 
+## 后台运营台
+
+平台管理员可以通过 `/platform-admin/resources` 进入“三库运营台”，面向业务重新整理后的标准文件完成：
+
+- 上传 `assessment`、`attribution`、`tool` 的 Excel 或 JSON 标准文件。
+- 先预检字段、结构、兜底归因规则、工具匹配提示和结构化投影数量。
+- 确认文件不包含真实学生、家长或教师个人业务数据后，保存为草稿或直接发布。
+- 查看历史版本、预览确定性运行效果、查看量表/归因/工具的结构化投影，并执行发布、停用、回滚。
+
+后台运营台和命令行脚本使用同一套标准 payload 校验与投影逻辑。当前不会自动读取 `业务需求/` 下的旧原始 Excel；业务更新后的文件应放入 `business-libraries/[module]/assessment|attribution|tool.(xlsx|json)`，或由平台管理员在运营台手动上传。
+
 ```bash
-# 试运行（不写库）
+# 试运行标准资源目录（不写库）
 pnpm import:business-data --dry-run
 
-# 全部导入并发布
+# 全部导入并发布标准资源目录
 pnpm import:business-data --publish
 
 # 单模块导入
@@ -73,7 +84,20 @@ pnpm import:business-data --module=class_system --publish
 
 # 仅导入工具库
 pnpm import:business-data --type=tool --publish
+
+# 严格质量检查：警告也会阻断导入
+pnpm import:business-data --dry-run --strict-quality
+
+# 完整性验收：要求 5 个模块 × 3 类资源文件全部存在
+pnpm import:business-data --dry-run --require-complete
+
+# 仅历史排查使用：显式导入旧“业务需求”原始 Excel
+pnpm import:business-data --dry-run --include-legacy-raw
 ```
+
+默认导入来源是 `business-libraries/[module]/assessment|attribution|tool.(xlsx|json)`。旧 `业务需求/` 下的原始 Excel 不再作为默认发布来源，只能通过 `--include-legacy-raw` 显式启用，用于历史排查或对照。
+
+每个导入任务都会输出质量摘要：状态、评分、结构化投影数量、核心覆盖率指标和前 5 条错误/警告。默认规则是“错误阻断、警告放行”；正式发布或汇报验收前建议使用严格质量检查，并同时使用 `--require-complete` 检查三库文件是否齐全。
 
 ## 系统集成状态
 

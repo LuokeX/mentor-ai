@@ -9,6 +9,8 @@ const emit = defineEmits<{
   'update:payload': [value: RuleConfig]
 }>()
 
+const { actionStatusLabel } = useDisplayLabels()
+
 // ---- 本地编辑副本 ----
 const editing = reactive<RuleConfig>(JSON.parse(JSON.stringify(props.payload)))
 
@@ -101,6 +103,7 @@ async function runTest() {
 
 // level 选项
 const levelOptions = ['green', 'blue', 'yellow', 'orange', 'red', 'purple', 'survival', 'norming', 'operating', 'mature', 'L1', 'L2', 'L3', 'E']
+const actionStatusOptions = ['pending', 'in_progress', 'done'].map(value => ({ label: actionStatusLabel(value), value }))
 </script>
 
 <template>
@@ -201,7 +204,7 @@ const levelOptions = ['green', 'blue', 'yellow', 'orange', 'red', 'purple', 'sur
             </div>
             <UInput v-model="act.title" size="xs" class="w-full mb-1" placeholder="标题" @update:model-value="emitUpdate()" />
             <UTextarea v-model="act.detail" size="xs" :rows="2" class="w-full" placeholder="详细说明" @update:model-value="emitUpdate()" />
-            <ModalSelect v-model="act.status" size="xs" :items="['pending', 'in_progress', 'done']" class="w-full mt-1" @update:model-value="emitUpdate()" />
+            <ModalSelect v-model="act.status" size="xs" :items="actionStatusOptions" class="w-full mt-1" @update:model-value="emitUpdate()" />
           </div>
         </div>
       </div>

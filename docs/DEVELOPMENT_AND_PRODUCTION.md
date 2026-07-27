@@ -125,7 +125,7 @@ pnpm build
 - 应用新旧版本可能短暂并存，因此 migration 不得立即破坏旧版本仍在读取的字段。
 - migration 必须先在全新数据库和现有数据副本上各验证一次。
 - 不在 migration 中创建演示账号或业务测试数据；正式必需的静态配置应使用可审计、幂等且经审核的专用数据迁移。
-- 三库业务资料不是数据库 Schema migration。标准 JSON 应通过平台后台模块资源中心或 `pnpm import:business-data` 导入并经过发布，禁止直接向资源表写 SQL。
+- 三库业务资料不是数据库 Schema migration。标准 Excel/JSON 应通过平台后台“三库运营台”或 `pnpm import:business-data` 导入并经过发布，禁止直接向资源表写 SQL。
 
 ## 5. 应用代码变更流程
 

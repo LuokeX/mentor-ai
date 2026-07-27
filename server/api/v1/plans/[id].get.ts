@@ -44,19 +44,34 @@ export default defineEventHandler(async (event) => {
   }
 
   // LEFT JOIN 复盘记录
-  const reviews = await db.select().from(schema.planReviews)
-    .where(eq(schema.planReviews.planId, id))
-    .orderBy(desc(schema.planReviews.reviewAt), desc(schema.planReviews.createdAt))
+  const [reviews, feedback] = await Promise.all([
+    db.select().from(schema.planReviews)
+      .where(eq(schema.planReviews.planId, id))
+      .orderBy(desc(schema.planReviews.reviewAt), desc(schema.planReviews.createdAt)),
+    db.select().from(schema.planFeedback)
+      .where(and(eq(schema.planFeedback.planId, id), eq(schema.planFeedback.ownerUserId, user.id)))
+      .orderBy(desc(schema.planFeedback.createdAt))
+      .limit(10)
+  ])
   const actions = await ensurePlanActions(event, plan.id, user.id)
+  const { summaryEnc, acceptanceReasonEnc, ...publicPlan } = plan
 
   return {
-    ...plan,
-    summary: decryptSensitive(plan.summaryEnc, secret),
-    summaryEnc: undefined,
+    ...publicPlan,
+    summary: decryptSensitive(summaryEnc, secret),
+    acceptanceReason: acceptanceReasonEnc ? decryptSensitive(acceptanceReasonEnc, secret) : null,
     student,
     class: klass,
     sourceAssessment,
-    actions,
+    actions: actions.map(({ blockNoteEnc, evidenceSummaryEnc, ...action }) => ({
+      ...action,
+      blockNote: blockNoteEnc ? decryptSensitive(blockNoteEnc, secret) : null,
+      evidenceSummary: evidenceSummaryEnc ? decryptSensitive(evidenceSummaryEnc, secret) : null
+    })),
     reviews,
+    feedback: feedback.map(({ noteEnc, ...item }) => ({
+      ...item,
+      note: noteEnc ? decryptSensitive(noteEnc, secret) : null
+    })),
   }
 })

@@ -24,6 +24,7 @@ interface CenterEvent {
 
 const toast = useToast()
 const { user } = useAuth()
+const { targetTypeLabel } = useDisplayLabels()
 const activeFilter = ref<EventFilter>('all')
 const completingActionId = ref<string | null>(null)
 const selectedEventId = ref<string | null>(null)
@@ -243,7 +244,7 @@ function detailRows(item: CenterEvent) {
     { label: '时间', value: formatTime(item.time) }
   ]
   if (item.raw?.planTitle) rows.push({ label: '关联方案', value: item.raw.planTitle })
-  if (item.raw?.targetType) rows.push({ label: '关联对象', value: item.raw.targetType })
+  if (item.raw?.targetType) rows.push({ label: '关联对象', value: targetTypeLabel(item.raw.targetType) })
   return rows
 }
 

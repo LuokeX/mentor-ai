@@ -14,7 +14,12 @@ import {
   targetTypeSchema,
   reasonCategorySchema
 } from '../../shared/contracts'
-import { planReviewCreateSchema } from '../../shared/reports'
+import {
+  planAcceptanceSchema,
+  planActionExecutionSchema,
+  planFeedbackCreateSchema,
+  planReviewCreateSchema
+} from '../../shared/reports'
 
 // ---- Auth ----
 
@@ -138,6 +143,45 @@ describe('planReviewCreateSchema', () => {
 
   it('rejects too short progress note', () => {
     expect(() => planReviewCreateSchema.parse({ effectScore: 3, progressNote: 'ab', nextAction: 'cd' })).toThrow(ZodError)
+  })
+
+  it('accepts operational review decisions', () => {
+    const result = planReviewCreateSchema.parse({
+      effectScore: 2,
+      progressNote: '执行后发现动作过难，需要调整。',
+      nextAction: '降低动作难度后再跟进',
+      decision: 'adjust_actions'
+    })
+    expect(result.decision).toBe('adjust_actions')
+  })
+})
+
+describe('plan operation schemas', () => {
+  it('requires reasons when a plan is deferred or not applicable', () => {
+    expect(planAcceptanceSchema.safeParse({ decision: 'accepted' }).success).toBe(true)
+    expect(planAcceptanceSchema.safeParse({ decision: 'deferred' }).success).toBe(false)
+    expect(planAcceptanceSchema.safeParse({ decision: 'not_applicable', reason: '当前场景不适合执行' }).success).toBe(true)
+  })
+
+  it('requires a note when blocked reason is other', () => {
+    expect(planActionExecutionSchema.safeParse({ blockReason: 'time_limited' }).success).toBe(true)
+    expect(planActionExecutionSchema.safeParse({ blockReason: 'other' }).success).toBe(false)
+    expect(planActionExecutionSchema.safeParse({ blockReason: 'other', blockNote: '特殊排期冲突' }).success).toBe(true)
+  })
+
+  it('allows feedback to carry rule and tool trace ids', () => {
+    const result = planFeedbackCreateSchema.parse({
+      ruleIds: ['hs-high'],
+      toolCodes: ['HS-T1'],
+      attributionAccuracy: 2,
+      toolUsability: 4,
+      scriptNaturalness: 4,
+      actionDifficulty: 5,
+      reviewUsefulness: 3,
+      tags: ['场景不匹配']
+    })
+    expect(result.ruleIds).toEqual(['hs-high'])
+    expect(result.toolCodes).toEqual(['HS-T1'])
   })
 })
 

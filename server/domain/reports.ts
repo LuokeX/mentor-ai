@@ -164,6 +164,87 @@ function moduleSevenDayFollowUp(module: ModuleId, weak: string, strong: string):
   }[module]
 }
 
+function splitToolContent(content: string) {
+  return content
+    .split(/\n|[;；。]/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .slice(0, 6)
+}
+
+function moduleSupportGoal(module: ModuleId, result: RuleOutput, weak: string, strong: string): NonNullable<AssessmentReport['supportGoal']> {
+  const base = {
+    self_growth: {
+      weeklyGoal: `围绕"${weak}"减少持续消耗，先恢复一个稳定支持点。`,
+      observableChange: '一周内能说出至少一个有效补能动作，并减少非必要即时回应。',
+      avoidGoal: '不要把目标设成马上解决所有压力源或独自承担全部问题。'
+    },
+    class_system: {
+      weeklyGoal: `把"${weak}"从模糊问题转成一个可重复执行的班级机制。`,
+      observableChange: '学生能说清一个流程或岗位要求，关键节点的混乱频率下降。',
+      avoidGoal: '不要期待一次班会或一次提醒就完成系统重建。'
+    },
+    home_school: {
+      weeklyGoal: `围绕"${weak}"稳住事实边界，并形成一次可确认的下一步沟通。`,
+      observableChange: '沟通从情绪拉扯转向事实核对、责任边界和行动约定。',
+      avoidGoal: '不要在情绪高点争辩责任，也不要承诺超出教师职责的事项。'
+    },
+    student_case: {
+      weeklyGoal: `围绕"${strong}"完成结构化观察，并确定支持层级。`,
+      observableChange: '能整理出场景、诱因、已尝试措施和学生反应的基本时间线。',
+      avoidGoal: '不要给学生贴诊断标签，也不要只凭单次事件下结论。'
+    },
+    learning_problem: {
+      weeklyGoal: `围绕"${strong}"定位一个具体学习卡点，并试用一项支架。`,
+      observableChange: '能观察到学生在参与、正确率、作业完成或学习情绪上的一点变化。',
+      avoidGoal: '不要简单追加练习量，也不要把所有学习困难都归因为态度问题。'
+    }
+  }[module]
+  if (result.blocked) {
+    return {
+      weeklyGoal: '优先完成安全确认和校内协同，不进入常规支持目标。',
+      observableChange: '相关责任人已确认收到风险信息，并形成线下处置记录。',
+      avoidGoal: '不要继续给出普通教育建议或让教师单独处置高风险信号。'
+    }
+  }
+  return base
+}
+
+function moduleEscalationConditions(module: ModuleId): string[] {
+  return {
+    self_growth: ['连续多日无法恢复精力或明显影响睡眠饮食', '出现无助、自伤或安全风险表达', '教师已无法独立维持基本工作功能'],
+    class_system: ['班级秩序持续失控且常规流程无效', '冲突或违规频率明显上升', '需要任课教师、年级组共同统一机制'],
+    home_school: ['出现威胁、公开抹黑或恶意维权升级', '家长拒绝基本沟通边界', '沟通已影响学生安全或学校秩序'],
+    student_case: ['学生表现持续加重或扩展到更多场景', '常规教师支持连续无效', '出现自伤、暴力、虐待、失联等安全信号'],
+    learning_problem: ['学习困难持续加重且常规支架无效', '出现明显厌学、拒学或躯体化表现', '伴随自伤、暴力或重大创伤等安全信号']
+  }[module]
+}
+
+function moduleSuccessCriteria(module: ModuleId, weak: string, strong: string): string[] {
+  return {
+    self_growth: ['至少完成 1 个补能或边界动作', `"${weak}"相关消耗有所下降`, '能明确下一步需要谁提供支持'],
+    class_system: [`"${weak}"对应的班级节点更可预期`, '学生能复述一个规则或流程', '班级微复盘形成一个保留动作和一个调整动作'],
+    home_school: ['形成事实、诉求、边界三项记录', '双方确认一个下一步动作和反馈时间', '沟通没有继续升级到公开冲突'],
+    student_case: [`"${strong}"表现的频率或强度有记录`, '至少完成一次低压力谈话或结构化观察', '明确继续教师支持还是升级协同'],
+    learning_problem: [`"${strong}"层面的具体卡点被描述清楚`, '至少试用一项教学支架', '能根据效果决定保留、调整或升级支持']
+  }[module]
+}
+
+function toolPrescriptions(result: RuleOutput): NonNullable<AssessmentReport['toolPrescriptions']> {
+  return result.tools.slice(0, 6).map(tool => {
+    const steps = splitToolContent(tool.content)
+    return {
+      title: tool.title,
+      applicableWhen: `适用于当前"${result.primaryAttribution}"相关场景。`,
+      steps: steps.length ? steps : [tool.content],
+      script: tool.content.includes('：') ? tool.content.slice(0, 500) : undefined,
+      prohibitions: [],
+      outputArtifact: '执行记录或沟通/观察纪要',
+      estimatedTime: '本周内完成一次并记录结果'
+    }
+  })
+}
+
 export function createTemplateAssessmentReport(input: {
   module: ModuleId
   result: RuleOutput
@@ -192,6 +273,14 @@ export function createTemplateAssessmentReport(input: {
     threeDayPlan: moduleThreeDayPlan(input.module, result, weak, strong),
     sevenDayFollowUp: moduleSevenDayFollowUp(input.module, weak, strong),
     scripts: moduleScript(input.module, result),
+    supportGoal: moduleSupportGoal(input.module, result, weak, strong),
+    firstAction: {
+      title: result.actions[0]?.title || (input.module === 'home_school' ? '先完成事实记录' : '先完成一个最小行动'),
+      detail: result.actions[0]?.detail || `围绕"${result.primaryAttribution}"选择一项今天能完成的观察或沟通动作。`
+    },
+    toolPrescriptions: toolPrescriptions(result),
+    escalationConditions: moduleEscalationConditions(input.module),
+    successCriteria: moduleSuccessCriteria(input.module, weak, strong),
     printMeta: {
       module: input.module,
       moduleTitle: moduleMeta[input.module].title,

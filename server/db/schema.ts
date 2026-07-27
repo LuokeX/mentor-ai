@@ -383,6 +383,12 @@ export const plans = pgTable('plans', {
   report: jsonb('report').$type<Record<string, unknown>>().default({}).notNull(),
   sourceVersions: jsonb('source_versions').$type<string[]>().default([]).notNull(),
   status: varchar('status', { length: 30 }).default('in_progress').notNull(),
+  acceptanceDecision: varchar('acceptance_decision', { length: 30 }),
+  acceptanceReasonEnc: text('acceptance_reason_enc'),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+  matchedRuleIds: jsonb('matched_rule_ids').$type<string[]>().default([]).notNull(),
+  matchedToolCodes: jsonb('matched_tool_codes').$type<string[]>().default([]).notNull(),
+  sourceResourceVersionIds: jsonb('source_resource_version_ids').$type<string[]>().default([]).notNull(),
   nextReviewAt: timestamp('next_review_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
   closedAt: timestamp('closed_at', { withTimezone: true }),
@@ -409,6 +415,13 @@ export const planActions = pgTable('plan_actions', {
   completedAt: timestamp('completed_at', { withTimezone: true }),
   executedAt: timestamp('executed_at', { withTimezone: true }),
   executionNote: text('execution_note'),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  blockedAt: timestamp('blocked_at', { withTimezone: true }),
+  blockReason: varchar('block_reason', { length: 40 }),
+  blockNoteEnc: text('block_note_enc'),
+  evidenceType: varchar('evidence_type', { length: 40 }).default('none').notNull(),
+  evidenceSummaryEnc: text('evidence_summary_enc'),
+  teacherConfidence: integer('teacher_confidence'),
   ...timestamps
 }, table => [
   uniqueIndex('plan_actions_plan_sequence_uidx').on(table.planId, table.sequence),
@@ -424,11 +437,51 @@ export const planReviews = pgTable('plan_reviews', {
   effectScore: integer('effect_score').notNull(),
   progressNote: text('progress_note').notNull(),
   nextAction: text('next_action').notNull(),
+  decision: varchar('decision', { length: 40 }).default('continue_plan').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [
   index('plan_reviews_plan_created_idx').on(table.planId, table.createdAt),
   index('plan_reviews_owner_idx').on(table.ownerUserId, table.reviewAt)
+])
+
+export const planFeedback = pgTable('plan_feedback', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  actionId: uuid('action_id').references(() => planActions.id, { onDelete: 'set null' }),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  module: varchar('module', { length: 40 }),
+  ruleIds: jsonb('rule_ids').$type<string[]>().default([]).notNull(),
+  toolCodes: jsonb('tool_codes').$type<string[]>().default([]).notNull(),
+  sourceResourceVersionIds: jsonb('source_resource_version_ids').$type<string[]>().default([]).notNull(),
+  attributionAccuracy: integer('attribution_accuracy').notNull(),
+  toolUsability: integer('tool_usability').notNull(),
+  scriptNaturalness: integer('script_naturalness').notNull(),
+  actionDifficulty: integer('action_difficulty').notNull(),
+  reviewUsefulness: integer('review_usefulness').notNull(),
+  tags: jsonb('tags').$type<string[]>().default([]).notNull(),
+  noteEnc: text('note_enc'),
+  dataClassification: varchar('data_classification', { length: 30 }).default('sensitive').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  index('plan_feedback_plan_idx').on(table.planId, table.createdAt),
+  index('plan_feedback_owner_idx').on(table.ownerUserId, table.createdAt),
+  index('plan_feedback_module_idx').on(table.schoolId, table.module, table.createdAt)
+])
+
+export const planOperationEvents = pgTable('plan_operation_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  actionId: uuid('action_id').references(() => planActions.id, { onDelete: 'set null' }),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  eventType: varchar('event_type', { length: 60 }).notNull(),
+  metadata: jsonb('metadata').$type<Record<string, string | number | boolean | null>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  index('plan_operation_events_school_type_idx').on(table.schoolId, table.eventType, table.createdAt),
+  index('plan_operation_events_plan_idx').on(table.planId, table.createdAt)
 ])
 
 export const communications = pgTable('communications', {
@@ -532,6 +585,81 @@ export const moduleResourceChunks = pgTable('module_resource_chunks', {
   index('module_resource_chunks_version_idx').on(table.versionId),
   index('module_resource_chunks_library_idx').on(table.libraryId),
   index('module_resource_chunks_document_idx').on(table.documentId)
+])
+
+export const moduleResourceAssessmentItems = pgTable('module_resource_assessment_items', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  libraryId: uuid('library_id').notNull().references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').notNull().references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
+  module: varchar('module', { length: 40 }).notNull(),
+  scope: varchar('scope', { length: 20 }).notNull(),
+  schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'cascade' }),
+  instrumentCode: varchar('instrument_code', { length: 80 }).notNull(),
+  title: varchar('title', { length: 200 }).notNull(),
+  questionCount: integer('question_count').default(0).notNull(),
+  dimensions: jsonb('dimensions').$type<string[]>().default([]).notNull(),
+  scoringKeys: jsonb('scoring_keys').$type<string[]>().default([]).notNull(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('module_resource_assessment_items_version_code_uidx').on(table.versionId, table.instrumentCode),
+  index('module_resource_assessment_items_lookup_idx').on(table.module, table.scope, table.schoolId),
+  index('module_resource_assessment_items_library_idx').on(table.libraryId)
+])
+
+export const moduleResourceAttributionRules = pgTable('module_resource_attribution_rules', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  libraryId: uuid('library_id').notNull().references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').notNull().references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
+  module: varchar('module', { length: 40 }).notNull(),
+  scope: varchar('scope', { length: 20 }).notNull(),
+  schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'cascade' }),
+  ruleId: varchar('rule_id', { length: 120 }).notNull(),
+  priority: integer('priority').notNull(),
+  level: varchar('level', { length: 80 }).notNull(),
+  blocked: boolean('blocked').default(false).notNull(),
+  hasCondition: boolean('has_condition').default(false).notNull(),
+  primaryAttribution: varchar('primary_attribution', { length: 120 }).notNull(),
+  secondaryAttributions: jsonb('secondary_attributions').$type<string[]>().default([]).notNull(),
+  toolTags: jsonb('tool_tags').$type<string[]>().default([]).notNull(),
+  reasonCount: integer('reason_count').default(0).notNull(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('module_resource_attribution_rules_version_rule_uidx').on(table.versionId, table.ruleId),
+  index('module_resource_attribution_rules_lookup_idx').on(table.module, table.scope, table.schoolId),
+  index('module_resource_attribution_rules_level_idx').on(table.level, table.blocked),
+  index('module_resource_attribution_rules_library_idx').on(table.libraryId)
+])
+
+export const moduleResourceToolItems = pgTable('module_resource_tool_items', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  libraryId: uuid('library_id').notNull().references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').notNull().references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
+  module: varchar('module', { length: 40 }).notNull(),
+  scope: varchar('scope', { length: 20 }).notNull(),
+  schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'cascade' }),
+  toolCode: varchar('tool_code', { length: 80 }).notNull(),
+  name: varchar('name', { length: 200 }).notNull(),
+  form: varchar('form', { length: 100 }).notNull(),
+  severity: varchar('severity', { length: 40 }),
+  level: varchar('level', { length: 40 }),
+  primaryAttribution: varchar('primary_attribution', { length: 120 }),
+  attributions: jsonb('attributions').$type<string[]>().default([]).notNull(),
+  tags: jsonb('tags').$type<string[]>().default([]).notNull(),
+  toolTags: jsonb('tool_tags').$type<string[]>().default([]).notNull(),
+  dimensions: jsonb('dimensions').$type<string[]>().default([]).notNull(),
+  stepCount: integer('step_count').default(0).notNull(),
+  hasScript: boolean('has_script').default(false).notNull(),
+  hasProhibitions: boolean('has_prohibitions').default(false).notNull(),
+  hasExpectedEffect: boolean('has_expected_effect').default(false).notNull(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('module_resource_tool_items_version_code_uidx').on(table.versionId, table.toolCode),
+  index('module_resource_tool_items_lookup_idx').on(table.module, table.scope, table.schoolId),
+  index('module_resource_tool_items_match_idx').on(table.form, table.severity, table.level),
+  index('module_resource_tool_items_library_idx').on(table.libraryId)
 ])
 
 export const aiModelCalls = pgTable('ai_model_calls', {

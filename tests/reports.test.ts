@@ -19,6 +19,11 @@ describe('assessment reports', () => {
       expect(report.threeDayPlan).toHaveLength(3)
       expect(report.sevenDayFollowUp.escalationSignals.length).toBeGreaterThan(0)
       expect(report.scripts.length).toBeGreaterThan(0)
+      expect(report.supportGoal?.weeklyGoal).toBeTruthy()
+      expect(report.firstAction?.title).toBeTruthy()
+      expect(report.toolPrescriptions?.length).toBeGreaterThan(0)
+      expect(report.escalationConditions?.length).toBeGreaterThan(0)
+      expect(report.successCriteria?.length).toBeGreaterThan(0)
       expect(report.printMeta.source).toBe('template')
     }
   })

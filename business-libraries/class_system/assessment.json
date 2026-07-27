@@ -1,0 +1,56 @@
+{
+  "instruments": [
+    {
+      "code": "CS_SAMPLE_ASSESS_001",
+      "instrumentCode": "CS_SAMPLE_ASSESS_001",
+      "version": "1.0.0",
+      "module": "class_system",
+      "title": "班级系统建设样例量表",
+      "description": "用于三库运营台演示的班级规则、秩序与同伴关系快速评估。",
+      "estimatedMinutes": 3,
+      "questions": [
+        {
+          "id": "cs_q1",
+          "text": "班级日常规则执行需要教师反复提醒。",
+          "dimension": "routine",
+          "options": [
+            { "label": "完全不符合", "value": 1 },
+            { "label": "比较不符合", "value": 2 },
+            { "label": "一般", "value": 3 },
+            { "label": "比较符合", "value": 4 },
+            { "label": "非常符合", "value": 5 }
+          ]
+        },
+        {
+          "id": "cs_q2",
+          "text": "班干部或小组角色分工能稳定支持班级运转。",
+          "dimension": "roles",
+          "reverse": true,
+          "options": [
+            { "label": "完全不符合", "value": 5 },
+            { "label": "比较不符合", "value": 4 },
+            { "label": "一般", "value": 3 },
+            { "label": "比较符合", "value": 2 },
+            { "label": "非常符合", "value": 1 }
+          ]
+        },
+        {
+          "id": "cs_q3",
+          "text": "近期班级同伴冲突或小团体问题变多。",
+          "dimension": "peer_relation",
+          "options": [
+            { "label": "完全不符合", "value": 1 },
+            { "label": "比较不符合", "value": 2 },
+            { "label": "一般", "value": 3 },
+            { "label": "比较符合", "value": 4 },
+            { "label": "非常符合", "value": 5 }
+          ]
+        }
+      ],
+      "scoring": {
+        "classSystemRisk": "MAX(scores)",
+        "summary": "规则、角色和关系三个维度综合观察"
+      }
+    }
+  ]
+}

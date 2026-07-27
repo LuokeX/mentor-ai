@@ -1,0 +1,43 @@
+{
+  "tools": [
+    {
+      "code": "HS_SAMPLE_TOOL_001",
+      "name": "家校沟通降温话术卡",
+      "form": "话术卡",
+      "symptoms": "家校沟通冲突升级、家长情绪较强。",
+      "expectedEffect": "先降低对抗，再把沟通转回事实与下一步。",
+      "severity": "high",
+      "level": "high",
+      "attribution": "家校沟通冲突升级",
+      "attributions": ["家校沟通冲突升级", "沟通边界不清"],
+      "tags": ["home_school", "conflict", "boundary"],
+      "toolTags": ["home_school", "conflict", "boundary", "high"],
+      "duration": "首次沟通后 3 天复盘",
+      "timePerSession": "10 分钟",
+      "steps": ["确认对方感受", "复述可核实事实", "说明教师权限边界", "约定下一次反馈时间"],
+      "scripts": "我能感受到您现在很着急。我们先把事实核清楚，再约定一个明确的反馈时间。",
+      "prohibitions": "不在群内争辩；不承诺超出教师权限的事项；高冲突场景需留痕。",
+      "targetUsers": "教师",
+      "dimensions": ["conflict", "boundary"]
+    },
+    {
+      "code": "HS_SAMPLE_TOOL_002",
+      "name": "家校共识纪要模板",
+      "form": "记录表",
+      "symptoms": "沟通后容易遗忘约定或双方理解不一致。",
+      "expectedEffect": "形成事实、责任、时间点清晰的沟通纪要。",
+      "severity": "stable",
+      "level": "stable",
+      "attribution": "家校沟通状态稳定",
+      "tags": ["home_school", "stable", "record"],
+      "toolTags": ["home_school", "stable"],
+      "duration": "每次重要沟通后",
+      "timePerSession": "8 分钟",
+      "steps": ["记录沟通事实", "写明双方已确认事项", "列出下一步动作与时间", "保存到学生支持记录"],
+      "scripts": "我们把刚才达成的共识写成三点，方便双方后续对照。",
+      "prohibitions": "不写主观评价和未经确认的推断。",
+      "targetUsers": "教师",
+      "dimensions": ["cooperation", "record"]
+    }
+  ]
+}

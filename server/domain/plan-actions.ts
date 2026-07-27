@@ -75,7 +75,7 @@ export async function resolveToolsForPlan(
     toolTags?: string[]
     schoolId?: string | null
   }
-): Promise<Array<{ title: string, content: string }>> {
+): Promise<Array<{ title: string, content: string, code?: string, sourceVersionId?: string }>> {
   const { resolvePublishedModuleResource } = await import('./module-resources')
   const resource = await resolvePublishedModuleResource<{ tools?: Array<Record<string, unknown>> }>(
     event,
@@ -92,7 +92,7 @@ export async function resolveToolsForPlan(
 
   if (tools.length === 0) return []
 
-  const matchedTools: Array<{ title: string, content: string }> = []
+  const matchedTools: Array<{ title: string, content: string, code?: string, sourceVersionId?: string }> = []
 
   for (const tool of tools) {
     const toolSeverity = normalize(tool.severity || tool.severity_grade || tool.level)
@@ -138,6 +138,8 @@ export async function resolveToolsForPlan(
 
       matchedTools.push({
         title: String(tool.name || tool.title || ''),
+        code: String(tool.code || '').trim() || undefined,
+        sourceVersionId: resource.versionId,
         content: `${steps}${scripts}${prohibitions}`
       })
     }

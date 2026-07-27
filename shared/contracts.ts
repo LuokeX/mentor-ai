@@ -87,6 +87,33 @@ export const moduleResourceDocumentImportSchema = moduleResourceDocumentImportSc
   versionId: z.string().uuid()
 })
 
+export const moduleResourceFileImportSchema = z.object({
+  libraryId: z.string().uuid().optional(),
+  module: moduleIdSchema,
+  libraryType: libraryTypeSchema,
+  scope: moduleResourceScopeSchema.default('global'),
+  schoolId: z.string().uuid().optional(),
+  libraryName: z.string().trim().min(2).max(160).optional(),
+  libraryDescription: z.string().trim().max(1000).optional(),
+  version: z.string().trim().min(1).max(40),
+  notes: z.string().trim().max(1000).optional(),
+  filename: z.string().trim().min(1).max(260),
+  contentBase64: z.string().min(4).max(16_000_000),
+  confirmNoPersonalData: z.literal(true),
+  publish: z.boolean().default(false)
+}).superRefine((value, context) => {
+  if (value.scope === 'school' && !value.schoolId) {
+    context.addIssue({ code: 'custom', path: ['schoolId'], message: '校本资源库必须选择学校' })
+  }
+  if (value.scope === 'global' && value.schoolId) {
+    context.addIssue({ code: 'custom', path: ['schoolId'], message: '平台资源库不能绑定学校' })
+  }
+  if (!value.libraryId && !value.libraryName) {
+    context.addIssue({ code: 'custom', path: ['libraryName'], message: '新建资源库时必须填写名称' })
+  }
+})
+export type ModuleResourceFileImport = z.infer<typeof moduleResourceFileImportSchema>
+
 // ---- 工具库·处方型 (tool-rx) ----
 export const toolRxEntrySchema = z.object({
   code: z.string().trim().min(1).max(40),

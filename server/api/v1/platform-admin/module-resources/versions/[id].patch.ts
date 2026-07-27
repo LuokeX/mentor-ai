@@ -3,6 +3,8 @@ import { moduleResourceVersionActionSchema } from '../../../../../../shared/cont
 import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
 import { schema, useDb } from '../../../../../utils/db'
+import { validateModuleResourcePayload } from '../../../../../domain/module-resource-validation'
+import { rebuildModuleResourceProjection } from '../../../../../domain/module-resource-projection'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['platform_admin'])
@@ -14,9 +16,11 @@ export default defineEventHandler(async (event) => {
     libraryId: schema.moduleResourceVersions.libraryId,
     status: schema.moduleResourceVersions.status,
     version: schema.moduleResourceVersions.version,
+    payload: schema.moduleResourceVersions.payload,
     schoolId: schema.moduleResourceLibraries.schoolId,
     module: schema.moduleResourceLibraries.module,
-    libraryType: schema.moduleResourceLibraries.libraryType
+    libraryType: schema.moduleResourceLibraries.libraryType,
+    scope: schema.moduleResourceLibraries.scope
   })
     .from(schema.moduleResourceVersions)
     .innerJoin(schema.moduleResourceLibraries, eq(schema.moduleResourceVersions.libraryId, schema.moduleResourceLibraries.id))
@@ -25,9 +29,30 @@ export default defineEventHandler(async (event) => {
   if (!version) throw createError({ statusCode: 404, message: '资源版本不存在' })
 
   const shouldPublish = body.action === 'publish' || body.action === 'rollback'
+  if (shouldPublish) {
+    const validation = validateModuleResourcePayload({
+      module: version.module as any,
+      libraryType: version.libraryType as any,
+      payload: version.payload as Record<string, unknown>
+    })
+    if (!validation.ok) {
+      throw createError({
+        statusCode: 422,
+        message: `资源版本校验失败：${validation.errors.map(item => item.message).join('；')}`
+      })
+    }
+  }
   const now = new Date()
   const updated = await db.transaction(async (tx) => {
     if (shouldPublish) {
+      await rebuildModuleResourceProjection(tx, {
+        libraryId: version.libraryId,
+        versionId: version.id,
+        module: version.module as any,
+        libraryType: version.libraryType as any,
+        scope: version.scope as any,
+        schoolId: version.schoolId
+      }, version.payload as Record<string, unknown>)
       await tx.update(schema.moduleResourceVersions).set({ status: 'retired', updatedAt: now })
         .where(and(
           eq(schema.moduleResourceVersions.libraryId, version.libraryId),

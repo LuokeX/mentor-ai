@@ -9,6 +9,7 @@ import { resolveAssessmentDefinition, resolveAttributionConfig } from '../../../
 import { encryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
 import { createPlanActions, defaultReviewAt, resolveToolsForPlan } from '../../../../domain/plan-actions'
+import { extractSourceResourceVersionIds, recordPlanOperationEvent } from '../../../../domain/plan-operations'
 import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
 import { generateAssessmentReport } from '../../../../integrations/deepseek'
@@ -143,6 +144,14 @@ export default defineEventHandler(async (event) => {
     })
     const planTools = [...result.tools, ...matchedTools]
     const nextReviewAt = defaultReviewAt()
+    const sourceResourceVersionIds = [
+      resolvedDefinition.versionId,
+      publishedAttribution?.versionId,
+      ...matchedTools.map(tool => tool.sourceVersionId)
+    ].filter((item): item is string => Boolean(item))
+    const matchedToolCodes = planTools
+      .map(tool => (tool as { code?: string }).code)
+      .filter((item): item is string => Boolean(item))
     const [plan] = await db.insert(schema.plans).values({
       schoolId: user.schoolId, ownerUserId: user.id, module,
       studentId: body.studentId,
@@ -170,6 +179,12 @@ export default defineEventHandler(async (event) => {
         }
       },
       sourceVersions: [...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || [`fallback-attribution:${module}`]), ...result.matchedRuleIds],
+      status: 'pending_acceptance',
+      matchedRuleIds: result.matchedRuleIds,
+      matchedToolCodes,
+      sourceResourceVersionIds: sourceResourceVersionIds.length
+        ? sourceResourceVersionIds
+        : extractSourceResourceVersionIds([...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || [])]),
       nextReviewAt
     }).returning({ id: schema.plans.id, createdAt: schema.plans.createdAt })
     planId = plan?.id || null
@@ -177,6 +192,13 @@ export default defineEventHandler(async (event) => {
       await createPlanActions(event, {
         planId: plan.id, schoolId: user.schoolId, ownerUserId: user.id,
         createdAt: plan.createdAt, actions: result.actions
+      })
+      await recordPlanOperationEvent(event, {
+        schoolId: user.schoolId,
+        ownerUserId: user.id,
+        planId: plan.id,
+        eventType: 'plan_generated',
+        metadata: { module, ruleCount: result.matchedRuleIds.length, toolCount: planTools.length }
       })
     }
   }

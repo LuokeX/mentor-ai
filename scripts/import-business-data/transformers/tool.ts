@@ -152,3 +152,50 @@ export function parseToolFile(filePath: string, format: ToolFileFormat): ToolRxE
     case 'learning_problem': return parseLearningProblemFormat(filePath)
   }
 }
+
+export function parseStandardToolFile(filePath: string): ToolRxEntry[] {
+  const sheets = readXlsxFile(filePath, { sheetFilter: name => !name.includes('说明') && !name.includes('模板') })
+  const entries: ToolRxEntry[] = []
+
+  for (const sheet of sheets) {
+    for (const row of sheet.rows) {
+      const code = extractValue(row, ['code', '工具编码', '工具ID', '编号'])
+      const name = extractValue(row, ['name', '工具名称', '处方名称'])
+      if (!code || !name) continue
+      const stepsRaw = extractValue(row, ['steps', '执行步骤', '操作步骤', '操作步骤（详细）', '具体操作步骤', '核心操作'])
+      const steps = splitList(stepsRaw)
+      if (!steps.length) continue
+
+      entries.push({
+        code,
+        name,
+        form: extractValue(row, ['form', '工具形式', '处方形式', '工具类型']) || '',
+        symptoms: extractValue(row, ['symptoms', '适用症状/场景', '适用问题/场景', '适用场景', '触发情景']) || '',
+        expectedEffect: extractValue(row, ['expectedEffect', '预期输出或效果', '预期效果', '输出物']),
+        severity: extractValue(row, ['severity', '严重度分级', '风险等级']),
+        level: extractValue(row, ['level', '适用等级', '等级']),
+        attribution: extractValue(row, ['attribution', '适用归因', '主归因']),
+        attributions: splitList(extractValue(row, ['attributions', '归因列表', '适用归因列表'])),
+        primaryAttribution: extractValue(row, ['primaryAttribution', '主归因']),
+        tags: splitList(extractValue(row, ['tags', '场景标签', '标签'])),
+        toolTags: splitList(extractValue(row, ['toolTags', '工具标签', '匹配标签'])),
+        duration: extractValue(row, ['duration', '建议周期', '疗程与频次']),
+        timePerSession: extractValue(row, ['timePerSession', '单次时长', '单次耗时']),
+        steps,
+        scripts: extractValue(row, ['scripts', '关键话术', '话术']),
+        prohibitions: extractValue(row, ['prohibitions', '禁忌条件', '禁止事项']),
+        targetUsers: extractValue(row, ['targetUsers', '适用对象', '责任角色']),
+        dimensions: splitList(extractValue(row, ['dimensions', '适用维度', '作用维度', '维度']))
+      })
+    }
+  }
+
+  return entries
+}
+
+function splitList(value: string | undefined): string[] {
+  return (value || '')
+    .split(/[,，、;；\n]/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}

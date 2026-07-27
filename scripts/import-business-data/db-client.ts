@@ -2,6 +2,7 @@
 import { createHash } from 'crypto'
 import pg from 'pg'
 import { readFileSync } from 'fs'
+import { projectModuleResourcePayload } from '../../server/domain/module-resource-projection'
 
 // 读取 .env 中的 DATABASE_URL
 function loadEnv(): string {
@@ -70,12 +71,20 @@ export async function createVersion(libraryId: string, version: string, payload:
      VALUES ($1, $2, $3, $4, 'draft', $5) RETURNING id`,
     [libraryId, version, JSON.stringify(payload), notes, await getImportActorId()]
   )
-  return result.rows[0].id as string
+  const versionId = result.rows[0].id as string
+  try {
+    await refreshResourceProjection(versionId)
+  } catch (error) {
+    await db.query('DELETE FROM module_resource_versions WHERE id = $1', [versionId])
+    throw error
+  }
+  return versionId
 }
 
 export async function publishVersion(versionId: string): Promise<void> {
   const db = getDb()
   const actor = await getImportActorId()
+  await refreshResourceProjection(versionId)
   await db.query(
     `UPDATE module_resource_versions SET status = 'published', published_by = $2, published_at = NOW(), updated_at = NOW() WHERE id = $1`,
     [versionId, actor]
@@ -84,6 +93,124 @@ export async function publishVersion(versionId: string): Promise<void> {
     `UPDATE module_resource_documents SET status = 'ready', updated_at = NOW() WHERE version_id = $1 AND status = 'draft'`,
     [versionId]
   )
+}
+
+export async function refreshResourceProjection(versionId: string): Promise<void> {
+  const db = getDb()
+  const result = await db.query<{
+    id: string
+    library_id: string
+    module: string
+    library_type: string
+    scope: string
+    school_id: string | null
+    payload: Record<string, unknown>
+  }>(
+    `SELECT mrv.id, mrv.library_id, mrl.module, mrl.library_type, mrl.scope, mrl.school_id, mrv.payload
+     FROM module_resource_versions mrv
+     INNER JOIN module_resource_libraries mrl ON mrv.library_id = mrl.id
+     WHERE mrv.id = $1
+     LIMIT 1`,
+    [versionId]
+  )
+  const row = result.rows[0]
+  if (!row) throw new Error(`资源版本不存在：${versionId}`)
+  const projection = projectModuleResourcePayload({
+    libraryId: row.library_id,
+    versionId: row.id,
+    module: row.module as any,
+    libraryType: row.library_type as any,
+    scope: row.scope as any,
+    schoolId: row.school_id
+  }, row.payload)
+
+  await db.query('BEGIN')
+  try {
+    await db.query('DELETE FROM module_resource_assessment_items WHERE version_id = $1', [versionId])
+    await db.query('DELETE FROM module_resource_attribution_rules WHERE version_id = $1', [versionId])
+    await db.query('DELETE FROM module_resource_tool_items WHERE version_id = $1', [versionId])
+
+    for (const item of projection.assessments) {
+      await db.query(
+        `INSERT INTO module_resource_assessment_items
+          (library_id, version_id, module, scope, school_id, instrument_code, title, question_count, dimensions, scoring_keys, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          item.libraryId,
+          item.versionId,
+          item.module,
+          item.scope,
+          item.schoolId,
+          item.instrumentCode,
+          item.title,
+          item.questionCount,
+          JSON.stringify(item.dimensions),
+          JSON.stringify(item.scoringKeys),
+          JSON.stringify(item.metadata)
+        ]
+      )
+    }
+
+    for (const item of projection.attributionRules) {
+      await db.query(
+        `INSERT INTO module_resource_attribution_rules
+          (library_id, version_id, module, scope, school_id, rule_id, priority, level, blocked, has_condition, primary_attribution, secondary_attributions, tool_tags, reason_count, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [
+          item.libraryId,
+          item.versionId,
+          item.module,
+          item.scope,
+          item.schoolId,
+          item.ruleId,
+          item.priority,
+          item.level,
+          item.blocked,
+          item.hasCondition,
+          item.primaryAttribution,
+          JSON.stringify(item.secondaryAttributions),
+          JSON.stringify(item.toolTags),
+          item.reasonCount,
+          JSON.stringify(item.metadata)
+        ]
+      )
+    }
+
+    for (const item of projection.tools) {
+      await db.query(
+        `INSERT INTO module_resource_tool_items
+          (library_id, version_id, module, scope, school_id, tool_code, name, form, severity, level, primary_attribution, attributions, tags, tool_tags, dimensions, step_count, has_script, has_prohibitions, has_expected_effect, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+        [
+          item.libraryId,
+          item.versionId,
+          item.module,
+          item.scope,
+          item.schoolId,
+          item.toolCode,
+          item.name,
+          item.form,
+          item.severity,
+          item.level,
+          item.primaryAttribution,
+          JSON.stringify(item.attributions),
+          JSON.stringify(item.tags),
+          JSON.stringify(item.toolTags),
+          JSON.stringify(item.dimensions),
+          item.stepCount,
+          item.hasScript,
+          item.hasProhibitions,
+          item.hasExpectedEffect,
+          JSON.stringify(item.metadata)
+        ]
+      )
+    }
+
+    await db.query('COMMIT')
+  } catch (error) {
+    await db.query('ROLLBACK')
+    throw error
+  }
 }
 
 export async function createSearchableDocument(input: {
