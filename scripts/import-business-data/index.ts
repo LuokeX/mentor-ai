@@ -25,7 +25,7 @@ async function main() {
     }
   }
   if (type) {
-    const validTypes = ['tool', 'assessment', 'attribution']
+    const validTypes = ['tool', 'assessment', 'attribution', 'keyword_route', 'output_template']
     if (!validTypes.includes(type)) {
       console.error(`Invalid type: ${type}. Valid: ${validTypes.join(', ')}`)
       process.exit(1)

@@ -280,6 +280,7 @@ export async function rebuildModuleResourceProjection(
   context: ProjectionContext,
   payload: Record<string, unknown>
 ) {
+  // knowledge 类型已独立为知识库系统，不通过三库运营台投影
   const projection = projectModuleResourcePayload(context, payload)
 
   await db.delete(schema.moduleResourceAssessmentItems)

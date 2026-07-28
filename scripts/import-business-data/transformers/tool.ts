@@ -74,6 +74,10 @@ function parseToolFileV2(sheets: SheetData[]): ToolRxEntry[] {
       collaborativeToolCodes: parseStringList(extractValue(row, ['协同工具编码'])),
       crossModuleTags: parseStringList(extractValue(row, ['跨模块标签'])),
       sourceRef: extractValue(row, ['手册出处']),
+      // V2 模板补齐
+      applicableSchoolSection: extractValue(row, ['适用学部']),
+      reAssessmentIntervalDays: Number(extractValue(row, ['重评间隔天数'])) || undefined,
+      contraindicationNote: extractValue(row, ['禁忌说明']),
       structuredSteps: stepsByCode[code],
       contraindicationRules: contraindicationsByCode[code],
     })

@@ -53,6 +53,8 @@ const projectionOpen = ref(false)
 const projectionResult = ref<any>(null)
 const versionPreviewOpen = ref(false)
 const versionPreviewResult = ref<any>(null)
+const expandedLibrary = ref<string | null>(null)
+const importOpen = ref(false)
 
 const matchingLibraries = computed(() => (resourceData.value?.libraries || []).filter((item: any) =>
   item.module === form.module
@@ -145,6 +147,7 @@ async function commitImport() {
     selectedFile.value = null
     fileBase64.value = ''
     form.confirmNoPersonalData = false
+    importOpen.value = false
     toast.add({ title: form.publish ? '资源已导入并发布' : '资源草稿已导入', color: 'success' })
   } catch (error: any) {
     toast.add({ title: '导入失败', description: error?.data?.message || '请根据预检结果修正', color: 'error' })
@@ -202,185 +205,245 @@ function fileToBase64(file: File) {
 
 <template>
   <ManagementPage title="三库运营台" description="面向业务整理后的量表库、归因库和工具库；默认不读取旧原始资料。">
-    <h2 class="text-xl font-semibold">资源导入、校验与发布</h2>
 
-    <div class="grid gap-4 sm:grid-cols-4">
-      <div class="panel p-5"><p class="text-sm text-slate-500">资源库</p><strong class="mt-2 block text-3xl">{{ resourceData?.libraries?.length || 0 }}</strong></div>
-      <div class="panel p-5"><p class="text-sm text-slate-500">版本</p><strong class="mt-2 block text-3xl">{{ resourceData?.versions?.length || 0 }}</strong></div>
-      <div class="panel p-5"><p class="text-sm text-slate-500">已发布</p><strong class="mt-2 block text-3xl">{{ publishedCount }}</strong></div>
-      <div class="panel p-5"><p class="text-sm text-slate-500">发布覆盖率</p><strong class="mt-2 block text-3xl">{{ coverageRate }}%</strong></div>
+    <!-- ===== 统计横条 ===== -->
+    <div class="grid grid-cols-2 divide-x divide-slate-100 overflow-hidden rounded-xl border border-slate-100 bg-white sm:grid-cols-4">
+      <div class="px-5 py-4">
+        <p class="text-xs font-medium text-slate-400 uppercase tracking-wide">资源库</p>
+        <strong class="mt-1 block text-2xl text-slate-800">{{ resourceData?.libraries?.length || 0 }}</strong>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-xs font-medium text-slate-400 uppercase tracking-wide">版本</p>
+        <strong class="mt-1 block text-2xl text-slate-800">{{ resourceData?.versions?.length || 0 }}</strong>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-xs font-medium text-slate-400 uppercase tracking-wide">已发布</p>
+        <strong class="mt-1 block text-2xl text-slate-800">{{ publishedCount }}</strong>
+      </div>
+      <div class="px-5 py-4">
+        <p class="text-xs font-medium text-slate-400 uppercase tracking-wide">发布覆盖率</p>
+        <strong class="mt-1 block text-2xl text-slate-800">{{ coverageRate }}%</strong>
+      </div>
     </div>
 
-    <div class="panel mt-6 p-6">
+    <!-- ===== 质量反哺 ===== -->
+    <section class="rounded-xl border border-slate-100 bg-white p-6">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 class="text-xl font-semibold">质量反哺</h2>
-          <p class="mt-1 text-sm text-slate-500">汇总方案反馈，不展示学校业务正文。</p>
+          <h2 class="text-lg font-semibold text-slate-800">质量反哺</h2>
+          <p class="mt-0.5 text-sm text-slate-400">汇总方案反馈，不展示学校业务正文。</p>
         </div>
-        <UButton color="neutral" variant="soft" size="xs" icon="i-lucide-refresh-cw" @click="() => refreshResourceQuality()">刷新</UButton>
+        <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-refresh-cw" @click="() => refreshResourceQuality()">刷新</UButton>
       </div>
-      <div class="mt-4 grid gap-3 sm:grid-cols-5">
-        <div class="rounded-lg bg-slate-50 p-4 text-sm">反馈 <strong class="block text-2xl">{{ resourceQuality?.summary?.feedbackCount || 0 }}</strong></div>
-        <div class="rounded-lg bg-slate-50 p-4 text-sm">模块 <strong class="block text-2xl">{{ resourceQuality?.summary?.moduleCount || 0 }}</strong></div>
-        <div class="rounded-lg bg-slate-50 p-4 text-sm">版本 <strong class="block text-2xl">{{ resourceQuality?.summary?.trackedVersionCount || 0 }}</strong></div>
-        <div class="rounded-lg bg-slate-50 p-4 text-sm">规则 <strong class="block text-2xl">{{ resourceQuality?.summary?.trackedRuleCount || 0 }}</strong></div>
-        <div class="rounded-lg bg-slate-50 p-4 text-sm">工具 <strong class="block text-2xl">{{ resourceQuality?.summary?.trackedToolCount || 0 }}</strong></div>
+
+      <!-- 摘要行 -->
+      <div class="mt-4 flex flex-wrap divide-x divide-slate-100 rounded-lg bg-slate-50/70">
+        <div class="flex-1 px-4 py-3 text-center text-sm text-slate-500">反馈 <strong class="block text-lg text-slate-700">{{ resourceQuality?.summary?.feedbackCount || 0 }}</strong></div>
+        <div class="flex-1 px-4 py-3 text-center text-sm text-slate-500">模块 <strong class="block text-lg text-slate-700">{{ resourceQuality?.summary?.moduleCount || 0 }}</strong></div>
+        <div class="flex-1 px-4 py-3 text-center text-sm text-slate-500">版本 <strong class="block text-lg text-slate-700">{{ resourceQuality?.summary?.trackedVersionCount || 0 }}</strong></div>
+        <div class="flex-1 px-4 py-3 text-center text-sm text-slate-500">规则 <strong class="block text-lg text-slate-700">{{ resourceQuality?.summary?.trackedRuleCount || 0 }}</strong></div>
+        <div class="flex-1 px-4 py-3 text-center text-sm text-slate-500">工具 <strong class="block text-lg text-slate-700">{{ resourceQuality?.summary?.trackedToolCount || 0 }}</strong></div>
       </div>
+
+      <!-- 三栏反馈明细 -->
       <div class="mt-5 grid gap-5 lg:grid-cols-3">
         <div>
-          <h3 class="text-sm font-semibold">优先修订规则</h3>
+          <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+            <span class="inline-block size-2 rounded-full bg-red-400" />
+            优先修订规则
+          </h3>
           <div class="mt-3 space-y-2">
-            <div v-for="item in resourceQuality?.rules?.slice(0, 6) || []" :key="`${item.module}:${item.code}`" class="rounded-lg bg-red-50 p-3 text-sm">
-              <strong>{{ item.code }}</strong>
+            <div v-for="item in resourceQuality?.rules?.slice(0, 6) || []" :key="`${item.module}:${item.code}`" class="rounded-lg border border-red-100 bg-red-50/60 p-3 text-sm">
+              <strong class="text-slate-800">{{ item.code }}</strong>
               <p class="mt-1 text-xs text-slate-500">{{ moduleLabel(item.module) }} · 归因 {{ item.attributionAccuracy }}/5 · {{ item.count }} 次反馈</p>
             </div>
             <p v-if="!resourceQuality?.rules?.length" class="py-6 text-center text-sm text-slate-400">暂无规则反馈</p>
           </div>
         </div>
         <div>
-          <h3 class="text-sm font-semibold">优先修订工具</h3>
+          <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+            <span class="inline-block size-2 rounded-full bg-amber-400" />
+            优先修订工具
+          </h3>
           <div class="mt-3 space-y-2">
-            <div v-for="item in resourceQuality?.tools?.slice(0, 6) || []" :key="`${item.module}:${item.code}`" class="rounded-lg bg-amber-50 p-3 text-sm">
-              <strong>{{ item.code }}</strong>
+            <div v-for="item in resourceQuality?.tools?.slice(0, 6) || []" :key="`${item.module}:${item.code}`" class="rounded-lg border border-amber-100 bg-amber-50/60 p-3 text-sm">
+              <strong class="text-slate-800">{{ item.code }}</strong>
               <p class="mt-1 text-xs text-slate-500">{{ moduleLabel(item.module) }} · 工具 {{ item.toolUsability }}/5 · 过难率 {{ Math.round((item.hardActionRate || 0) * 100) }}%</p>
             </div>
             <p v-if="!resourceQuality?.tools?.length" class="py-6 text-center text-sm text-slate-400">暂无工具反馈</p>
           </div>
         </div>
         <div>
-          <h3 class="text-sm font-semibold">版本质量</h3>
+          <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+            <span class="inline-block size-2 rounded-full bg-sky-400" />
+            版本质量
+          </h3>
           <div class="mt-3 space-y-2">
-            <div v-for="item in resourceQuality?.versions?.slice(0, 6) || []" :key="item.code" class="rounded-lg bg-sky-50 p-3 text-sm">
-              <strong>{{ item.version || item.code.slice(0, 8) }}</strong>
+            <div v-for="item in resourceQuality?.versions?.slice(0, 6) || []" :key="item.code" class="rounded-lg border border-sky-100 bg-sky-50/60 p-3 text-sm">
+              <strong class="text-slate-800">{{ item.version || item.code.slice(0, 8) }}</strong>
               <p class="mt-1 text-xs text-slate-500">{{ moduleLabel(item.module) }} · {{ libraryTypeLabel(item.libraryType) }} · {{ item.count }} 次反馈</p>
             </div>
             <p v-if="!resourceQuality?.versions?.length" class="py-6 text-center text-sm text-slate-400">暂无版本反馈</p>
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <div class="mt-6 grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-      <form class="panel space-y-5 p-6" @submit.prevent="previewImport">
-        <div>
-          <h2 class="text-xl font-semibold">上传标准资源</h2>
-          <p class="mt-1 text-sm text-slate-500">支持模板 Excel 或 JSON。先预检，再确认写入。</p>
-        </div>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="模块"><USelect v-model="form.module" :items="moduleOptions" class="w-full" /></UFormField>
-          <UFormField label="库类型"><USelect v-model="form.libraryType" :items="libraryTypeOptions" class="w-full" /></UFormField>
-          <UFormField label="范围"><USelect v-model="form.scope" :items="scopeOptions" class="w-full" /></UFormField>
-          <UFormField v-if="form.scope === 'school'" label="学校"><USelect v-model="form.schoolId" :items="dashboard?.schools?.map((school:any)=>({label:school.name,value:school.id})) || []" class="w-full" /></UFormField>
-        </div>
-        <UFormField label="已有资源库">
-          <USelect v-model="form.libraryId" :items="[{label:'自动创建或复用匹配资源库',value:AUTO_LIBRARY_ID}, ...matchingLibraries.map((item:any)=>({label:libraryLabel(item),value:item.id}))]" class="w-full" />
-        </UFormField>
-        <div v-if="form.libraryId === AUTO_LIBRARY_ID" class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="资源库名称"><UInput v-model="form.libraryName" class="w-full" /></UFormField>
-          <UFormField label="版本号"><UInput v-model="form.version" class="w-full" /></UFormField>
-          <UFormField class="sm:col-span-2" label="资源库说明"><UTextarea v-model="form.libraryDescription" :rows="2" class="w-full" /></UFormField>
-        </div>
-        <UFormField v-else label="版本号"><UInput v-model="form.version" class="w-full" /></UFormField>
-        <UFormField label="版本说明"><UInput v-model="form.notes" class="w-full" /></UFormField>
-        <UFormField label="资源文件" help="接受 .xlsx、.xls、.json；不得包含真实个人业务数据。">
-          <input type="file" accept=".xlsx,.xls,.json,application/json" class="block w-full rounded-lg border border-slate-200 bg-white p-3 text-sm" @change="onFileChange" />
-        </UFormField>
-        <div class="flex flex-wrap gap-4">
-          <UCheckbox v-model="form.confirmNoPersonalData" label="确认不含真实个人业务数据" />
-          <UCheckbox v-model="form.publish" label="预检通过后直接发布" />
-        </div>
-        <div class="flex gap-3">
-          <UButton type="submit" icon="i-lucide-shield-check" :disabled="!selectedFile || !form.confirmNoPersonalData || (form.libraryId === AUTO_LIBRARY_ID && matchingLibraries.length === 0 && form.libraryName.trim().length < 2)" :loading="pending">预检</UButton>
-          <UButton color="primary" variant="soft" icon="i-lucide-upload-cloud" :disabled="!previewResult?.validation?.ok" :loading="pending" @click="commitImport">确认导入</UButton>
-        </div>
-      </form>
-
-      <div class="panel p-6">
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <h2 class="text-xl font-semibold">预检结果</h2>
-            <p class="mt-1 text-sm text-slate-500">错误会阻断导入；警告允许导入但建议业务补齐。</p>
-          </div>
-          <UBadge v-if="previewResult" :color="previewResult.validation.ok ? (previewResult.validation.warnings?.length ? 'warning' : 'success') : 'error'" variant="soft">
-            {{ previewResult.validation.ok ? (previewResult.validation.warnings?.length ? '有警告' : '通过') : '失败' }}
-          </UBadge>
-        </div>
-        <div v-if="previewResult" class="mt-5 space-y-5">
-          <div class="grid gap-3 sm:grid-cols-3">
-            <div class="rounded-lg bg-slate-50 p-4 text-sm">量表 <strong class="block text-2xl">{{ previewResult.projection.assessmentCount }}</strong></div>
-            <div class="rounded-lg bg-slate-50 p-4 text-sm">规则 <strong class="block text-2xl">{{ previewResult.projection.attributionRuleCount }}</strong></div>
-            <div class="rounded-lg bg-slate-50 p-4 text-sm">工具 <strong class="block text-2xl">{{ previewResult.projection.toolCount }}</strong></div>
-          </div>
-          <!-- V2: 新增类型计数 -->
-          <div v-if="previewResult.projection.templateCount || previewResult.projection.routeCount" class="mt-3 grid gap-3 sm:grid-cols-2">
-            <div v-if="previewResult.projection.templateCount" class="rounded-lg bg-indigo-50 p-4 text-sm">
-              输出模板 <strong class="block text-2xl">{{ previewResult.projection.templateCount }}</strong>
-            </div>
-            <div v-if="previewResult.projection.routeCount" class="rounded-lg bg-sky-50 p-4 text-sm">
-              关键词路由 <strong class="block text-2xl">{{ previewResult.projection.routeCount }}</strong>
-            </div>
-          </div>
-          <!-- V2: 校验错误分组展示 -->
-          <div v-if="previewResult.validation.v2Metrics" class="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-            <p class="font-medium">V2 质量指标</p>
-            <div class="mt-2 grid gap-2 sm:grid-cols-3">
-              <span>维度定义覆盖率：<strong>{{ previewResult.validation.v2Metrics.dimensionDefCoverage ?? '-' }}</strong></span>
-              <span>红线覆盖：<strong>{{ previewResult.validation.v2Metrics.redLineCount ?? '-' }} 条</strong></span>
-              <span>结构化步骤：<strong>{{ previewResult.validation.v2Metrics.structuredStepRatio ?? '-' }}</strong></span>
-            </div>
-          </div>
-          <div v-if="previewResult.validation.errors?.length" class="rounded-lg border border-red-200 bg-red-50 p-4">
-            <p class="text-sm font-semibold text-red-700">错误</p>
-            <p v-for="issue in previewResult.validation.errors" :key="`${issue.path}:${issue.message}`" class="mt-2 text-xs text-red-700">{{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}</p>
-          </div>
-          <div v-if="previewResult.validation.warnings?.length" class="rounded-lg border border-amber-200 bg-amber-50 p-4">
-            <p class="text-sm font-semibold text-amber-700">警告</p>
-            <p v-for="issue in previewResult.validation.warnings.slice(0, 12)" :key="`${issue.path}:${issue.message}`" class="mt-2 text-xs text-amber-700">{{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}</p>
-          </div>
-          <pre class="max-h-72 overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100"><code>{{ JSON.stringify(previewResult.preview, null, 2) }}</code></pre>
-        </div>
-        <div v-else class="mt-5 rounded-lg border border-dashed border-slate-200 p-10 text-center text-sm text-slate-400">上传文件后先执行预检。</div>
+    <!-- ===== 导入资源按钮（统计栏右侧） ===== -->
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-semibold text-slate-800">资源库与版本</h2>
+      <div class="flex items-center gap-2">
+        <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-refresh-cw" @click="() => refreshResources()">刷新</UButton>
+        <UButton color="primary" size="xs" icon="i-lucide-upload-cloud" @click="() => { importOpen = true }">导入资源</UButton>
       </div>
     </div>
 
-    <div class="mt-6 grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
-      <div class="panel p-6">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="text-xl font-semibold">资源库</h2>
-          <UButton color="neutral" variant="soft" size="xs" icon="i-lucide-refresh-cw" @click="() => refreshResources()">刷新</UButton>
+    <!-- ===== 导入 Slideover ===== -->
+    <USlideover v-model:open="importOpen" title="导入资源" description="上传 Excel 或 JSON 模板，先预检，再确认写入。">
+      <template #body>
+        <div class="mb-5 flex items-center gap-3 rounded-lg border border-primary-100 bg-primary-50/60 p-3">
+          <UIcon name="i-lucide-file-down" class="size-5 shrink-0 text-primary-500" />
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium text-primary-800">{{ libraryTypeLabel(form.libraryType) }}填写模板</p>
+            <p class="text-xs text-primary-500">下载 {{ libraryTypeLabel(form.libraryType) }} 专用模板，填写后上传。</p>
+          </div>
+          <UButton
+            as="a"
+            :href="`/templates/${form.libraryType}.xlsx`"
+            :download="`${libraryTypeLabel(form.libraryType)}_填写模板.xlsx`"
+            color="primary"
+            variant="soft"
+            size="xs"
+            icon="i-lucide-download"
+          >下载</UButton>
         </div>
-        <div class="mt-4 space-y-3">
-          <button v-for="library in resourceData?.libraries || []" :key="library.id" type="button" class="w-full rounded-lg border p-4 text-left transition" :class="form.libraryId === library.id ? 'border-indigo-300 bg-indigo-50' : 'border-slate-100 hover:bg-slate-50'" @click="Object.assign(form, { module: library.module, libraryType: library.libraryType, scope: library.scope, schoolId: library.schoolId || '', libraryId: library.id })">
-            <div class="flex items-start justify-between gap-3">
-              <div><strong>{{ moduleLabel(library.module) }} · {{ libraryTypeLabel(library.libraryType) }}</strong><p class="mt-1 text-xs text-slate-400">{{ resourceScopeLabel(library.scope) }}</p></div>
-              <UBadge color="neutral" variant="soft">{{ allVersions.filter((version:any)=>version.libraryId===library.id).length }} 版</UBadge>
-            </div>
-          </button>
-          <p v-if="!resourceData?.libraries?.length" class="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">暂无资源库。新版业务库导入后会显示在这里。</p>
-        </div>
-      </div>
 
-      <div class="panel p-6">
-        <h2 class="text-xl font-semibold">版本管理</h2>
-        <div class="mt-4 overflow-x-auto">
-          <table class="w-full text-left text-sm">
-            <thead class="text-xs text-slate-400"><tr><th class="py-3">版本</th><th>状态</th><th>更新时间</th><th class="text-right">操作</th></tr></thead>
-            <tbody>
-              <tr v-for="version in selectedLibraryVersions" :key="version.id" class="border-t border-slate-100">
-                <td class="py-4"><strong>{{ version.version }}</strong><p class="mt-1 max-w-sm truncate text-xs text-slate-400">{{ version.notes || '暂无说明' }}</p></td>
-                <td><UBadge :color="resourceStatusColor(version.status)" variant="soft">{{ resourceStatusLabel(version.status) }}</UBadge></td>
-                <td class="text-xs text-slate-400">{{ new Date(version.updatedAt).toLocaleString('zh-CN') }}</td>
-                <td class="space-x-1 text-right">
-                  <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-pencil" @click="() => { navigateTo(`/platform-admin/resources/edit/${version.id}`) }">编辑</UButton>
-                  <UButton v-if="version.status !== 'published'" size="xs" @click="versionAction(version.id, 'publish')">发布</UButton>
-                  <UButton v-if="version.status === 'published'" size="xs" color="neutral" variant="soft" @click="versionAction(version.id, 'retire')">停用</UButton>
-                  <UButton v-if="version.status === 'retired'" size="xs" color="neutral" variant="soft" @click="versionAction(version.id, 'rollback')">回滚</UButton>
+        <form class="space-y-5" @submit.prevent="previewImport">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <UFormField label="模块"><USelect v-model="form.module" :items="moduleOptions" class="w-full" /></UFormField>
+            <UFormField label="库类型"><USelect v-model="form.libraryType" :items="libraryTypeOptions" class="w-full" /></UFormField>
+            <UFormField label="范围"><USelect v-model="form.scope" :items="scopeOptions" class="w-full" /></UFormField>
+            <UFormField v-if="form.scope === 'school'" label="学校"><USelect v-model="form.schoolId" :items="dashboard?.schools?.map((school:any)=>({label:school.name,value:school.id})) || []" class="w-full" /></UFormField>
+          </div>
+          <UFormField label="已有资源库">
+            <USelect v-model="form.libraryId" :items="[{label:'自动创建或复用匹配资源库',value:AUTO_LIBRARY_ID}, ...matchingLibraries.map((item:any)=>({label:libraryLabel(item),value:item.id}))]" class="w-full" />
+          </UFormField>
+          <div v-if="form.libraryId === AUTO_LIBRARY_ID" class="grid gap-4 sm:grid-cols-2">
+            <UFormField label="资源库名称"><UInput v-model="form.libraryName" class="w-full" /></UFormField>
+            <UFormField label="版本号"><UInput v-model="form.version" class="w-full" /></UFormField>
+            <UFormField class="sm:col-span-2" label="资源库说明"><UTextarea v-model="form.libraryDescription" :rows="2" class="w-full" /></UFormField>
+          </div>
+          <UFormField v-else label="版本号"><UInput v-model="form.version" class="w-full" /></UFormField>
+          <UFormField label="版本说明"><UInput v-model="form.notes" class="w-full" /></UFormField>
+          <UFormField label="资源文件" help="接受 .xlsx、.xls、.json；不得包含真实个人业务数据。">
+            <input type="file" accept=".xlsx,.xls,.json,application/json" class="block w-full rounded-lg border border-slate-200 bg-white p-3 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200" @change="onFileChange" />
+          </UFormField>
+          <div class="flex flex-wrap gap-4">
+            <UCheckbox v-model="form.confirmNoPersonalData" label="确认不含真实个人业务数据" />
+            <UCheckbox v-model="form.publish" label="预检通过后直接发布" />
+          </div>
+          <div class="flex gap-3">
+            <UButton type="submit" icon="i-lucide-shield-check" :disabled="!selectedFile || !form.confirmNoPersonalData || (form.libraryId === AUTO_LIBRARY_ID && matchingLibraries.length === 0 && form.libraryName.trim().length < 2)" :loading="pending">预检</UButton>
+            <UButton color="primary" variant="soft" icon="i-lucide-upload-cloud" :disabled="!previewResult?.validation?.ok" :loading="pending" @click="commitImport">确认导入</UButton>
+          </div>
+        </form>
+
+        <!-- 预检结果 -->
+        <div v-if="previewResult" class="mt-6 space-y-4 border-t border-slate-100 pt-6">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-slate-700">预检结果</h3>
+            <UBadge :color="previewResult.validation.ok ? (previewResult.validation.warnings?.length ? 'warning' : 'success') : 'error'" variant="soft" size="xs">
+              {{ previewResult.validation.ok ? (previewResult.validation.warnings?.length ? '有警告' : '通过') : '失败' }}
+            </UBadge>
+          </div>
+          <div class="flex divide-x divide-slate-100 rounded-lg bg-slate-50/70">
+            <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">量表 <strong class="block text-base text-slate-700">{{ previewResult.projection.assessmentCount }}</strong></div>
+            <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">规则 <strong class="block text-base text-slate-700">{{ previewResult.projection.attributionRuleCount }}</strong></div>
+            <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">工具 <strong class="block text-base text-slate-700">{{ previewResult.projection.toolCount }}</strong></div>
+          </div>
+          <div v-if="previewResult.projection.templateCount || previewResult.projection.routeCount" class="flex divide-x divide-slate-100 rounded-lg bg-slate-50/70">
+            <div v-if="previewResult.projection.templateCount" class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">输出模板 <strong class="block text-base text-indigo-600">{{ previewResult.projection.templateCount }}</strong></div>
+            <div v-if="previewResult.projection.routeCount" class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">关键词路由 <strong class="block text-base text-sky-600">{{ previewResult.projection.routeCount }}</strong></div>
+          </div>
+          <div v-if="previewResult.validation.errors?.length" class="rounded-lg border border-red-200 bg-red-50 p-3">
+            <p class="text-xs font-semibold text-red-700">错误</p>
+            <p v-for="issue in previewResult.validation.errors" :key="`${issue.path}:${issue.message}`" class="mt-1.5 text-xs text-red-700">{{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}</p>
+          </div>
+          <div v-if="previewResult.validation.warnings?.length" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p class="text-xs font-semibold text-amber-700">警告</p>
+            <p v-for="issue in previewResult.validation.warnings.slice(0, 12)" :key="`${issue.path}:${issue.message}`" class="mt-1.5 text-xs text-amber-700">{{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}</p>
+          </div>
+        </div>
+      </template>
+    </USlideover>
+
+    <!-- ===== 资源库与版本（合并表格） ===== -->
+    <div class="rounded-xl border border-slate-100 bg-white">
+      <div class="overflow-x-auto p-6 pt-4">
+        <table class="w-full text-left text-sm">
+          <thead class="border-b border-slate-100 text-xs font-medium text-slate-400">
+            <tr>
+              <th class="w-10 py-3" />
+              <th class="py-3 pr-4">模块</th>
+              <th class="pr-4">类型</th>
+              <th class="pr-4">范围</th>
+              <th class="pr-4 text-right">版本数</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="library in resourceData?.libraries || []" :key="library.id">
+              <!-- 库行 -->
+              <tr
+                class="cursor-pointer border-b border-slate-50 transition hover:bg-slate-50/60"
+                :class="form.libraryId === library.id ? 'bg-indigo-50/70' : ''"
+                @click="Object.assign(form, { module: library.module, libraryType: library.libraryType, scope: library.scope, schoolId: library.schoolId || '', libraryId: library.id }); expandedLibrary = expandedLibrary === library.id ? null : library.id"
+              >
+                <td class="py-3 text-center text-slate-400">
+                  <UIcon
+                    :name="expandedLibrary === library.id ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+                    class="size-4 transition-transform"
+                  />
+                </td>
+                <td class="py-3 pr-4"><strong class="text-slate-800">{{ moduleLabel(library.module) }}</strong></td>
+                <td class="pr-4 text-slate-600">{{ libraryTypeLabel(library.libraryType) }}</td>
+                <td class="pr-4 text-slate-600">{{ resourceScopeLabel(library.scope) }}</td>
+                <td class="pr-4 text-right">
+                  <UBadge color="neutral" variant="soft" size="sm">{{ allVersions.filter((v:any)=>v.libraryId===library.id).length }} 版</UBadge>
                 </td>
               </tr>
-            </tbody>
-          </table>
-          <p v-if="!selectedLibraryVersions.length" class="py-12 text-center text-sm text-slate-400">请选择资源库查看版本。</p>
-        </div>
+              <!-- 版本子行 -->
+              <template v-if="expandedLibrary === library.id">
+                <tr v-for="version in allVersions.filter((v:any)=>v.libraryId===library.id)" :key="version.id" class="border-b border-slate-50 bg-slate-50/40">
+                  <td class="py-2.5" />
+                  <td class="py-2.5 pr-4 text-xs text-slate-500" colspan="4">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="flex items-center gap-4">
+                        <div>
+                          <span class="font-medium text-slate-700">{{ version.version }}</span>
+                          <span class="ml-2 inline-flex">
+                            <UBadge :color="resourceStatusColor(version.status)" variant="soft" size="sm">{{ resourceStatusLabel(version.status) }}</UBadge>
+                          </span>
+                        </div>
+                        <span v-if="version.notes" class="max-w-xs truncate text-slate-400">{{ version.notes }}</span>
+                        <span class="text-slate-400">{{ new Date(version.updatedAt).toLocaleString('zh-CN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) }}</span>
+                      </div>
+                      <div class="flex shrink-0 gap-1">
+                        <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-pencil" @click.stop="() => { navigateTo(`/platform-admin/resources/edit/${version.id}`) }">编辑</UButton>
+                        <UButton v-if="version.status !== 'published'" size="xs" variant="soft" @click.stop="versionAction(version.id, 'publish')">发布</UButton>
+                        <UButton v-if="version.status === 'published'" size="xs" color="neutral" variant="soft" @click.stop="versionAction(version.id, 'retire')">停用</UButton>
+                        <UButton v-if="version.status === 'retired'" size="xs" color="neutral" variant="soft" @click.stop="versionAction(version.id, 'rollback')">回滚</UButton>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="allVersions.filter((v:any)=>v.libraryId===library.id).length === 0">
+                  <td class="py-6 text-center text-xs text-slate-400" colspan="5">暂无版本</td>
+                </tr>
+              </template>
+            </template>
+          </tbody>
+        </table>
+        <p v-if="!resourceData?.libraries?.length" class="py-12 text-center text-sm text-slate-400">暂无资源库。新版业务库导入后会显示在这里。</p>
       </div>
     </div>
 
@@ -391,14 +454,14 @@ function fileToBase64(file: File) {
     </UModal>
     <UModal v-model:open="projectionOpen" title="结构化投影">
       <template #body>
-        <div class="mb-4 grid gap-3 sm:grid-cols-3">
-          <div class="rounded-lg bg-slate-50 p-4 text-sm">量表 <strong class="block text-2xl">{{ projectionResult?.summary?.assessmentCount || 0 }}</strong></div>
-          <div class="rounded-lg bg-slate-50 p-4 text-sm">规则 <strong class="block text-2xl">{{ projectionResult?.summary?.attributionRuleCount || 0 }}</strong></div>
-          <div class="rounded-lg bg-slate-50 p-4 text-sm">工具 <strong class="block text-2xl">{{ projectionResult?.summary?.toolCount || 0 }}</strong></div>
+        <div class="mb-4 flex divide-x divide-slate-100 rounded-lg bg-slate-50/70">
+          <div class="flex-1 px-4 py-3 text-center text-sm text-slate-500">量表 <strong class="block text-lg text-slate-700">{{ projectionResult?.summary?.assessmentCount || 0 }}</strong></div>
+          <div class="flex-1 px-4 py-3 text-center text-sm text-slate-500">规则 <strong class="block text-lg text-slate-700">{{ projectionResult?.summary?.attributionRuleCount || 0 }}</strong></div>
+          <div class="flex-1 px-4 py-3 text-center text-sm text-slate-500">工具 <strong class="block text-lg text-slate-700">{{ projectionResult?.summary?.toolCount || 0 }}</strong></div>
         </div>
-        <div v-if="projectionResult?.summary?.templateCount || projectionResult?.summary?.routeCount" class="mb-4 grid gap-3 sm:grid-cols-2">
-          <div v-if="projectionResult?.summary?.templateCount" class="rounded-lg bg-indigo-50 p-4 text-sm">输出模板 <strong class="block text-2xl">{{ projectionResult.summary.templateCount }}</strong></div>
-          <div v-if="projectionResult?.summary?.routeCount" class="rounded-lg bg-sky-50 p-4 text-sm">关键词路由 <strong class="block text-2xl">{{ projectionResult.summary.routeCount }}</strong></div>
+        <div v-if="projectionResult?.summary?.templateCount || projectionResult?.summary?.routeCount" class="mb-4 flex divide-x divide-slate-100 rounded-lg bg-slate-50/70">
+          <div v-if="projectionResult?.summary?.templateCount" class="flex-1 px-4 py-3 text-center text-sm text-slate-500">输出模板 <strong class="block text-lg text-indigo-600">{{ projectionResult.summary.templateCount }}</strong></div>
+          <div v-if="projectionResult?.summary?.routeCount" class="flex-1 px-4 py-3 text-center text-sm text-slate-500">关键词路由 <strong class="block text-lg text-sky-600">{{ projectionResult.summary.routeCount }}</strong></div>
         </div>
         <pre class="max-h-[60vh] overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100"><code>{{ JSON.stringify(projectionResult, null, 2) }}</code></pre>
       </template>

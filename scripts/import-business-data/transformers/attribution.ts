@@ -65,6 +65,10 @@ function collectBranches(sheet: SheetData | undefined, module: ModuleId) {
         escalationTarget: extractValue(row, ['升级目标']),
         reEvaluationTrigger: extractValue(row, ['复评触发条件']),
         sourceRef: extractValue(row, ['手册出处']),
+        // V2 模板补齐
+        assessmentCode: extractValue(row, ['依据量表编码']),
+        levelName: extractValue(row, ['等级中文名']),
+        resultDescription: extractValue(row, ['结果说明']),
       }
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item))

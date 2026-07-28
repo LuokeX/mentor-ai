@@ -141,6 +141,13 @@
       "when": 1785131502939,
       "tag": "0019_lean_nightcrawler",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785201920736,
+      "tag": "0020_sudden_trauma",
+      "breakpoints": true
     }
   ]
 }

@@ -330,6 +330,8 @@ export function validateModuleResourcePayload(input: {
     }
   }
 
+  // V2 新增: knowledge 校验已独立为知识库系统，不通过三库运营台校验
+
   return {
     ok: !issues.some(issue => issue.severity === 'error'),
     issueCount: issues.length,
@@ -401,6 +403,7 @@ export function previewModuleResourcePayload(input: {
       }))
     }
   }
+  // knowledge 已独立为知识库系统
   const parsed = attributionConfigSchema.safeParse(input.payload)
   if (!parsed.success) return { type: 'attribution', error: '归因库结构无效，无法预览' }
   // 必须针对现行量表求值：用代码兜底量表预览会在题目 id 不一致时给出与线上不同的分级。

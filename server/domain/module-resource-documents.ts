@@ -5,6 +5,11 @@ export interface ModuleResourceChunkInput {
   heading: string | null
   content: string
   tokenEstimate: number
+  // 从文档级透传到每个 chunk，用于检索过滤和结果展示
+  documentTitle?: string
+  sourceType?: string
+  sourceRef?: string
+  tags?: string[]
 }
 
 export function normalizeModuleResourceContent(value: string) {
@@ -15,7 +20,7 @@ export function checksumModuleResourceContent(value: string) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-export function chunkModuleResourceDocument(raw: string, maxChars = 1200): ModuleResourceChunkInput[] {
+export function chunkModuleResourceDocument(raw: string, maxChars = 1300): ModuleResourceChunkInput[] {
   const content = normalizeModuleResourceContent(raw)
   if (!content) return []
   const paragraphs = content.split(/\n{2,}/).map(item => item.trim()).filter(Boolean)

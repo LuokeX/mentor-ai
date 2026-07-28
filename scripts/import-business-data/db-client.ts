@@ -285,7 +285,7 @@ export async function createSearchableDocument(input: {
   }
 }
 
-export function chunkText(content: string, maxChars = 1200) {
+export function chunkText(content: string, maxChars = 1300) {
   const paragraphs = content.split(/\n{2,}/).map(item => item.trim()).filter(Boolean)
   const chunks: Array<{ chunkIndex: number; heading: string | null; content: string; tokenEstimate: number }> = []
   let heading: string | null = null

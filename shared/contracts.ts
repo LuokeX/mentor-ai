@@ -55,7 +55,10 @@ export const moduleResourceDocumentImportSchemaBase = z.object({
   originalFilename: z.string().trim().max(260).optional(),
   mimeType: z.string().trim().max(120).optional(),
   content: z.string().min(10).max(1_000_000),
-  confirmNoPersonalData: z.literal(true)
+  confirmNoPersonalData: z.boolean().optional().default(true),
+  module: moduleIdSchema.optional(),
+  tags: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+  sourceRef: z.string().trim().max(500).optional()
 })
 
 export const moduleResourceLibraryCreateSchema = z.object({
@@ -84,7 +87,7 @@ export const moduleResourceVersionCreateSchema = z.object({
 export const moduleResourceVersionActionSchema = z.object({ action: z.enum(['publish', 'retire', 'rollback']) })
 
 export const moduleResourceDocumentImportSchema = moduleResourceDocumentImportSchemaBase.extend({
-  versionId: z.string().uuid()
+  versionId: z.string().uuid().optional()
 })
 
 export const moduleResourceFileImportSchema = z.object({
@@ -173,10 +176,15 @@ export const toolRxEntrySchema = z.object({
   collaborativeToolCodes: z.array(z.string().trim().min(1).max(40)).optional(),
   crossModuleTags: z.array(z.string().trim().min(1).max(80)).optional(),
   sourceRef: z.string().trim().max(500).optional(),
+  // V2 模板补齐
+  applicableSchoolSection: z.string().trim().max(40).optional(),
+  reAssessmentIntervalDays: z.number().int().min(0).optional(),
+  contraindicationNote: z.string().trim().max(2000).optional(),
+  toolVersion: z.string().trim().max(40).optional(),
   structuredSteps: z.array(toolStructuredStepSchema).optional(),
   contraindicationRules: z.array(toolContraindicationRuleSchema).optional()
 })
-export const toolLibraryPayloadSchema = z.object({ tools: z.array(toolRxEntrySchema).min(1) })
+export const toolLibraryPayloadSchema = z.object({ tools: z.array(toolRxEntrySchema).min(1) }).passthrough()
 export type ToolRxEntry = z.infer<typeof toolRxEntrySchema>
 export type ToolStructuredStep = z.infer<typeof toolStructuredStepSchema>
 export type ToolContraindicationRule = z.infer<typeof toolContraindicationRuleSchema>
@@ -192,7 +200,7 @@ export const outputTemplateEntrySchema = z.object({
   placeholders: z.string().trim().max(2000).optional(),  // 占位符说明
   order: z.number().int().min(0)
 })
-export const outputTemplateLibraryPayloadSchema = z.object({ templates: z.array(outputTemplateEntrySchema).min(1) })
+export const outputTemplateLibraryPayloadSchema = z.object({ templates: z.array(outputTemplateEntrySchema).min(1) }).passthrough()
 export type OutputTemplateEntry = z.infer<typeof outputTemplateEntrySchema>
 
 // ---- V2 新增: 关键词-路由 (keyword_route) ----
@@ -214,7 +222,7 @@ export const keywordRouteEntrySchema = z.object({
   temporalValidity: z.enum(['always', 'pre_term', 'pre_exam', 'holiday']).default('always'),
   description: z.string().trim().max(2000).optional()        // 场景描述
 })
-export const keywordRouteLibraryPayloadSchema = z.object({ routes: z.array(keywordRouteEntrySchema).min(1) })
+export const keywordRouteLibraryPayloadSchema = z.object({ routes: z.array(keywordRouteEntrySchema).min(1) }).passthrough()
 export type KeywordRouteEntry = z.infer<typeof keywordRouteEntrySchema>
 
 // ---- 归因规则库 (attribution) ----
@@ -234,7 +242,11 @@ export const attributionBranchSchema = z.object({
   escalationCondition: z.string().trim().max(1000).optional(),
   escalationTarget: z.string().trim().max(200).optional(),
   reEvaluationTrigger: z.string().trim().max(1000).optional(),
-  sourceRef: z.string().trim().max(500).optional()
+  sourceRef: z.string().trim().max(500).optional(),
+  // V2 模板补齐
+  assessmentCode: z.string().trim().max(40).optional(),
+  levelName: z.string().trim().max(80).optional(),
+  resultDescription: z.string().trim().max(2000).optional()
 })
 
 // V2 字段映射: ⑤b 归因-计算变量 + ⑤c 归因-分级规则 + ⑥ 归因-红线熔断
@@ -268,7 +280,7 @@ export const attributionConfigSchema = z.object({
   crisis: z.object({ when: z.string().trim().min(1), blocked: z.boolean() }).optional(),
   // V2 新增: 红线熔断规则列表
   redLines: z.array(redLineRuleSchema).default([])
-})
+}).passthrough()
 export type AttributionConfig = z.infer<typeof attributionConfigSchema>
 
 export const moduleToolPayloadSchema = z.object({
@@ -496,6 +508,7 @@ export interface AssessmentPayload {
   applicabilityPreconditions?: string
   contraindications?: string
   postAssessmentActions?: string
+  applicableSchoolSection?: string  // 适用学部
   // ---- V2 新增: 维度定义 ----
   dimensionDefs?: AssessmentDimensionDef[]
 }
@@ -508,6 +521,7 @@ export interface RedLineConfig {
   condition: string
   description: string
   scope: 'instrument' | 'module' | 'system'
+  requiredActions: string
   actions: string[]
   recoveryCondition?: string
   responsibleRole?: string
@@ -538,6 +552,9 @@ export interface RuleConfig {
     escalationTarget?: string
     reEvaluationTrigger?: string
     sourceRef?: string
+    assessmentCode?: string
+    levelName?: string
+    resultDescription?: string
   }>
   // 输出模板
   actions: Array<{ title: string, detail: string, status: 'pending' }>

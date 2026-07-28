@@ -4,13 +4,17 @@ import { useDb, schema } from '../../../utils/db'
 import { decryptSensitive, encryptSensitive } from '../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../domain/safety'
 import { routeWithDeepSeek, semanticSafetySignals, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
+import type { KnowledgeCitation } from '../../../integrations/deepseek'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
 import { composeClarificationSummaryHistory } from '../../../domain/chat-clarification'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
 import { trackProductEvent } from '../../../domain/product-events'
+import { embedModuleResourceQuery } from '../../../integrations/ollama'
+import { searchKnowledgeChunks } from '../../../domain/module-resource-knowledge-search'
 import { sendStream } from 'h3'
 import { and, desc, eq } from 'drizzle-orm'
 import { moduleMeta } from '../../../../shared/assessments'
+import type { ModuleId } from '../../../../shared/contracts'
 
 const CLARIFICATION_DONE_SIGNAL = '[DONE]'
 const MAX_CLARIFICATION_ROUNDS = 3
@@ -129,6 +133,34 @@ export default defineEventHandler(async (event) => {
         emit(controller, 'answer', answerPayload)
       }
 
+      // 知识库检索辅助：embed 用户消息 → pgvector 余弦搜索 → KnowledgeCitation[]
+      // embedding 不可用或无结果时降级为 []
+      const fetchKnowledgeCitations = async (query: string, module?: ModuleId): Promise<KnowledgeCitation[]> => {
+        try {
+          const embedding = await embedModuleResourceQuery(event, query)
+          if (!embedding || embedding.length === 0) return []
+          const results = await searchKnowledgeChunks(db, embedding, { module, minSimilarity: 0.65, limit: 5 })
+          return results.map(r => ({
+            chunkId: r.chunkId,
+            documentTitle: r.documentTitle,
+            heading: r.heading,
+            excerpt: r.excerpt,
+            knowledgeBase: r.libraryType,
+            module: r.module as ModuleId,
+            libraryType: r.libraryType,
+          }))
+        } catch {
+          return []
+        }
+      }
+
+      // 从 clarificationState.moduleScores 中提取最高分模块作为知识检索过滤条件
+      const topModuleFromScores = (scores: Record<string, number>): ModuleId | undefined => {
+        const entries = Object.entries(scores)
+        if (entries.length === 0) return undefined
+        return entries.reduce((a, b) => (a[1] >= b[1] ? a : b))[0] as ModuleId
+      }
+
       try {
         emit(controller, 'ack', {
           sessionId: ownedSessionId,
@@ -164,13 +196,15 @@ export default defineEventHandler(async (event) => {
               currentMessage: body.message,
               includeCurrentMessage: false
             })
+            const topModule = topModuleFromScores(clarificationState.moduleScores)
+            const citations = await fetchKnowledgeCitations(body.message, topModule)
             emit(controller, 'answer_start', { mode: 'deepseek' })
             const summary = await streamClarificationSummary(event, {
               schoolId: user.schoolId!,
               ownerUserId: user.id,
               sessionId: ownedSessionId,
               history: combinedHistory,
-              citations: [],
+              citations,
               lastModuleScores: clarificationState.moduleScores,
               onDelta: text => emit(controller, 'answer_delta', { text })
             })
@@ -206,13 +240,15 @@ export default defineEventHandler(async (event) => {
               currentMessage: body.message,
               includeCurrentMessage: true
             })
+            const topModule = topModuleFromScores(clarificationState.moduleScores)
+            const citations = await fetchKnowledgeCitations(body.message, topModule)
             emit(controller, 'answer_start', { mode: 'deepseek' })
             const summary = await streamClarificationSummary(event, {
               schoolId: user.schoolId!,
               ownerUserId: user.id,
               sessionId: ownedSessionId,
               history: combinedHistory,
-              citations: [],
+              citations,
               lastModuleScores: clarificationState.moduleScores,
               onDelta: text => emit(controller, 'answer_delta', { text })
             })
@@ -236,6 +272,8 @@ export default defineEventHandler(async (event) => {
           }
 
           const combinedHistory = [...entityMemory, ...history]
+          const topModule = topModuleFromScores(clarificationState.moduleScores)
+          const citations = await fetchKnowledgeCitations(body.message, topModule)
           emit(controller, 'answer_start', { mode: 'deepseek' })
           const result = await streamClarificationRound(event, {
             schoolId: user.schoolId!,
@@ -243,7 +281,7 @@ export default defineEventHandler(async (event) => {
             sessionId: ownedSessionId,
             message: body.message,
             history: combinedHistory,
-            citations: [],
+            citations,
             clarificationRound: nextRound,
             previousModuleScores: clarificationState.moduleScores,
             onDelta: text => emit(controller, 'answer_delta', { text })
@@ -279,6 +317,10 @@ export default defineEventHandler(async (event) => {
         // ---- 分诊流程：AI 只推荐模块，不生成工具、方案或知识库引用 ----
         const route = await routeWithDeepSeek(event, body.message)
         const triageMode = governance.effectiveMode === 'local' || !useRuntimeConfig(event).deepseekApiKey ? 'local_fallback' : 'deepseek'
+
+        // 知识库检索：基于用户消息 + 路由确定的模块检索相关文档
+        const triageCitations = await fetchKnowledgeCitations(body.message, route.primaryModule)
+
         const contextText = businessContext && !body.withoutRecord ? `已关联当前对象“${businessContext.label}”。` : '本次分诊未纳入具体学生、班级或家长档案。'
         const prepItems = [
           '准备最近一周或最近一次事件的具体事实。',
@@ -286,7 +328,10 @@ export default defineEventHandler(async (event) => {
           '若涉及自伤、伤人、虐待、失联等红线，请立即联系校内安全/心理支持。'
         ]
         const moduleTitle = moduleMeta[route.primaryModule]?.title || route.primaryModule
-        const answer = `${contextText} 我建议先进入「${moduleTitle}」模块完成评估。${route.rationale} 进入前请先准备：${prepItems.join('；')}`
+        const knowledgeSuffix = triageCitations.length > 0
+          ? ` 以下已发布资源可作参考：${triageCitations.slice(0, 3).map(c => `《${c.documentTitle}》${c.heading ? `"${c.heading}"` : ''}`).join('、')}。`
+          : ''
+        const answer = `${contextText} 我建议先进入「${moduleTitle}」模块完成评估。${route.rationale}${knowledgeSuffix} 进入前请先准备：${prepItems.join('；')}`
         emit(controller, 'answer_start', { mode: triageMode, suggestedActions: [] })
         emit(controller, 'answer_delta', { text: answer })
         const [decision] = await db.insert(schema.routingDecisions).values({
@@ -306,6 +351,7 @@ export default defineEventHandler(async (event) => {
           classId: businessContext?.type === 'class' ? businessContext.id : undefined,
           guardianId: businessContext?.type === 'guardian' ? businessContext.id : undefined,
           suggestedActions: [{ label: '进入建议模块完成量表评估', type: 'open_module', module: route.primaryModule }],
+          citations: triageCitations.length > 0 ? triageCitations.slice(0, 5) : undefined,
           prepItems,
           route: { primaryModule: route.primaryModule, secondaryModules: route.secondaryModules, confidence: route.confidence, rationale: route.rationale, decisionId: decision.id }
         }

@@ -13,7 +13,9 @@ const labels = {
   libraryType: {
     assessment: '量表库',
     attribution: '归因库',
-    tool: '工具库'
+    tool: '工具库',
+    output_template: '输出模板',
+    keyword_route: '关键词路由'
   },
   resourceScope: {
     global: '平台默认',

@@ -9,7 +9,7 @@ import type { AssistantBusinessContext } from '../domain/assistant-context'
 import { createTemplateAssessmentReport, validateAssessmentReport } from '../domain/reports'
 import { schema, useDb } from '../utils/db'
 
-interface KnowledgeCitation {
+export interface KnowledgeCitation {
   chunkId: string
   documentTitle: string
   heading?: string | null

@@ -4,13 +4,10 @@ definePageMeta({ layout: 'default' })
 const route = useRoute()
 const versionId = String(route.params.versionId)
 const toast = useToast()
-const { moduleLabel, libraryTypeLabel, actionStatusLabel } = useDisplayLabels()
+const { moduleLabel, libraryTypeLabel } = useDisplayLabels()
 
 const { data: resourceData, refresh: refreshResources } = await useFetch<any>('/api/v1/platform-admin/module-resources')
 const { refresh: refreshResourceQuality } = await useFetch<any>('/api/v1/platform-admin/resource-quality')
-
-const levelOptions = ['success', 'info', 'warning', 'orange', 'error', 'purple', 'survival', 'norming', 'operating', 'mature', 'L1', 'L2', 'L3', 'E']
-const actionStatusOptions = ['pending', 'in_progress', 'done'].map(value => ({ label: actionStatusLabel(value), value }))
 
 // ---- 查找版本和库 ----
 const version = computed(() => (resourceData.value?.versions || []).find((v: any) => v.id === versionId))
@@ -19,8 +16,41 @@ const library = computed(() => {
   return (resourceData.value?.libraries || []).find((l: any) => l.id === version.value.libraryId)
 })
 
+// ---- 常量和选项 ----
+const moduleOptions = [
+  { label: '自我成长', value: 'self_growth' },
+  { label: '班级系统', value: 'class_system' },
+  { label: '家校沟通', value: 'home_school' },
+  { label: '学生个案', value: 'student_case' },
+  { label: '学习问题', value: 'learning_problem' }
+]
+const schoolSectionOptions = ['all', 'primary', 'junior', 'senior', 'repeat']
+const triggerMethodOptions = ['manual', 'auto', 'scheduled']
+const frequencyOptions = ['once', 'daily', 'weekly', 'monthly', 'per_case', 'semester']
+const visibilityOptions = ['teacher_only', 'teacher_and_student', 'psychologist']
+const calcMethodOptions = ['mean', 'sum', 'weighted', 'count']
+const matchModeOptions = ['exact', 'fuzzy', 'regex']
+const temporalValidityOptions = ['always', 'pre_term', 'pre_exam', 'holiday']
+const templateTypeOptions = ['summary', 'conclusion', 'attribution', 'goal', 'action', 'tool', 'caution', 'review']
+const evidenceLevelOptions = [
+  { label: '(无)', value: '__none__' },
+  { label: 'A', value: 'A' },
+  { label: 'B', value: 'B' },
+  { label: 'C', value: 'C' },
+  { label: 'D', value: 'D' },
+]
+const scopeOptions = ['instrument', 'module', 'system']
+const contraindicationTypeOptions = ['block', 'warn']
+const levelOptions = ['success', 'info', 'warning', 'orange', 'error', 'purple', 'survival', 'norming', 'operating', 'mature', 'L1', 'L2', 'L3', 'E']
+
 // ---- 编辑表单 ----
 const pending = ref(false)
+const activeTab = ref(0)
+const savedSnapshot = ref('')
+const crossRefResult = ref<any>(null)
+const crossRefOpen = ref(false)
+const crossRefLoading = ref(false)
+
 const editForm = reactive({
   libraryId: '',
   module: 'home_school',
@@ -32,7 +62,7 @@ const editForm = reactive({
 })
 const editStructured = ref<any>({})
 
-// 初始化
+// ---- 初始化 ----
 const initialized = ref(false)
 watch([version, library], ([v, l]) => {
   if (!v || !l || initialized.value) return
@@ -46,10 +76,54 @@ watch([version, library], ([v, l]) => {
     publish: false
   })
   editStructured.value = normalizeVisualPayload(l.libraryType, l.module, v.payload || {})
+  savedSnapshot.value = JSON.stringify(editStructured.value)
+  activeTab.value = 0
   initialized.value = true
 }, { immediate: true })
 
 const editPayloadError = computed(() => validateVisualPayload())
+
+// ---- Tab 配置 ----
+const tabs = computed(() => {
+  const t = editForm.libraryType
+  if (t === 'assessment') return [
+    { label: '基本属性', icon: 'i-lucide-settings' },
+    { label: '题项管理', icon: 'i-lucide-list-checks' },
+    { label: '维度定义', icon: 'i-lucide-grid-3x3' },
+    { label: '信效度与元数据', icon: 'i-lucide-shield-check' }
+  ]
+  if (t === 'attribution') return [
+    { label: '分级规则', icon: 'i-lucide-git-branch' },
+    { label: '计算变量', icon: 'i-lucide-function-square' },
+    { label: '红线熔断', icon: 'i-lucide-alert-triangle' },
+    { label: '输出与行动', icon: 'i-lucide-play' }
+  ]
+  if (t === 'tool') return [
+    { label: '基本信息', icon: 'i-lucide-settings' },
+    { label: '结构化步骤', icon: 'i-lucide-list-ordered' },
+    { label: '禁忌规则', icon: 'i-lucide-shield-off' },
+    { label: '元数据与关联', icon: 'i-lucide-link' }
+  ]
+  if (t === 'keyword_route') return [
+    { label: '路由规则', icon: 'i-lucide-route' }
+  ]
+  if (t === 'output_template') return [
+    { label: '输出模板', icon: 'i-lucide-file-text' }
+  ]
+  return []
+})
+
+// ---- 未保存离开检测 ----
+const hasUnsavedChanges = computed(() => {
+  return savedSnapshot.value !== JSON.stringify(editStructured.value)
+})
+
+onBeforeRouteLeave(() => {
+  if (hasUnsavedChanges.value) {
+    return window.confirm('有未保存的修改，确定要离开吗？')
+  }
+  return true
+})
 
 // ---- 工具函数 ----
 function suggestNextVersion(ver: string) {
@@ -58,12 +132,12 @@ function suggestNextVersion(ver: string) {
   return `${match[1]}.${match[2]}.${Number(match[3]) + 1}`
 }
 
-function splitList(value: unknown) {
+function splitList(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean)
   return String(value || '').split(/[\n,，]/).map(item => item.trim()).filter(Boolean)
 }
 
-function listText(value: unknown) {
+function listText(value: unknown): string {
   return Array.isArray(value) ? value.join('\n') : String(value || '')
 }
 
@@ -71,30 +145,74 @@ function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value || {}))
 }
 
-// ---- normalize / build / validate ----
+function toNumber(val: unknown, fallback: number = 0): number {
+  const n = Number(val)
+  return Number.isFinite(n) ? n : fallback
+}
+
+// ---- normalizeVisualPayload ----
 function normalizeVisualPayload(libraryType: string, module: string, payload: Record<string, any>) {
   const source = deepClone(payload)
+
   if (libraryType === 'assessment') {
     const instruments = Array.isArray(source.instruments) ? source.instruments : [source]
     return {
       instruments: instruments.map((instrument: any) => ({
         code: instrument.code || instrument.instrumentCode || '',
-        instrumentCode: instrument.instrumentCode || instrument.code || '',
         title: instrument.title || '',
         description: instrument.description || '',
-        estimatedMinutes: instrument.estimatedMinutes || 3,
+        estimatedMinutes: toNumber(instrument.estimatedMinutes, 3),
         version: instrument.version || editForm.version,
         module,
+        // V2 基本属性
+        shortName: instrument.shortName || '',
+        applicableGradesText: listText(instrument.applicableGrades),
+        applicableSubjectsText: listText(instrument.applicableSubjects),
+        applicableSchoolSection: instrument.applicableSchoolSection || '',
+        targetAudience: instrument.targetAudience || '',
+        formType: instrument.formType || '',
+        triggerMethod: instrument.triggerMethod || 'manual',
+        frequency: instrument.frequency || 'once',
+        isRequired: Boolean(instrument.isRequired),
+        timeLimitMinutes: toNumber(instrument.timeLimitMinutes),
+        minQuestions: toNumber(instrument.minQuestions),
+        usageTiming: instrument.usageTiming || '',
+        reAssessmentIntervalDays: toNumber(instrument.reAssessmentIntervalDays),
+        prerequisiteCodesText: listText(instrument.prerequisiteCodes),
+        exclusiveCodesText: listText(instrument.exclusiveCodes),
+        // V2 信效度与元数据
+        resultVisibility: instrument.resultVisibility || 'teacher_only',
+        responsibleRole: instrument.responsibleRole || '',
+        dataSensitivity: instrument.dataSensitivity || '',
+        sourceType: instrument.sourceType || '',
+        externalAuthorizationNote: instrument.externalAuthorizationNote || '',
+        sourceRef: instrument.sourceRef || '',
+        normReference: instrument.normReference || '',
+        reliabilityNote: instrument.reliabilityNote || '',
+        validityNote: instrument.validityNote || '',
+        privacyNotice: instrument.privacyNotice || '',
+        applicabilityPreconditions: instrument.applicabilityPreconditions || '',
+        contraindications: instrument.contraindications || '',
+        postAssessmentActions: instrument.postAssessmentActions || '',
+        // 题项
         questions: (instrument.questions || []).map((question: any) => ({
           id: question.id || '',
           text: question.text || '',
           dimension: question.dimension || '',
+          subDimension: question.subDimension || '',
+          weight: question.weight != null ? String(question.weight) : '',
           reverse: Boolean(question.reverse),
+          required: question.required !== false,
+          displayCondition: question.displayCondition || '',
+          dataUsage: question.dataUsage || '',
+          questionNote: question.questionNote || '',
+          example: question.example || '',
           options: (question.options || []).map((option: any) => ({
             label: option.label || '',
-            value: Number(option.value ?? 0)
+            value: toNumber(option.value, 0)
           }))
         })),
+        // 计分
         scoringRows: Object.entries(instrument.scoring || {}).map(([key, expression]) => ({
           key,
           expression: String(expression)
@@ -108,7 +226,9 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
           weight: dim.weight != null ? String(dim.weight) : '',
           description: dim.description || '',
           highInterpretation: dim.highInterpretation || '',
-          lowInterpretation: dim.lowInterpretation || ''
+          lowInterpretation: dim.lowInterpretation || '',
+          normMean: dim.normMean != null ? String(dim.normMean) : '',
+          normStd: dim.normStd != null ? String(dim.normStd) : ''
         }))
       }))
     }
@@ -118,9 +238,9 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
     return {
       module: source.module || module,
       version: source.version || editForm.version,
-      computedRows: Object.entries(source.computed || {}).map(([key, expression]) => ({ key, expression })),
+      computedRows: Object.entries(source.computed || {}).map(([key, expression]) => ({ key, expression: String(expression) })),
       branches: (source.branches || []).map((branch: any) => ({
-        pri: Number(branch.pri ?? 100),
+        pri: toNumber(branch.pri, 100),
         when: branch.when || '',
         level: branch.level || 'stable',
         blocked: Boolean(branch.blocked),
@@ -129,10 +249,16 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
         secondaryAttributionsText: listText(branch.secondaryAttributions),
         reasonsText: listText(branch.reasons),
         toolTagsText: listText(branch.toolTags),
-        // V2: 升级/复评
+        // V2
+        assessmentCode: branch.assessmentCode || '',
+        levelName: branch.levelName || '',
+        resultDescription: branch.resultDescription || '',
+        outputActionSummary: branch.outputActionSummary || '',
+        outputToolSummary: branch.outputToolSummary || '',
         escalationCondition: branch.escalationCondition || '',
         escalationTarget: branch.escalationTarget || '',
-        reEvaluationTrigger: branch.reEvaluationTrigger || ''
+        reEvaluationTrigger: branch.reEvaluationTrigger || '',
+        sourceRef: branch.sourceRef || ''
       })),
       actions: (source.actions || []).map((action: any) => ({
         title: action.title || '',
@@ -150,15 +276,58 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
         condition: rl.condition || '',
         description: rl.description || '',
         scope: rl.scope || 'module',
-        actionsText: listText(rl.actions)
+        requiredActions: rl.requiredActions || '',
+        actionsText: listText(rl.actions),
+        recoveryCondition: rl.recoveryCondition || '',
+        responsibleRole: rl.responsibleRole || '',
+        notificationTemplate: rl.notificationTemplate || '',
+        sourceRef: rl.sourceRef || ''
       }))
     }
   }
 
+  if (libraryType === 'keyword_route') {
+    return {
+      routes: (source.routes || []).map((route: any) => ({
+        code: route.code || '',
+        coreKeywords: route.coreKeywords || '',
+        expandedKeywords: route.expandedKeywords || '',
+        exclusionKeywordsText: listText(route.exclusionKeywords),
+        module: route.module || module,
+        matchPriority: toNumber(route.matchPriority, 0),
+        matchMode: route.matchMode || 'fuzzy',
+        riskLevel: route.riskLevel || '',
+        semanticCategory: route.semanticCategory || '',
+        linkedAssessmentCode: route.linkedAssessmentCode || '',
+        linkedToolCode: route.linkedToolCode || '',
+        contextConstraint: route.contextConstraint || '',
+        routeWeight: route.routeWeight != null ? String(route.routeWeight) : '',
+        temporalValidity: route.temporalValidity || 'always',
+        description: route.description || ''
+      }))
+    }
+  }
+
+  if (libraryType === 'output_template') {
+    return {
+      templates: (source.templates || []).map((tpl: any) => ({
+        code: tpl.code || '',
+        module: tpl.module || module,
+        attributionLevel: tpl.attributionLevel || '',
+        type: tpl.type || 'summary',
+        content: tpl.content || '',
+        placeholders: tpl.placeholders || '',
+        order: toNumber(tpl.order, 0)
+      }))
+    }
+  }
+
+  // tool — default fallback
   return {
     tools: (source.tools || []).map((tool: any) => ({
       code: tool.code || '',
       name: tool.name || '',
+      shortName: tool.shortName || '',
       form: tool.form || '',
       symptoms: tool.symptoms || '',
       expectedEffect: tool.expectedEffect || '',
@@ -175,11 +344,27 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
       prohibitions: tool.prohibitions || '',
       targetUsers: tool.targetUsers || '',
       dimensionsText: listText(tool.dimensions),
-      // V2: 结构化步骤、禁忌规则、证据等级
-      evidenceLevel: tool.evidenceLevel || '',
+      // V2 new
+      applicableSchoolSection: tool.applicableSchoolSection || '',
+      reAssessmentIntervalDays: toNumber(tool.reAssessmentIntervalDays),
+      contraindicationNote: tool.contraindicationNote || '',
+      toolVersion: tool.toolVersion || '',
+      // V2 metadata
+      evidenceLevel: tool.evidenceLevel || '__none__',
+      evidenceSource: tool.evidenceSource || '',
+      outcomeIndicators: tool.outcomeIndicators || '',
+      failureCriteria: tool.failureCriteria || '',
+      preparationNeeded: tool.preparationNeeded || '',
+      materialsRequired: tool.materialsRequired || '',
+      outputArtifact: tool.outputArtifact || '',
+      prerequisiteToolCode: tool.prerequisiteToolCode || '',
+      alternativeToolCode: tool.alternativeToolCode || '',
+      advancedToolCode: tool.advancedToolCode || '',
+      collaborativeToolCodesText: listText(tool.collaborativeToolCodes),
       crossModuleTagsText: listText(tool.crossModuleTags),
+      sourceRef: tool.sourceRef || '',
       structuredSteps: (tool.structuredSteps || []).map((s: any) => ({
-        seq: s.seq || 1,
+        seq: toNumber(s.seq, 1),
         title: s.title || '',
         description: s.description || '',
         estimatedTime: s.estimatedTime || '',
@@ -192,38 +377,77 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
       contraindicationRules: (tool.contraindicationRules || []).map((r: any) => ({
         condition: r.condition || '',
         type: r.type || 'warn',
-        description: r.description || '',
-        alternativeSuggestion: r.alternativeSuggestion || ''
+        description: r.description || r.condition,
+        alternativeSuggestion: r.alternativeSuggestion || '',
+        applicableTeacherGroup: r.applicableTeacherGroup || '',
+        reference: r.reference || ''
       }))
     }))
   }
 }
 
+// ---- buildVisualPayload ----
 function buildVisualPayload() {
   if (editForm.libraryType === 'assessment') {
     return {
       instruments: (editStructured.value.instruments || []).map((instrument: any) => ({
         code: instrument.code,
-        instrumentCode: instrument.instrumentCode || instrument.code,
+        instrumentCode: instrument.code,
         version: instrument.version || editForm.version,
         module: editForm.module,
         title: instrument.title,
         description: instrument.description,
-        estimatedMinutes: Number(instrument.estimatedMinutes || 0),
+        estimatedMinutes: toNumber(instrument.estimatedMinutes),
+        // V2
+        shortName: instrument.shortName || undefined,
+        applicableGrades: splitList(instrument.applicableGradesText).map(Number).filter(n => !Number.isNaN(n)).length ? splitList(instrument.applicableGradesText).map(Number).filter(n => !Number.isNaN(n)) : undefined,
+        applicableSubjects: splitList(instrument.applicableSubjectsText).length ? splitList(instrument.applicableSubjectsText) : undefined,
+        applicableSchoolSection: instrument.applicableSchoolSection || undefined,
+        targetAudience: instrument.targetAudience || undefined,
+        formType: instrument.formType || undefined,
+        triggerMethod: instrument.triggerMethod || undefined,
+        frequency: instrument.frequency || undefined,
+        isRequired: instrument.isRequired || undefined,
+        timeLimitMinutes: toNumber(instrument.timeLimitMinutes) || undefined,
+        minQuestions: toNumber(instrument.minQuestions) || undefined,
+        usageTiming: instrument.usageTiming || undefined,
+        reAssessmentIntervalDays: toNumber(instrument.reAssessmentIntervalDays) || undefined,
+        prerequisiteCodes: splitList(instrument.prerequisiteCodesText).length ? splitList(instrument.prerequisiteCodesText) : undefined,
+        exclusiveCodes: splitList(instrument.exclusiveCodesText).length ? splitList(instrument.exclusiveCodesText) : undefined,
+        resultVisibility: instrument.resultVisibility || undefined,
+        responsibleRole: instrument.responsibleRole || undefined,
+        dataSensitivity: instrument.dataSensitivity || undefined,
+        sourceType: instrument.sourceType || undefined,
+        externalAuthorizationNote: instrument.externalAuthorizationNote || undefined,
+        sourceRef: instrument.sourceRef || undefined,
+        normReference: instrument.normReference || undefined,
+        reliabilityNote: instrument.reliabilityNote || undefined,
+        validityNote: instrument.validityNote || undefined,
+        privacyNotice: instrument.privacyNotice || undefined,
+        applicabilityPreconditions: instrument.applicabilityPreconditions || undefined,
+        contraindications: instrument.contraindications || undefined,
+        postAssessmentActions: instrument.postAssessmentActions || undefined,
+        // 题项
         questions: (instrument.questions || []).map((question: any) => ({
           id: question.id,
           text: question.text,
           dimension: question.dimension,
+          subDimension: question.subDimension || undefined,
+          weight: question.weight ? toNumber(question.weight) : undefined,
           reverse: Boolean(question.reverse),
+          required: Boolean(question.required),
+          displayCondition: question.displayCondition || undefined,
+          dataUsage: question.dataUsage || undefined,
+          questionNote: question.questionNote || undefined,
+          example: question.example || undefined,
           options: (question.options || []).map((option: any) => ({
             label: option.label,
-            value: Number(option.value)
+            value: toNumber(option.value)
           }))
         })),
         scoring: Object.fromEntries((instrument.scoringRows || [])
           .filter((row: any) => row.key && row.expression)
           .map((row: any) => [row.key, row.expression])),
-        // V2: 维度定义
         dimensionDefs: (instrument.dimensionDefs || [])
           .filter((dim: any) => dim.code && dim.name)
           .map((dim: any) => ({
@@ -231,10 +455,12 @@ function buildVisualPayload() {
             name: dim.name,
             questionIds: splitList(dim.questionIdsText),
             calcMethod: dim.calcMethod || 'mean',
-            weight: dim.weight ? Number(dim.weight) : undefined,
+            weight: dim.weight ? toNumber(dim.weight) : undefined,
             description: dim.description || undefined,
             highInterpretation: dim.highInterpretation || undefined,
-            lowInterpretation: dim.lowInterpretation || undefined
+            lowInterpretation: dim.lowInterpretation || undefined,
+            normMean: dim.normMean ? toNumber(dim.normMean) : undefined,
+            normStd: dim.normStd ? toNumber(dim.normStd) : undefined
           }))
       }))
     }
@@ -248,7 +474,7 @@ function buildVisualPayload() {
         .filter((row: any) => row.key && row.expression)
         .map((row: any) => [row.key, row.expression])),
       branches: (editStructured.value.branches || []).map((branch: any) => ({
-        pri: Number(branch.pri || 100),
+        pri: toNumber(branch.pri, 100),
         when: branch.when || undefined,
         level: branch.level,
         blocked: Boolean(branch.blocked),
@@ -257,10 +483,15 @@ function buildVisualPayload() {
         secondaryAttributions: splitList(branch.secondaryAttributionsText),
         reasons: splitList(branch.reasonsText),
         toolTags: splitList(branch.toolTagsText),
-        // V2
+        assessmentCode: branch.assessmentCode || undefined,
+        levelName: branch.levelName || undefined,
+        resultDescription: branch.resultDescription || undefined,
+        outputActionSummary: branch.outputActionSummary || undefined,
+        outputToolSummary: branch.outputToolSummary || undefined,
         escalationCondition: branch.escalationCondition || undefined,
         escalationTarget: branch.escalationTarget || undefined,
-        reEvaluationTrigger: branch.reEvaluationTrigger || undefined
+        reEvaluationTrigger: branch.reEvaluationTrigger || undefined,
+        sourceRef: branch.sourceRef || undefined
       })),
       actions: (editStructured.value.actions || []).filter((action: any) => action.title && action.detail)
         .map((action: any) => ({ title: action.title, detail: action.detail, status: 'pending' })),
@@ -269,7 +500,6 @@ function buildVisualPayload() {
       crisis: editStructured.value.crisisWhen
         ? { when: editStructured.value.crisisWhen, blocked: Boolean(editStructured.value.crisisBlocked) }
         : undefined,
-      // V2: 红线熔断
       redLines: (editStructured.value.redLines || [])
         .filter((rl: any) => rl.condition && rl.description)
         .map((rl: any) => ({
@@ -277,15 +507,60 @@ function buildVisualPayload() {
           condition: rl.condition,
           description: rl.description,
           scope: rl.scope || 'module',
-          actions: splitList(rl.actionsText)
+          requiredActions: rl.requiredActions || '',
+          actions: splitList(rl.actionsText),
+          recoveryCondition: rl.recoveryCondition || undefined,
+          responsibleRole: rl.responsibleRole || undefined,
+          notificationTemplate: rl.notificationTemplate || undefined,
+          sourceRef: rl.sourceRef || undefined
         }))
     }
   }
 
+  if (editForm.libraryType === 'keyword_route') {
+    return {
+      routes: (editStructured.value.routes || []).filter((r: any) => r.code && r.coreKeywords)
+        .map((r: any) => ({
+          code: r.code,
+          coreKeywords: r.coreKeywords,
+          expandedKeywords: r.expandedKeywords || undefined,
+          exclusionKeywords: splitList(r.exclusionKeywordsText).length ? splitList(r.exclusionKeywordsText) : undefined,
+          module: r.module || editForm.module,
+          matchPriority: toNumber(r.matchPriority, 0),
+          matchMode: r.matchMode || 'fuzzy',
+          riskLevel: r.riskLevel,
+          semanticCategory: r.semanticCategory || undefined,
+          linkedAssessmentCode: r.linkedAssessmentCode || undefined,
+          linkedToolCode: r.linkedToolCode || undefined,
+          contextConstraint: r.contextConstraint || undefined,
+          routeWeight: r.routeWeight ? toNumber(r.routeWeight) : undefined,
+          temporalValidity: r.temporalValidity || 'always',
+          description: r.description || undefined
+        }))
+    }
+  }
+
+  if (editForm.libraryType === 'output_template') {
+    return {
+      templates: (editStructured.value.templates || []).filter((t: any) => t.code && t.content)
+        .map((t: any) => ({
+          code: t.code,
+          module: t.module || editForm.module,
+          attributionLevel: t.attributionLevel,
+          type: t.type || 'summary',
+          content: t.content,
+          placeholders: t.placeholders || undefined,
+          order: toNumber(t.order, 0)
+        }))
+    }
+  }
+
+  // tool
   return {
     tools: (editStructured.value.tools || []).map((tool: any) => ({
       code: tool.code,
       name: tool.name,
+      shortName: tool.shortName || undefined,
       form: tool.form,
       symptoms: tool.symptoms,
       expectedEffect: tool.expectedEffect,
@@ -302,13 +577,27 @@ function buildVisualPayload() {
       prohibitions: tool.prohibitions,
       targetUsers: tool.targetUsers,
       dimensions: splitList(tool.dimensionsText),
-      // V2
-      evidenceLevel: tool.evidenceLevel || undefined,
+      applicableSchoolSection: tool.applicableSchoolSection || undefined,
+      reAssessmentIntervalDays: toNumber(tool.reAssessmentIntervalDays) || undefined,
+      contraindicationNote: tool.contraindicationNote || undefined,
+      toolVersion: tool.toolVersion || undefined,
+      evidenceLevel: tool.evidenceLevel === '__none__' ? undefined : tool.evidenceLevel,
+      evidenceSource: tool.evidenceSource || undefined,
+      outcomeIndicators: tool.outcomeIndicators || undefined,
+      failureCriteria: tool.failureCriteria || undefined,
+      preparationNeeded: tool.preparationNeeded || undefined,
+      materialsRequired: tool.materialsRequired || undefined,
+      outputArtifact: tool.outputArtifact || undefined,
+      prerequisiteToolCode: tool.prerequisiteToolCode || undefined,
+      alternativeToolCode: tool.alternativeToolCode || undefined,
+      advancedToolCode: tool.advancedToolCode || undefined,
+      collaborativeToolCodes: splitList(tool.collaborativeToolCodesText).length ? splitList(tool.collaborativeToolCodesText) : undefined,
       crossModuleTags: splitList(tool.crossModuleTagsText).length ? splitList(tool.crossModuleTagsText) : undefined,
+      sourceRef: tool.sourceRef || undefined,
       structuredSteps: (tool.structuredSteps || [])
         .filter((s: any) => s.title && s.description)
         .map((s: any) => ({
-          seq: Number(s.seq || 1),
+          seq: toNumber(s.seq, 1),
           title: s.title,
           description: s.description,
           estimatedTime: s.estimatedTime || undefined,
@@ -324,7 +613,9 @@ function buildVisualPayload() {
           condition: r.condition,
           type: r.type,
           description: r.description || r.condition,
-          alternativeSuggestion: r.alternativeSuggestion || undefined
+          alternativeSuggestion: r.alternativeSuggestion || undefined,
+          applicableTeacherGroup: r.applicableTeacherGroup || undefined,
+          reference: r.reference || undefined
         }))
     }))
   }
@@ -361,21 +652,42 @@ function validateVisualPayload() {
       if (!splitList(tool.stepsText).length) return `工具 ${tool.code} 至少需要一个步骤`
     }
   }
+  if (editForm.libraryType === 'keyword_route') {
+    const routes = editStructured.value.routes || []
+    if (!routes.length) return '关键词路由至少需要一条规则'
+    for (const r of routes) {
+      if (!r.code || !r.coreKeywords) return '每条路由都需要编码和核心关键词'
+    }
+  }
+  if (editForm.libraryType === 'output_template') {
+    const templates = editStructured.value.templates || []
+    if (!templates.length) return '输出模板至少需要一个模板'
+    for (const t of templates) {
+      if (!t.code || !t.content) return '每个模板都需要编码和内容'
+    }
+  }
   return ''
 }
 
 // ---- 增删操作 ----
 function addInstrument() {
   editStructured.value.instruments.push({
-    code: '', instrumentCode: '', title: '', description: '',
-    estimatedMinutes: 3, version: editForm.version, module: editForm.module,
-    questions: [], scoringRows: []
+    code: '', title: '', description: '', estimatedMinutes: 3, version: editForm.version,
+    module: editForm.module, shortName: '', applicableGradesText: '', applicableSubjectsText: '',
+    applicableSchoolSection: '', targetAudience: '', formType: '', triggerMethod: 'manual',
+    frequency: 'once', isRequired: false, timeLimitMinutes: 0, minQuestions: 0,
+    usageTiming: '', reAssessmentIntervalDays: 0, prerequisiteCodesText: '', exclusiveCodesText: '',
+    resultVisibility: 'teacher_only', responsibleRole: '', dataSensitivity: '', sourceType: '',
+    externalAuthorizationNote: '', sourceRef: '', normReference: '', reliabilityNote: '',
+    validityNote: '', privacyNotice: '', applicabilityPreconditions: '', contraindications: '',
+    postAssessmentActions: '', questions: [], scoringRows: [], dimensionDefs: []
   })
 }
 
 function addQuestion(instrument: any) {
   instrument.questions.push({
-    id: '', text: '', dimension: '', reverse: false,
+    id: '', text: '', dimension: '', subDimension: '', weight: '', reverse: false,
+    required: true, displayCondition: '', dataUsage: '', questionNote: '', example: '',
     options: [
       { label: '完全不符合', value: 1 },
       { label: '比较不符合', value: 2 },
@@ -386,62 +698,58 @@ function addQuestion(instrument: any) {
   })
 }
 
-function addScoringRow(instrument: any) {
-  instrument.scoringRows.push({ key: '', expression: '' })
+function addScoringRow(instrument: any) { instrument.scoringRows.push({ key: '', expression: '' }) }
+
+function addDimensionDef(instrument: any) {
+  if (!instrument.dimensionDefs) instrument.dimensionDefs = []
+  instrument.dimensionDefs.push({
+    code: '', name: '', questionIdsText: '', calcMethod: 'mean',
+    weight: '', description: '', highInterpretation: '', lowInterpretation: '',
+    normMean: '', normStd: ''
+  })
 }
 
 function addBranch() {
   editStructured.value.branches.push({
     pri: 100, when: '', level: 'stable', blocked: false,
     ruleId: '', primaryAttribution: '',
-    secondaryAttributionsText: '', reasonsText: '', toolTagsText: ''
+    secondaryAttributionsText: '', reasonsText: '', toolTagsText: '',
+    assessmentCode: '', levelName: '', resultDescription: '',
+    outputActionSummary: '', outputToolSummary: '',
+    escalationCondition: '', escalationTarget: '', reEvaluationTrigger: '', sourceRef: ''
   })
 }
 
-function addComputedRow() {
-  editStructured.value.computedRows.push({ key: '', expression: '' })
-}
+function addComputedRow() { editStructured.value.computedRows.push({ key: '', expression: '' }) }
+function addAttributionAction() { editStructured.value.actions.push({ title: '', detail: '' }) }
+function addEmbeddedTool() { editStructured.value.embeddedTools.push({ title: '', content: '' }) }
 
-function addAttributionAction() {
-  editStructured.value.actions.push({ title: '', detail: '' })
-}
-
-function addEmbeddedTool() {
-  editStructured.value.embeddedTools.push({ title: '', content: '' })
-}
-
-function addToolItem() {
-  editStructured.value.tools.push({
-    code: '', name: '', form: '', symptoms: '', expectedEffect: '',
-    severity: '', level: '', attribution: '',
-    attributionsText: '', tagsText: '', toolTagsText: '',
-    duration: '', timePerSession: '', stepsText: '',
-    scripts: '', prohibitions: '', targetUsers: '', dimensionsText: '',
-    // V2
-    evidenceLevel: '', crossModuleTagsText: '',
-    structuredSteps: [], contraindicationRules: []
-  })
-}
-
-// ---- V2 维度定义操作 ----
-function addDimensionDef(instrument: any) {
-  if (!instrument.dimensionDefs) instrument.dimensionDefs = []
-  instrument.dimensionDefs.push({
-    code: '', name: '', questionIdsText: '', calcMethod: 'mean',
-    weight: '', description: '', highInterpretation: '', lowInterpretation: ''
-  })
-}
-
-// ---- V2 红线操作 ----
 function addRedLine() {
   if (!editStructured.value.redLines) editStructured.value.redLines = []
   editStructured.value.redLines.push({
     module: editForm.module, condition: '', description: '',
-    scope: 'module', actionsText: ''
+    scope: 'module', requiredActions: '', actionsText: '',
+    recoveryCondition: '', responsibleRole: '', notificationTemplate: '', sourceRef: ''
   })
 }
 
-// ---- V2 结构化步骤操作 ----
+function addToolItem() {
+  editStructured.value.tools.push({
+    code: '', name: '', shortName: '', form: '', symptoms: '', expectedEffect: '',
+    severity: '', level: '', attribution: '',
+    attributionsText: '', tagsText: '', toolTagsText: '',
+    duration: '', timePerSession: '', stepsText: '',
+    scripts: '', prohibitions: '', targetUsers: '', dimensionsText: '',
+    applicableSchoolSection: '', reAssessmentIntervalDays: 0,
+    contraindicationNote: '', toolVersion: '',
+    evidenceLevel: '__none__', evidenceSource: '', outcomeIndicators: '', failureCriteria: '',
+    preparationNeeded: '', materialsRequired: '', outputArtifact: '',
+    prerequisiteToolCode: '', alternativeToolCode: '', advancedToolCode: '',
+    collaborativeToolCodesText: '', crossModuleTagsText: '', sourceRef: '',
+    structuredSteps: [], contraindicationRules: []
+  })
+}
+
 function addStructuredStep(tool: any) {
   if (!tool.structuredSteps) tool.structuredSteps = []
   tool.structuredSteps.push({
@@ -452,11 +760,28 @@ function addStructuredStep(tool: any) {
   })
 }
 
-// ---- V2 禁忌规则操作 ----
 function addContraindicationRule(tool: any) {
   if (!tool.contraindicationRules) tool.contraindicationRules = []
   tool.contraindicationRules.push({
-    condition: '', type: 'warn', description: '', alternativeSuggestion: ''
+    condition: '', type: 'warn', description: '', alternativeSuggestion: '',
+    applicableTeacherGroup: '', reference: ''
+  })
+}
+
+function addRoute() {
+  editStructured.value.routes.push({
+    code: '', coreKeywords: '', expandedKeywords: '', exclusionKeywordsText: '',
+    module: editForm.module, matchPriority: 0, matchMode: 'fuzzy',
+    riskLevel: '', semanticCategory: '', linkedAssessmentCode: '',
+    linkedToolCode: '', contextConstraint: '', routeWeight: '',
+    temporalValidity: 'always', description: ''
+  })
+}
+
+function addTemplate() {
+  editStructured.value.templates.push({
+    code: '', module: editForm.module, attributionLevel: '',
+    type: 'summary', content: '', placeholders: '', order: 0
   })
 }
 
@@ -494,28 +819,40 @@ async function saveEditedVersion() {
     pending.value = false
   }
 }
+
+// ---- 交叉引用校验 ----
+async function runCrossRefCheck() {
+  crossRefLoading.value = true
+  crossRefResult.value = null
+  try {
+    crossRefResult.value = await $fetch(
+      `/api/v1/platform-admin/module-resources/cross-ref-check?module=${editForm.module}&versionId=${versionId}`
+    )
+    crossRefOpen.value = true
+  } catch (error: any) {
+    toast.add({
+      title: '校验失败',
+      description: error?.data?.message || '请稍后重试',
+      color: 'error'
+    })
+  } finally {
+    crossRefLoading.value = false
+  }
+}
+
+// ---- 行内编辑辅助 ----
+const editingCell = ref<string | null>(null)
+function startEdit(cellKey: string) { editingCell.value = cellKey }
+function stopEdit() { editingCell.value = null }
+
+function inlineInput(model: any, key: string) {
+  return { modelValue: model[key], 'onUpdate:modelValue': (v: any) => { model[key] = v } }
+}
 </script>
 
 <template>
-  <div class="mx-auto max-w-full px-5 py-8">
-    <!-- 页头 -->
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <p class="text-sm font-semibold text-indigo-700">三库运营台 · 编辑资源版本</p>
-        <h1 class="mt-2 text-3xl font-semibold">
-          {{ library ? `${library.name}` : '加载中...' }}
-          <span class="text-base font-normal text-slate-400">· {{ libraryTypeLabel(editForm.libraryType) }}</span>
-        </h1>
-        <p class="mt-2 text-sm text-slate-500">
-          基于版本 <strong>{{ editForm.sourceVersion }}</strong> 修订 · 模块 {{ moduleLabel(editForm.module) }}
-        </p>
-      </div>
-      <UButton to="/platform-admin/resources" color="neutral" variant="soft" icon="i-lucide-arrow-left">
-        返回资源列表
-      </UButton>
-    </div>
-
-    <!-- 未找到版本 -->
+  <div class="mx-auto max-w-7xl px-5 py-8">
+    <!-- 未找到 -->
     <div v-if="initialized && !version" class="panel mt-6 p-12 text-center">
       <UIcon name="i-lucide-file-question" class="mx-auto text-4xl text-slate-300" />
       <p class="mt-4 text-lg font-semibold text-slate-500">未找到该版本</p>
@@ -523,401 +860,718 @@ async function saveEditedVersion() {
       <UButton to="/platform-admin/resources" class="mt-6" color="neutral" variant="soft">返回资源列表</UButton>
     </div>
 
-    <!-- 编辑区 -->
     <template v-if="initialized && version">
-      <!-- 版本信息 -->
-      <div class="panel mt-6 p-6">
-        <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="来源版本">
-            <UInput v-model="editForm.sourceVersion" disabled class="w-full" />
-          </UFormField>
-          <UFormField label="新版本号">
-            <UInput v-model="editForm.version" class="w-full" />
-          </UFormField>
-        </div>
-        <UFormField label="版本说明" class="mt-4">
-          <UInput v-model="editForm.notes" class="w-full" />
-        </UFormField>
-      </div>
-
-      <!-- === 量表库 === -->
-      <div v-if="editForm.libraryType === 'assessment'" class="mt-6 space-y-6">
-        <div class="panel p-6">
-          <div class="flex items-center justify-between gap-3 mb-4">
-            <h2 class="text-xl font-semibold">量表库表格</h2>
-            <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-plus" @click="addInstrument">新增量表行</UButton>
+      <!-- 顶部栏 sticky -->
+      <div class="sticky top-3 z-30 rounded-xl border border-slate-100 bg-white shadow-sm px-5 py-3">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-2 text-sm text-slate-500">
+            <NuxtLink to="/platform-admin/resources" class="hover:text-indigo-600 transition-colors">三库运营台</NuxtLink>
+            <span class="text-slate-300">/</span>
+            <span class="font-medium text-slate-700">{{ library?.name || '加载中...' }}</span>
+            <span class="text-slate-300">/</span>
+            <span class="text-slate-500">{{ editForm.sourceVersion }} 编辑</span>
+            <UBadge v-if="version" :color="version.status === 'published' ? 'success' : version.status === 'retired' ? 'warning' : 'neutral'" variant="soft" size="xs" class="ml-2">
+              {{ version.status }}
+            </UBadge>
           </div>
-          <div class="overflow-x-auto rounded-lg border border-slate-200">
-            <table class="min-w-[1040px] w-full text-left text-xs">
-              <thead class="bg-slate-50 text-slate-500">
-                <tr><th class="p-2">量表编码</th><th class="p-2">量表名称</th><th class="p-2">版本</th><th class="p-2">分钟</th><th class="p-2">说明</th><th class="p-2">操作</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="(instrument, instrumentIndex) in editStructured.instruments || []" :key="instrumentIndex" class="border-t border-slate-100">
-                  <td class="p-2"><UInput v-model="instrument.code" size="xs" /></td>
-                  <td class="p-2"><UInput v-model="instrument.title" size="xs" /></td>
-                  <td class="p-2"><UInput v-model="instrument.version" size="xs" /></td>
-                  <td class="p-2"><UInput v-model.number="instrument.estimatedMinutes" type="number" size="xs" /></td>
-                  <td class="p-2"><UTextarea v-model="instrument.description" :rows="1" size="xs" /></td>
-                  <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.instruments.splice(instrumentIndex, 1)" /></td>
-                </tr>
-              </tbody>
-            </table>
+          <div class="flex items-center gap-2">
+            <UButton to="/platform-admin/resources" color="neutral" variant="soft" size="sm">取消</UButton>
+            <UButton
+              color="neutral"
+              variant="soft"
+              size="sm"
+              icon="i-lucide-link-2"
+              :loading="crossRefLoading"
+              @click="runCrossRefCheck"
+            >校验关联</UButton>
+            <UButton
+              as="a"
+              :href="`/api/v1/platform-admin/module-resources/versions/${versionId}/export`"
+              download
+              color="neutral"
+              variant="soft"
+              size="sm"
+              icon="i-lucide-download"
+            >导出</UButton>
+            <UButton icon="i-lucide-save" size="sm" :disabled="Boolean(editPayloadError)" :loading="pending" @click="saveEditedVersion">
+              保存新版本
+            </UButton>
           </div>
         </div>
-
-        <div v-for="(instrument, instrumentIndex) in editStructured.instruments || []" :key="`detail-${instrumentIndex}`" class="panel space-y-5 p-6">
-          <div class="flex items-center justify-between gap-3">
-            <h3 class="text-lg font-semibold">{{ instrument.code || `量表 ${Number(instrumentIndex) + 1}` }} 题项表</h3>
-            <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-plus" @click="addQuestion(instrument)">新增题项行</UButton>
-          </div>
-          <div class="overflow-x-auto rounded-lg border border-slate-200">
-            <table class="min-w-[1320px] w-full text-left text-xs">
-              <thead class="bg-slate-50 text-slate-500">
-                <tr><th class="p-2">题号</th><th class="p-2">题干</th><th class="p-2">维度</th><th class="p-2">反向</th><th class="p-2">选项/分值</th><th class="p-2">操作</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="(question, questionIndex) in instrument.questions" :key="questionIndex" class="border-t border-slate-100 align-top">
-                  <td class="p-2"><UInput v-model="question.id" size="xs" /></td>
-                  <td class="p-2"><UTextarea v-model="question.text" :rows="2" size="xs" /></td>
-                  <td class="p-2"><UInput v-model="question.dimension" size="xs" /></td>
-                  <td class="p-2"><UCheckbox v-model="question.reverse" /></td>
-                  <td class="p-2">
-                    <div class="space-y-1">
-                      <div v-for="(option, optionIndex) in question.options" :key="optionIndex" class="grid grid-cols-[1fr_80px_32px] gap-1">
-                        <UInput v-model="option.label" size="xs" placeholder="选项" />
-                        <UInput v-model.number="option.value" type="number" size="xs" placeholder="分" />
-                        <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="question.options.splice(optionIndex, 1)" />
-                      </div>
-                      <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-plus" @click="question.options.push({ label: '', value: 0 })">加选项</UButton>
-                    </div>
-                  </td>
-                  <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="instrument.questions.splice(questionIndex, 1)" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="flex items-center justify-between gap-3">
-            <h4 class="text-sm font-semibold">{{ instrument.code || `量表 ${Number(instrumentIndex) + 1}` }} 计分表</h4>
-            <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addScoringRow(instrument)">新增计分行</UButton>
-          </div>
-          <div class="overflow-x-auto rounded-lg border border-slate-200">
-            <table class="min-w-[720px] w-full text-left text-xs">
-              <thead class="bg-slate-50 text-slate-500">
-                <tr><th class="p-2">字段</th><th class="p-2">汇总方式/表达式</th><th class="p-2">操作</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, rowIndex) in instrument.scoringRows" :key="rowIndex" class="border-t border-slate-100">
-                  <td class="p-2"><UInput v-model="row.key" size="xs" /></td>
-                  <td class="p-2"><UInput v-model="row.expression" size="xs" /></td>
-                  <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="instrument.scoringRows.splice(rowIndex, 1)" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- V2: 维度定义编辑器 -->
-          <div class="flex items-center justify-between gap-3 mt-5">
-            <h4 class="text-sm font-semibold">维度定义 (V2)</h4>
-            <UButton size="xs" color="primary" variant="soft" icon="i-lucide-plus" @click="addDimensionDef(instrument)">新增维度</UButton>
-          </div>
-          <div v-if="(instrument.dimensionDefs || []).length" class="overflow-x-auto rounded-lg border border-slate-200 mt-2">
-            <table class="min-w-[1280px] w-full text-left text-xs">
-              <thead class="bg-slate-50 text-slate-500">
-                <tr>
-                  <th class="p-2">编码</th><th class="p-2">名称</th><th class="p-2">题号</th>
-                  <th class="p-2">计算方式</th><th class="p-2">权重</th>
-                  <th class="p-2">高分解释</th><th class="p-2">低分解释</th>
-                  <th class="p-2">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(dim, dIndex) in instrument.dimensionDefs" :key="dIndex" class="border-t border-slate-100 align-top">
-                  <td class="p-2"><UInput v-model="dim.code" size="xs" /></td>
-                  <td class="p-2"><UInput v-model="dim.name" size="xs" /></td>
-                  <td class="p-2"><UInput v-model="dim.questionIdsText" size="xs" placeholder="逗号分隔" /></td>
-                  <td class="p-2">
-                    <USelect v-model="dim.calcMethod" size="xs" :items="['mean', 'sum', 'weighted', 'count']" class="w-24" />
-                  </td>
-                  <td class="p-2"><UInput v-model="dim.weight" size="xs" type="number" class="w-16" /></td>
-                  <td class="p-2"><UTextarea v-model="dim.highInterpretation" :rows="1" size="xs" /></td>
-                  <td class="p-2"><UTextarea v-model="dim.lowInterpretation" :rows="1" size="xs" /></td>
-                  <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="instrument.dimensionDefs.splice(dIndex, 1)" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p v-else class="mt-2 text-xs text-slate-400">暂无维度定义；题项的 dimension 字段会在运行时自动聚合。</p>
+        <!-- 版本信息行 -->
+        <div class="mt-2 flex flex-wrap items-center gap-3 text-sm">
+          <span class="text-slate-400">{{ libraryTypeLabel(editForm.libraryType) }} · 模块 {{ moduleLabel(editForm.module) }}</span>
+          <span class="text-slate-300">|</span>
+          <UInput v-model="editForm.version" size="xs" class="w-32" placeholder="版本号" />
+          <UInput v-model="editForm.notes" size="xs" class="w-64" placeholder="版本说明" />
+          <UCheckbox v-model="editForm.publish" label="保存后发布" size="sm" />
         </div>
       </div>
 
-      <!-- === 归因库 === -->
-      <div v-if="editForm.libraryType === 'attribution'" class="mt-6 space-y-6">
-        <div class="panel p-6">
-          <div class="flex items-center justify-between gap-3 mb-4">
-            <h2 class="text-xl font-semibold">计算变量表</h2>
-            <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-plus" @click="addComputedRow">新增变量行</UButton>
-          </div>
-          <div class="overflow-x-auto rounded-lg border border-slate-200">
-            <table class="min-w-[720px] w-full text-left text-xs">
-              <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">变量名</th><th class="p-2">表达式</th><th class="p-2">操作</th></tr></thead>
-              <tbody>
-                <tr v-for="(row, rowIndex) in editStructured.computedRows || []" :key="rowIndex" class="border-t border-slate-100">
-                  <td class="p-2"><UInput v-model="row.key" size="xs" /></td>
-                  <td class="p-2"><UInput v-model="row.expression" size="xs" /></td>
-                  <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.computedRows.splice(rowIndex, 1)" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="panel p-6">
-          <div class="flex items-center justify-between gap-3 mb-4">
-            <h2 class="text-xl font-semibold">归因规则表</h2>
-            <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-plus" @click="addBranch">新增规则行</UButton>
-          </div>
-          <div class="overflow-x-auto rounded-lg border border-slate-200">
-            <table class="min-w-[1560px] w-full text-left text-xs">
-              <thead class="bg-slate-50 text-slate-500">
-                <tr><th class="p-2">规则编码</th><th class="p-2">优先级</th><th class="p-2">触发条件</th><th class="p-2">等级</th><th class="p-2">主归因</th><th class="p-2">次归因</th><th class="p-2">原因说明</th><th class="p-2">工具标签</th><th class="p-2">阻断</th><th class="p-2 w-16">升级条件</th><th class="p-2 w-16">升级目标</th><th class="p-2">操作</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="(branch, branchIndex) in editStructured.branches || []" :key="branchIndex" class="border-t border-slate-100 align-top">
-                  <td class="p-2"><UInput v-model="branch.ruleId" size="xs" /></td>
-                  <td class="p-2"><UInput v-model.number="branch.pri" type="number" size="xs" /></td>
-                  <td class="p-2"><UInput v-model="branch.when" size="xs" placeholder="留空兜底" /></td>
-                  <td class="p-2"><UInput v-model="branch.level" size="xs" /></td>
-                  <td class="p-2"><UInput v-model="branch.primaryAttribution" size="xs" /></td>
-                  <td class="p-2"><UTextarea v-model="branch.secondaryAttributionsText" :rows="2" size="xs" /></td>
-                  <td class="p-2"><UTextarea v-model="branch.reasonsText" :rows="2" size="xs" /></td>
-                  <td class="p-2"><UTextarea v-model="branch.toolTagsText" :rows="2" size="xs" /></td>
-                  <td class="p-2"><UCheckbox v-model="branch.blocked" /></td>
-                  <td class="p-2"><UInput v-model="branch.escalationCondition" size="xs" placeholder="如 score >= 5" /></td>
-                  <td class="p-2"><UInput v-model="branch.escalationTarget" size="xs" placeholder="如 心理老师" /></td>
-                  <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.branches.splice(branchIndex, 1)" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="panel p-6">
-          <h2 class="text-xl font-semibold mb-4">危机条件</h2>
-          <div class="overflow-x-auto rounded-lg border border-slate-200">
-            <table class="min-w-[760px] w-full text-left text-xs">
-              <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">危机触发条件</th><th class="p-2">阻断</th></tr></thead>
-              <tbody><tr class="border-t border-slate-100"><td class="p-2"><UInput v-model="editStructured.crisisWhen" size="xs" /></td><td class="p-2"><UCheckbox v-model="editStructured.crisisBlocked" /></td></tr></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- V2: 红线熔断规则编辑器 -->
-        <div class="panel p-6">
-          <div class="flex items-center justify-between gap-3 mb-4">
-            <h2 class="text-xl font-semibold">红线熔断规则 (V2)</h2>
-            <UButton size="sm" color="primary" variant="soft" icon="i-lucide-plus" @click="addRedLine">新增红线</UButton>
-          </div>
-          <div v-if="(editStructured.redLines || []).length" class="overflow-x-auto rounded-lg border border-slate-200">
-            <table class="min-w-[1200px] w-full text-left text-xs">
-              <thead class="bg-slate-50 text-slate-500">
-                <tr>
-                  <th class="p-2">触发条件</th><th class="p-2">说明</th>
-                  <th class="p-2">范围</th><th class="p-2">动作列表</th>
-                  <th class="p-2">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(rl, rlIndex) in editStructured.redLines" :key="rlIndex" class="border-t border-slate-100 align-top">
-                  <td class="p-2"><UInput v-model="rl.condition" size="xs" placeholder="如: SCORE(q1) >= 5" /></td>
-                  <td class="p-2"><UTextarea v-model="rl.description" :rows="2" size="xs" /></td>
-                  <td class="p-2">
-                    <USelect v-model="rl.scope" size="xs" :items="['instrument', 'module', 'system']" class="w-28" />
-                  </td>
-                  <td class="p-2"><UTextarea v-model="rl.actionsText" :rows="2" size="xs" placeholder="每行一个动作" /></td>
-                  <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.redLines.splice(rlIndex, 1)" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p v-else class="text-sm text-slate-400">暂无红线规则；crisis 条件可提供基础的熔断能力。</p>
-        </div>
-
-        <div class="grid gap-6 xl:grid-cols-2">
-          <div class="panel p-6">
-            <div class="flex items-center justify-between gap-3 mb-4">
-              <h2 class="text-xl font-semibold">默认行动项表</h2>
-              <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-plus" @click="addAttributionAction">新增行动行</UButton>
-            </div>
-            <div class="overflow-x-auto rounded-lg border border-slate-200">
-              <table class="min-w-[760px] w-full text-left text-xs">
-                <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">标题</th><th class="p-2">说明</th><th class="p-2">操作</th></tr></thead>
-                <tbody>
-                  <tr v-for="(action, actionIndex) in editStructured.actions || []" :key="actionIndex" class="border-t border-slate-100">
-                    <td class="p-2"><UInput v-model="action.title" size="xs" /></td>
-                    <td class="p-2"><UTextarea v-model="action.detail" :rows="2" size="xs" /></td>
-                    <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.actions.splice(actionIndex, 1)" /></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="panel p-6">
-            <div class="flex items-center justify-between gap-3 mb-4">
-              <h2 class="text-xl font-semibold">内置工具提示表</h2>
-              <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-plus" @click="addEmbeddedTool">新增提示行</UButton>
-            </div>
-            <div class="overflow-x-auto rounded-lg border border-slate-200">
-              <table class="min-w-[760px] w-full text-left text-xs">
-                <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">标题</th><th class="p-2">内容</th><th class="p-2">操作</th></tr></thead>
-                <tbody>
-                  <tr v-for="(tool, toolIndex) in editStructured.embeddedTools || []" :key="toolIndex" class="border-t border-slate-100">
-                    <td class="p-2"><UInput v-model="tool.title" size="xs" /></td>
-                    <td class="p-2"><UTextarea v-model="tool.content" :rows="2" size="xs" /></td>
-                    <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.embeddedTools.splice(toolIndex, 1)" /></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+      <!-- Tab 栏 -->
+      <div class="mt-4 flex border-b border-slate-200">
+        <button
+          v-for="(tab, index) in tabs"
+          :key="index"
+          class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+          :class="activeTab === index ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-700'"
+          @click="activeTab = index"
+        >
+          <UIcon :name="tab.icon" class="mr-1.5 align-middle" />
+          {{ tab.label }}
+        </button>
       </div>
 
-      <!-- === 工具库 === -->
-      <div v-if="editForm.libraryType === 'tool'" class="panel mt-6 p-6">
-        <div class="flex items-center justify-between gap-3 mb-4">
-          <h2 class="text-xl font-semibold">工具库表格</h2>
-          <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-plus" @click="addToolItem">新增工具行</UButton>
-        </div>
-        <div class="overflow-x-auto rounded-lg border border-slate-200">
-          <table class="min-w-[2600px] w-full text-left text-xs">
-            <thead class="bg-slate-50 text-slate-500">
-              <tr>
-                <th class="p-2">编码</th><th class="p-2">名称</th><th class="p-2">形式</th>
-                <th class="p-2">等级</th><th class="p-2">严重度</th><th class="p-2">主归因</th>
-                <th class="p-2">适用归因</th><th class="p-2">场景标签</th><th class="p-2">工具标签</th>
-                <th class="p-2">维度</th><th class="p-2">适用情形</th><th class="p-2">预期效果</th>
-                <th class="p-2">步骤</th><th class="p-2">话术</th><th class="p-2">禁忌</th>
-                <th class="p-2">周期</th><th class="p-2">单次时长</th><th class="p-2">对象</th>
-                <th class="p-2 w-14">证据</th><th class="p-2 w-20">跨模块</th>
-                <th class="p-2">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(tool, toolIndex) in editStructured.tools || []" :key="toolIndex" class="border-t border-slate-100 align-top">
-                <td class="p-2"><UInput v-model="tool.code" size="xs" /></td>
-                <td class="p-2"><UInput v-model="tool.name" size="xs" /></td>
-                <td class="p-2"><UInput v-model="tool.form" size="xs" /></td>
-                <td class="p-2"><UInput v-model="tool.level" size="xs" /></td>
-                <td class="p-2"><UInput v-model="tool.severity" size="xs" /></td>
-                <td class="p-2"><UInput v-model="tool.attribution" size="xs" /></td>
-                <td class="p-2"><UTextarea v-model="tool.attributionsText" :rows="2" size="xs" /></td>
-                <td class="p-2"><UTextarea v-model="tool.tagsText" :rows="2" size="xs" /></td>
-                <td class="p-2"><UTextarea v-model="tool.toolTagsText" :rows="2" size="xs" /></td>
-                <td class="p-2"><UTextarea v-model="tool.dimensionsText" :rows="2" size="xs" /></td>
-                <td class="p-2"><UTextarea v-model="tool.symptoms" :rows="2" size="xs" /></td>
-                <td class="p-2"><UTextarea v-model="tool.expectedEffect" :rows="2" size="xs" /></td>
-                <td class="p-2"><UTextarea v-model="tool.stepsText" :rows="2" size="xs" /></td>
-                <td class="p-2"><UTextarea v-model="tool.scripts" :rows="2" size="xs" /></td>
-                <td class="p-2"><UTextarea v-model="tool.prohibitions" :rows="2" size="xs" /></td>
-                <td class="p-2"><UInput v-model="tool.duration" size="xs" /></td>
-                <td class="p-2"><UInput v-model="tool.timePerSession" size="xs" /></td>
-                <td class="p-2"><UInput v-model="tool.targetUsers" size="xs" /></td>
-                <td class="p-2">
-                  <USelect v-model="tool.evidenceLevel" size="xs" :items="['', 'A', 'B', 'C', 'D']" class="w-14" />
-                </td>
-                <td class="p-2"><UInput v-model="tool.crossModuleTagsText" size="xs" placeholder="逗号分隔" /></td>
-                <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.tools.splice(toolIndex, 1)" /></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <!-- Tab 内容区 -->
+      <div class="mt-4">
 
-      <!-- V2: 工具结构化步骤与禁忌规则 -->
-      <div v-if="editForm.libraryType === 'tool' && editStructured.tools?.some((t: any) => (t.structuredSteps || []).length || (t.contraindicationRules || []).length)" class="mt-6 space-y-4">
-        <h2 class="text-xl font-semibold">V2 详情：结构化步骤与禁忌规则</h2>
-        <div v-for="(tool, toolIndex) in editStructured.tools" :key="`v2-${toolIndex}`">
-          <div v-if="tool.code && ((tool.structuredSteps || []).length || (tool.contraindicationRules || []).length)" class="panel p-5">
-            <div class="flex items-center justify-between gap-3 mb-3">
-              <h3 class="font-semibold">工具 {{ tool.code }} · {{ tool.name }}</h3>
-            </div>
+        <!-- ====== ASSESSMENT ====== -->
+        <template v-if="editForm.libraryType === 'assessment'">
 
-            <!-- structuredSteps -->
-            <div v-if="(tool.structuredSteps || []).length" class="mb-4">
-              <div class="flex items-center justify-between gap-3 mb-2">
-                <p class="text-sm font-medium text-slate-600">结构化步骤</p>
-                <UButton size="xs" color="primary" variant="soft" icon="i-lucide-plus" @click="addStructuredStep(tool)">新增步骤</UButton>
+          <!-- Tab 0: 基本属性 -->
+          <div v-show="activeTab === 0" class="space-y-6">
+            <div v-for="(instrument, i) in editStructured.instruments || []" :key="`basic-${i}`" class="panel p-5">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-semibold">{{ instrument.code || `量表 ${Number(i) + 1}` }}</h3>
+                <UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.instruments.splice(i, 1)" />
               </div>
-              <div class="space-y-2">
-                <div v-for="(step, sIndex) in tool.structuredSteps" :key="sIndex" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                  <div class="grid gap-2 sm:grid-cols-[60px_1fr]">
-                    <div class="flex gap-1">
-                      <UInput v-model.number="step.seq" type="number" size="xs" class="w-14" />
-                      <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="tool.structuredSteps.splice(sIndex, 1)" />
-                    </div>
-                    <div class="space-y-2">
-                      <div class="grid gap-2 sm:grid-cols-3">
-                        <UInput v-model="step.title" size="xs" placeholder="步骤标题" />
-                        <UInput v-model="step.estimatedTime" size="xs" placeholder="预计耗时" />
-                        <UInput v-model="step.materials" size="xs" placeholder="所需材料" />
-                      </div>
-                      <UTextarea v-model="step.description" :rows="2" size="xs" placeholder="步骤说明" />
-                      <UTextarea v-model="step.keyTip" :rows="1" size="xs" placeholder="关键提示" />
-                      <UTextarea v-model="step.scriptTemplate" :rows="1" size="xs" placeholder="话术模板" />
-                      <div class="grid gap-2 sm:grid-cols-2">
-                        <UInput v-model="step.successCriteria" size="xs" placeholder="成功标准" />
-                        <UInput v-model="step.commonIssues" size="xs" placeholder="常见问题" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              <div class="grid gap-3 sm:grid-cols-3">
+                <UFormField label="量表编码"><UInput v-bind="inlineInput(instrument, 'code')" size="sm" /></UFormField>
+                <UFormField label="量表名称"><UInput v-bind="inlineInput(instrument, 'title')" size="sm" /></UFormField>
+                <UFormField label="量表简称"><UInput v-bind="inlineInput(instrument, 'shortName')" size="sm" /></UFormField>
+                <UFormField label="所属模块">
+                  <USelect v-bind="inlineInput(instrument, 'module')" :items="moduleOptions" size="sm" />
+                </UFormField>
+                <UFormField label="版本"><UInput v-bind="inlineInput(instrument, 'version')" size="sm" /></UFormField>
+                <UFormField label="预计用时(分钟)"><UInput v-bind="inlineInput(instrument, 'estimatedMinutes')" type="number" size="sm" /></UFormField>
+              </div>
+              <UFormField label="量表说明" class="mt-3">
+                <UTextarea v-bind="inlineInput(instrument, 'description')" :rows="2" size="sm" />
+              </UFormField>
+              <div class="grid gap-3 mt-3 sm:grid-cols-3">
+                <UFormField label="适用学部">
+                  <USelect v-bind="inlineInput(instrument, 'applicableSchoolSection')" :items="schoolSectionOptions" size="sm" />
+                </UFormField>
+                <UFormField label="适用年级(逗号分隔)"><UInput v-bind="inlineInput(instrument, 'applicableGradesText')" size="sm" /></UFormField>
+                <UFormField label="适用学科(逗号分隔)"><UInput v-bind="inlineInput(instrument, 'applicableSubjectsText')" size="sm" /></UFormField>
+                <UFormField label="施测对象"><UInput v-bind="inlineInput(instrument, 'targetAudience')" size="sm" /></UFormField>
+                <UFormField label="施测形式"><UInput v-bind="inlineInput(instrument, 'formType')" size="sm" /></UFormField>
+                <UFormField label="触发方式">
+                  <USelect v-bind="inlineInput(instrument, 'triggerMethod')" :items="triggerMethodOptions" size="sm" />
+                </UFormField>
+                <UFormField label="作答频次">
+                  <USelect v-bind="inlineInput(instrument, 'frequency')" :items="frequencyOptions" size="sm" />
+                </UFormField>
+                <UFormField label="作答时限(分钟)"><UInput v-bind="inlineInput(instrument, 'timeLimitMinutes')" type="number" size="sm" /></UFormField>
+                <UFormField label="最低题数"><UInput v-bind="inlineInput(instrument, 'minQuestions')" type="number" size="sm" /></UFormField>
+                <UFormField label="使用时机"><UInput v-bind="inlineInput(instrument, 'usageTiming')" size="sm" /></UFormField>
+                <UFormField label="重评间隔天数"><UInput v-bind="inlineInput(instrument, 'reAssessmentIntervalDays')" type="number" size="sm" /></UFormField>
+                <UFormField label="前置量表编码"><UInput v-bind="inlineInput(instrument, 'prerequisiteCodesText')" size="sm" /></UFormField>
+                <UFormField label="互斥量表编码"><UInput v-bind="inlineInput(instrument, 'exclusiveCodesText')" size="sm" /></UFormField>
+                <UFormField label="是否必做">
+                  <UCheckbox v-bind="inlineInput(instrument, 'isRequired')" />
+                </UFormField>
               </div>
             </div>
+            <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-plus" @click="addInstrument">新增量表</UButton>
+          </div>
 
-            <!-- contraindicationRules -->
-            <div v-if="(tool.contraindicationRules || []).length">
-              <div class="flex items-center justify-between gap-3 mb-2">
-                <p class="text-sm font-medium text-slate-600">禁忌规则</p>
-                <UButton size="xs" color="primary" variant="soft" icon="i-lucide-plus" @click="addContraindicationRule(tool)">新增规则</UButton>
+          <!-- Tab 1: 题项管理 -->
+          <div v-show="activeTab === 1" class="space-y-6">
+            <div v-for="(instrument, i) in editStructured.instruments || []" :key="`q-${i}`" class="panel p-5">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold">{{ instrument.code || `量表 ${Number(i) + 1}` }} · 题项</h3>
+                <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addQuestion(instrument)">新增题项</UButton>
               </div>
               <div class="overflow-x-auto rounded-lg border border-slate-200">
-                <table class="min-w-[800px] w-full text-left text-xs">
+                <table class="min-w-[1600px] w-full text-left text-xs">
                   <thead class="bg-slate-50 text-slate-500">
-                    <tr><th class="p-2">条件</th><th class="p-2">类型</th><th class="p-2">说明</th><th class="p-2">替代建议</th><th class="p-2">操作</th></tr>
+                    <tr>
+                      <th class="p-2 w-16">题号</th><th class="p-2 w-40">题干</th><th class="p-2 w-20">维度</th>
+                      <th class="p-2 w-20">子维度</th><th class="p-2 w-14">权重</th><th class="p-2 w-14">反向</th>
+                      <th class="p-2 w-14">必答</th><th class="p-2 w-24">显示条件</th><th class="p-2 w-20">数据用途</th>
+                      <th class="p-2 w-24">题目说明</th><th class="p-2 w-24">题干举例</th>
+                      <th class="p-2 w-48">选项</th><th class="p-2 w-14">操作</th>
+                    </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="(rule, rIndex) in tool.contraindicationRules" :key="rIndex" class="border-t border-slate-100">
-                      <td class="p-2"><UInput v-model="rule.condition" size="xs" /></td>
-                      <td class="p-2">
-                        <USelect v-model="rule.type" size="xs" :items="['block', 'warn']" class="w-20" />
+                    <tr v-for="(q, qi) in instrument.questions" :key="qi" class="border-t border-slate-100 align-top">
+                      <td class="p-1"><UInput v-bind="inlineInput(q, 'id')" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(q, 'text')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(q, 'dimension')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(q, 'subDimension')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(q, 'weight')" size="xs" type="number" /></td>
+                      <td class="p-1 text-center"><UCheckbox v-bind="inlineInput(q, 'reverse')" /></td>
+                      <td class="p-1 text-center"><UCheckbox v-bind="inlineInput(q, 'required')" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(q, 'displayCondition')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(q, 'dataUsage')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(q, 'questionNote')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(q, 'example')" size="xs" /></td>
+                      <td class="p-1">
+                        <div class="space-y-0.5">
+                          <div v-for="(opt, oi) in q.options" :key="oi" class="flex gap-1">
+                            <UInput v-bind="inlineInput(opt, 'label')" size="xs" class="flex-1" placeholder="选项" />
+                            <UInput v-bind="inlineInput(opt, 'value')" size="xs" type="number" class="w-12" />
+                            <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="q.options.splice(oi, 1)" />
+                          </div>
+                          <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-plus" @click="q.options.push({ label: '', value: 0 })">加选项</UButton>
+                        </div>
                       </td>
-                      <td class="p-2"><UTextarea v-model="rule.description" :rows="1" size="xs" /></td>
-                      <td class="p-2"><UInput v-model="rule.alternativeSuggestion" size="xs" /></td>
-                      <td class="p-2"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="tool.contraindicationRules.splice(rIndex, 1)" /></td>
+                      <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="instrument.questions.splice(qi, 1)" /></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <!-- 计分表 -->
+              <div class="flex items-center justify-between gap-3 mt-4 mb-2">
+                <h4 class="text-sm font-semibold">计分表</h4>
+                <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addScoringRow(instrument)">新增计分行</UButton>
+              </div>
+              <div class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="min-w-[600px] w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">字段</th><th class="p-2">表达式</th><th class="p-2 w-14">操作</th></tr></thead>
+                  <tbody>
+                    <tr v-for="(row, ri) in instrument.scoringRows" :key="ri" class="border-t border-slate-100">
+                      <td class="p-1"><UInput v-bind="inlineInput(row, 'key')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(row, 'expression')" size="xs" /></td>
+                      <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="instrument.scoringRows.splice(ri, 1)" /></td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
-        </div>
+
+          <!-- Tab 2: 维度定义 -->
+          <div v-show="activeTab === 2" class="space-y-6">
+            <div v-for="(instrument, i) in editStructured.instruments || []" :key="`dim-${i}`" class="panel p-5">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold">{{ instrument.code || `量表 ${Number(i) + 1}` }} · 维度定义</h3>
+                <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addDimensionDef(instrument)">新增维度</UButton>
+              </div>
+              <div v-if="(instrument.dimensionDefs || []).length" class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="min-w-[1280px] w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th class="p-2">编码</th><th class="p-2">名称</th><th class="p-2">题号</th>
+                      <th class="p-2">计算方式</th><th class="p-2 w-14">权重</th>
+                      <th class="p-2">维度说明</th><th class="p-2">高分解释</th><th class="p-2">低分解释</th>
+                      <th class="p-2 w-20">常模均值</th><th class="p-2 w-20">常模标准差</th>
+                      <th class="p-2 w-14">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(dim, di) in instrument.dimensionDefs" :key="di" class="border-t border-slate-100 align-top">
+                      <td class="p-1"><UInput v-bind="inlineInput(dim, 'code')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(dim, 'name')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(dim, 'questionIdsText')" size="xs" placeholder="逗号分隔" /></td>
+                      <td class="p-1"><USelect v-bind="inlineInput(dim, 'calcMethod')" :items="calcMethodOptions" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(dim, 'weight')" size="xs" type="number" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(dim, 'description')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(dim, 'highInterpretation')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(dim, 'lowInterpretation')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(dim, 'normMean')" size="xs" type="number" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(dim, 'normStd')" size="xs" type="number" /></td>
+                      <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="instrument.dimensionDefs.splice(di, 1)" /></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p v-else class="text-xs text-slate-400">暂无维度定义</p>
+            </div>
+          </div>
+
+          <!-- Tab 3: 信效度与元数据 -->
+          <div v-show="activeTab === 3" class="space-y-6">
+            <div v-for="(instrument, i) in editStructured.instruments || []" :key="`meta-${i}`" class="panel p-5">
+              <h3 class="font-semibold mb-3">{{ instrument.code || `量表 ${Number(i) + 1}` }} · 信效度与元数据</h3>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <UFormField label="结果可见性">
+                  <USelect v-bind="inlineInput(instrument, 'resultVisibility')" :items="visibilityOptions" size="sm" />
+                </UFormField>
+                <UFormField label="责任角色"><UInput v-bind="inlineInput(instrument, 'responsibleRole')" size="sm" /></UFormField>
+                <UFormField label="数据敏感级"><UInput v-bind="inlineInput(instrument, 'dataSensitivity')" size="sm" /></UFormField>
+                <UFormField label="来源属性"><UInput v-bind="inlineInput(instrument, 'sourceType')" size="sm" /></UFormField>
+                <UFormField label="手册出处"><UInput v-bind="inlineInput(instrument, 'sourceRef')" size="sm" /></UFormField>
+                <UFormField label="外部授权说明"><UInput v-bind="inlineInput(instrument, 'externalAuthorizationNote')" size="sm" /></UFormField>
+              </div>
+              <div class="grid gap-3 mt-3 sm:grid-cols-1">
+                <UFormField label="常模参照"><UTextarea v-bind="inlineInput(instrument, 'normReference')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="信度说明"><UTextarea v-bind="inlineInput(instrument, 'reliabilityNote')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="效度说明"><UTextarea v-bind="inlineInput(instrument, 'validityNote')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="隐私声明"><UTextarea v-bind="inlineInput(instrument, 'privacyNotice')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="适用前提"><UTextarea v-bind="inlineInput(instrument, 'applicabilityPreconditions')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="不适合情况"><UTextarea v-bind="inlineInput(instrument, 'contraindications')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="后续建议动作"><UTextarea v-bind="inlineInput(instrument, 'postAssessmentActions')" :rows="2" size="sm" /></UFormField>
+              </div>
+            </div>
+          </div>
+
+        </template>
+
+        <!-- ====== ATTRIBUTION ====== -->
+        <template v-if="editForm.libraryType === 'attribution'">
+
+          <!-- Tab 0: 分级规则 -->
+          <div v-show="activeTab === 0" class="panel p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">分级规则</h3>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addBranch">新增规则</UButton>
+            </div>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="min-w-[2200px] w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="p-2">编码</th><th class="p-2 w-14">优先级</th><th class="p-2">条件</th>
+                    <th class="p-2">等级</th><th class="p-2">等级中文名</th><th class="p-2">主归因</th>
+                    <th class="p-2">次归因</th><th class="p-2">原因</th><th class="p-2">工具标签</th>
+                    <th class="p-2 w-14">阻断</th><th class="p-2">依据量表</th><th class="p-2">结果说明</th>
+                    <th class="p-2">动作摘要</th><th class="p-2">工具摘要</th>
+                    <th class="p-2">升级条件</th><th class="p-2">升级目标</th><th class="p-2">复评触发</th>
+                    <th class="p-2">手册出处</th><th class="p-2 w-14">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(b, bi) in editStructured.branches || []" :key="bi" class="border-t border-slate-100 align-top">
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'ruleId')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'pri')" size="xs" type="number" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'when')" size="xs" placeholder="留空兜底" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'level')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'levelName')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'primaryAttribution')" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(b, 'secondaryAttributionsText')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(b, 'reasonsText')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(b, 'toolTagsText')" :rows="1" size="xs" /></td>
+                    <td class="p-1 text-center"><UCheckbox v-bind="inlineInput(b, 'blocked')" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'assessmentCode')" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(b, 'resultDescription')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'outputActionSummary')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'outputToolSummary')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'escalationCondition')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'escalationTarget')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'reEvaluationTrigger')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(b, 'sourceRef')" size="xs" /></td>
+                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.branches.splice(bi, 1)" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 1: 计算变量 -->
+          <div v-show="activeTab === 1" class="panel p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">计算变量</h3>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addComputedRow">新增变量</UButton>
+            </div>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="min-w-[600px] w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">变量名</th><th class="p-2">表达式</th><th class="p-2 w-14">操作</th></tr></thead>
+                <tbody>
+                  <tr v-for="(row, ri) in editStructured.computedRows || []" :key="ri" class="border-t border-slate-100">
+                    <td class="p-1"><UInput v-bind="inlineInput(row, 'key')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(row, 'expression')" size="xs" /></td>
+                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.computedRows.splice(ri, 1)" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <!-- 危机条件 -->
+            <div class="mt-5">
+              <h4 class="text-sm font-semibold mb-2">危机条件</h4>
+              <div class="flex items-center gap-3">
+                <UInput v-bind="inlineInput(editStructured, 'crisisWhen')" size="sm" placeholder="危机触发条件" class="flex-1" />
+                <UCheckbox v-bind="inlineInput(editStructured, 'crisisBlocked')" label="阻断" size="sm" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 2: 红线熔断 -->
+          <div v-show="activeTab === 2" class="panel p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">红线熔断规则</h3>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addRedLine">新增红线</UButton>
+            </div>
+            <div v-if="(editStructured.redLines || []).length" class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="min-w-[1400px] w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="p-2">条件</th><th class="p-2">说明</th><th class="p-2">范围</th>
+                    <th class="p-2">处置要求</th><th class="p-2">动作列表</th>
+                    <th class="p-2">恢复条件</th><th class="p-2">责任人</th><th class="p-2">通知模板</th>
+                    <th class="p-2">手册出处</th><th class="p-2 w-14">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(rl, ri) in editStructured.redLines" :key="ri" class="border-t border-slate-100 align-top">
+                    <td class="p-1"><UInput v-bind="inlineInput(rl, 'condition')" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(rl, 'description')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><USelect v-bind="inlineInput(rl, 'scope')" :items="scopeOptions" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rl, 'requiredActions')" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(rl, 'actionsText')" :rows="1" size="xs" placeholder="每行一个动作" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rl, 'recoveryCondition')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rl, 'responsibleRole')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rl, 'notificationTemplate')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rl, 'sourceRef')" size="xs" /></td>
+                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.redLines.splice(ri, 1)" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p v-else class="text-xs text-slate-400">暂无红线规则</p>
+          </div>
+
+          <!-- Tab 3: 输出与行动 -->
+          <div v-show="activeTab === 3" class="grid gap-6 xl:grid-cols-2">
+            <div class="panel p-5">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold">默认行动项</h3>
+                <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addAttributionAction">新增</UButton>
+              </div>
+              <div class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="min-w-[600px] w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">标题</th><th class="p-2">说明</th><th class="p-2 w-14">操作</th></tr></thead>
+                  <tbody>
+                    <tr v-for="(a, ai) in editStructured.actions || []" :key="ai" class="border-t border-slate-100">
+                      <td class="p-1"><UInput v-bind="inlineInput(a, 'title')" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(a, 'detail')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.actions.splice(ai, 1)" /></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="panel p-5">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold">内置工具提示</h3>
+                <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addEmbeddedTool">新增</UButton>
+              </div>
+              <div class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="min-w-[600px] w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500"><tr><th class="p-2">标题</th><th class="p-2">内容</th><th class="p-2 w-14">操作</th></tr></thead>
+                  <tbody>
+                    <tr v-for="(t, ti) in editStructured.embeddedTools || []" :key="ti" class="border-t border-slate-100">
+                      <td class="p-1"><UInput v-bind="inlineInput(t, 'title')" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(t, 'content')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.embeddedTools.splice(ti, 1)" /></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+        </template>
+
+        <!-- ====== TOOL ====== -->
+        <template v-if="editForm.libraryType === 'tool'">
+
+          <!-- Tab 0: 基本信息 -->
+          <div v-show="activeTab === 0" class="panel p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">工具列表</h3>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addToolItem">新增工具</UButton>
+            </div>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="min-w-[3000px] w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="p-2">编码</th><th class="p-2">名称</th><th class="p-2">简称</th><th class="p-2">形式</th>
+                    <th class="p-2">适用情形</th><th class="p-2">预期效果</th><th class="p-2">严重度</th>
+                    <th class="p-2">等级</th><th class="p-2">主归因</th><th class="p-2">归因</th>
+                    <th class="p-2">标签</th><th class="p-2">工具标签</th><th class="p-2">维度</th>
+                    <th class="p-2">步骤</th><th class="p-2">话术</th><th class="p-2">禁忌</th>
+                    <th class="p-2">周期</th><th class="p-2">单次时长</th><th class="p-2">对象</th>
+                    <th class="p-2">适用学部</th><th class="p-2 w-16">重评间隔</th><th class="p-2">版本</th>
+                    <th class="p-2 w-14">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(tool, ti) in editStructured.tools || []" :key="ti" class="border-t border-slate-100 align-top">
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'code')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'name')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'shortName')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'form')" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'symptoms')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'expectedEffect')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'severity')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'level')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'attribution')" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'attributionsText')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'tagsText')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'toolTagsText')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'dimensionsText')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'stepsText')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'scripts')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'prohibitions')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'duration')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'timePerSession')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'targetUsers')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'applicableSchoolSection')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'reAssessmentIntervalDays')" size="xs" type="number" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'toolVersion')" size="xs" /></td>
+                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.tools.splice(ti, 1)" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 1: 结构化步骤 -->
+          <div v-show="activeTab === 1" class="space-y-4">
+            <div v-for="(tool, ti) in editStructured.tools || []" :key="'ss-' + ti" class="panel p-5" v-show="tool.code">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold">{{ tool.code }} · {{ tool.name }} · 结构化步骤</h3>
+                <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addStructuredStep(tool)">新增步骤</UButton>
+              </div>
+              <div v-if="(tool.structuredSteps || []).length" class="space-y-2">
+                <div v-for="(step, si) in tool.structuredSteps" :key="si" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                  <div class="flex gap-2 items-start">
+                    <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="tool.structuredSteps.splice(si, 1)" />
+                    <div class="grid gap-2 flex-1 sm:grid-cols-2">
+                      <UFormField label="序号"><UInput v-bind="inlineInput(step, 'seq')" size="xs" type="number" /></UFormField>
+                      <UFormField label="标题"><UInput v-bind="inlineInput(step, 'title')" size="xs" /></UFormField>
+                      <UFormField label="预计耗时"><UInput v-bind="inlineInput(step, 'estimatedTime')" size="xs" /></UFormField>
+                      <UFormField label="所需材料"><UInput v-bind="inlineInput(step, 'materials')" size="xs" /></UFormField>
+                      <div class="sm:col-span-2"><UFormField label="说明"><UTextarea v-bind="inlineInput(step, 'description')" :rows="2" size="xs" /></UFormField></div>
+                      <UFormField label="关键提示"><UInput v-bind="inlineInput(step, 'keyTip')" size="xs" /></UFormField>
+                      <UFormField label="话术模板"><UInput v-bind="inlineInput(step, 'scriptTemplate')" size="xs" /></UFormField>
+                      <UFormField label="成功标准"><UInput v-bind="inlineInput(step, 'successCriteria')" size="xs" /></UFormField>
+                      <UFormField label="常见问题"><UInput v-bind="inlineInput(step, 'commonIssues')" size="xs" /></UFormField>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p v-else class="text-xs text-slate-400">暂无结构化步骤</p>
+            </div>
+          </div>
+
+          <!-- Tab 2: 禁忌规则 -->
+          <div v-show="activeTab === 2" class="space-y-4">
+            <div v-for="(tool, ti) in editStructured.tools || []" :key="'cr-' + ti" class="panel p-5" v-show="tool.code">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold">{{ tool.code }} · {{ tool.name }} · 禁忌规则</h3>
+                <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addContraindicationRule(tool)">新增规则</UButton>
+              </div>
+              <div v-if="(tool.contraindicationRules || []).length" class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="min-w-[1000px] w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500">
+                    <tr><th class="p-2">条件</th><th class="p-2">类型</th><th class="p-2">说明</th><th class="p-2">替代建议</th><th class="p-2">教师群体</th><th class="p-2">依据</th><th class="p-2 w-14">操作</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(rule, ri) in tool.contraindicationRules" :key="ri" class="border-t border-slate-100">
+                      <td class="p-1"><UInput v-bind="inlineInput(rule, 'condition')" size="xs" /></td>
+                      <td class="p-1"><USelect v-bind="inlineInput(rule, 'type')" :items="contraindicationTypeOptions" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(rule, 'description')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(rule, 'alternativeSuggestion')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(rule, 'applicableTeacherGroup')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(rule, 'reference')" size="xs" /></td>
+                      <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="tool.contraindicationRules.splice(ri, 1)" /></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p v-else class="text-xs text-slate-400">暂无禁忌规则</p>
+            </div>
+          </div>
+
+          <!-- Tab 3: 元数据与关联 -->
+          <div v-show="activeTab === 3" class="space-y-4">
+            <div v-for="(tool, ti) in editStructured.tools || []" :key="'md-' + ti" class="panel p-5" v-show="tool.code">
+              <h3 class="font-semibold mb-3">{{ tool.code }} · {{ tool.name }} · 元数据与关联</h3>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <UFormField label="证据等级"><USelect v-bind="inlineInput(tool, 'evidenceLevel')" :items="evidenceLevelOptions" size="sm" /></UFormField>
+                <UFormField label="手册出处"><UInput v-bind="inlineInput(tool, 'sourceRef')" size="sm" /></UFormField>
+                <UFormField label="证据来源"><UTextarea v-bind="inlineInput(tool, 'evidenceSource')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="效果指标"><UTextarea v-bind="inlineInput(tool, 'outcomeIndicators')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="失败标准"><UTextarea v-bind="inlineInput(tool, 'failureCriteria')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="准备事项"><UTextarea v-bind="inlineInput(tool, 'preparationNeeded')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="所需材料"><UTextarea v-bind="inlineInput(tool, 'materialsRequired')" :rows="2" size="sm" /></UFormField>
+                <UFormField label="输出物"><UInput v-bind="inlineInput(tool, 'outputArtifact')" size="sm" /></UFormField>
+                <UFormField label="前置工具"><UInput v-bind="inlineInput(tool, 'prerequisiteToolCode')" size="sm" /></UFormField>
+                <UFormField label="替代工具"><UInput v-bind="inlineInput(tool, 'alternativeToolCode')" size="sm" /></UFormField>
+                <UFormField label="进阶工具"><UInput v-bind="inlineInput(tool, 'advancedToolCode')" size="sm" /></UFormField>
+                <UFormField label="协同工具(逗号分隔)"><UInput v-bind="inlineInput(tool, 'collaborativeToolCodesText')" size="sm" /></UFormField>
+                <UFormField label="跨模块标签(逗号分隔)"><UInput v-bind="inlineInput(tool, 'crossModuleTagsText')" size="sm" /></UFormField>
+              </div>
+            </div>
+          </div>
+
+        </template>
+
+        <!-- ====== KEYWORD_ROUTE ====== -->
+        <template v-if="editForm.libraryType === 'keyword_route'">
+          <div v-show="activeTab === 0" class="panel p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">路由规则</h3>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addRoute">新增路由</UButton>
+            </div>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="min-w-[1800px] w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="p-2">编码</th><th class="p-2">核心关键词</th><th class="p-2">扩展关键词</th>
+                    <th class="p-2">排除关键词</th><th class="p-2">模块</th><th class="p-2">优先级</th>
+                    <th class="p-2">匹配模式</th><th class="p-2">风险等级</th><th class="p-2">语义类别</th>
+                    <th class="p-2">关联量表</th><th class="p-2">关联工具</th><th class="p-2">上下文约束</th>
+                    <th class="p-2 w-16">权重</th><th class="p-2">时效</th><th class="p-2">说明</th>
+                    <th class="p-2 w-14">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(r, ri) in editStructured.routes || []" :key="ri" class="border-t border-slate-100 align-top">
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'code')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'coreKeywords')" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(r, 'expandedKeywords')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'exclusionKeywordsText')" size="xs" placeholder="逗号分隔" /></td>
+                    <td class="p-1"><USelect v-bind="inlineInput(r, 'module')" :items="moduleOptions" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'matchPriority')" size="xs" type="number" /></td>
+                    <td class="p-1"><USelect v-bind="inlineInput(r, 'matchMode')" :items="matchModeOptions" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'riskLevel')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'semanticCategory')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'linkedAssessmentCode')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'linkedToolCode')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'contextConstraint')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(r, 'routeWeight')" size="xs" type="number" /></td>
+                    <td class="p-1"><USelect v-bind="inlineInput(r, 'temporalValidity')" :items="temporalValidityOptions" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(r, 'description')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.routes.splice(ri, 1)" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+
+        <!-- ====== OUTPUT_TEMPLATE ====== -->
+        <template v-if="editForm.libraryType === 'output_template'">
+          <div v-show="activeTab === 0" class="panel p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">输出模板</h3>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addTemplate">新增模板</UButton>
+            </div>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="min-w-[1200px] w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="p-2">编码</th><th class="p-2">模块</th><th class="p-2">归因等级</th>
+                    <th class="p-2">模板类型</th><th class="p-2">模板内容</th>
+                    <th class="p-2">变量占位符</th><th class="p-2 w-14">排序</th>
+                    <th class="p-2 w-14">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(t, ti) in editStructured.templates || []" :key="ti" class="border-t border-slate-100 align-top">
+                    <td class="p-1"><UInput v-bind="inlineInput(t, 'code')" size="xs" /></td>
+                    <td class="p-1"><USelect v-bind="inlineInput(t, 'module')" :items="moduleOptions" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(t, 'attributionLevel')" size="xs" /></td>
+                    <td class="p-1"><USelect v-bind="inlineInput(t, 'type')" :items="templateTypeOptions" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(t, 'content')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(t, 'placeholders')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(t, 'order')" size="xs" type="number" /></td>
+                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.templates.splice(ti, 1)" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+
       </div>
 
-      <!-- 底部操作栏 -->
-      <div class="panel sticky bottom-4 mt-6 flex items-center justify-between gap-4 p-6">
-        <UCheckbox v-model="editForm.publish" label="保存后直接发布" />
-        <div class="flex gap-3">
-          <UButton to="/platform-admin/resources" color="neutral" variant="soft">取消</UButton>
-          <UButton icon="i-lucide-save" :disabled="Boolean(editPayloadError)" :loading="pending" @click="saveEditedVersion">
-            保存新版本
-          </UButton>
-        </div>
-      </div>
+      <!-- 错误提示 -->
+      <p v-if="editPayloadError" class="mt-4 text-right text-xs text-red-500">{{ editPayloadError }}</p>
 
-      <p v-if="editPayloadError" class="mt-2 text-right text-xs text-red-500">{{ editPayloadError }}</p>
+      <!-- 交叉引用校验报告弹窗 -->
+      <UModal v-model:open="crossRefOpen" title="交叉引用校验报告">
+        <template #body>
+          <div v-if="crossRefResult" class="space-y-4">
+            <!-- 模块信息 -->
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+              <span class="text-slate-500">模块</span>
+              <span class="font-medium">{{ moduleLabel(crossRefResult.module) }}</span>
+              <span class="text-slate-300">|</span>
+              <span class="text-slate-500">已导入</span>
+              <span v-if="crossRefResult.librariesAvailable.length" class="flex gap-1">
+                <UBadge v-for="lt in crossRefResult.librariesAvailable" :key="lt" color="success" variant="soft" size="xs">
+                  {{ libraryTypeLabel(lt) }}
+                </UBadge>
+              </span>
+              <span v-else class="text-slate-400 text-xs">(无)</span>
+            </div>
+
+            <!-- 缺失库类型 -->
+            <div v-if="crossRefResult.librariesMissing.length" class="rounded-lg border border-red-100 bg-red-50/50 p-3">
+              <p class="text-sm font-medium text-red-700 mb-2">尚未导入的库类型</p>
+              <div class="flex flex-wrap gap-1">
+                <UBadge v-for="lt in crossRefResult.librariesMissing" :key="lt" color="error" variant="soft" size="xs">
+                  {{ libraryTypeLabel(lt) }}
+                </UBadge>
+              </div>
+              <p class="mt-2 text-xs text-red-500">这些库类型尚未导入，导致依赖它们的引用无法校验</p>
+            </div>
+
+            <!-- 问题列表 -->
+            <div v-if="crossRefResult.issues.length" class="space-y-2">
+              <p class="text-sm font-medium text-slate-700">
+                发现 {{ crossRefResult.issues.length }} 个问题
+                <span class="text-xs text-slate-400">
+                  (error {{ crossRefResult.issues.filter((i: any) => i.severity === 'error').length }}
+                  / warning {{ crossRefResult.issues.filter((i: any) => i.severity === 'warning').length }}
+                  / info {{ crossRefResult.issues.filter((i: any) => i.severity === 'info').length }})
+                </span>
+              </p>
+
+              <div
+                v-for="(issue, idx) in crossRefResult.issues"
+                :key="idx"
+                class="rounded-md border-l-4 p-3 text-sm"
+                :class="{
+                  'border-red-400 bg-red-50/70': issue.severity === 'error',
+                  'border-amber-400 bg-amber-50/70': issue.severity === 'warning',
+                  'border-slate-300 bg-slate-50/70': issue.severity === 'info'
+                }"
+              >
+                <div class="flex items-start gap-2">
+                  <UBadge
+                    :color="issue.severity === 'error' ? 'error' : issue.severity === 'warning' ? 'warning' : 'neutral'"
+                    variant="solid"
+                    size="xs"
+                    class="shrink-0 mt-0.5"
+                  >{{ issue.severity }}</UBadge>
+                  <div class="min-w-0">
+                    <p class="text-slate-800">
+                      <span class="font-medium">{{ libraryTypeLabel(issue.sourceLibraryType) }}</span>
+                      <span v-if="issue.sourceCode" class="text-slate-500"> · {{ issue.sourceCode }}</span>
+                    </p>
+                    <p class="mt-0.5 text-slate-600">
+                      字段 <code class="text-xs bg-slate-200 px-1 rounded">{{ issue.sourceField }}</code>
+                      的值 <code class="text-xs bg-slate-200 px-1 rounded">{{ issue.sourceValue }}</code>
+                      → 目标 <span class="font-medium">{{ libraryTypeLabel(issue.targetLibraryType) }}</span>.{{ issue.targetField }}
+                    </p>
+                    <p class="mt-1 text-xs" :class="issue.severity === 'error' ? 'text-red-600' : issue.severity === 'warning' ? 'text-amber-600' : 'text-slate-500'">
+                      {{ issue.message }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 无问题 -->
+            <div v-else class="rounded-lg border border-green-100 bg-green-50/50 p-4 text-center">
+              <UIcon name="i-lucide-check-circle" class="mx-auto text-2xl text-green-500" />
+              <p class="mt-2 text-sm font-medium text-green-700">所有交叉引用校验通过</p>
+              <p class="text-xs text-green-500">已导入的库之间没有发现不一致的引用</p>
+            </div>
+          </div>
+
+          <!-- 加载中 -->
+          <div v-else class="py-8 text-center text-sm text-slate-400">
+            <UIcon name="i-lucide-loader-2" class="mx-auto animate-spin text-2xl" />
+            <p class="mt-2">正在校验...</p>
+          </div>
+        </template>
+      </UModal>
     </template>
   </div>
 </template>

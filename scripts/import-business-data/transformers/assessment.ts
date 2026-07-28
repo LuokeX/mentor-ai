@@ -28,6 +28,7 @@ export interface AssessmentInstrument {
   }>
   // V2 元数据
   shortName?: string
+  applicableSchoolSection?: string
   applicableGrades?: number[]
   applicableSubjects?: string[]
   targetAudience?: string
@@ -124,6 +125,7 @@ function parseAssessmentFileV2(allSheets: SheetData[], moduleCode: ModuleId): As
       questions,
       // V2 元数据
       shortName: extractValue(row, ['量表简称', 'shortName']),
+      applicableSchoolSection: extractValue(row, ['适用学部']),
       applicableGrades: parseNumberList(extractValue(row, ['适用年级'])),
       applicableSubjects: parseStringList(extractValue(row, ['适用学科'])),
       targetAudience: extractValue(row, ['施测对象']),
@@ -429,6 +431,7 @@ export function toAssessmentPayload(instrument: AssessmentInstrument, _module: M
     })),
     // V2 元数据
     shortName: instrument.shortName,
+    applicableSchoolSection: instrument.applicableSchoolSection,
     applicableGrades: instrument.applicableGrades,
     applicableSubjects: instrument.applicableSubjects,
     targetAudience: instrument.targetAudience,

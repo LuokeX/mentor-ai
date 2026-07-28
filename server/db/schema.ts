@@ -578,8 +578,8 @@ export const moduleResourceVersions = pgTable('module_resource_versions', {
 
 export const moduleResourceDocuments = pgTable('module_resource_documents', {
   id: uuid('id').defaultRandom().primaryKey(),
-  libraryId: uuid('library_id').notNull().references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
-  versionId: uuid('version_id').notNull().references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
+  libraryId: uuid('library_id').references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
   title: varchar('title', { length: 200 }).notNull(),
   sourceType: varchar('source_type', { length: 30 }).notNull(),
   originalFilename: varchar('original_filename', { length: 260 }),
@@ -598,8 +598,8 @@ export const moduleResourceDocuments = pgTable('module_resource_documents', {
 
 export const moduleResourceChunks = pgTable('module_resource_chunks', {
   id: uuid('id').defaultRandom().primaryKey(),
-  libraryId: uuid('library_id').notNull().references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
-  versionId: uuid('version_id').notNull().references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
+  libraryId: uuid('library_id').references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
   documentId: uuid('document_id').notNull().references(() => moduleResourceDocuments.id, { onDelete: 'cascade' }),
   chunkIndex: integer('chunk_index').notNull(),
   heading: varchar('heading', { length: 300 }),

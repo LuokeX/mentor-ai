@@ -6,6 +6,8 @@ import { createVersion, end as closeDb, findOrCreateLibrary, publishVersion } fr
 import { parseStandardToolFile, parseToolFile } from '../transformers/tool'
 import { parseAssessmentFile, toAssessmentPayload } from '../transformers/assessment'
 import { parseAttributionFile } from '../transformers/attribution'
+import { parseKeywordRouteFile } from '../transformers/keyword-route'
+import { parseOutputTemplateFile } from '../transformers/output-template'
 import { attributionConfigSchema, type LibraryType, type ModuleId } from '../../../shared/contracts'
 import { evaluateImportQuality, formatImportQualityReport, type ImportQualityReport } from '../quality'
 
@@ -23,7 +25,7 @@ interface ImportTask {
 
 const MODULES: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
 // 核心三库（向后兼容旧 import:business-data；output_template/keyword_route 按需导入）
-const LIBRARY_TYPES: LibraryType[] = ['assessment', 'attribution', 'tool']
+const LIBRARY_TYPES: LibraryType[] = ['assessment', 'attribution', 'tool', 'keyword_route', 'output_template']
 
 const LEGACY_RAW_TASKS: ImportTask[] = [
   {
@@ -120,7 +122,11 @@ export async function runImport(task: ImportTask, options: { dryRun?: boolean; p
       ? Array.isArray((payload as { instruments?: unknown[] }).instruments) ? (payload as { instruments: unknown[] }).instruments.length : 1
       : task.type === 'tool'
         ? Array.isArray((payload as { tools?: unknown[] }).tools) ? (payload as { tools: unknown[] }).tools.length : 0
-        : (payload as { branches: unknown[] }).branches.length
+        : task.type === 'keyword_route'
+          ? Array.isArray((payload as { routes?: unknown[] }).routes) ? (payload as { routes: unknown[] }).routes.length : 0
+          : task.type === 'output_template'
+            ? Array.isArray((payload as { templates?: unknown[] }).templates) ? (payload as { templates: unknown[] }).templates.length : 0
+            : (payload as { branches: unknown[] }).branches.length
 
     if (count === 0) throw new Error('未解析出任何条目')
     if (quality.status === 'fail') {
@@ -129,8 +135,8 @@ export async function runImport(task: ImportTask, options: { dryRun?: boolean; p
     if (dryRun) return { task, count, success: true, quality }
 
     const libraryId = await findOrCreateLibrary(task.module, task.type, task.libName, task.notes)
-    const version = task.type === 'attribution'
-      ? (payload as { version: string }).version
+    const version = (task.type === 'attribution' || task.type === 'keyword_route' || task.type === 'output_template')
+      ? (payload as { version: string }).version || '1.0.0'
       : '1.0.0'
     const versionId = await createVersion(libraryId, version, payload, task.notes)
     if (publish) await publishVersion(versionId)
@@ -188,6 +194,21 @@ async function loadPayload(task: ImportTask, filePath: string) {
     const instruments = parseAssessmentFile(filePath, task.module)
     return { instruments: instruments.map(instrument => toAssessmentPayload(instrument, task.module)) }
   }
+  if (task.type === 'keyword_route') {
+    if (filePath.endsWith('.json')) {
+      const json = JSON.parse(await readFile(filePath, 'utf8'))
+      return Array.isArray(json) ? { routes: json } : json
+    }
+    return { routes: parseKeywordRouteFile(filePath, task.module) }
+  }
+  if (task.type === 'output_template') {
+    if (filePath.endsWith('.json')) {
+      const json = JSON.parse(await readFile(filePath, 'utf8'))
+      return Array.isArray(json) ? { templates: json } : json
+    }
+    return { templates: parseOutputTemplateFile(filePath, task.module) }
+  }
+  // attribution
   if (filePath.endsWith('.xlsx')) return parseAttributionFile(filePath, task.module)
   const json = JSON.parse(await readFile(filePath, 'utf8'))
   return attributionConfigSchema.parse(json)

@@ -1,8 +1,10 @@
 import XLSX from 'xlsx'
 import {
   attributionConfigSchema,
+  type KeywordRouteEntry,
   type LibraryType,
   type ModuleId,
+  type OutputTemplateEntry,
   type ToolRxEntry
 } from '../../shared/contracts'
 import type { AssessmentDefinition } from '../../shared/assessments'
@@ -28,13 +30,15 @@ export function parseModuleResourceFile(input: {
   const sheets = readWorkbook(buffer)
   if (input.libraryType === 'assessment') return { instruments: parseAssessmentSheets(sheets, input.module) }
   if (input.libraryType === 'tool') return { tools: parseToolSheets(sheets) }
+  if (input.libraryType === 'keyword_route') return { routes: parseKeywordRouteSheets(sheets, input.module) }
+  if (input.libraryType === 'output_template') return { templates: parseOutputTemplateSheets(sheets, input.module) }
   return parseAttributionSheets(sheets, input.module) as unknown as Record<string, unknown>
 }
 
 function readWorkbook(buffer: Buffer): SheetData[] {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
   return workbook.SheetNames
-    .filter(name => !/说明|模板|字段/i.test(name))
+    .filter(name => !/使用说明|字段映射/i.test(name))
     .map((name) => {
       const sheet = workbook.Sheets[name]
       const raw = sheet ? XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: undefined }) : []
@@ -62,7 +66,11 @@ function inferHeaderRow(rows: unknown[][]) {
     // V2 新增
     '量表编码', '量表名称', '工具名称', '所属模块', '适用年级', '触发方式', '作答频次',
     '维度编码', '计算方式', '计算表达式', '归因理由', '输出动作摘要', '升级条件',
-    '红线条件', '熔断范围', '步骤序号', '禁忌条件', '指标类别'
+    '红线条件', '熔断范围', '步骤序号', '禁忌条件', '指标类别',
+    // output_template & keyword_route 表头特征词
+    '模板编码', '模板类型', '模板内容', '占位符说明', '关键词编码', '核心触发词', '命中归因等级',
+    // knowledge 表头特征词
+    '文档标题', '来源类型', '标签关键词', '文档内容', '来源出处',
   ]
   let bestIndex = 0
   let bestScore = -1
@@ -108,7 +116,36 @@ function parseAssessmentSheets(sheets: SheetData[], module: ModuleId): Assessmen
         module,
         title,
         description: read(first, ['description', '说明', '量表说明']) || `${title}（${questions.length}题）`,
-        estimatedMinutes: Number(read(first, ['estimatedMinutes', '预计完成时间'])) || Math.max(1, Math.ceil(questions.length / 5)),
+        estimatedMinutes: Number(read(first, ['estimatedMinutes', '预计完成时间', '预计用时分钟'])) || Math.max(1, Math.ceil(questions.length / 5)),
+        // V2 元数据
+        shortName: read(first, ['量表简称', 'shortName']),
+        applicableSchoolSection: read(first, ['适用学部']),
+        applicableGrades: parseNumberList(read(first, ['适用年级'])),
+        applicableSubjects: parseStringList(read(first, ['适用学科'])),
+        targetAudience: read(first, ['施测对象']),
+        formType: read(first, ['施测形式']),
+        triggerMethod: read(first, ['触发方式']),
+        frequency: read(first, ['作答频次']),
+        isRequired: read(first, ['是否必做']) === '是' || undefined,
+        timeLimitMinutes: Number(read(first, ['作答时限分钟'])) || undefined,
+        minQuestions: Number(read(first, ['最低题数'])) || undefined,
+        usageTiming: read(first, ['使用时机']),
+        reAssessmentIntervalDays: Number(read(first, ['重评间隔天数'])) || undefined,
+        prerequisiteCodes: parseStringList(read(first, ['前置量表编码'])),
+        exclusiveCodes: parseStringList(read(first, ['互斥量表编码'])),
+        resultVisibility: read(first, ['结果可见性']),
+        responsibleRole: read(first, ['责任角色']),
+        dataSensitivity: read(first, ['数据敏感级']),
+        sourceType: read(first, ['来源属性']),
+        externalAuthorizationNote: read(first, ['外部授权说明']),
+        sourceRef: read(first, ['手册出处']),
+        normReference: read(first, ['常模参照']),
+        reliabilityNote: read(first, ['信度说明']),
+        validityNote: read(first, ['效度说明']),
+        privacyNotice: read(first, ['隐私声明']),
+        applicabilityPreconditions: read(first, ['适用前提']),
+        contraindications: read(first, ['不适合情况']),
+        postAssessmentActions: read(first, ['后续建议动作']),
         questions: questions.map((question, qIndex) => {
           let id = question.id
           if (seen.has(id)) id = `${id}-${qIndex + 1}`
@@ -159,7 +196,14 @@ function parseToolSheets(sheets: SheetData[]): ToolRxEntry[] {
     assignIfPresent(tool, 'preparationNeeded', read(row, ['准备事项']))
     assignIfPresent(tool, 'materialsRequired', read(row, ['所需材料']))
     assignIfPresent(tool, 'outputArtifact', read(row, ['输出物']))
+    assignIfPresent(tool, 'collaborativeToolCodes', splitList(read(row, ['协同工具编码'])))
     assignIfPresent(tool, 'crossModuleTags', splitList(read(row, ['跨模块标签'])))
+    assignIfPresent(tool, 'sourceRef', read(row, ['手册出处']))
+    // V2 模板补齐
+    assignIfPresent(tool, 'applicableSchoolSection', read(row, ['适用学部']))
+    assignIfPresent(tool, 'reAssessmentIntervalDays', Number(read(row, ['重评间隔天数'])) || undefined)
+    assignIfPresent(tool, 'contraindicationNote', read(row, ['禁忌说明']))
+    assignIfPresent(tool, 'toolVersion', read(row, ['版本']))
     return tool
   }).filter((item): item is ToolRxEntry => Boolean(item)))
 }
@@ -209,6 +253,10 @@ function parseAttributionSheets(sheets: SheetData[], module: ModuleId) {
           escalationTarget: read(row, ['升级目标']),
           reEvaluationTrigger: read(row, ['复评触发条件']),
           sourceRef: read(row, ['手册出处']),
+          // V2 模板补齐
+          assessmentCode: read(row, ['依据量表编码']),
+          levelName: read(row, ['等级中文名']),
+          resultDescription: read(row, ['结果说明']),
         })
       }
 
@@ -240,6 +288,102 @@ function parseAttributionSheets(sheets: SheetData[], module: ModuleId) {
     }
   }
   return attributionConfigSchema.parse({ module, version, computed, branches, actions, tools, redLines })
+}
+
+function parseKeywordRouteSheets(sheets: SheetData[], module: ModuleId): KeywordRouteEntry[] {
+  return sheets.flatMap(sheet => sheet.rows.map((row): KeywordRouteEntry | null => {
+    const code = read(row, ['关键词编码', 'code'])
+    const coreKeywords = read(row, ['核心触发词', 'coreKeywords'])
+    if (!code || !coreKeywords) return null
+    return {
+      code,
+      coreKeywords,
+      expandedKeywords: read(row, ['扩展词与近义表达', 'expandedKeywords']),
+      exclusionKeywords: splitList(read(row, ['排除词', 'exclusionKeywords'])),
+      module,
+      matchPriority: Number(read(row, ['匹配优先级', 'matchPriority'])) || 0,
+      matchMode: (read(row, ['匹配模式', 'matchMode']) || 'fuzzy') as KeywordRouteEntry['matchMode'],
+      riskLevel: read(row, ['风险等级', 'riskLevel']) || 'low',
+      semanticCategory: read(row, ['语义分类', 'semanticCategory']),
+      linkedAssessmentCode: read(row, ['关联量表编码', 'linkedAssessmentCode']),
+      linkedToolCode: read(row, ['关联工具编码', 'linkedToolCode']),
+      contextConstraint: read(row, ['情境限定', 'contextConstraint']),
+      routeWeight: Number(read(row, ['路由权重', 'routeWeight'])) || undefined,
+      temporalValidity: (read(row, ['时效性', 'temporalValidity']) || 'always') as KeywordRouteEntry['temporalValidity'],
+      description: read(row, ['场景描述', 'description']),
+    }
+  }).filter((item): item is KeywordRouteEntry => Boolean(item)))
+}
+
+function parseOutputTemplateSheets(sheets: SheetData[], module: ModuleId): OutputTemplateEntry[] {
+  return sheets.flatMap(sheet => sheet.rows.map((row): OutputTemplateEntry | null => {
+    const code = read(row, ['模板编码', 'code'])
+    const type = read(row, ['模板类型', 'type'])
+    const content = read(row, ['模板内容', 'content'])
+    if (!code || !type || !content) return null
+    return {
+      code,
+      module,
+      attributionLevel: read(row, ['命中归因等级', 'attributionLevel']) || '',
+      type: type as OutputTemplateEntry['type'],
+      content,
+      placeholders: read(row, ['占位符说明', 'placeholders']),
+      order: Number(read(row, ['排序', 'order'])) || 0,
+    }
+  }).filter((item): item is OutputTemplateEntry => Boolean(item)))
+}
+
+export interface KnowledgeEntry {
+  title: string
+  module: ModuleId
+  sourceType: string
+  tags: string[]
+  content: string
+  sourceRef?: string
+  notes?: string
+}
+
+const VALID_SOURCE_TYPES = ['markdown', 'text', 'json'] as const
+const MODULE_IDS: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
+
+export function parseKnowledgeSheets(sheets: SheetData[], defaultModule: ModuleId): KnowledgeEntry[] {
+  // 查找「知识文档」Sheet（优先按名匹配，fallback 按含知识/文档关键字的 Sheet 或第一个数据 Sheet）
+  const targetSheet = sheets.find(s => /知识文档|知识库|knowledge/i.test(s.name)) || sheets[0]
+  if (!targetSheet) return []
+
+  return targetSheet.rows.map((row): KnowledgeEntry | null => {
+    const title = read(row, ['文档标题', 'title'])
+    const content = read(row, ['文档内容', 'content'])
+    if (!title || !content) return null
+
+    // 所属模块：优先取行内值，否则用导入参数
+    const moduleRaw = read(row, ['所属模块', 'module'])
+    let entryModule = defaultModule
+    if (moduleRaw) {
+      const matched = MODULE_IDS.find(m => m === moduleRaw || moduleRaw.includes(m))
+      if (matched) entryModule = matched
+    }
+
+    // 来源类型
+    const sourceTypeRaw = read(row, ['来源类型', 'sourceType'])
+    const sourceType = sourceTypeRaw && VALID_SOURCE_TYPES.includes(sourceTypeRaw as typeof VALID_SOURCE_TYPES[number])
+      ? sourceTypeRaw
+      : 'markdown'
+
+    // 标签关键词：逗号/分号分隔
+    const tagsRaw = read(row, ['标签关键词', 'tags'])
+    const tags = tagsRaw ? tagsRaw.split(/[,，;；]/).map(t => t.trim()).filter(Boolean) : []
+
+    return {
+      title,
+      module: entryModule,
+      sourceType,
+      tags,
+      content,
+      sourceRef: read(row, ['来源出处', 'sourceRef']),
+      notes: read(row, ['备注', 'notes']),
+    }
+  }).filter((item): item is KnowledgeEntry => Boolean(item))
 }
 
 function read(row: Record<string, string | undefined>, keys: string[]) {
@@ -284,6 +428,18 @@ function parseOptions(row: Record<string, string | undefined>) {
 
 function splitList(value: string | undefined): string[] {
   return (value || '').split(/[,，、;；\n]/).map(item => item.trim()).filter(Boolean)
+}
+
+function parseStringList(value: string | undefined): string[] | undefined {
+  if (!value) return undefined
+  const result = splitList(value)
+  return result.length > 0 ? result : undefined
+}
+
+function parseNumberList(value: string | undefined): number[] | undefined {
+  if (!value) return undefined
+  const result = value.split(/[,，、;；\s]+/).map(v => Number(v.trim())).filter(n => Number.isFinite(n))
+  return result.length > 0 ? result : undefined
 }
 
 function parseBool(value: string | undefined) {
