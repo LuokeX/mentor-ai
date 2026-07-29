@@ -29,6 +29,13 @@ const triggerMethodOptions = ['manual', 'auto', 'scheduled']
 const frequencyOptions = ['once', 'daily', 'weekly', 'monthly', 'per_case', 'semester']
 const visibilityOptions = ['teacher_only', 'teacher_and_student', 'psychologist']
 const calcMethodOptions = ['mean', 'sum', 'weighted', 'count']
+/** 严重度取值必须与工具库一致，这是分级规则与工具能咬合的唯一键 */
+const severityOptions = [
+  { label: 'low 轻度', value: 'low' },
+  { label: 'medium 中度', value: 'medium' },
+  { label: 'high 重度', value: 'high' },
+  { label: 'crisis 危机', value: 'crisis' }
+]
 const matchModeOptions = ['exact', 'fuzzy', 'regex']
 const temporalValidityOptions = ['always', 'pre_term', 'pre_exam', 'holiday']
 const templateTypeOptions = ['summary', 'conclusion', 'attribution', 'goal', 'action', 'tool', 'caution', 'review']
@@ -93,6 +100,8 @@ const tabs = computed(() => {
     { label: '信效度与元数据', icon: 'i-lucide-shield-check' }
   ]
   if (t === 'attribution') return [
+    { label: '归因项', icon: 'i-lucide-tags' },
+    { label: '证据规则', icon: 'i-lucide-scale' },
     { label: '分级规则', icon: 'i-lucide-git-branch' },
     { label: '计算变量', icon: 'i-lucide-function-square' },
     { label: '红线熔断', icon: 'i-lucide-alert-triangle' },
@@ -239,26 +248,41 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
       module: source.module || module,
       version: source.version || editForm.version,
       computedRows: Object.entries(source.computed || {}).map(([key, expression]) => ({ key, expression: String(expression) })),
-      branches: (source.branches || []).map((branch: any) => ({
-        pri: toNumber(branch.pri, 100),
-        when: branch.when || '',
-        level: branch.level || 'stable',
-        blocked: Boolean(branch.blocked),
-        ruleId: branch.ruleId || '',
-        primaryAttribution: branch.primaryAttribution || '',
-        secondaryAttributionsText: listText(branch.secondaryAttributions),
-        reasonsText: listText(branch.reasons),
-        toolTagsText: listText(branch.toolTags),
-        // V2
-        assessmentCode: branch.assessmentCode || '',
-        levelName: branch.levelName || '',
-        resultDescription: branch.resultDescription || '',
-        outputActionSummary: branch.outputActionSummary || '',
-        outputToolSummary: branch.outputToolSummary || '',
-        escalationCondition: branch.escalationCondition || '',
-        escalationTarget: branch.escalationTarget || '',
-        reEvaluationTrigger: branch.reEvaluationTrigger || '',
-        sourceRef: branch.sourceRef || ''
+      // V3 三层：归因项 / 证据规则 / 分级规则
+      attributionItems: (source.attributionItems || []).map((item: any) => ({
+        code: item.code || '',
+        name: item.name || '',
+        baseWeight: item.baseWeight ?? 1,
+        toolTagsText: listText(item.toolTags),
+        description: item.description || '',
+        highManifestation: item.highManifestation || '',
+        typicalTrigger: item.typicalTrigger || '',
+        suggestedAction: item.suggestedAction || '',
+        sourceRef: item.sourceRef || ''
+      })),
+      evidences: (source.evidences || []).map((evidence: any) => ({
+        evidenceCode: evidence.evidenceCode || '',
+        attributionCode: evidence.attributionCode || '',
+        assessmentCode: evidence.assessmentCode || '',
+        condition: evidence.condition || '',
+        weight: evidence.weight ?? 1,
+        description: evidence.description || '',
+        sourceRef: evidence.sourceRef || ''
+      })),
+      gradingRules: (source.gradingRules || []).map((rule: any) => ({
+        ruleId: rule.ruleId || '',
+        assessmentCode: rule.assessmentCode || '',
+        pri: toNumber(rule.pri, 100),
+        when: rule.when || '',
+        level: rule.level || 'stable',
+        levelName: rule.levelName || '',
+        severity: rule.severity || 'medium',
+        blocked: Boolean(rule.blocked),
+        resultDescription: rule.resultDescription || '',
+        escalationCondition: rule.escalationCondition || '',
+        escalationTarget: rule.escalationTarget || '',
+        reEvaluationTrigger: rule.reEvaluationTrigger || '',
+        sourceRef: rule.sourceRef || ''
       })),
       actions: (source.actions || []).map((action: any) => ({
         title: action.title || '',
@@ -333,8 +357,9 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
       expectedEffect: tool.expectedEffect || '',
       severity: tool.severity || '',
       level: tool.level || '',
-      attribution: tool.attribution || tool.primaryAttribution || '',
-      attributionsText: listText(tool.attributions),
+      attributionCode: tool.attributionCode || '',
+      attributionLabel: tool.attributionLabel || '',
+      attributionCodesText: listText(tool.attributionCodes),
       tagsText: listText(tool.tags),
       toolTagsText: listText(tool.toolTags),
       duration: tool.duration || '',
@@ -473,25 +498,41 @@ function buildVisualPayload() {
       computed: Object.fromEntries((editStructured.value.computedRows || [])
         .filter((row: any) => row.key && row.expression)
         .map((row: any) => [row.key, row.expression])),
-      branches: (editStructured.value.branches || []).map((branch: any) => ({
-        pri: toNumber(branch.pri, 100),
-        when: branch.when || undefined,
-        level: branch.level,
-        blocked: Boolean(branch.blocked),
-        ruleId: branch.ruleId,
-        primaryAttribution: branch.primaryAttribution,
-        secondaryAttributions: splitList(branch.secondaryAttributionsText),
-        reasons: splitList(branch.reasonsText),
-        toolTags: splitList(branch.toolTagsText),
-        assessmentCode: branch.assessmentCode || undefined,
-        levelName: branch.levelName || undefined,
-        resultDescription: branch.resultDescription || undefined,
-        outputActionSummary: branch.outputActionSummary || undefined,
-        outputToolSummary: branch.outputToolSummary || undefined,
-        escalationCondition: branch.escalationCondition || undefined,
-        escalationTarget: branch.escalationTarget || undefined,
-        reEvaluationTrigger: branch.reEvaluationTrigger || undefined,
-        sourceRef: branch.sourceRef || undefined
+      attributionItems: (editStructured.value.attributionItems || []).map((item: any) => ({
+        code: item.code,
+        name: item.name,
+        module: editForm.module,
+        baseWeight: toNumber(item.baseWeight, 1),
+        toolTags: splitList(item.toolTagsText),
+        description: item.description || undefined,
+        highManifestation: item.highManifestation || undefined,
+        typicalTrigger: item.typicalTrigger || undefined,
+        suggestedAction: item.suggestedAction || undefined,
+        sourceRef: item.sourceRef || undefined
+      })),
+      evidences: (editStructured.value.evidences || []).map((evidence: any) => ({
+        evidenceCode: evidence.evidenceCode,
+        attributionCode: evidence.attributionCode,
+        assessmentCode: evidence.assessmentCode,
+        condition: evidence.condition,
+        weight: toNumber(evidence.weight, 1),
+        description: evidence.description,
+        sourceRef: evidence.sourceRef || undefined
+      })),
+      gradingRules: (editStructured.value.gradingRules || []).map((rule: any) => ({
+        ruleId: rule.ruleId,
+        assessmentCode: rule.assessmentCode || undefined,
+        pri: toNumber(rule.pri, 100),
+        when: rule.when || undefined,
+        level: rule.level,
+        levelName: rule.levelName || undefined,
+        severity: rule.severity || 'medium',
+        blocked: Boolean(rule.blocked),
+        resultDescription: rule.resultDescription || undefined,
+        escalationCondition: rule.escalationCondition || undefined,
+        escalationTarget: rule.escalationTarget || undefined,
+        reEvaluationTrigger: rule.reEvaluationTrigger || undefined,
+        sourceRef: rule.sourceRef || undefined
       })),
       actions: (editStructured.value.actions || []).filter((action: any) => action.title && action.detail)
         .map((action: any) => ({ title: action.title, detail: action.detail, status: 'pending' })),
@@ -566,8 +607,9 @@ function buildVisualPayload() {
       expectedEffect: tool.expectedEffect,
       severity: tool.severity,
       level: tool.level,
-      attribution: tool.attribution,
-      attributions: splitList(tool.attributionsText),
+      attributionCode: tool.attributionCode || undefined,
+      attributionLabel: tool.attributionLabel || undefined,
+      attributionCodes: splitList(tool.attributionCodesText),
       tags: splitList(tool.tagsText),
       toolTags: splitList(tool.toolTagsText),
       duration: tool.duration,
@@ -636,12 +678,42 @@ function validateVisualPayload() {
     }
   }
   if (editForm.libraryType === 'attribution') {
-    const branches = editStructured.value.branches || []
-    if (!branches.length) return '归因库至少需要一条规则'
-    if (!branches.some((branch: any) => !branch.when)) return '归因库必须保留一条兜底规则，条件留空即可'
-    for (const branch of branches) {
-      if (!branch.ruleId || !branch.level || !branch.primaryAttribution) return '每条归因规则都需要编码、等级和主归因'
-      if (!splitList(branch.reasonsText).length) return `规则 ${branch.ruleId} 至少需要一条原因说明`
+    const items = editStructured.value.attributionItems || []
+    const evidences = editStructured.value.evidences || []
+    const gradingRules = editStructured.value.gradingRules || []
+    if (!items.length) return '归因库至少需要一条归因项'
+    if (!evidences.length) return '归因库至少需要一条证据规则'
+    if (!gradingRules.length) return '归因库至少需要一条分级规则'
+
+    const codes = new Set<string>()
+    for (const item of items) {
+      if (!item.code || !item.name) return '每条归因项都需要编码和名称'
+      if (codes.has(item.code)) return `归因编码重复：${item.code}`
+      codes.add(item.code)
+    }
+    const covered = new Set<string>()
+    for (const evidence of evidences) {
+      if (!evidence.evidenceCode || !evidence.attributionCode || !evidence.assessmentCode || !evidence.condition) {
+        return '每条证据规则都需要证据编码、归因编码、依据量表编码和触发条件'
+      }
+      if (!codes.has(evidence.attributionCode)) return `证据 ${evidence.evidenceCode} 引用的归因编码 ${evidence.attributionCode} 不存在`
+      if (!evidence.description) return `证据 ${evidence.evidenceCode} 需要填写证据说明，它会成为方案里的「依据」文案`
+      covered.add(evidence.attributionCode)
+    }
+    for (const item of items) {
+      if (!covered.has(item.code)) return `归因项 ${item.code} 没有任何证据规则，永远不会被命中`
+    }
+
+    const fallbacks = gradingRules.filter((rule: any) => !rule.when)
+    if (!fallbacks.length) return '分级规则必须保留一条兜底规则，触发条件留空即可'
+    const maxPri = Math.max(...gradingRules.map((rule: any) => toNumber(rule.pri, 100)))
+    for (const rule of fallbacks) {
+      if (toNumber(rule.pri, 100) < maxPri) {
+        return `兜底分级规则 ${rule.ruleId} 的优先级必须是最大值（当前最大 ${maxPri}）；否则它会吃掉全部作答，其余规则永远不可达`
+      }
+    }
+    for (const rule of gradingRules) {
+      if (!rule.ruleId || !rule.level || !rule.severity) return '每条分级规则都需要编码、命中等级和严重度'
     }
   }
   if (editForm.libraryType === 'tool') {
@@ -709,14 +781,26 @@ function addDimensionDef(instrument: any) {
   })
 }
 
-function addBranch() {
-  editStructured.value.branches.push({
-    pri: 100, when: '', level: 'stable', blocked: false,
-    ruleId: '', primaryAttribution: '',
-    secondaryAttributionsText: '', reasonsText: '', toolTagsText: '',
-    assessmentCode: '', levelName: '', resultDescription: '',
-    outputActionSummary: '', outputToolSummary: '',
-    escalationCondition: '', escalationTarget: '', reEvaluationTrigger: '', sourceRef: ''
+function addAttributionItem() {
+  editStructured.value.attributionItems.push({
+    code: '', name: '', baseWeight: 1, toolTagsText: '',
+    description: '', highManifestation: '', typicalTrigger: '', suggestedAction: '', sourceRef: ''
+  })
+}
+
+function addEvidence() {
+  editStructured.value.evidences.push({
+    evidenceCode: '', attributionCode: '', assessmentCode: '',
+    condition: '', weight: 1, description: '', sourceRef: ''
+  })
+}
+
+function addGradingRule() {
+  editStructured.value.gradingRules.push({
+    ruleId: '', assessmentCode: '', pri: 100, when: '',
+    level: 'stable', levelName: '', severity: 'medium', blocked: false,
+    resultDescription: '', escalationCondition: '', escalationTarget: '',
+    reEvaluationTrigger: '', sourceRef: ''
   })
 }
 
@@ -736,8 +820,8 @@ function addRedLine() {
 function addToolItem() {
   editStructured.value.tools.push({
     code: '', name: '', shortName: '', form: '', symptoms: '', expectedEffect: '',
-    severity: '', level: '', attribution: '',
-    attributionsText: '', tagsText: '', toolTagsText: '',
+    severity: 'medium', level: '', attributionCode: '', attributionLabel: '',
+    attributionCodesText: '', tagsText: '', toolTagsText: '',
     duration: '', timePerSession: '', stepsText: '',
     scripts: '', prohibitions: '', targetUsers: '', dimensionsText: '',
     applicableSchoolSection: '', reAssessmentIntervalDays: 0,
@@ -997,7 +1081,7 @@ function inlineInput(model: any, key: string) {
                   <tbody>
                     <tr v-for="(q, qi) in instrument.questions" :key="qi" class="border-t border-slate-100 align-top">
                       <td class="p-1"><UInput v-bind="inlineInput(q, 'id')" size="xs" /></td>
-                      <td class="p-1"><UTextarea v-bind="inlineInput(q, 'text')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(q, 'text')" :rows="2" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(q, 'dimension')" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(q, 'subDimension')" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(q, 'weight')" size="xs" type="number" /></td>
@@ -1067,9 +1151,9 @@ function inlineInput(model: any, key: string) {
                       <td class="p-1"><UInput v-bind="inlineInput(dim, 'questionIdsText')" size="xs" placeholder="逗号分隔" /></td>
                       <td class="p-1"><USelect v-bind="inlineInput(dim, 'calcMethod')" :items="calcMethodOptions" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(dim, 'weight')" size="xs" type="number" /></td>
-                      <td class="p-1"><UTextarea v-bind="inlineInput(dim, 'description')" :rows="1" size="xs" /></td>
-                      <td class="p-1"><UTextarea v-bind="inlineInput(dim, 'highInterpretation')" :rows="1" size="xs" /></td>
-                      <td class="p-1"><UTextarea v-bind="inlineInput(dim, 'lowInterpretation')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(dim, 'description')" :rows="2" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(dim, 'highInterpretation')" :rows="2" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(dim, 'lowInterpretation')" :rows="2" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(dim, 'normMean')" size="xs" type="number" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(dim, 'normStd')" size="xs" type="number" /></td>
                       <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="instrument.dimensionDefs.splice(di, 1)" /></td>
@@ -1112,54 +1196,127 @@ function inlineInput(model: any, key: string) {
         <!-- ====== ATTRIBUTION ====== -->
         <template v-if="editForm.libraryType === 'attribution'">
 
-          <!-- Tab 0: 分级规则 -->
+          <!-- Tab 0: 归因项（模块级词表，工具库的「对应归因编码」引用它） -->
           <div v-show="activeTab === 0" class="panel p-5">
             <div class="flex items-center justify-between mb-3">
-              <h3 class="font-semibold">分级规则</h3>
-              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addBranch">新增规则</UButton>
+              <div>
+                <h3 class="font-semibold">归因项</h3>
+                <p class="mt-1 text-xs text-slate-500">模块级词表。工具库的「对应归因编码」只能引用这里的编码，不要在工具表里另写文案。</p>
+              </div>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addAttributionItem">新增归因项</UButton>
             </div>
             <div class="overflow-x-auto rounded-lg border border-slate-200">
-              <table class="min-w-[2200px] w-full text-left text-xs">
+              <table class="min-w-[1600px] w-full text-left text-xs">
                 <thead class="bg-slate-50 text-slate-500">
                   <tr>
-                    <th class="p-2">编码</th><th class="p-2 w-14">优先级</th><th class="p-2">条件</th>
-                    <th class="p-2">等级</th><th class="p-2">等级中文名</th><th class="p-2">主归因</th>
-                    <th class="p-2">次归因</th><th class="p-2">原因</th><th class="p-2">工具标签</th>
-                    <th class="p-2 w-14">阻断</th><th class="p-2">依据量表</th><th class="p-2">结果说明</th>
-                    <th class="p-2">动作摘要</th><th class="p-2">工具摘要</th>
-                    <th class="p-2">升级条件</th><th class="p-2">升级目标</th><th class="p-2">复评触发</th>
-                    <th class="p-2">手册出处</th><th class="p-2 w-14">操作</th>
+                    <th class="p-2">归因编码</th><th class="p-2">归因名称</th><th class="p-2 w-20">权重基数</th>
+                    <th class="p-2">工具标签</th><th class="p-2">归因说明</th><th class="p-2">高分表现</th>
+                    <th class="p-2">典型诱因</th><th class="p-2">建议动作</th><th class="p-2">手册出处</th><th class="p-2 w-14">操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(b, bi) in editStructured.branches || []" :key="bi" class="border-t border-slate-100 align-top">
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'ruleId')" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'pri')" size="xs" type="number" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'when')" size="xs" placeholder="留空兜底" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'level')" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'levelName')" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'primaryAttribution')" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(b, 'secondaryAttributionsText')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(b, 'reasonsText')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(b, 'toolTagsText')" :rows="1" size="xs" /></td>
-                    <td class="p-1 text-center"><UCheckbox v-bind="inlineInput(b, 'blocked')" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'assessmentCode')" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(b, 'resultDescription')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'outputActionSummary')" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'outputToolSummary')" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'escalationCondition')" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'escalationTarget')" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'reEvaluationTrigger')" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(b, 'sourceRef')" size="xs" /></td>
-                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.branches.splice(bi, 1)" /></td>
+                  <tr v-for="(item, ii) in editStructured.attributionItems || []" :key="ii" class="border-t border-slate-100 align-top">
+                    <td class="p-1"><UInput v-bind="inlineInput(item, 'code')" size="xs" placeholder="ASCII 编码" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(item, 'name')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(item, 'baseWeight')" size="xs" type="number" step="0.1" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(item, 'toolTagsText')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(item, 'description')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(item, 'highManifestation')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(item, 'typicalTrigger')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(item, 'suggestedAction')" :rows="2" size="xs" placeholder="会成为方案的行动项" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(item, 'sourceRef')" size="xs" /></td>
+                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.attributionItems.splice(ii, 1)" /></td>
                   </tr>
                 </tbody>
               </table>
             </div>
           </div>
 
-          <!-- Tab 1: 计算变量 -->
+          <!-- Tab 1: 证据规则（量表级，一条归因可被多张量表的多条证据佐证） -->
           <div v-show="activeTab === 1" class="panel p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <h3 class="font-semibold">证据规则</h3>
+                <p class="mt-1 text-xs text-slate-500">
+                  命中的证据按权重累加到对应归因项，再归一化成占比。触发条件可用「题[q1] &gt;= 4 且 维度[CODE] &gt;= 3」这类写法。
+                  注意让条件覆盖中间分段，否则中等分作答会算不出任何归因。
+                </p>
+              </div>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addEvidence">新增证据</UButton>
+            </div>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="min-w-[1400px] w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="p-2">证据编码</th><th class="p-2">归因编码</th><th class="p-2">依据量表编码</th>
+                    <th class="p-2">触发条件</th><th class="p-2 w-20">证据权重</th><th class="p-2">证据说明</th>
+                    <th class="p-2">手册出处</th><th class="p-2 w-14">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(evidence, ei) in editStructured.evidences || []" :key="ei" class="border-t border-slate-100 align-top">
+                    <td class="p-1"><UInput v-bind="inlineInput(evidence, 'evidenceCode')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(evidence, 'attributionCode')" size="xs" placeholder="引用归因项编码" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(evidence, 'assessmentCode')" size="xs" placeholder="按此过滤适用量表" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(evidence, 'condition')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(evidence, 'weight')" size="xs" type="number" step="0.5" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(evidence, 'description')" :rows="2" size="xs" placeholder="命中后作为方案「依据」文案" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(evidence, 'sourceRef')" size="xs" /></td>
+                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.evidences.splice(ei, 1)" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 2: 分级规则（只产出等级与严重度，不再产出归因） -->
+          <div v-show="activeTab === 2" class="panel p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <h3 class="font-semibold">分级规则</h3>
+                <p class="mt-1 text-xs text-slate-500">
+                  只产出等级与严重度，与归因解耦。按优先级从小到大匹配、首条命中即停，
+                  <span class="font-semibold text-amber-700">兜底规则（条件留空）的优先级必须是全表最大值</span>，否则其余规则永远不可达。
+                  严重度与工具库共用同一套取值，这是二者能对上的唯一键。
+                </p>
+              </div>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addGradingRule">新增规则</UButton>
+            </div>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="min-w-[1800px] w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th class="p-2">编码</th><th class="p-2 w-16">优先级</th><th class="p-2">触发条件</th>
+                    <th class="p-2">命中等级</th><th class="p-2">等级中文名</th><th class="p-2 w-24">严重度</th>
+                    <th class="p-2 w-14">阻断</th><th class="p-2">依据量表</th><th class="p-2">结果说明</th>
+                    <th class="p-2">升级条件</th><th class="p-2">升级目标</th><th class="p-2">复评触发</th>
+                    <th class="p-2">手册出处</th><th class="p-2 w-14">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(rule, ri) in editStructured.gradingRules || []" :key="ri" class="border-t border-slate-100 align-top">
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'ruleId')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'pri')" size="xs" type="number" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'when')" size="xs" placeholder="留空即兜底" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'level')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'levelName')" size="xs" /></td>
+                    <td class="p-1"><USelect v-bind="inlineInput(rule, 'severity')" :items="severityOptions" size="xs" /></td>
+                    <td class="p-1 text-center"><UCheckbox v-bind="inlineInput(rule, 'blocked')" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'assessmentCode')" size="xs" placeholder="留空=模块通用" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(rule, 'resultDescription')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'escalationCondition')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'escalationTarget')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'reEvaluationTrigger')" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(rule, 'sourceRef')" size="xs" /></td>
+                    <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.gradingRules.splice(ri, 1)" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Tab 3: 计算变量 -->
+          <div v-show="activeTab === 3" class="panel p-5">
             <div class="flex items-center justify-between mb-3">
               <h3 class="font-semibold">计算变量</h3>
               <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addComputedRow">新增变量</UButton>
@@ -1186,8 +1343,8 @@ function inlineInput(model: any, key: string) {
             </div>
           </div>
 
-          <!-- Tab 2: 红线熔断 -->
-          <div v-show="activeTab === 2" class="panel p-5">
+          <!-- Tab 4: 红线熔断 -->
+          <div v-show="activeTab === 4" class="panel p-5">
             <div class="flex items-center justify-between mb-3">
               <h3 class="font-semibold">红线熔断规则</h3>
               <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addRedLine">新增红线</UButton>
@@ -1205,10 +1362,10 @@ function inlineInput(model: any, key: string) {
                 <tbody>
                   <tr v-for="(rl, ri) in editStructured.redLines" :key="ri" class="border-t border-slate-100 align-top">
                     <td class="p-1"><UInput v-bind="inlineInput(rl, 'condition')" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(rl, 'description')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(rl, 'description')" :rows="2" size="xs" /></td>
                     <td class="p-1"><USelect v-bind="inlineInput(rl, 'scope')" :items="scopeOptions" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(rl, 'requiredActions')" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(rl, 'actionsText')" :rows="1" size="xs" placeholder="每行一个动作" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(rl, 'actionsText')" :rows="2" size="xs" placeholder="每行一个动作" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(rl, 'recoveryCondition')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(rl, 'responsibleRole')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(rl, 'notificationTemplate')" size="xs" /></td>
@@ -1221,8 +1378,8 @@ function inlineInput(model: any, key: string) {
             <p v-else class="text-xs text-slate-400">暂无红线规则</p>
           </div>
 
-          <!-- Tab 3: 输出与行动 -->
-          <div v-show="activeTab === 3" class="grid gap-6 xl:grid-cols-2">
+          <!-- Tab 5: 输出与行动 -->
+          <div v-show="activeTab === 5" class="grid gap-6 xl:grid-cols-2">
             <div class="panel p-5">
               <div class="flex items-center justify-between mb-3">
                 <h3 class="font-semibold">默认行动项</h3>
@@ -1234,7 +1391,7 @@ function inlineInput(model: any, key: string) {
                   <tbody>
                     <tr v-for="(a, ai) in editStructured.actions || []" :key="ai" class="border-t border-slate-100">
                       <td class="p-1"><UInput v-bind="inlineInput(a, 'title')" size="xs" /></td>
-                      <td class="p-1"><UTextarea v-bind="inlineInput(a, 'detail')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(a, 'detail')" :rows="2" size="xs" /></td>
                       <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.actions.splice(ai, 1)" /></td>
                     </tr>
                   </tbody>
@@ -1252,7 +1409,7 @@ function inlineInput(model: any, key: string) {
                   <tbody>
                     <tr v-for="(t, ti) in editStructured.embeddedTools || []" :key="ti" class="border-t border-slate-100">
                       <td class="p-1"><UInput v-bind="inlineInput(t, 'title')" size="xs" /></td>
-                      <td class="p-1"><UTextarea v-bind="inlineInput(t, 'content')" :rows="1" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(t, 'content')" :rows="2" size="xs" /></td>
                       <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.embeddedTools.splice(ti, 1)" /></td>
                     </tr>
                   </tbody>
@@ -1278,8 +1435,8 @@ function inlineInput(model: any, key: string) {
                   <tr>
                     <th class="p-2">编码</th><th class="p-2">名称</th><th class="p-2">简称</th><th class="p-2">形式</th>
                     <th class="p-2">适用情形</th><th class="p-2">预期效果</th><th class="p-2">严重度</th>
-                    <th class="p-2">等级</th><th class="p-2">主归因</th><th class="p-2">归因</th>
-                    <th class="p-2">标签</th><th class="p-2">工具标签</th><th class="p-2">维度</th>
+                    <th class="p-2">等级</th><th class="p-2">对应归因编码</th><th class="p-2">附加归因编码</th>
+                    <th class="p-2">标签</th><th class="p-2">工具标签</th><th class="p-2">作用维度编码</th>
                     <th class="p-2">步骤</th><th class="p-2">话术</th><th class="p-2">禁忌</th>
                     <th class="p-2">周期</th><th class="p-2">单次时长</th><th class="p-2">对象</th>
                     <th class="p-2">适用学部</th><th class="p-2 w-16">重评间隔</th><th class="p-2">版本</th>
@@ -1292,18 +1449,18 @@ function inlineInput(model: any, key: string) {
                     <td class="p-1"><UInput v-bind="inlineInput(tool, 'name')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(tool, 'shortName')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(tool, 'form')" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'symptoms')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'expectedEffect')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'severity')" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'symptoms')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'expectedEffect')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><USelect v-bind="inlineInput(tool, 'severity')" :items="severityOptions" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(tool, 'level')" size="xs" /></td>
-                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'attribution')" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'attributionsText')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'tagsText')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'toolTagsText')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'dimensionsText')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'stepsText')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'scripts')" :rows="1" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'prohibitions')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UInput v-bind="inlineInput(tool, 'attributionCode')" size="xs" placeholder="引用归因项编码" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'attributionCodesText')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'tagsText')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'toolTagsText')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'dimensionsText')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'stepsText')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'scripts')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'prohibitions')" :rows="2" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(tool, 'duration')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(tool, 'timePerSession')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(tool, 'targetUsers')" size="xs" /></td>
@@ -1324,23 +1481,39 @@ function inlineInput(model: any, key: string) {
                 <h3 class="font-semibold">{{ tool.code }} · {{ tool.name }} · 结构化步骤</h3>
                 <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addStructuredStep(tool)">新增步骤</UButton>
               </div>
-              <div v-if="(tool.structuredSteps || []).length" class="space-y-2">
-                <div v-for="(step, si) in tool.structuredSteps" :key="si" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                  <div class="flex gap-2 items-start">
-                    <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="tool.structuredSteps.splice(si, 1)" />
-                    <div class="grid gap-2 flex-1 sm:grid-cols-2">
-                      <UFormField label="序号"><UInput v-bind="inlineInput(step, 'seq')" size="xs" type="number" /></UFormField>
-                      <UFormField label="标题"><UInput v-bind="inlineInput(step, 'title')" size="xs" /></UFormField>
-                      <UFormField label="预计耗时"><UInput v-bind="inlineInput(step, 'estimatedTime')" size="xs" /></UFormField>
-                      <UFormField label="所需材料"><UInput v-bind="inlineInput(step, 'materials')" size="xs" /></UFormField>
-                      <div class="sm:col-span-2"><UFormField label="说明"><UTextarea v-bind="inlineInput(step, 'description')" :rows="2" size="xs" /></UFormField></div>
-                      <UFormField label="关键提示"><UInput v-bind="inlineInput(step, 'keyTip')" size="xs" /></UFormField>
-                      <UFormField label="话术模板"><UInput v-bind="inlineInput(step, 'scriptTemplate')" size="xs" /></UFormField>
-                      <UFormField label="成功标准"><UInput v-bind="inlineInput(step, 'successCriteria')" size="xs" /></UFormField>
-                      <UFormField label="常见问题"><UInput v-bind="inlineInput(step, 'commonIssues')" size="xs" /></UFormField>
-                    </div>
-                  </div>
-                </div>
+              <div v-if="(tool.structuredSteps || []).length" class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="min-w-full text-xs">
+                  <thead class="bg-slate-50 border-b border-slate-200 sticky top-0">
+                    <tr>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 w-10"></th>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 w-14">序号</th>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 min-w-28">标题</th>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 w-20">预计耗时</th>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 min-w-28">所需材料</th>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 min-w-48">说明</th>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 min-w-36">关键提示</th>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 min-w-32">话术模板</th>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 min-w-28">成功标准</th>
+                      <th class="px-2 py-2 text-left font-medium text-slate-600 min-w-28">常见问题</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(step, si) in tool.structuredSteps" :key="si" class="border-b border-slate-100 hover:bg-slate-50/50 align-top">
+                      <td class="px-2 py-1">
+                        <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="tool.structuredSteps.splice(si, 1)" />
+                      </td>
+                      <td class="px-2 py-1"><UInput v-bind="inlineInput(step, 'seq')" size="xs" type="number" class="w-14" /></td>
+                      <td class="px-2 py-1"><UInput v-bind="inlineInput(step, 'title')" size="xs" /></td>
+                      <td class="px-2 py-1"><UInput v-bind="inlineInput(step, 'estimatedTime')" size="xs" /></td>
+                      <td class="px-2 py-1"><UTextarea v-bind="inlineInput(step, 'materials')" :rows="2" size="xs" /></td>
+                      <td class="px-2 py-1"><UTextarea v-bind="inlineInput(step, 'description')" :rows="2" size="xs" /></td>
+                      <td class="px-2 py-1"><UTextarea v-bind="inlineInput(step, 'keyTip')" :rows="2" size="xs" /></td>
+                      <td class="px-2 py-1"><UTextarea v-bind="inlineInput(step, 'scriptTemplate')" :rows="2" size="xs" /></td>
+                      <td class="px-2 py-1"><UTextarea v-bind="inlineInput(step, 'successCriteria')" :rows="2" size="xs" /></td>
+                      <td class="px-2 py-1"><UTextarea v-bind="inlineInput(step, 'commonIssues')" :rows="2" size="xs" /></td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
               <p v-else class="text-xs text-slate-400">暂无结构化步骤</p>
             </div>
@@ -1362,8 +1535,8 @@ function inlineInput(model: any, key: string) {
                     <tr v-for="(rule, ri) in tool.contraindicationRules" :key="ri" class="border-t border-slate-100">
                       <td class="p-1"><UInput v-bind="inlineInput(rule, 'condition')" size="xs" /></td>
                       <td class="p-1"><USelect v-bind="inlineInput(rule, 'type')" :items="contraindicationTypeOptions" size="xs" /></td>
-                      <td class="p-1"><UTextarea v-bind="inlineInput(rule, 'description')" :rows="1" size="xs" /></td>
-                      <td class="p-1"><UInput v-bind="inlineInput(rule, 'alternativeSuggestion')" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(rule, 'description')" :rows="2" size="xs" /></td>
+                      <td class="p-1"><UTextarea v-bind="inlineInput(rule, 'alternativeSuggestion')" :rows="2" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(rule, 'applicableTeacherGroup')" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(rule, 'reference')" size="xs" /></td>
                       <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="tool.contraindicationRules.splice(ri, 1)" /></td>
@@ -1379,20 +1552,51 @@ function inlineInput(model: any, key: string) {
           <div v-show="activeTab === 3" class="space-y-4">
             <div v-for="(tool, ti) in editStructured.tools || []" :key="'md-' + ti" class="panel p-5" v-show="tool.code">
               <h3 class="font-semibold mb-3">{{ tool.code }} · {{ tool.name }} · 元数据与关联</h3>
-              <div class="grid gap-3 sm:grid-cols-2">
-                <UFormField label="证据等级"><USelect v-bind="inlineInput(tool, 'evidenceLevel')" :items="evidenceLevelOptions" size="sm" /></UFormField>
-                <UFormField label="手册出处"><UInput v-bind="inlineInput(tool, 'sourceRef')" size="sm" /></UFormField>
-                <UFormField label="证据来源"><UTextarea v-bind="inlineInput(tool, 'evidenceSource')" :rows="2" size="sm" /></UFormField>
-                <UFormField label="效果指标"><UTextarea v-bind="inlineInput(tool, 'outcomeIndicators')" :rows="2" size="sm" /></UFormField>
-                <UFormField label="失败标准"><UTextarea v-bind="inlineInput(tool, 'failureCriteria')" :rows="2" size="sm" /></UFormField>
-                <UFormField label="准备事项"><UTextarea v-bind="inlineInput(tool, 'preparationNeeded')" :rows="2" size="sm" /></UFormField>
-                <UFormField label="所需材料"><UTextarea v-bind="inlineInput(tool, 'materialsRequired')" :rows="2" size="sm" /></UFormField>
-                <UFormField label="输出物"><UInput v-bind="inlineInput(tool, 'outputArtifact')" size="sm" /></UFormField>
-                <UFormField label="前置工具"><UInput v-bind="inlineInput(tool, 'prerequisiteToolCode')" size="sm" /></UFormField>
-                <UFormField label="替代工具"><UInput v-bind="inlineInput(tool, 'alternativeToolCode')" size="sm" /></UFormField>
-                <UFormField label="进阶工具"><UInput v-bind="inlineInput(tool, 'advancedToolCode')" size="sm" /></UFormField>
-                <UFormField label="协同工具(逗号分隔)"><UInput v-bind="inlineInput(tool, 'collaborativeToolCodesText')" size="sm" /></UFormField>
-                <UFormField label="跨模块标签(逗号分隔)"><UInput v-bind="inlineInput(tool, 'crossModuleTagsText')" size="sm" /></UFormField>
+              <div class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="min-w-full text-xs">
+                  <tbody>
+                    <tr class="border-b border-slate-100">
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50 w-40">证据等级</td>
+                      <td class="px-3 py-1.5"><USelect v-bind="inlineInput(tool, 'evidenceLevel')" :items="evidenceLevelOptions" size="xs" /></td>
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50 w-40">手册出处</td>
+                      <td class="px-3 py-1.5"><UInput v-bind="inlineInput(tool, 'sourceRef')" size="xs" /></td>
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">证据来源</td>
+                      <td class="px-3 py-1.5"><UTextarea v-bind="inlineInput(tool, 'evidenceSource')" :rows="2" size="xs" /></td>
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">效果指标</td>
+                      <td class="px-3 py-1.5"><UTextarea v-bind="inlineInput(tool, 'outcomeIndicators')" :rows="2" size="xs" /></td>
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">失败标准</td>
+                      <td class="px-3 py-1.5"><UTextarea v-bind="inlineInput(tool, 'failureCriteria')" :rows="2" size="xs" /></td>
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">准备事项</td>
+                      <td class="px-3 py-1.5"><UTextarea v-bind="inlineInput(tool, 'preparationNeeded')" :rows="2" size="xs" /></td>
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">所需材料</td>
+                      <td class="px-3 py-1.5"><UTextarea v-bind="inlineInput(tool, 'materialsRequired')" :rows="2" size="xs" /></td>
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">输出物</td>
+                      <td class="px-3 py-1.5"><UInput v-bind="inlineInput(tool, 'outputArtifact')" size="xs" /></td>
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">前置工具</td>
+                      <td class="px-3 py-1.5"><UInput v-bind="inlineInput(tool, 'prerequisiteToolCode')" size="xs" /></td>
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">替代工具</td>
+                      <td class="px-3 py-1.5"><UInput v-bind="inlineInput(tool, 'alternativeToolCode')" size="xs" /></td>
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">进阶工具</td>
+                      <td class="px-3 py-1.5"><UInput v-bind="inlineInput(tool, 'advancedToolCode')" size="xs" /></td>
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">协同工具</td>
+                      <td class="px-3 py-1.5"><UInput v-bind="inlineInput(tool, 'collaborativeToolCodesText')" size="xs" placeholder="逗号分隔" /></td>
+                    </tr>
+                    <tr>
+                      <td class="px-3 py-1.5 font-medium text-slate-600 bg-slate-50">跨模块标签</td>
+                      <td class="px-3 py-1.5" colspan="3"><UInput v-bind="inlineInput(tool, 'crossModuleTagsText')" size="xs" placeholder="逗号分隔" /></td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -1422,7 +1626,7 @@ function inlineInput(model: any, key: string) {
                   <tr v-for="(r, ri) in editStructured.routes || []" :key="ri" class="border-t border-slate-100 align-top">
                     <td class="p-1"><UInput v-bind="inlineInput(r, 'code')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(r, 'coreKeywords')" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(r, 'expandedKeywords')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(r, 'expandedKeywords')" :rows="2" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(r, 'exclusionKeywordsText')" size="xs" placeholder="逗号分隔" /></td>
                     <td class="p-1"><USelect v-bind="inlineInput(r, 'module')" :items="moduleOptions" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(r, 'matchPriority')" size="xs" type="number" /></td>
@@ -1434,7 +1638,7 @@ function inlineInput(model: any, key: string) {
                     <td class="p-1"><UInput v-bind="inlineInput(r, 'contextConstraint')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(r, 'routeWeight')" size="xs" type="number" /></td>
                     <td class="p-1"><USelect v-bind="inlineInput(r, 'temporalValidity')" :items="temporalValidityOptions" size="xs" /></td>
-                    <td class="p-1"><UTextarea v-bind="inlineInput(r, 'description')" :rows="1" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(r, 'description')" :rows="2" size="xs" /></td>
                     <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.routes.splice(ri, 1)" /></td>
                   </tr>
                 </tbody>

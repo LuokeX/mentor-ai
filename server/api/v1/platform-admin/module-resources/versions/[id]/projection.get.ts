@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm'
+import type { LibraryType, ModuleId, ModuleResourceScope } from '../../../../../../../shared/contracts'
 import { requireUser } from '../../../../../../utils/auth'
 import { schema, useDb } from '../../../../../../utils/db'
+import { projectModuleResourcePayload } from '../../../../../../domain/module-resource-projection'
 
 export default defineEventHandler(async (event) => {
   await requireUser(event, ['platform_admin'])
@@ -11,6 +13,7 @@ export default defineEventHandler(async (event) => {
     libraryId: schema.moduleResourceVersions.libraryId,
     version: schema.moduleResourceVersions.version,
     status: schema.moduleResourceVersions.status,
+    payload: schema.moduleResourceVersions.payload,
     module: schema.moduleResourceLibraries.module,
     libraryType: schema.moduleResourceLibraries.libraryType,
     scope: schema.moduleResourceLibraries.scope,
@@ -22,6 +25,14 @@ export default defineEventHandler(async (event) => {
     .limit(1)
 
   if (!version) throw createError({ statusCode: 404, message: '资源版本不存在' })
+  const projection = projectModuleResourcePayload({
+    libraryId: version.libraryId,
+    versionId: version.id,
+    module: version.module as ModuleId,
+    libraryType: version.libraryType as LibraryType,
+    scope: version.scope as ModuleResourceScope,
+    schoolId: version.schoolId
+  }, version.payload as Record<string, unknown>)
 
   const [assessments, attributionRules, tools] = await Promise.all([
     db.select().from(schema.moduleResourceAssessmentItems)
@@ -33,14 +44,29 @@ export default defineEventHandler(async (event) => {
   ])
 
   return {
-    version,
+    version: {
+      id: version.id,
+      libraryId: version.libraryId,
+      version: version.version,
+      status: version.status,
+      module: version.module,
+      libraryType: version.libraryType,
+      scope: version.scope,
+      schoolId: version.schoolId
+    },
     summary: {
       assessmentCount: assessments.length,
       attributionRuleCount: attributionRules.length,
-      toolCount: tools.length
+      attributionItemCount: projection.attributionItems.length,
+      toolCount: tools.length,
+      templateCount: projection.outputTemplates.length,
+      routeCount: projection.keywordRoutes.length
     },
     assessments,
     attributionRules,
-    tools
+    attributionItems: projection.attributionItems,
+    tools,
+    outputTemplates: projection.outputTemplates,
+    keywordRoutes: projection.keywordRoutes
   }
 })

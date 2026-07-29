@@ -1,7 +1,23 @@
-import { assessmentDefinitions, moduleMeta } from '../../shared/assessments'
-import type { ModuleId } from '../../shared/contracts'
+import { assessmentDefinitions, moduleMeta, type AssessmentDefinition } from '../../shared/assessments'
+import type { ModuleId, AttributionOutcome, OutputTemplateEntry, Severity } from '../../shared/contracts'
 import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
 import type { RuleOutput } from './rules'
+
+/**
+ * 报告可以由新引擎的多归因结果生成，也可以由硬编码 fallback 的单归因结果生成，
+ * 后者没有 attributions/severity，因此这里做成可选。
+ */
+type ReportResult = RuleOutput & {
+  attributions?: AttributionOutcome[]
+  severity?: Severity
+  levelName?: string
+  dimensionLabels?: Record<string, string>
+}
+
+/** 把维度编码换成中文名。缺映射时退回编码，至少不会崩。 */
+function dimensionLabel(result: ReportResult, code: string) {
+  return result.dimensionLabels?.[code] || code
+}
 
 const nonDiagnosticNote = '本报告仅用于教师教育工作支持，不构成心理、医学或法律诊断；涉及安全风险时应按学校流程转介。'
 
@@ -17,19 +33,23 @@ function riskLabel(module: ModuleId, level: string) {
   return moduleRiskLabels[module][level] || level
 }
 
-function weakestDimension(result: RuleOutput) {
+function weakestDimension(result: ReportResult) {
   const entries = Object.entries(result.dimensions)
-  if (!entries.length) return '当前模块'
-  return entries.sort((a, b) => a[1] - b[1])[0]?.[0] || entries[0]![0]
+  if (!entries.length) return '当前维度'
+  const code = entries.sort((a, b) => a[1] - b[1])[0]?.[0] || entries[0]![0]
+  const name = dimensionLabel(result, code!)
+  return (name && name.length >= 2) ? name : '当前维度'
 }
 
-function strongestDimension(result: RuleOutput) {
+function strongestDimension(result: ReportResult) {
   const entries = Object.entries(result.dimensions)
-  if (!entries.length) return '当前模块'
-  return entries.sort((a, b) => b[1] - a[1])[0]?.[0] || entries[0]![0]
+  if (!entries.length) return '当前维度'
+  const code = entries.sort((a, b) => b[1] - a[1])[0]?.[0] || entries[0]![0]
+  const name = dimensionLabel(result, code!)
+  return (name && name.length >= 2) ? name : '当前维度'
 }
 
-function moduleScript(module: ModuleId, result: RuleOutput) {
+function moduleScript(module: ModuleId, result: ReportResult) {
   const scripts: AssessmentReport['scripts'] = {
     self_growth: [
       { scenario: '向同事求助', text: '我最近在这个问题上消耗比较大，想请你帮我一起看一下事实和下一步，不需要马上给答案。' },
@@ -55,7 +75,7 @@ function moduleScript(module: ModuleId, result: RuleOutput) {
   return result.tools.length ? [...scripts, ...result.tools.slice(0, 1).map(tool => ({ scenario: tool.title, text: tool.content }))] : scripts
 }
 
-function moduleProfile(module: ModuleId, result: RuleOutput, weak: string, strong: string) {
+function moduleProfile(module: ModuleId, result: ReportResult, weak: string, strong: string) {
   const profiles: Record<ModuleId, AssessmentReport['profile']> = {
     self_growth: {
       title: '班主任个人状态画像',
@@ -87,7 +107,7 @@ function moduleProfile(module: ModuleId, result: RuleOutput, weak: string, stron
   return profiles[module]
 }
 
-function moduleRiskDescription(module: ModuleId, result: RuleOutput) {
+function moduleRiskDescription(module: ModuleId, result: ReportResult) {
   const label = riskLabel(module, result.level)
   const descriptions: Record<ModuleId, string> = {
     self_growth: `规则判断为"${label}"。该等级用于提示班主任当前消耗和支持优先级，重点是恢复节奏、减少独自承接和及时求助。`,
@@ -99,7 +119,7 @@ function moduleRiskDescription(module: ModuleId, result: RuleOutput) {
   return descriptions[module]
 }
 
-function moduleThreeDayPlan(module: ModuleId, result: RuleOutput, weak: string, strong: string): AssessmentReport['threeDayPlan'] {
+function moduleThreeDayPlan(module: ModuleId, result: ReportResult, weak: string, strong: string): AssessmentReport['threeDayPlan'] {
   const action = (index: number, fallbackTitle: string, fallbackDetail: string) => ({
     title: result.actions[index]?.title || fallbackTitle,
     detail: result.actions[index]?.detail || fallbackDetail
@@ -172,7 +192,7 @@ function splitToolContent(content: string) {
     .slice(0, 6)
 }
 
-function moduleSupportGoal(module: ModuleId, result: RuleOutput, weak: string, strong: string): NonNullable<AssessmentReport['supportGoal']> {
+function moduleSupportGoal(module: ModuleId, result: ReportResult, weak: string, strong: string): NonNullable<AssessmentReport['supportGoal']> {
   const base = {
     self_growth: {
       weeklyGoal: `围绕"${weak}"减少持续消耗，先恢复一个稳定支持点。`,
@@ -230,7 +250,7 @@ function moduleSuccessCriteria(module: ModuleId, weak: string, strong: string): 
   }[module]
 }
 
-function toolPrescriptions(result: RuleOutput): NonNullable<AssessmentReport['toolPrescriptions']> {
+function toolPrescriptions(result: ReportResult): NonNullable<AssessmentReport['toolPrescriptions']> {
   return result.tools.slice(0, 6).map(tool => {
     const steps = splitToolContent(tool.content)
     return {
@@ -245,30 +265,91 @@ function toolPrescriptions(result: RuleOutput): NonNullable<AssessmentReport['to
   })
 }
 
+function selectOutputTemplate(
+  templates: OutputTemplateEntry[] | undefined,
+  level: string,
+  type: OutputTemplateEntry['type']
+) {
+  if (!templates?.length) return undefined
+  return [...templates]
+    .filter(template =>
+      template.type === type
+      && ['default', 'stable', 'none', level].includes(template.attributionLevel)
+    )
+    .sort((a, b) => {
+      const rank = (template: OutputTemplateEntry) => template.attributionLevel === level ? 0 : 1
+      return rank(a) - rank(b) || a.order - b.order || a.code.localeCompare(b.code)
+    })[0]
+}
+
+function fitReportText(value: string, max: number) {
+  const text = value.replace(/\s+/g, ' ').trim()
+  return text.length > max ? text.slice(0, max) : text
+}
+
+function renderOutputTemplate(content: string, result: ReportResult, weak: string, strong: string) {
+  const replacements: Record<string, string> = {
+    主要归因: result.primaryAttribution || weak,
+    次要归因: result.secondaryAttributions?.length ? result.secondaryAttributions.join('、') : '暂无明显次要归因',
+    命中等级: result.level,
+    等级: result.level,
+    等级中文名: result.levelName || result.level,
+    严重度: result.severity || '',
+    薄弱维度: weak,
+    优势维度: strong
+  }
+  return content.replace(/\$\{([^}]+)\}/g, (_, key: string) => replacements[key.trim()] ?? '')
+}
+
 export function createTemplateAssessmentReport(input: {
   module: ModuleId
-  result: RuleOutput
+  result: ReportResult
   generatedAt?: Date
+  definition?: AssessmentDefinition
+  outputTemplates?: OutputTemplateEntry[]
 }): AssessmentReport {
-  const definition = assessmentDefinitions[input.module]
+  const definition = input.definition || assessmentDefinitions[input.module]
   const result = input.result
   const generatedAt = input.generatedAt || new Date()
   const weak = weakestDimension(result)
   const strong = strongestDimension(result)
+  const attributions = result.attributions || []
+  const profile = moduleProfile(input.module, result, weak, strong)
+  // 有归因结果时，「当前重点」用主归因而不是最弱维度——维度是测量口径，归因才是业务结论
+  if (attributions[0]) profile.primaryConcern = attributions[0].name
+  const templateSummary = selectOutputTemplate(input.outputTemplates, result.level, 'summary')
+  if (templateSummary) {
+    profile.summary = fitReportText(renderOutputTemplate(templateSummary.content, result, weak, strong), 700)
+  }
+  const conclusionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'conclusion')
   const report: AssessmentReport = {
-    profile: {
-      ...moduleProfile(input.module, result, weak, strong)
-    },
+    profile,
+    attributions: attributions.map(attribution => ({
+      name: attribution.name,
+      strength: attribution.strength,
+      reasons: attribution.reasons.slice(0, 8)
+    })),
     risk: {
       level: result.level,
       label: riskLabel(input.module, result.level),
-      description: moduleRiskDescription(input.module, result),
+      description: fitReportText(
+        conclusionTemplate
+          ? renderOutputTemplate(conclusionTemplate.content, result, weak, strong)
+          : moduleRiskDescription(input.module, result),
+        500
+      ),
       nonDiagnosticNote
     },
+    // evidence 上限 8 条，归因数和证据数都会增长，这里按归因聚合并截断
     evidence: [
-      ...result.reasons.map(reason => ({ title: '规则依据', detail: reason })),
+      ...(attributions.length
+        ? attributions.slice(0, 4).map(attribution => ({
+            title: `归因依据·${attribution.name}`,
+            detail: (attribution.reasons.join('；') || '由归因证据规则命中').slice(0, 400)
+          }))
+        : result.reasons.slice(0, 4).map(reason => ({ title: '规则依据', detail: reason.slice(0, 400) }))),
       { title: '主要短板/重点', detail: `当前重点维度：${weak}；相对优势维度：${strong}。` },
-      { title: '规则版本', detail: `${definition.code}@${definition.version}；命中规则：${result.matchedRuleIds.join('、')}` }
+      { title: '规则版本', detail: `${definition.code}@${definition.version}；命中规则：${result.matchedRuleIds.join('、')}`.slice(0, 400) }
     ],
     threeDayPlan: moduleThreeDayPlan(input.module, result, weak, strong),
     sevenDayFollowUp: moduleSevenDayFollowUp(input.module, weak, strong),
@@ -286,19 +367,49 @@ export function createTemplateAssessmentReport(input: {
       moduleTitle: moduleMeta[input.module].title,
       generatedAt: generatedAt.toISOString(),
       assessmentVersion: `${definition.code}@${definition.version}`,
-      ruleIds: result.matchedRuleIds,
+      ruleIds: result.matchedRuleIds.slice(0, 40),
       source: 'template',
       disclaimer: nonDiagnosticNote
     }
   }
+  const goalTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'goal')
+  if (goalTemplate && report.supportGoal) {
+    report.supportGoal.weeklyGoal = fitReportText(renderOutputTemplate(goalTemplate.content, result, weak, strong), 240)
+  }
+  const actionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'action')
+  if (actionTemplate) {
+    report.firstAction = {
+      title: '建议行动',
+      detail: fitReportText(renderOutputTemplate(actionTemplate.content, result, weak, strong), 300)
+    }
+  }
+  const cautionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'caution')
+  if (cautionTemplate) {
+    report.escalationConditions = [
+      fitReportText(renderOutputTemplate(cautionTemplate.content, result, weak, strong), 200),
+      ...(report.escalationConditions || [])
+    ].slice(0, 6)
+  }
+  const reviewTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'review')
+  if (reviewTemplate) {
+    report.sevenDayFollowUp.reviewQuestions = [
+      fitReportText(renderOutputTemplate(reviewTemplate.content, result, weak, strong), 160),
+      ...report.sevenDayFollowUp.reviewQuestions
+    ].slice(0, 5)
+  }
   return assessmentReportSchema.parse(report)
 }
 
-export function validateAssessmentReport(input: unknown, module: ModuleId, result: RuleOutput): AssessmentReport {
+export function validateAssessmentReport(input: unknown, module: ModuleId, result: ReportResult): AssessmentReport {
   const parsed = assessmentReportSchema.parse(input)
   if (parsed.risk.level !== result.level) throw new Error('AI report changed rule level')
   if (parsed.printMeta.module !== module) throw new Error('AI report changed module')
   if (parsed.printMeta.ruleIds.some(id => !result.matchedRuleIds.includes(id))) throw new Error('AI report used unknown rule id')
+  // 归因是确定性规则算出来的，AI 只能复述，不能新增或改名
+  const allowedAttributions = new Set((result.attributions || []).map(attribution => attribution.name))
+  if (allowedAttributions.size && parsed.attributions.some(attribution => !allowedAttributions.has(attribution.name))) {
+    throw new Error('AI report used unknown attribution')
+  }
   if (/(确诊|治疗|治愈|一定|保证|医学诊断)/i.test(JSON.stringify(parsed))) throw new Error('AI report contains forbidden wording')
   return parsed
 }

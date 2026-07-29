@@ -1,12 +1,13 @@
 import type { H3Event } from 'h3'
 import { z } from 'zod'
-import { clarificationRoundSchema, clarificationSummarySchema, routeDecisionSchema, type ClarificationRound, type ClarificationSummary, type RouteDecision } from '../../shared/contracts'
-import type { ModuleId } from '../../shared/contracts'
+import { routeDecisionSchema, type ClarificationRound, type ClarificationSummary, type RouteDecision } from '../../shared/contracts'
+import type { KeywordRouteEntry, ModuleId, OutputTemplateEntry, RuleExecResult } from '../../shared/contracts'
 import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
-import { assessmentDefinitions, moduleMeta } from '../../shared/assessments'
+import { assessmentDefinitions, moduleMeta, type AssessmentDefinition } from '../../shared/assessments'
 import type { RuleOutput } from '../domain/rules'
 import type { AssistantBusinessContext } from '../domain/assistant-context'
 import { createTemplateAssessmentReport, validateAssessmentReport } from '../domain/reports'
+import { resolvePublishedModuleResource } from '../domain/module-resources'
 import { schema, useDb } from '../utils/db'
 
 export interface KnowledgeCitation {
@@ -28,6 +29,7 @@ const keywordRoutes: Array<[RouteDecision['primaryModule'], RegExp]> = [
   ['learning_problem', /(学不|学不会|不想学|成绩|作业|考试|偏科|补习|厌学|听不懂|记不住)/i],
   ['self_growth', /(我很累|疲惫|压力|倦怠|无力|委屈|崩溃)/i]
 ]
+const routeModules: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
 
 export function localRoute(text: string): RouteDecision {
   const matches = keywordRoutes.filter(([, regex]) => regex.test(text)).map(([module]) => module)
@@ -884,17 +886,34 @@ export async function generateAssessmentReport(event: H3Event, input: {
   schoolId: string
   ownerUserId: string
   module: ModuleId
-  result: RuleOutput
+  result: RuleExecResult
+  definition?: AssessmentDefinition
 }): Promise<AssessmentReport> {
-  const fallback = createTemplateAssessmentReport({ module: input.module, result: input.result })
+  const definition = input.definition || assessmentDefinitions[input.module]
+  const outputTemplateResource = await resolvePublishedModuleResource<{ templates?: OutputTemplateEntry[] }>(event, {
+    module: input.module,
+    libraryType: 'output_template',
+    schoolId: input.schoolId
+  }).catch(() => null)
+  const outputTemplates = Array.isArray(outputTemplateResource?.payload?.templates)
+    ? outputTemplateResource.payload.templates
+    : []
+  const fallback = createTemplateAssessmentReport({ module: input.module, result: input.result, definition, outputTemplates })
   const config = useRuntimeConfig(event)
   if (!config.deepseekApiKey || input.result.blocked) return fallback
-  const definition = assessmentDefinitions[input.module]
   const facts = {
     module: input.module,
     moduleTitle: moduleMeta[input.module].title,
     assessmentVersion: `${definition.code}@${definition.version}`,
     level: input.result.level,
+    levelName: input.result.levelName,
+    severity: input.result.severity,
+    // 归因构成只给名称、强弱和依据，不把占比小数交给模型，避免它在文案里编出百分比
+    attributions: (input.result.attributions || []).map(attribution => ({
+      name: attribution.name,
+      strength: attribution.strength,
+      reasons: attribution.reasons
+    })),
     reasons: input.result.reasons,
     dimensions: input.result.dimensions,
     actions: input.result.actions,
@@ -915,6 +934,7 @@ export async function generateAssessmentReport(event: H3Event, input: {
             content: `你是教师赋能平台的报告撰写助手。只根据用户提供的规则事实生成正式评估报告 JSON。
 硬约束：
 1. 不得改变 module、level、matchedRuleIds、assessmentVersion。
+1b. 归因由确定性规则算出，attributions 只能原样复述名称与强弱，不得新增、改名或写出任何百分比。
 2. 不做精神、医学、法律诊断，不承诺效果，不写“确诊、治疗、治愈、一定、保证、医学诊断”等表述。
 3. 可优化表达和行动安排，但不得新增规则事实、风险等级或制度结论。
 4. 三天行动方案每天 1-3 个动作；七天跟进必须包含观察点、复盘问题和升级信号。
@@ -936,6 +956,15 @@ export async function generateAssessmentReport(event: H3Event, input: {
     if (!content) throw new Error('Empty model output')
     const report = validateAssessmentReport(JSON.parse(content), input.module, input.result)
     report.printMeta.source = 'ai'
+    if (outputTemplates.length) {
+      const deterministic = createTemplateAssessmentReport({ module: input.module, result: input.result, definition, outputTemplates })
+      report.profile.summary = deterministic.profile.summary
+      report.risk.description = deterministic.risk.description
+      if (deterministic.supportGoal) report.supportGoal = deterministic.supportGoal
+      report.firstAction = deterministic.firstAction
+      report.escalationConditions = deterministic.escalationConditions
+      report.sevenDayFollowUp.reviewQuestions = deterministic.sevenDayFollowUp.reviewQuestions
+    }
     await useDb(event).insert(schema.aiModelCalls).values({
       schoolId: input.schoolId,
       ownerUserId: input.ownerUserId,
@@ -963,7 +992,83 @@ export async function generateAssessmentReport(event: H3Event, input: {
   }
 }
 
-export async function routeWithDeepSeek(event: H3Event, text: string): Promise<RouteDecision> {
+function splitRouteKeywords(value?: string) {
+  return (value || '')
+    .split(/[,，、;；\n]/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function normalizeRouteText(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function routeMatchesText(route: KeywordRouteEntry, text: string) {
+  const normalizedText = normalizeRouteText(text)
+  if ((route.temporalValidity || 'always') !== 'always') return false
+  if ((route.exclusionKeywords || []).some(keyword => normalizedText.includes(normalizeRouteText(keyword)))) return false
+  if (route.matchMode === 'regex') {
+    try {
+      return new RegExp(route.coreKeywords, 'i').test(text)
+    } catch {
+      return false
+    }
+  }
+  const keywords = route.matchMode === 'exact'
+    ? splitRouteKeywords(route.coreKeywords)
+    : [...splitRouteKeywords(route.coreKeywords), ...splitRouteKeywords(route.expandedKeywords)]
+  return keywords.some(keyword => normalizedText.includes(normalizeRouteText(keyword)))
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+async function routeWithPublishedKeywords(event: H3Event, text: string, schoolId?: string | null): Promise<RouteDecision | null> {
+  const matches: Array<{ route: KeywordRouteEntry; score: number }> = []
+  for (const module of routeModules) {
+    const resource = await resolvePublishedModuleResource<{ routes?: KeywordRouteEntry[] }>(event, {
+      module,
+      libraryType: 'keyword_route',
+      schoolId
+    }).catch(() => null)
+    const routes = Array.isArray(resource?.payload?.routes) ? resource.payload.routes : []
+    for (const route of routes) {
+      if (!routeMatchesText(route, text)) continue
+      matches.push({
+        route,
+        score: (route.routeWeight ?? 0.7) + Math.max(0, 100 - route.matchPriority) / 1000
+      })
+    }
+  }
+  if (!matches.length) return null
+  matches.sort((a, b) =>
+    b.score - a.score || a.route.matchPriority - b.route.matchPriority || a.route.code.localeCompare(b.route.code)
+  )
+  const byModule = new Map<ModuleId, { route: KeywordRouteEntry; score: number }>()
+  for (const match of matches) {
+    const current = byModule.get(match.route.module)
+    if (!current || match.score > current.score) byModule.set(match.route.module, match)
+  }
+  const ranked = Array.from(byModule.values()).sort((a, b) =>
+    b.score - a.score || a.route.matchPriority - b.route.matchPriority || a.route.code.localeCompare(b.route.code)
+  )
+  const primary = ranked[0]!
+  return routeDecisionSchema.parse({
+    primaryModule: primary.route.module,
+    secondaryModules: ranked.slice(1, 4).map(match => ({
+      module: match.route.module,
+      confidence: clamp(0.35 + (match.route.routeWeight ?? 0.7) * 0.4, 0.35, 0.86)
+    })),
+    confidence: clamp(0.55 + (primary.route.routeWeight ?? 0.7) * 0.4, 0.55, 0.95),
+    needsClarification: false,
+    rationale: `命中已发布关键词路由「${primary.route.semanticCategory || primary.route.code}」，建议先进入对应模块完成量表评估。`
+  })
+}
+
+export async function routeWithDeepSeek(event: H3Event, text: string, schoolId?: string | null): Promise<RouteDecision> {
+  const publishedRoute = await routeWithPublishedKeywords(event, text, schoolId)
+  if (publishedRoute) return publishedRoute
   const config = useRuntimeConfig(event)
   if (!config.deepseekApiKey) return localRoute(text)
   const redacted = redactPii(text)

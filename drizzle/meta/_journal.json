@@ -148,6 +148,20 @@
       "when": 1785201920736,
       "tag": "0020_sudden_trauma",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785298100294,
+      "tag": "0021_drop_legacy_attribution_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1785298122343,
+      "tag": "0022_attribution_items_and_severity",
+      "breakpoints": true
     }
   ]
 }

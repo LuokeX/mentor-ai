@@ -123,6 +123,11 @@ const libraryTypeLabels: Record<LibraryType, string> = {
   keyword_route: '关键词路由库'
 }
 
+/** 归因强弱标签。班主任看到的是分组，不是占比小数。 */
+function attributionStrengthLabel(strength: 'primary' | 'secondary' | 'reference') {
+  return { primary: '主要', secondary: '次要', reference: '参考' }[strength] || '参考'
+}
+
 function libraryTypeLabel(type: LibraryType) {
   return libraryTypeLabels[type] || type
 }
@@ -378,6 +383,36 @@ async function submit() {
             <section><h2 class="text-lg font-semibold">问题画像</h2><p class="mt-3 text-sm leading-7 text-slate-600">{{ report.profile.summary }}</p><p class="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">主要关注：{{ report.profile.primaryConcern }}</p></section>
             <section><h2 class="text-lg font-semibold">风险等级</h2><p class="mt-3 text-sm leading-7 text-slate-600">{{ report.risk.description }}</p><p class="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">{{ report.risk.nonDiagnosticNote }}</p></section>
           </div>
+          <!--
+            归因构成。只呈现主要/次要/参考的分组与排序，不显示占比数字：
+            占比反映的是规则匹配强度，直接给出百分比会被当成测量精度承诺。
+          -->
+          <section v-if="report.attributions?.length" class="mt-8">
+            <h2 class="text-lg font-semibold">归因构成</h2>
+            <p class="mt-2 text-xs text-slate-400">按规则匹配强度排序，供教育支持参考，不构成诊断。</p>
+            <div class="mt-4 space-y-3">
+              <div
+                v-for="attribution in report.attributions"
+                :key="attribution.name"
+                class="rounded-xl border p-4"
+                :class="attribution.strength === 'primary' ? 'border-emerald-200 bg-emerald-50' : 'border-slate-100 bg-white'"
+              >
+                <div class="flex items-center gap-2">
+                  <UBadge
+                    size="sm"
+                    :color="attribution.strength === 'primary' ? 'primary' : 'neutral'"
+                    :variant="attribution.strength === 'primary' ? 'solid' : 'soft'"
+                  >
+                    {{ attributionStrengthLabel(attribution.strength) }}
+                  </UBadge>
+                  <p class="text-sm font-semibold text-slate-800">{{ attribution.name }}</p>
+                </div>
+                <ul v-if="attribution.reasons?.length" class="mt-2 space-y-1">
+                  <li v-for="reason in attribution.reasons" :key="reason" class="text-xs leading-5 text-slate-500">· {{ reason }}</li>
+                </ul>
+              </div>
+            </div>
+          </section>
           <section class="mt-8"><h2 class="text-lg font-semibold">关键依据</h2><div class="mt-4 grid gap-3 md:grid-cols-2"><div v-for="item in report.evidence" :key="item.title + item.detail" class="rounded-xl border border-slate-100 p-4"><p class="text-sm font-semibold">{{ item.title }}</p><p class="mt-2 text-xs leading-5 text-slate-500">{{ item.detail }}</p></div></div></section>
           <section class="mt-8"><h2 class="text-lg font-semibold">3 天行动方案</h2><div class="mt-4 grid gap-4 md:grid-cols-3"><div v-for="day in report.threeDayPlan" :key="day.day" class="rounded-xl bg-emerald-50 p-4"><p class="text-sm font-semibold text-emerald-900">第 {{ day.day }} 天 · {{ day.title }}</p><div class="mt-3 space-y-3"><div v-for="action in day.actions" :key="action.title"><p class="text-sm font-medium">{{ action.title }}</p><p class="mt-1 text-xs leading-5 text-slate-600">{{ action.detail }}</p></div></div></div></div></section>
           <section class="mt-8 grid gap-6 lg:grid-cols-3"><div><h2 class="text-lg font-semibold">7 天观察点</h2><ul class="mt-3 space-y-2 text-sm text-slate-600"><li v-for="item in report.sevenDayFollowUp.observationPoints" :key="item">· {{ item }}</li></ul></div><div><h2 class="text-lg font-semibold">复盘问题</h2><ul class="mt-3 space-y-2 text-sm text-slate-600"><li v-for="item in report.sevenDayFollowUp.reviewQuestions" :key="item">· {{ item }}</li></ul></div><div><h2 class="text-lg font-semibold">升级信号</h2><ul class="mt-3 space-y-2 text-sm text-slate-600"><li v-for="item in report.sevenDayFollowUp.escalationSignals" :key="item">· {{ item }}</li></ul></div></section>

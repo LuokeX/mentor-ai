@@ -3,6 +3,23 @@
 import type { ToolRxEntry, ToolStructuredStep, ToolContraindicationRule } from '../../../shared/contracts'
 import { readXlsxFile, extractValue, type SheetData } from '../xlsx-reader'
 
+/**
+ * 严重度归一化。工具库与归因库的分级规则必须落在同一套枚举上，
+ * 否则运行时拿两套词做比对，永远匹配不上。填了无法识别的值返回 undefined，
+ * 由校验环节报错，而不是静默降级成某个默认档位。
+ */
+const SEVERITY_ALIASES: Record<string, ToolRxEntry['severity']> = {
+  low: 'low', medium: 'medium', high: 'high', crisis: 'crisis',
+  轻度: 'low', 中度: 'medium', 重度: 'high', 危机: 'crisis',
+  低: 'low', 中: 'medium', 高: 'high'
+}
+
+function parseSeverity(value: string | undefined): ToolRxEntry['severity'] {
+  const normalized = (value || '').trim().toLowerCase()
+  if (!normalized) return undefined
+  return SEVERITY_ALIASES[normalized]
+}
+
 function splitList(value: string | undefined): string[] {
   return (value || '')
     .split(/[,，、;；\n]/)
@@ -46,10 +63,11 @@ function parseToolFileV2(sheets: SheetData[]): ToolRxEntry[] {
       form: extractValue(row, ['工具形式', '处方形式', '工具类型', 'form']) || '',
       symptoms: extractValue(row, ['适用症状场景', '适用症状/场景', '适用问题/场景', 'symptoms']) || '',
       expectedEffect: extractValue(row, ['预期效果', 'expectedEffect']),
-      severity: extractValue(row, ['严重度', '严重度分级', 'severity']),
-      level: extractValue(row, ['严重度', 'level']),
-      attribution: extractValue(row, ['对应归因', 'attribution']),
-      primaryAttribution: extractValue(row, ['对应归因', 'primaryAttribution']),
+      severity: parseSeverity(extractValue(row, ['严重度', '严重度分级', 'severity'])),
+      level: extractValue(row, ['适用等级', 'level']),
+      attributionCode: extractValue(row, ['对应归因编码', '归因编码', 'attributionCode']),
+      attributionCodes: parseStringList(extractValue(row, ['对应归因编码列表', '归因编码列表', 'attributionCodes'])),
+      attributionLabel: extractValue(row, ['对应归因名称', '对应归因', 'attributionLabel']),
       tags: parseStringList(extractValue(row, ['tags', '场景标签', '标签'])),
       toolTags: parseStringList(extractValue(row, ['工具标签', '匹配标签', 'toolTags'])),
       duration: extractValue(row, ['疗程与频次', 'duration']),
@@ -58,7 +76,8 @@ function parseToolFileV2(sheets: SheetData[]): ToolRxEntry[] {
       scripts: extractValue(row, ['关键话术', 'scripts']),
       prohibitions: extractValue(row, ['禁止事项', '禁忌说明', 'prohibitions']),
       targetUsers: extractValue(row, ['适用对象', 'targetUsers']),
-      dimensions: parseStringList(extractValue(row, ['作用维度', '维度', 'dimensions'])),
+      dimensions: parseStringList(extractValue(row, ['作用维度编码', '作用维度', '维度', 'dimensions'])),
+      effectNote: extractValue(row, ['效果说明', 'effectNote']),
       // V2 新增
       shortName: extractValue(row, ['工具简称']),
       prerequisiteToolCode: extractValue(row, ['前置工具编码']),
@@ -167,14 +186,14 @@ function parseRxFormat(filePath: string): ToolRxEntry[] {
         form: row['处方形式'] || row['工具类型'] || '',
         symptoms: row['适用症状/场景'] || row['适用问题/场景'] || '',
         expectedEffect: row['预期效果'] || undefined,
-        severity: row['严重度分级'] || undefined,
+        severity: parseSeverity(row['严重度分级']),
         duration: row['疗程与频次'] || undefined,
         timePerSession: row['单次耗时'] || undefined,
         steps,
         scripts: row['关键话术'] || undefined,
         prohibitions: row['禁止事项'] || undefined,
         targetUsers: row['适用对象'] || undefined,
-        dimensions: (row['作用维度'] || row['维度'] || '')?.split(/[,，、+]/).map(d => d.trim()).filter(Boolean) || undefined,
+        dimensions: (row['作用维度编码'] || row['作用维度'] || row['维度'] || '')?.split(/[,，、+]/).map(d => d.trim()).filter(Boolean) || undefined,
       })
     }
   }
@@ -314,11 +333,11 @@ export function parseStandardToolFile(filePath: string): ToolRxEntry[] {
         form: extractValue(row, ['form', '工具形式', '处方形式', '工具类型']) || '',
         symptoms: extractValue(row, ['symptoms', '适用症状/场景', '适用问题/场景', '适用场景', '触发情景']) || '',
         expectedEffect: extractValue(row, ['expectedEffect', '预期输出或效果', '预期效果', '输出物']),
-        severity: extractValue(row, ['severity', '严重度分级', '风险等级']),
+        severity: parseSeverity(extractValue(row, ['severity', '严重度', '严重度分级'])),
         level: extractValue(row, ['level', '适用等级', '等级']),
-        attribution: extractValue(row, ['attribution', '适用归因', '主归因']),
-        attributions: splitList(extractValue(row, ['attributions', '归因列表', '适用归因列表'])),
-        primaryAttribution: extractValue(row, ['primaryAttribution', '主归因']),
+        attributionCode: extractValue(row, ['attributionCode', '对应归因编码', '归因编码']),
+        attributionCodes: splitList(extractValue(row, ['attributionCodes', '对应归因编码列表', '归因编码列表'])),
+        attributionLabel: extractValue(row, ['attributionLabel', '对应归因名称', '对应归因']),
         tags: splitList(extractValue(row, ['tags', '场景标签', '标签'])),
         toolTags: splitList(extractValue(row, ['toolTags', '工具标签', '匹配标签'])),
         duration: extractValue(row, ['duration', '建议周期', '疗程与频次']),
@@ -327,7 +346,7 @@ export function parseStandardToolFile(filePath: string): ToolRxEntry[] {
         scripts: extractValue(row, ['scripts', '关键话术', '话术']),
         prohibitions: extractValue(row, ['prohibitions', '禁忌条件', '禁止事项']),
         targetUsers: extractValue(row, ['targetUsers', '适用对象', '责任角色']),
-        dimensions: splitList(extractValue(row, ['dimensions', '适用维度', '作用维度', '维度']))
+        dimensions: splitList(extractValue(row, ['dimensions', '作用维度编码', '适用维度', '作用维度', '维度']))
       })
     }
   }

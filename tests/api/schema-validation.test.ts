@@ -304,18 +304,32 @@ describe('attributionConfigSchema', () => {
     const result = attributionConfigSchema.parse({
       module: 'student_case',
       version: '1.0.0',
-      branches: [{
-        pri: 1,
-        level: 'medium',
-        blocked: false,
-        ruleId: 'student-case-learning',
-        primaryAttribution: '学习支持不足',
-        secondaryAttributions: ['课堂参与下降'],
-        reasons: ['量表显示学习支持维度需要关注'],
+      attributionItems: [{
+        code: 'SC_AT_LEARNING',
+        name: '学习支持不足',
+        module: 'student_case',
         toolTags: ['learning_support']
+      }],
+      evidences: [{
+        attributionCode: 'SC_AT_LEARNING',
+        assessmentCode: 'SC_SCALE_A',
+        evidenceCode: 'SC_EV_01',
+        condition: '维度[D_LEARNING] >= 4',
+        description: '量表显示学习支持维度需要关注'
+      }],
+      gradingRules: [{
+        ruleId: 'student-case-learning',
+        pri: 999,
+        level: 'medium',
+        severity: 'medium',
+        blocked: false
       }]
     })
-    expect(result.branches[0]?.toolTags).toEqual(['learning_support'])
+    expect(result.attributionItems[0]?.toolTags).toEqual(['learning_support'])
+    // 权重与打分参数有默认值，业务不填也能跑
+    expect(result.attributionItems[0]?.baseWeight).toBe(1)
+    expect(result.evidences[0]?.weight).toBe(1)
+    expect(result.scoring.maxAttributions).toBe(3)
   })
 })
 

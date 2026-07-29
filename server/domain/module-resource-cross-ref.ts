@@ -33,24 +33,43 @@ function extractAssessmentCodes(payload: Record<string, unknown>): Set<string> {
   return codes
 }
 
-/** 从 attribution payload 提取所有主归因文本 + 命中等级集合 */
+/** 从 attribution payload 提取归因编码、等级集合，以及证据/分级规则引用的量表编码 */
 function extractAttributionIndex(payload: Record<string, unknown>): {
-  primaryAttributions: Set<string>
+  attributionCodes: Set<string>
   levels: Set<string>
-  assessmentCodes: string[]  // branch.assessmentCode 引用
+  assessmentCodes: Array<{ code: string, from: string }>
 } {
-  const primaryAttributions = new Set<string>()
+  const attributionCodes = new Set<string>()
   const levels = new Set<string>()
-  const assessmentCodes: string[] = []
-  const branches = (payload as Record<string, unknown>).branches
-  if (Array.isArray(branches)) {
-    for (const branch of branches as Array<Record<string, unknown>>) {
-      if (branch.primaryAttribution) primaryAttributions.add(String(branch.primaryAttribution))
-      if (branch.level) levels.add(String(branch.level))
-      if (branch.assessmentCode) assessmentCodes.push(String(branch.assessmentCode))
+  const assessmentCodes: Array<{ code: string, from: string }> = []
+
+  const items = (payload as Record<string, unknown>).attributionItems
+  if (Array.isArray(items)) {
+    for (const item of items as Array<Record<string, unknown>>) {
+      if (item.code) attributionCodes.add(String(item.code))
     }
   }
-  return { primaryAttributions, levels, assessmentCodes }
+
+  const evidences = (payload as Record<string, unknown>).evidences
+  if (Array.isArray(evidences)) {
+    for (const evidence of evidences as Array<Record<string, unknown>>) {
+      if (evidence.assessmentCode) {
+        assessmentCodes.push({ code: String(evidence.assessmentCode), from: String(evidence.evidenceCode || '证据规则') })
+      }
+    }
+  }
+
+  const gradingRules = (payload as Record<string, unknown>).gradingRules
+  if (Array.isArray(gradingRules)) {
+    for (const rule of gradingRules as Array<Record<string, unknown>>) {
+      if (rule.level) levels.add(String(rule.level))
+      if (rule.assessmentCode) {
+        assessmentCodes.push({ code: String(rule.assessmentCode), from: String(rule.ruleId || '分级规则') })
+      }
+    }
+  }
+
+  return { attributionCodes, levels, assessmentCodes }
 }
 
 /** 从 tool payload 提取所有工具编码集合 + 归因引用列表 + 工具内部自引用 */
@@ -67,18 +86,16 @@ function extractToolIndex(payload: Record<string, unknown>): {
     for (const tool of tools as Array<Record<string, unknown>>) {
       const code = String(tool.code || '')
       if (code) codes.add(code)
-      // 收集所有归因引用字段
-      for (const field of ['attribution', 'primaryAttribution']) {
-        const value = tool[field]
-        if (typeof value === 'string' && value.trim()) {
-          attributionRefs.push({ code, field, value: value.trim() })
-        }
+      // 收集归因编码引用。attributionLabel 是展示用快照，不参与校验。
+      const attributionCode = tool.attributionCode
+      if (typeof attributionCode === 'string' && attributionCode.trim()) {
+        attributionRefs.push({ code, field: 'attributionCode', value: attributionCode.trim() })
       }
-      const attributions = tool.attributions
-      if (Array.isArray(attributions)) {
-        for (const attr of attributions) {
+      const attributionCodes = tool.attributionCodes
+      if (Array.isArray(attributionCodes)) {
+        for (const attr of attributionCodes) {
           if (typeof attr === 'string' && attr.trim()) {
-            attributionRefs.push({ code, field: 'attributions[]', value: attr.trim() })
+            attributionRefs.push({ code, field: 'attributionCodes[]', value: attr.trim() })
           }
         }
       }
@@ -180,7 +197,7 @@ export function checkCrossReferences(
 
   // ---- 提取各库类型的索引数据 ----
   const assessmentCodes = new Set<string>()
-  let attributionPrimaryAttributions = new Set<string>()
+  let attributionItemCodes = new Set<string>()
   let attributionLevels = new Set<string>()
   const toolCodes = new Set<string>()
 
@@ -194,15 +211,15 @@ export function checkCrossReferences(
   const attributionPayload = versionPayloads.get('attribution')
   if (attributionPayload) {
     const idx = extractAttributionIndex(attributionPayload)
-    attributionPrimaryAttributions = idx.primaryAttributions
+    attributionItemCodes = idx.attributionCodes
     attributionLevels = idx.levels
 
-    // 链 1: attribution → assessment
+    // 链 1: attribution → assessment。证据规则按量表编码过滤执行，编码对不上等于该证据永远不生效。
     if (assessmentPayload) {
-      for (const refCode of idx.assessmentCodes) {
-        if (!assessmentCodes.has(refCode)) {
-          add('error', 'attribution', '(归因库)', 'assessmentCode', refCode, 'assessment', 'code',
-            `归因库引用的量表编码 "${refCode}" 在现行量表中不存在`)
+      for (const ref of idx.assessmentCodes) {
+        if (!assessmentCodes.has(ref.code)) {
+          add('error', 'attribution', ref.from, 'assessmentCode', ref.code, 'assessment', 'code',
+            `引用的量表编码 "${ref.code}" 在现行量表中不存在，该规则永远不会被执行`)
         }
       }
     }
@@ -217,9 +234,9 @@ export function checkCrossReferences(
     // 链 2: tool → attribution
     if (attributionPayload) {
       for (const ref of toolIdx.attributionRefs) {
-        if (!attributionPrimaryAttributions.has(ref.value)) {
-          add('error', 'tool', ref.code, ref.field, ref.value, 'attribution', 'primaryAttribution',
-            `工具的 ${ref.field} "${ref.value}" 在归因库主归因中未找到匹配`)
+        if (!attributionItemCodes.has(ref.value)) {
+          add('error', 'tool', ref.code, ref.field, ref.value, 'attribution', 'code',
+            `工具的 ${ref.field} "${ref.value}" 在归因项清单中不存在，该工具不会被任何归因推出来`)
         }
       }
     }
@@ -282,9 +299,9 @@ export function checkCrossReferences(
     const toolIdx = extractToolIndex(toolPayload)
     const distinctValues = [...new Set(toolIdx.attributionRefs.map(r => r.value))]
     if (distinctValues.length) {
-      add('info', 'tool', `(${toolIdx.attributionRefs.length} 条)`, 'attribution/primaryAttribution', distinctValues.slice(0, 3).join('、') + (distinctValues.length > 3 ? '...' : ''),
-        'attribution', 'primaryAttribution',
-        '工具库中引用了归因字段，但归因库尚未导入，无法校验匹配')
+      add('info', 'tool', `(${toolIdx.attributionRefs.length} 条)`, 'attributionCode', distinctValues.slice(0, 3).join('、') + (distinctValues.length > 3 ? '...' : ''),
+        'attribution', 'code',
+        '工具库中引用了归因编码，但归因库尚未导入，无法校验匹配')
     }
   }
 
@@ -321,7 +338,8 @@ export function checkCrossReferences(
   if (attributionPayload && !assessmentPayload) {
     const idx = extractAttributionIndex(attributionPayload)
     if (idx.assessmentCodes.length) {
-      add('info', 'attribution', `(${idx.assessmentCodes.length} 条)`, 'assessmentCode', idx.assessmentCodes.join('、'),
+      add('info', 'attribution', `(${idx.assessmentCodes.length} 条)`, 'assessmentCode',
+        [...new Set(idx.assessmentCodes.map(ref => ref.code))].join('、'),
         'assessment', 'code',
         '归因库引用了量表编码，但量表库尚未导入，无法校验匹配')
     }

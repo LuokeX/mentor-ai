@@ -1,5 +1,5 @@
 /**
- * 从 V2 通用模板中提取 per-library-type 模板文件（仅保留表头行）。
+ * 从 V3 通用模板中提取 per-library-type 模板文件（仅保留表头行）。
  * 输出到 public/templates/{libraryType}.xlsx
  *
  * 运行: pnpm tsx scripts/generate-templates.ts
@@ -8,14 +8,16 @@ import XLSX from 'xlsx'
 import fs from 'node:fs'
 import path from 'node:path'
 
-// V2 模板中 sheet 名 → libraryType 的映射
+// V3 模板中 sheet 名 → libraryType 的映射
 const SHEET_MAP: Record<string, string> = {
   '③ 量表-清单': 'assessment',
   '④ 量表-题目': 'assessment',
   '④b 量表-选项组': 'assessment',
   '④c 量表-维度定义': 'assessment',
   '⑤b 归因-计算变量': 'attribution',
-  '⑤c 归因-分级规则': 'attribution',
+  '⑤c 归因项': 'attribution',
+  '⑤d 证据规则': 'attribution',
+  '⑤e 分级规则': 'attribution',
   '⑥ 归因-红线熔断': 'attribution',
   '⑦ 工具-处方总表': 'tool',
   '⑦b 工具-步骤明细': 'tool',
@@ -33,7 +35,7 @@ const TYPE_LABELS: Record<string, string> = {
   output_template: '输出模板模板',
 }
 
-const SRC = path.resolve('public/templates/三库填写模板_v2.xlsx')
+const SRC = path.resolve('business-libraries/templates/三库填写模板_v3.xlsx')
 const OUT_DIR = path.resolve('public/templates')
 
 function main() {
@@ -43,6 +45,8 @@ function main() {
   }
 
   const workbook = XLSX.readFile(SRC)
+  fs.mkdirSync(OUT_DIR, { recursive: true })
+  fs.copyFileSync(SRC, path.join(OUT_DIR, '三库填写模板_v3.xlsx'))
 
   // 按 libraryType 分组 sheet
   const groups: Record<string, { name: string; data: unknown[][] }[]> = {}
@@ -79,7 +83,7 @@ function main() {
 
   console.log(`\n已生成 ${Object.keys(groups).length} 个模板文件到 ${OUT_DIR}`)
 
-  // 知识库模板：直接复制（独立模板，不来自三库 V2）
+  // 知识库模板：直接复制（独立模板，不来自三库 V3）
   const knowledgeSrc = path.resolve('business-libraries/templates/知识库填写模板.xlsx')
   const knowledgeDst = path.join(OUT_DIR, 'knowledge.xlsx')
   if (fs.existsSync(knowledgeSrc)) {

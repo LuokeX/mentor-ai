@@ -2,6 +2,13 @@ import { z } from 'zod'
 
 export const roleSchema = z.enum(['teacher', 'psychologist', 'school_admin', 'platform_admin'])
 export const moduleIdSchema = z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem'])
+
+/**
+ * 严重度。分级规则（归因库）与工具库共用同一套取值，这是二者能咬合的唯一键。
+ * 定义在文件最前面，因为工具库和归因库两处 schema 都要引用它。
+ */
+export const severitySchema = z.enum(['low', 'medium', 'high', 'crisis'])
+export type Severity = z.infer<typeof severitySchema>
 export const libraryTypeSchema = z.enum(['assessment', 'attribution', 'tool', 'output_template', 'keyword_route'])
 export const moduleResourceScopeSchema = z.enum(['global', 'school'])
 export const resourceStatusSchema = z.enum(['draft', 'published', 'retired'])
@@ -55,7 +62,7 @@ export const moduleResourceDocumentImportSchemaBase = z.object({
   originalFilename: z.string().trim().max(260).optional(),
   mimeType: z.string().trim().max(120).optional(),
   content: z.string().min(10).max(1_000_000),
-  confirmNoPersonalData: z.boolean().optional().default(true),
+  confirmNoPersonalData: z.literal(true),
   module: moduleIdSchema.optional(),
   tags: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
   sourceRef: z.string().trim().max(500).optional()
@@ -147,11 +154,14 @@ export const toolRxEntrySchema = z.object({
   form: z.string().trim().min(1).max(100),
   symptoms: z.string().trim().min(1).max(2000),
   expectedEffect: z.string().trim().max(2000).optional(),
-  severity: z.string().trim().max(40).optional(),
+  /** 与分级规则共用同一套取值，这是二者能咬合的唯一键 */
+  severity: severitySchema.optional(),
   level: z.string().trim().max(40).optional(),
-  attribution: z.string().trim().max(120).optional(),
-  attributions: z.array(z.string().trim().min(1).max(120)).optional(),
-  primaryAttribution: z.string().trim().max(120).optional(),
+  /** 引用归因项的 code。业务不得在这里写自由文案，否则匹配不上。 */
+  attributionCode: z.string().trim().max(80).optional(),
+  attributionCodes: z.array(z.string().trim().min(1).max(80)).optional(),
+  /** 归因名称快照，仅供运营台展示，不参与匹配 */
+  attributionLabel: z.string().trim().max(120).optional(),
   tags: z.array(z.string().trim().min(1).max(80)).optional(),
   toolTags: z.array(z.string().trim().min(1).max(80)).optional(),
   duration: z.string().trim().max(200).optional(),
@@ -160,7 +170,10 @@ export const toolRxEntrySchema = z.object({
   scripts: z.string().trim().max(5000).optional(),
   prohibitions: z.string().trim().max(2000).optional(),
   targetUsers: z.string().trim().max(200).optional(),
+  /** 填量表维度定义里的「维度编码」，与薄弱维度精确比对。自由描述请写 effectNote。 */
   dimensions: z.array(z.string().trim().min(1).max(100)).optional(),
+  /** 工具功效的自由描述，不参与匹配 */
+  effectNote: z.string().trim().max(1000).optional(),
   // ---- V2 新增字段 ----
   shortName: z.string().trim().max(80).optional(),
   prerequisiteToolCode: z.string().trim().max(40).optional(),
@@ -226,27 +239,69 @@ export const keywordRouteLibraryPayloadSchema = z.object({ routes: z.array(keywo
 export type KeywordRouteEntry = z.infer<typeof keywordRouteEntrySchema>
 
 // ---- 归因规则库 (attribution) ----
-export const attributionBranchSchema = z.object({
+// V3 模型：归因是「多因素加权」而非「单分支分级」。三层结构互相解耦：
+//   归因项 attributionItems  —— 模块级词表，工具库的「对应归因」引用它的 code
+//   证据规则 evidences        —— 量表级，一条归因项可被多张量表的多条证据佐证
+//   分级规则 gradingRules     —— 只产出等级与严重度，不再产出归因
+// 一次评估会命中多条证据，按权重累加到各归因项后归一化成占比。
+
+/** 归因项（模块级词表）。业务只维护一份，其他表一律引用 code，不得现编文案。 */
+export const attributionItemSchema = z.object({
+  code: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(120),
+  module: moduleIdSchema,
+  /** 权重基数，与命中证据的权重相乘后参与占比计算 */
+  baseWeight: z.number().min(0).default(1),
+  /** 该归因倾向于匹配哪些工具标签 */
+  toolTags: z.array(z.string().trim().min(1).max(80)).default([]),
+  description: z.string().trim().max(2000).optional(),
+  highManifestation: z.string().trim().max(2000).optional(),
+  typicalTrigger: z.string().trim().max(2000).optional(),
+  suggestedAction: z.string().trim().max(1000).optional(),
+  sourceRef: z.string().trim().max(500).optional()
+})
+export type AttributionItem = z.infer<typeof attributionItemSchema>
+
+/** 证据规则（量表级）。命中后 description 会成为方案里「依据」一栏的文案。 */
+export const attributionEvidenceSchema = z.object({
+  attributionCode: z.string().trim().min(1).max(80),
+  /** 该证据依据哪张量表。执行时按当前作答量表过滤，跨量表规则不会被误求值。 */
+  assessmentCode: z.string().trim().min(1).max(40),
+  evidenceCode: z.string().trim().min(1).max(80),
+  condition: z.string().trim().min(1),
+  weight: z.number().min(0).default(1),
+  description: z.string().trim().min(1).max(500),
+  sourceRef: z.string().trim().max(500).optional()
+})
+export type AttributionEvidence = z.infer<typeof attributionEvidenceSchema>
+
+/** 分级规则。按 pri 升序首条命中即停；兜底规则省略 when，其 pri 必须为最大值。 */
+export const gradingRuleSchema = z.object({
+  ruleId: z.string().trim().min(1).max(120),
+  /** 留空表示模块内所有量表通用 */
+  assessmentCode: z.string().trim().max(40).optional(),
   pri: z.number().int(),
   when: z.string().trim().min(1).optional(),
   level: z.string().trim().min(1).max(80),
+  levelName: z.string().trim().max(80).optional(),
+  severity: severitySchema,
   blocked: z.boolean().default(false),
-  ruleId: z.string().trim().min(1).max(120),
-  primaryAttribution: z.string().trim().min(1).max(120),
-  secondaryAttributions: z.array(z.string().trim().min(1).max(120)).default([]),
-  reasons: z.array(z.string().trim().min(1).max(500)).min(1),
-  toolTags: z.array(z.string().trim().min(1).max(80)).default([]),
-  // V2 新增
-  outputActionSummary: z.string().trim().max(1000).optional(),
-  outputToolSummary: z.string().trim().max(1000).optional(),
+  resultDescription: z.string().trim().max(2000).optional(),
   escalationCondition: z.string().trim().max(1000).optional(),
   escalationTarget: z.string().trim().max(200).optional(),
   reEvaluationTrigger: z.string().trim().max(1000).optional(),
-  sourceRef: z.string().trim().max(500).optional(),
-  // V2 模板补齐
-  assessmentCode: z.string().trim().max(40).optional(),
-  levelName: z.string().trim().max(80).optional(),
-  resultDescription: z.string().trim().max(2000).optional()
+  sourceRef: z.string().trim().max(500).optional()
+})
+export type GradingRule = z.infer<typeof gradingRuleSchema>
+
+/** 归因打分的可调参数，按模块下发，不必改代码。 */
+export const attributionScoringSchema = z.object({
+  /** 最多呈现几条归因 */
+  maxAttributions: z.number().int().min(1).max(10).default(3),
+  /** 占比低于该阈值的归因不呈现 */
+  minShare: z.number().min(0).max(1).default(0.05),
+  /** 排名进入前几位算「次要」，其余为「参考」 */
+  secondaryRankCutoff: z.number().int().min(1).max(10).default(3)
 })
 
 // V2 字段映射: ⑤b 归因-计算变量 + ⑤c 归因-分级规则 + ⑥ 归因-红线熔断
@@ -267,7 +322,10 @@ export const attributionConfigSchema = z.object({
   module: moduleIdSchema,
   version: z.string().trim().min(1).max(40),
   computed: z.record(z.string(), z.string().trim().min(1)).default({}),
-  branches: z.array(attributionBranchSchema).min(1),
+  attributionItems: z.array(attributionItemSchema).min(1),
+  evidences: z.array(attributionEvidenceSchema).min(1),
+  gradingRules: z.array(gradingRuleSchema).min(1),
+  scoring: attributionScoringSchema.default({ maxAttributions: 3, minShare: 0.05, secondaryRankCutoff: 3 }),
   actions: z.array(z.object({
     title: z.string().trim().min(1).max(200),
     detail: z.string().trim().min(1).max(1000),
@@ -534,28 +592,46 @@ export interface RuleConfig {
   version: string
   // 中间变量: 从 answers 计算得出
   computed: Record<string, string>  // 变量名 -> 表达式 (SUM/MAX/MIN/SCORE/RAW)
-  // 条件分支（按 priority 优先级排序）
-  branches: Array<{
-    pri: number
-    when?: string           // 若省略则总是匹配（默认分支）
-    level: string
-    blocked: boolean
+  // 归因项：模块级词表
+  attributionItems: Array<{
+    code: string
+    name: string
+    module: ModuleId
+    baseWeight: number
+    toolTags: string[]
+    description?: string
+    highManifestation?: string
+    typicalTrigger?: string
+    suggestedAction?: string
+    sourceRef?: string
+  }>
+  // 证据规则：量表级，命中后按权重累加到对应归因项
+  evidences: Array<{
+    attributionCode: string
+    assessmentCode: string
+    evidenceCode: string
+    condition: string
+    weight: number
+    description: string
+    sourceRef?: string
+  }>
+  // 分级规则：按 pri 升序首条命中即停，只产出等级与严重度
+  gradingRules: Array<{
     ruleId: string
-    primaryAttribution?: string
-    secondaryAttributions?: string[]
-    toolTags?: string[]
-    reasons: string[]
-    // V2 新增
-    outputActionSummary?: string
-    outputToolSummary?: string
+    assessmentCode?: string   // 留空表示模块内通用
+    pri: number
+    when?: string             // 若省略则总是匹配（兜底，pri 须为最大值）
+    level: string
+    levelName?: string
+    severity: Severity
+    blocked: boolean
+    resultDescription?: string
     escalationCondition?: string
     escalationTarget?: string
     reEvaluationTrigger?: string
     sourceRef?: string
-    assessmentCode?: string
-    levelName?: string
-    resultDescription?: string
   }>
+  scoring?: { maxAttributions: number, minShare: number, secondaryRankCutoff: number }
   // 输出模板
   actions: Array<{ title: string, detail: string, status: 'pending' }>
   tools: Array<{ title: string, content: string }>
@@ -564,16 +640,44 @@ export interface RuleConfig {
   redLines?: RedLineConfig[]
 }
 
-// 规则执行结果（与现有 RuleOutput 一致）
+/** 强弱标签。班主任只看到这个分组，看不到 share 小数，避免精确度错觉。 */
+export type AttributionStrength = 'primary' | 'secondary' | 'reference'
+
+/** 单条归因的计算结果 */
+export interface AttributionOutcome {
+  code: string
+  name: string
+  /** 原始得分 = baseWeight × Σ 命中证据权重 */
+  rawScore: number
+  /** 归一化占比 0..1。用于工具加权，不直接呈现给班主任。 */
+  share: number
+  /** 从 0 开始的排名 */
+  rank: number
+  strength: AttributionStrength
+  /** 命中证据的说明文案，进入方案的「依据」栏 */
+  reasons: string[]
+  evidenceCodes: string[]
+}
+
+// 规则执行结果
 export interface RuleExecResult {
   level: string
+  levelName?: string
+  severity: Severity
   reasons: string[]
   blocked: boolean
   matchedRuleIds: string[]
+  /** 多归因结果，按 share 降序。空数组表示没有任何证据命中。 */
+  attributions: AttributionOutcome[]
+  /** 派生自 attributions[0]，保留给工具匹配与既有前端 */
   primaryAttribution: string
+  /** 派生自 attributions[1..]，仅含 strength 非 reference 的项 */
   secondaryAttributions: string[]
   toolTags: string[]
+  /** 维度得分，按维度编码索引 */
   dimensions: Record<string, number>
+  /** 维度编码 → 中文名。面向班主任的文案必须用名称，不能把编码露出去。 */
+  dimensionLabels: Record<string, string>
   actions: Array<{ title: string, detail: string, status: 'pending' }>
   tools: Array<{ title: string, content: string }>
   // V2 新增: 命中的红线信息

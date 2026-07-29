@@ -22,20 +22,38 @@ describe('business import transformers', () => {
       ['home_school', '1.0.0', 'conflict', 'MAX(scores)', '冲突最高分']
     ]), '归因变量')
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
-      ['module', 'version', 'priority', 'when', 'level', 'blocked', 'ruleId', 'primaryAttribution', 'secondaryAttributions', 'reasons', 'toolTags'],
-      ['home_school', '1.0.0', '10', 'conflict >= 4', 'high', '否', 'home-school-high', '家校沟通冲突升级', '沟通边界不清;家长期待不一致', '冲突题项偏高，需要先降温。', 'home_school;conflict;high'],
-      ['home_school', '1.0.0', '100', '', 'stable', '否', 'home-school-default', '家校沟通状态稳定', '', '进入常规维护。', 'home_school;stable']
-    ]), '归因规则')
+      ['归因编码', '归因名称', '所属模块', '权重基数', '工具标签', '归因说明'],
+      ['HS_AT_CONFLICT', '家校沟通冲突升级', 'home_school', '1.5', 'home_school;conflict', '家长与教师之间的冲突正在升级'],
+      ['HS_AT_BOUNDARY', '沟通边界不清', 'home_school', '1', 'home_school;boundary', '沟通职责边界模糊']
+    ]), '⑤c 归因项')
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+      ['证据编码', '归因编码', '依据量表编码', '触发条件', '证据权重', '证据说明'],
+      ['HS_EV_01', 'HS_AT_CONFLICT', 'HS_A1', 'conflict >= 4', '2', '冲突题项偏高，需要先降温。'],
+      ['HS_EV_02', 'HS_AT_BOUNDARY', 'HS_A1', 'conflict >= 3', '1', '边界相关题项偏高。']
+    ]), '⑤d 证据规则')
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+      ['规则编码', '所属模块', '优先级', '触发条件', '命中等级', '等级中文名', '严重度', '是否红线熔断'],
+      ['home-school-high', 'home_school', '10', 'conflict >= 4', 'high', '需重点支持', '重度', '否'],
+      ['home-school-default', 'home_school', '999', '', 'stable', '状态平稳', '轻度', '是']
+    ]), '⑤e 分级规则')
 
     const filePath = join(mkdtempSync(join(tmpdir(), 'mentor-attribution-')), 'attribution.xlsx')
     XLSX.writeFile(workbook, filePath)
 
     const parsed = parseAttributionFile(filePath, 'home_school')
     expect(parsed.computed.conflict).toBe('MAX(scores)')
-    expect(parsed.branches).toHaveLength(2)
-    expect(parsed.branches[0]?.primaryAttribution).toBe('家校沟通冲突升级')
-    expect(parsed.branches[0]?.secondaryAttributions).toEqual(['沟通边界不清', '家长期待不一致'])
-    expect(parsed.branches[1]?.when).toBeUndefined()
+    expect(parsed.attributionItems).toHaveLength(2)
+    expect(parsed.attributionItems[0]?.name).toBe('家校沟通冲突升级')
+    expect(parsed.attributionItems[0]?.baseWeight).toBe(1.5)
+    expect(parsed.evidences).toHaveLength(2)
+    expect(parsed.evidences[0]?.attributionCode).toBe('HS_AT_CONFLICT')
+    expect(parsed.gradingRules).toHaveLength(2)
+    // 中文严重度归一化到统一枚举，与工具库共用
+    expect(parsed.gradingRules[0]?.severity).toBe('high')
+    expect(parsed.gradingRules[1]?.severity).toBe('low')
+    // 兜底规则：无触发条件且优先级最大
+    expect(parsed.gradingRules[1]?.when).toBeUndefined()
+    expect(parsed.gradingRules[1]?.pri).toBe(999)
   })
 
   it('cleans assessment rows by filtering metadata and making repeated ids unique', () => {
@@ -99,8 +117,11 @@ describe('business import quality gates', () => {
     })
     expect(report.status).toBe('pass')
     expect(report.summary.attributionRuleCount).toBe(2)
+    expect(report.summary.attributionItemCount).toBe(2)
     expect(report.metrics.fallbackRuleCount).toBe(1)
-    expect(report.metrics.toolTaggedRuleRatio).toBe(1)
+    expect(report.metrics.toolTaggedAttributionRatio).toBe(1)
+    // 每条归因项都必须有证据，否则永远算不出分
+    expect(report.metrics.attributionsWithoutEvidence).toBe(0)
   })
 
   it('accepts golden tool samples and reports operational completeness', () => {
@@ -111,6 +132,7 @@ describe('business import quality gates', () => {
     })
     expect(report.status).toBe('pass')
     expect(report.summary.toolCount).toBe(1)
+    expect(report.metrics.toolAttributionCodeRatio).toBe(1)
     expect(report.metrics.toolMatchHintRatio).toBe(1)
     expect(report.metrics.toolScriptRatio).toBe(1)
     expect(report.metrics.toolProhibitionRatio).toBe(1)
@@ -140,14 +162,17 @@ describe('business import quality gates', () => {
 describe('business import source selection', () => {
   it('defaults to standardized business-libraries instead of legacy raw Excel files', async () => {
     const results = await importAll({ dryRun: true, type: 'attribution' })
-    // 旧 JSON payload 已删除，目前 business-libraries/ 下无 V2 xlsx 文件
-    // Phase 2 完成后应恢复为 5（每个模块一个 V2 xlsx）
-    expect(results).toHaveLength(0)
+    // 五个模块各一份标准归因库（正式交付目录缺省时回退到 business-libraries/test-data/）
+    expect(results).toHaveLength(5)
+    expect(results.every(result => result.success)).toBe(true)
+    expect(results.every(result => !result.task.filePath.includes('业务需求'))).toBe(true)
   })
 
   it('does not import legacy raw tool files unless explicitly requested', async () => {
     const results = await importAll({ dryRun: true, type: 'tool' })
-    expect(results).toHaveLength(0)
+    expect(results).toHaveLength(5)
     expect(results.every(result => result.success)).toBe(true)
+    // 未显式要求时不得走 业务需求/ 下的原始 Excel
+    expect(results.every(result => !result.task.filePath.includes('业务需求'))).toBe(true)
   })
 })

@@ -1,417 +1,319 @@
 import { describe, expect, it } from 'vitest'
-import { executeRules, evaluateWithFallback } from '../server/domain/rules-executor'
-import { assessmentDefinitions } from '../shared/assessments'
-import type { RuleConfig, ModuleId } from '../shared/contracts'
+import { executeRules, evaluateWithFallback, normalizeExpression } from '../server/domain/rules-executor'
+import { scoreTools } from '../server/domain/plan-actions'
+import type { RuleConfig } from '../shared/contracts'
+import type { AssessmentDefinition } from '../shared/assessments'
 
-// 模拟 self_growth 的规则 DSL（与硬编码规则等效）
-const selfGrowthRuleConfig: RuleConfig = {
+// ---- 测试夹具：一份最小但完整的 v3 归因库 ----
+
+const scaleA: AssessmentDefinition = {
+  code: 'T_SCALE_A',
+  instrumentCode: 'T_SCALE_A',
+  version: '1.0.0',
   module: 'self_growth',
-  version: '2.0.0',
-  computed: {
-    total: 'SUM(scores)',
-    max: 'MAX(scores)',
-    meaningRaw: 'RAW(q3)',
-    exhaustion: 'SCORE(q1)',
-    meaningRisk: 'SCORE(q3)'
-  },
-  branches: [
-    { pri: 1, when: 'exhaustion >= 4 && meaningRisk >= 4', level: 'red', blocked: true, ruleId: 'SG-RED-Q1-Q3', reasons: ['疲惫与意义感风险同时处于高位'] },
-    { pri: 2, when: 'meaningRaw <= 2 && ctx_previousConsecutiveLowMeaning >= 3', level: 'purple', blocked: true, ruleId: 'SG-PURPLE-MEANING-4X', reasons: ['意义感连续四次处于低位，需要主动关爱与转介评估'] },
-    { pri: 3, when: 'total >= 20 || max >= 4', level: 'orange', blocked: false, ruleId: 'SG-ORANGE', reasons: ['总分或单项达到主动支持阈值'] },
-    { pri: 4, when: 'total >= 15 || max >= 3', level: 'yellow', blocked: false, ruleId: 'SG-YELLOW', reasons: ['状态出现需要支持的波动'] },
-    { pri: 5, when: 'total >= 11', level: 'blue', blocked: false, ruleId: 'SG-BLUE', reasons: ['存在轻微波动，建议关注节奏'] },
-    { pri: 6, level: 'green', blocked: false, ruleId: 'SG-GREEN', reasons: ['当前状态整体稳定'] }
-  ],
-  actions: [
-    { title: '今天：完成一次三分钟补能', detail: '离开工作情境，完成三轮缓慢呼吸并观察身体感受。', status: 'pending' },
-    { title: '本周：拆解可控事项', detail: '把最困扰的一件事拆成可控制、可影响和暂时不可控三类。', status: 'pending' }
-  ],
-  tools: [
-    { title: '3 分钟补能卡', content: '停下来—感受双脚—缓慢呼吸—命名情绪—选择一个最小行动。' },
-    { title: '边界话术', content: '我理解这件事让您着急。我需要先核实情况，会在约定时间内回复您。' }
+  title: '测试量表A',
+  description: '',
+  estimatedMinutes: 3,
+  questions: ['q1', 'q2', 'q3', 'q4'].map(id => ({
+    id,
+    text: id,
+    dimension: id === 'q1' || id === 'q2' ? '负荷' : '方法',
+    reverse: id === 'q4',
+    options: [1, 2, 3, 4, 5].map(v => ({ label: String(v), value: v }))
+  })),
+  dimensionDefs: [
+    { code: 'D_LOAD', name: '负荷', questionIds: ['q1', 'q2'], calcMethod: 'mean' },
+    { code: 'D_METHOD', name: '方法', questionIds: ['q3', 'q4'], calcMethod: 'mean' }
   ]
 }
 
-function answers(module: ModuleId, value: number) {
-  return Object.fromEntries(assessmentDefinitions[module].questions.map(q => [q.id, value]))
+/** 与 scaleA 题号完全不同，用来验证证据规则按量表隔离 */
+const scaleB: AssessmentDefinition = {
+  code: 'T_SCALE_B',
+  instrumentCode: 'T_SCALE_B',
+  version: '1.0.0',
+  module: 'self_growth',
+  title: '测试量表B',
+  description: '',
+  estimatedMinutes: 3,
+  questions: ['b1', 'b2'].map(id => ({
+    id,
+    text: id,
+    dimension: '支持',
+    options: [1, 2, 3, 4, 5].map(v => ({ label: String(v), value: v }))
+  })),
+  dimensionDefs: [{ code: 'D_SUPPORT', name: '支持', questionIds: ['b1', 'b2'], calcMethod: 'mean' }]
 }
 
-describe('executeRules (DSL engine)', () => {
-  it('rejects incomplete answers', () => {
-    expect(() => executeRules(selfGrowthRuleConfig, {}, assessmentDefinitions.self_growth))
-      .toThrow('所有题目都必须作答')
+const config: RuleConfig = {
+  module: 'self_growth',
+  version: '3.0.0',
+  computed: { 均值: 'AVG(scores)' },
+  attributionItems: [
+    { code: 'AT_LOAD', name: '负荷过载', module: 'self_growth', baseWeight: 1, toolTags: ['load'], suggestedAction: '先做减法' },
+    { code: 'AT_METHOD', name: '方法不足', module: 'self_growth', baseWeight: 1, toolTags: ['method'], suggestedAction: '补一个最小流程' },
+    { code: 'AT_SUPPORT', name: '支持缺失', module: 'self_growth', baseWeight: 2, toolTags: ['support'] }
+  ],
+  evidences: [
+    { attributionCode: 'AT_LOAD', assessmentCode: 'T_SCALE_A', evidenceCode: 'EV_L1', condition: '维度[D_LOAD] >= 4', weight: 2, description: '负荷维度高位' },
+    { attributionCode: 'AT_LOAD', assessmentCode: 'T_SCALE_A', evidenceCode: 'EV_L2', condition: '维度[D_LOAD] >= 3', weight: 1, description: '负荷维度偏高' },
+    { attributionCode: 'AT_METHOD', assessmentCode: 'T_SCALE_A', evidenceCode: 'EV_M1', condition: '题[q3] >= 4', weight: 1, description: '方法题高位' },
+    // 只属于量表B。若按量表过滤失效，用量表A作答时会因为找不到 b1 而抛错。
+    { attributionCode: 'AT_SUPPORT', assessmentCode: 'T_SCALE_B', evidenceCode: 'EV_S1', condition: '题[b1] >= 4', weight: 1, description: '支持题高位' }
+  ],
+  gradingRules: [
+    { ruleId: 'G_RED', pri: 10, when: '均值 >= 4.5', level: 'red', levelName: '需立即关注', severity: 'crisis', blocked: true },
+    { ruleId: 'G_ORANGE', pri: 20, when: '均值 >= 3.5', level: 'orange', levelName: '需重点支持', severity: 'high', blocked: false },
+    { ruleId: 'G_DEFAULT', pri: 999, level: 'none', levelName: '状态平稳', severity: 'low', blocked: false }
+  ],
+  actions: [{ title: '通用行动', detail: '归因项没填建议动作时才用这条', status: 'pending' }],
+  tools: []
+}
+
+const answersA = (values: Partial<Record<'q1' | 'q2' | 'q3' | 'q4', number>>) => ({
+  q1: 1, q2: 1, q3: 1, q4: 1, ...values
+})
+
+describe('normalizeExpression 业务写法翻译', () => {
+  it('把中文取值写法翻译成 DSL', () => {
+    expect(normalizeExpression('题[q1] >= 4')).toBe('SCORE(q1) >= 4')
+    expect(normalizeExpression('维度[D_LOAD] <= 2')).toBe('DIM(D_LOAD) <= 2')
+    expect(normalizeExpression('原始[q3] == 5')).toBe('RAW(q3) == 5')
   })
 
-  it('fuses self-growth red when exhaustion and meaning risk are both high', () => {
-    const input = answers('self_growth', 1)
-    input.q1 = 5 // exhaustion = 5
-    input.q3 = 1 // raw=1, score=5 (reversed)
-    const result = executeRules(selfGrowthRuleConfig, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('red')
-    expect(result.blocked).toBe(true)
-    expect(result.matchedRuleIds).toContain('SG-RED-Q1-Q3')
+  it('翻译聚合写法与逻辑连接词', () => {
+    expect(normalizeExpression('总分 >= 20 且 均分 >= 3')).toBe('SUM(scores) >= 20 && AVG(scores) >= 3')
+    expect(normalizeExpression('题[q1] >= 4 或 题[q2] >= 4')).toBe('SCORE(q1) >= 4 || SCORE(q2) >= 4')
   })
 
-  it('uses reverse scoring for positive self-growth questions', () => {
-    const input = answers('self_growth', 1)
-    input.q3 = 5 // raw=5 → score=1
-    input.q4 = 5 // raw=5 → score=1
-    const result = executeRules(selfGrowthRuleConfig, input, assessmentDefinitions.self_growth)
-    expect(result.dimensions['意义感知']).toBe(1)
-    expect(result.dimensions['效能信心']).toBe(1)
+  it('归一化全角符号', () => {
+    expect(normalizeExpression('题[q1] ≥ 4')).toBe('SCORE(q1) >= 4')
+    expect(normalizeExpression('题[q1] ＞ 4')).toBe('SCORE(q1) > 4')
   })
 
-  it('raises purple after four consecutive low-meaning with ctx', () => {
-    const input = answers('self_growth', 1)
-    input.q1 = 1
-    input.q3 = 2 // raw=2
-    // 没有 ctx 时不应为 purple
-    expect(executeRules(selfGrowthRuleConfig, input, assessmentDefinitions.self_growth).level).not.toBe('purple')
-    // ctx.previousConsecutiveLowMeaning >= 3 时触发 purple
-    const result = executeRules(selfGrowthRuleConfig, input, assessmentDefinitions.self_growth, { previousConsecutiveLowMeaning: 3 })
-    expect(result.level).toBe('purple')
-    expect(result.blocked).toBe(true)
-    expect(result.matchedRuleIds).toContain('SG-PURPLE-MEANING-4X')
+  it('不切坏包含关键词的中文变量名', () => {
+    // 业务把计算变量命名为「状态总分」时，不能被替换成「状态SUM(scores)」
+    expect(normalizeExpression('状态总分 >= 20')).toBe('状态总分 >= 20')
+    expect(normalizeExpression('情绪均分 >= 4')).toBe('情绪均分 >= 4')
+    expect(normalizeExpression('疲惫且失意 >= 3')).toBe('疲惫且失意 >= 3')
+    // 但独立出现时仍然翻译
+    expect(normalizeExpression('总分 >= 20')).toBe('SUM(scores) >= 20')
+    expect(normalizeExpression('状态总分 >= 20 且 均分 >= 3')).toBe('状态总分 >= 20 && AVG(scores) >= 3')
+  })
+})
+
+describe('executeRules 多归因加权', () => {
+  it('拒绝未答完的作答', () => {
+    expect(() => executeRules(config, { q1: 5 }, scaleA)).toThrow('所有题目都必须作答')
   })
 
-  it('maps to orange when total >= 20', () => {
-    const input = answers('self_growth', 4) // all 4's: total = 5*4 = 20
-    const result = executeRules(selfGrowthRuleConfig, input, assessmentDefinitions.self_growth)
+  it('按权重累加并归一化成占比，降序排名', () => {
+    // 负荷维度 5 分 → 命中 EV_L1(2) + EV_L2(1) = 3；方法题 q3=5 → 命中 EV_M1(1) = 1
+    const result = executeRules(config, answersA({ q1: 5, q2: 5, q3: 5 }), scaleA)
+    expect(result.attributions.map(a => a.code)).toEqual(['AT_LOAD', 'AT_METHOD'])
+    expect(result.attributions[0]!.rawScore).toBe(3)
+    expect(result.attributions[1]!.rawScore).toBe(1)
+    expect(result.attributions[0]!.share).toBe(0.75)
+    expect(result.attributions[1]!.share).toBe(0.25)
+    expect(result.attributions.reduce((s, a) => s + a.share, 0)).toBeCloseTo(1, 4)
+  })
+
+  it('给出主要/次要强弱标签，并派生 primaryAttribution', () => {
+    const result = executeRules(config, answersA({ q1: 5, q2: 5, q3: 5 }), scaleA)
+    expect(result.attributions[0]!.strength).toBe('primary')
+    expect(result.attributions[1]!.strength).toBe('secondary')
+    expect(result.primaryAttribution).toBe('负荷过载')
+    expect(result.secondaryAttributions).toEqual(['方法不足'])
+  })
+
+  it('权重基数参与计算', () => {
+    // AT_SUPPORT 的 baseWeight 是 2，证据权重 1 → rawScore 应为 2
+    const result = executeRules(config, { b1: 5, b2: 5 }, scaleB)
+    expect(result.attributions[0]!.code).toBe('AT_SUPPORT')
+    expect(result.attributions[0]!.rawScore).toBe(2)
+  })
+
+  it('命中证据的说明进入 reasons，供方案的「依据」栏使用', () => {
+    const result = executeRules(config, answersA({ q1: 5, q2: 5 }), scaleA)
+    expect(result.reasons).toContain('负荷维度高位')
+    expect(result.reasons).toContain('负荷维度偏高')
+  })
+
+  it('没有任何证据命中时不报错，给出兜底说明', () => {
+    const result = executeRules(config, answersA({}), scaleA)
+    expect(result.attributions).toHaveLength(0)
+    expect(result.primaryAttribution).toBe('')
+    expect(result.reasons).toHaveLength(1)
+  })
+
+  it('同样的作答必须得到同样的结果（并列时按编码排序）', () => {
+    const a = executeRules(config, answersA({ q1: 4, q2: 4, q3: 4 }), scaleA)
+    const b = executeRules(config, answersA({ q1: 4, q2: 4, q3: 4 }), scaleA)
+    expect(a.attributions.map(x => x.code)).toEqual(b.attributions.map(x => x.code))
+    expect(a.matchedRuleIds).toEqual(b.matchedRuleIds)
+  })
+})
+
+describe('executeRules 按量表隔离证据规则', () => {
+  it('用量表A作答时不会去求值属于量表B的证据（否则会因题号不存在而抛错）', () => {
+    expect(() => executeRules(config, answersA({ q1: 5, q2: 5 }), scaleA)).not.toThrow()
+  })
+
+  it('用量表B作答时只命中量表B的证据', () => {
+    const result = executeRules(config, { b1: 5, b2: 5 }, scaleB)
+    expect(result.attributions.map(a => a.code)).toEqual(['AT_SUPPORT'])
+  })
+
+  it('分级规则可以限定量表，未限定的视为模块通用', () => {
+    const scoped: RuleConfig = {
+      ...config,
+      gradingRules: [
+        { ruleId: 'G_B_ONLY', assessmentCode: 'T_SCALE_B', pri: 1, when: '均值 >= 1', level: 'b_only', severity: 'high', blocked: false },
+        { ruleId: 'G_DEFAULT', pri: 999, level: 'none', severity: 'low', blocked: false }
+      ]
+    }
+    expect(executeRules(scoped, answersA({}), scaleA).level).toBe('none')
+    expect(executeRules(scoped, { b1: 3, b2: 3 }, scaleB).level).toBe('b_only')
+  })
+})
+
+describe('executeRules 分级与归因解耦', () => {
+  it('等级来自分级规则，与归因结果无关', () => {
+    const result = executeRules(config, answersA({ q1: 5, q2: 5, q3: 5, q4: 5 }), scaleA)
     expect(result.level).toBe('orange')
+    expect(result.levelName).toBe('需重点支持')
+    expect(result.severity).toBe('high')
   })
 
-  it('maps to green when all answers are low', () => {
-    const input = answers('self_growth', 1)
-    input.q3 = 5 // raw=5 → score=1 (reversed), total = 1+1+1+1+1 = 5
-    input.q4 = 5
-    const result = executeRules(selfGrowthRuleConfig, input, assessmentDefinitions.self_growth, { previousConsecutiveLowMeaning: 0 })
-    expect(result.level).toBe('green')
-    expect(result.matchedRuleIds).toContain('SG-GREEN')
+  it('按优先级升序首条命中即停', () => {
+    // q4 反向计分：raw 1 → score 5，四题全 5 分，均值 5 → 命中 pri 最小的 G_RED
+    const result = executeRules(config, { q1: 5, q2: 5, q3: 5, q4: 1 }, scaleA)
+    expect(result.matchedRuleIds[0]).toBe('G_RED')
+    expect(result.blocked).toBe(true)
   })
 
-  it('attaches actions and tools in output', () => {
-    const input = answers('self_growth', 3)
-    const result = executeRules(selfGrowthRuleConfig, input, assessmentDefinitions.self_growth)
-    expect(result.actions.length).toBeGreaterThan(0)
-    expect(result.tools.length).toBeGreaterThan(0)
+  it('没有任何分级规则命中时落到兜底', () => {
+    const result = executeRules(config, answersA({}), scaleA)
+    expect(result.matchedRuleIds[0]).toBe('G_DEFAULT')
+    expect(result.level).toBe('none')
   })
 
-  it('evaluateWithFallback returns same results as evaluateAssessment', () => {
-    for (const module of ['self_growth', 'class_system', 'home_school', 'student_case'] as ModuleId[]) {
-      const input = answers(module, 3)
-      const result = evaluateWithFallback(module, input)
-      expect(result.level).toBeDefined()
-      expect(result.matchedRuleIds.length).toBeGreaterThan(0)
-      expect(result.actions.length).toBeGreaterThan(0)
+  it('缺少适用分级规则时抛出可定位的错误', () => {
+    const broken: RuleConfig = {
+      ...config,
+      gradingRules: [{ ruleId: 'G_OTHER', assessmentCode: 'OTHER_SCALE', pri: 1, level: 'x', severity: 'low', blocked: false }]
     }
+    expect(() => executeRules(broken, answersA({}), scaleA)).toThrow("量表 'T_SCALE_A' 没有适用的分级规则")
+  })
+
+  it('matchedRuleIds 同时记录分级规则和命中的证据编码，用于溯源', () => {
+    const result = executeRules(config, answersA({ q1: 5, q2: 5 }), scaleA)
+    expect(result.matchedRuleIds[0]).toBe('G_ORANGE')
+    expect(result.matchedRuleIds).toContain('EV_L1')
+    expect(result.matchedRuleIds).toContain('EV_L2')
   })
 })
 
-describe('DSL expression evaluator edge cases', () => {
-  it('handles string comparison in when', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: { level: 'SUM(scores)' },
-      branches: [
-        { pri: 1, level: 'green', blocked: false, ruleId: 'T-DEFAULT', reasons: [] }
-      ],
-      actions: [], tools: []
+describe('executeRules 红线熔断', () => {
+  it('独立红线可以覆盖分级规则的 blocked', () => {
+    const withRedLine: RuleConfig = {
+      ...config,
+      redLines: [{
+        module: 'self_growth', condition: '题[q1] >= 5', description: '单题触顶',
+        scope: 'module', requiredActions: '转介', actions: []
+      }]
     }
-    const input = answers('self_growth', 3)
-    const result = executeRules(config, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('green')
+    const result = executeRules(withRedLine, answersA({ q1: 5 }), scaleA)
+    expect(result.blocked).toBe(true)
+    expect(result.matchedRedLines).toHaveLength(1)
   })
 
-  it('throws on unknown variable in when', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: {},
-      branches: [
-        { pri: 1, when: 'unknown_var > 3', level: 'red', blocked: false, ruleId: 'T-ERR', reasons: [] }
-      ],
-      actions: [], tools: []
+  it('红线表达式求值失败不阻断评估', () => {
+    const badRedLine: RuleConfig = {
+      ...config,
+      redLines: [{
+        module: 'self_growth', condition: '题[不存在的题] >= 5', description: '坏表达式',
+        scope: 'module', requiredActions: '', actions: []
+      }]
     }
-    expect(() => executeRules(config, answers('self_growth', 3), assessmentDefinitions.self_growth))
-      .toThrow(/Unknown variable/)
-  })
-
-  it('handles parentheses in expressions', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: { a: 'SUM(scores)' },
-      branches: [
-        { pri: 1, when: '(a >= 10) && (a <= 25)', level: 'blue', blocked: false, ruleId: 'T-PAREN', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    const result = executeRules(config, answers('self_growth', 3), assessmentDefinitions.self_growth) // total=15
-    expect(result.level).toBe('blue')
-  })
-
-  it('matches default branch when no when conditions match', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: { a: 'SUM(scores)' },
-      branches: [
-        { pri: 1, when: 'a >= 100', level: 'red', blocked: false, ruleId: 'T-IMPOSSIBLE', reasons: [] },
-        { pri: 2, level: 'green', blocked: false, ruleId: 'T-DEFAULT', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    const result = executeRules(config, answers('self_growth', 1), assessmentDefinitions.self_growth) // total=5
-    expect(result.level).toBe('green')
-    expect(result.matchedRuleIds).toContain('T-DEFAULT')
-  })
-
-  it('throws on invalid expression syntax', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: {},
-      branches: [
-        { pri: 1, when: '>>invalid', level: 'red', blocked: false, ruleId: 'T-BAD', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    expect(() => executeRules(config, answers('self_growth', 3), assessmentDefinitions.self_growth))
-      .toThrow()
+    expect(() => executeRules(badRedLine, answersA({}), scaleA)).not.toThrow()
   })
 })
 
-// ---- 补充测试: crisis 熔断、边界值、多模块、内置函数 ----
+describe('executeRules 行动项由归因推导', () => {
+  it('命中归因的建议动作成为方案行动项', () => {
+    const result = executeRules(config, answersA({ q1: 5, q2: 5, q3: 5 }), scaleA)
+    expect(result.actions.map(a => a.detail)).toEqual(['先做减法', '补一个最小流程'])
+  })
 
-describe('crisis fuse (crisis.when overrides branch blocked)', () => {
-  const configWithCrisis: RuleConfig = {
-    module: 'self_growth', version: '1.0',
-    computed: { total: 'SUM(scores)', max: 'MAX(scores)' },
-    branches: [
-      { pri: 1, when: 'total >= 20', level: 'orange', blocked: false, ruleId: 'T-ORANGE', reasons: [] },
-      { pri: 2, level: 'green', blocked: false, ruleId: 'T-GREEN', reasons: [] }
-    ],
-    actions: [], tools: [],
-    crisis: { when: 'max >= 5', blocked: true }
+  it('归因项没填建议动作时退回通用行动清单', () => {
+    const result = executeRules(config, answersA({}), scaleA)
+    expect(result.actions).toEqual(config.actions)
+  })
+})
+
+describe('scoreTools 加权打分', () => {
+  const tools = [
+    { code: 'RX_LOAD', name: '负荷工具', attributionCode: 'AT_LOAD', severity: 'high', toolTags: ['load'], dimensions: ['D_LOAD'] },
+    { code: 'RX_METHOD', name: '方法工具', attributionCode: 'AT_METHOD', severity: 'low', toolTags: ['method'], dimensions: ['D_METHOD'] },
+    { code: 'RX_NONE', name: '无关工具', attributionCode: 'AT_OTHER', severity: 'low', toolTags: ['other'], dimensions: [] }
+  ]
+  const input = {
+    dimensions: { D_LOAD: 4.5, D_METHOD: 2.0 },
+    severity: 'high' as const,
+    attributions: [{ code: 'AT_LOAD', share: 0.75 }, { code: 'AT_METHOD', share: 0.25 }],
+    toolTags: ['load', 'method']
   }
 
-  it('overrides blocked when crisis condition matches', () => {
-    // self_growth q3,q4 are reverse. Raw: q1=5,q2=4,q3=2→4,q4=2→4,q5=4 → total=21, max=5
-    const input = answers('self_growth', 4)
-    input.q1 = 5; input.q3 = 2; input.q4 = 2
-    const result = executeRules(configWithCrisis, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('orange') // branch still matches (total>=20)
-    expect(result.blocked).toBe(true)    // crisis overrides blocked (max>=5)
+  it('按归因占比加权排序，主归因的工具排在前面', () => {
+    const scored = scoreTools(tools, input)
+    expect(scored[0]!.tool.code).toBe('RX_LOAD')
+    expect(scored[1]!.tool.code).toBe('RX_METHOD')
   })
 
-  it('does not fuse when crisis condition is false', () => {
-    // self_growth q3,q4 are reverse. answers(1) gives scores [1,1,5,5,1], max=5.
-    // Set q3,q4 to raw=2 → scores=4, so max=4 < 5, crisis does not fire.
-    const input = answers('self_growth', 1)
-    input.q3 = 2; input.q4 = 2 // max becomes 4
-    const result = executeRules(configWithCrisis, input, assessmentDefinitions.self_growth)
-    expect(result.blocked).toBe(false)
+  it('归因对不上的工具得 0 分，被排除', () => {
+    expect(scoreTools(tools, input).map(s => s.tool.code)).not.toContain('RX_NONE')
   })
 
-  it('crisis keeps original level from matched branch', () => {
-    const input = answers('self_growth', 3) // total=15, max=3
-    const result = executeRules(configWithCrisis, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('green')
-    expect(result.blocked).toBe(false)
-  })
-})
-
-describe('boundary thresholds', () => {
-  const config: RuleConfig = {
-    module: 'self_growth', version: '1.0',
-    computed: { total: 'SUM(scores)' },
-    branches: [
-      { pri: 1, when: 'total >= 25', level: 'red', blocked: true, ruleId: 'T-RED', reasons: [] },
-      { pri: 2, when: 'total >= 20', level: 'orange', blocked: false, ruleId: 'T-ORANGE', reasons: [] },
-      { pri: 3, when: 'total >= 15', level: 'yellow', blocked: false, ruleId: 'T-YELLOW', reasons: [] },
-      { pri: 4, when: 'total >= 11', level: 'blue', blocked: false, ruleId: 'T-BLUE', reasons: [] },
-      { pri: 5, level: 'green', blocked: false, ruleId: 'T-GREEN', reasons: [] }
-    ],
-    actions: [], tools: []
-  }
-
-  it('hits exactly at threshold 20 → orange', () => {
-    // self_growth q3,q4 are reverse. Raw values: q1=4,q2=4,q3=2→4,q4=2→4,q5=4 → total=20
-    const input = answers('self_growth', 4)
-    input.q3 = 2; input.q4 = 2
-    const result = executeRules(config, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('orange')
+  it('给出得分明细，运营台可以解释推荐理由', () => {
+    const top = scoreTools(tools, input)[0]!
+    expect(top.breakdown.attribution).toBeCloseTo(7.5, 4)
+    expect(top.breakdown.severity).toBe(2)
+    expect(top.breakdown.tag).toBeCloseTo(3, 4)
   })
 
-  it('hits exactly at threshold 15 → yellow', () => {
-    const input = answers('self_growth', 3) // 5*3 = 15 exactly
-    const result = executeRules(config, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('yellow')
+  it('单项对不上不会导致整体落空——这是旧 AND 硬过滤最致命的问题', () => {
+    // 严重度和维度都对不上，只有归因命中
+    const scored = scoreTools(tools, { ...input, severity: 'crisis', dimensions: {} })
+    expect(scored.length).toBeGreaterThan(0)
+    expect(scored[0]!.tool.code).toBe('RX_LOAD')
   })
 
-  it('hits exactly at threshold 11 → blue', () => {
-    const input = answers('self_growth', 1)
-    input.q1 = 3; input.q2 = 3; input.q3 = 5; input.q4 = 5; input.q5 = 1
-    // total = 3+3+1+1+1 = 9 (after reverse), no wait...
-    // q3 raw=5 → score=1, q4 raw=5 → score=1
-    // Let me recalculate: all default to 1: q1=1, q2=1, q3(reverse:5→1), q4(reverse:5→1), q5=1 = total 5
-    // Not 11. Let me try: q1=3, q2=3, q3=2 (reverse→4), q4=2 (reverse→4), q5=2 = 3+3+4+4+2=16
-    // Or q1=2, q2=2, q3=3 (reverse→3), q4=3 (reverse→3), q5=3 = 2+2+3+3+3=13
-    // q1=2, q2=2, q3=5 (reverse→1), q4=5 (reverse→1), q5=5 = 2+2+1+1+5=11 ✓
-    input.q1 = 2; input.q2 = 2; input.q3 = 5; input.q4 = 5; input.q5 = 5
-    const result = executeRules(config, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('blue')
+  it('block 型禁忌在条件确认时一票否决', () => {
+    const blocked = [{ ...tools[0]!, contraindicationRules: [{ type: 'block', condition: 'always', description: 'y' }] }]
+    expect(scoreTools(blocked, input)).toHaveLength(0)
   })
 
-  it('just below threshold 11 → green', () => {
-    const input = answers('self_growth', 1)
-    input.q1 = 2; input.q2 = 2; input.q3 = 5; input.q4 = 5; input.q5 = 4
-    // total = 2+2+1+1+4 = 10
-    const result = executeRules(config, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('green')
+  it('无法被当前规则输入确认的 block 说明不默认排除工具', () => {
+    const blocked = [{ ...tools[0]!, contraindicationRules: [{ type: 'block', condition: '冲突涉及肢体伤害或欺凌', description: 'y' }] }]
+    expect(scoreTools(blocked, input)).toHaveLength(1)
+  })
+
+  it('并列得分时按工具编码排序，保证推荐顺序稳定', () => {
+    const tied = [
+      { code: 'RX_B', name: 'B', attributionCode: 'AT_LOAD', toolTags: [], dimensions: [] },
+      { code: 'RX_A', name: 'A', attributionCode: 'AT_LOAD', toolTags: [], dimensions: [] }
+    ]
+    expect(scoreTools(tied, input).map(s => s.tool.code)).toEqual(['RX_A', 'RX_B'])
   })
 })
 
-describe('MAX/MIN built-in functions', () => {
-  it('MAX(scores) returns the highest score', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: { max: 'MAX(scores)' },
-      branches: [
-        { pri: 1, when: 'max >= 4', level: 'red', blocked: true, ruleId: 'T-MAX-HIGH', reasons: [] },
-        { pri: 2, level: 'green', blocked: false, ruleId: 'T-GREEN', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    const input = answers('self_growth', 1)
-    input.q1 = 4 // max = 4
-    const result = executeRules(config, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('red')
-  })
-
-  it('MIN(scores) returns the lowest score', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: { min: 'MIN(scores)' },
-      branches: [
-        { pri: 1, when: 'min >= 4', level: 'orange', blocked: false, ruleId: 'T-MIN-HIGH', reasons: [] },
-        { pri: 2, level: 'green', blocked: false, ruleId: 'T-GREEN', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    // self_growth q3,q4 are reverse. Raw q3=2→4,q4=2→4. With all others=4, min=4.
-    const input = answers('self_growth', 4)
-    input.q3 = 2; input.q4 = 2
-    const result = executeRules(config, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('orange')
-  })
-})
-
-describe('multi-module DSL cross-verification', () => {
-  it('class_system: dimension-based scoring with SCORE', () => {
-    const classConfig: RuleConfig = {
-      module: 'class_system', version: '1.0',
-      computed: {
-        goal: 'SCORE(goal1)',
-        org: 'SCORE(org1)'
-      },
-      branches: [
-        { pri: 1, when: 'goal >= 4 && org >= 4', level: 'orange', blocked: false, ruleId: 'CS-HIGH', reasons: ['目标和组织双高'] },
-        { pri: 2, level: 'green', blocked: false, ruleId: 'CS-GREEN', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    const input: Record<string, number> = {}
-    for (const q of assessmentDefinitions.class_system.questions) input[q.id] = 1
-    input.goal1 = 4; input.org1 = 4
-    const result = executeRules(classConfig, input, assessmentDefinitions.class_system)
-    expect(result.level).toBe('orange')
-    expect(result.matchedRuleIds).toContain('CS-HIGH')
-  })
-
-  it('home_school: cooperation + attitude composite', () => {
-    const hsConfig: RuleConfig = {
-      module: 'home_school', version: '1.0',
-      computed: {
-        coopAvg: 'SUM(scores)',
-        attAvg: 'SUM(scores)'
-      },
-      branches: [
-        { pri: 1, when: 'coopAvg >= 12 || attAvg >= 12', level: 'yellow', blocked: false, ruleId: 'HS-YELLOW', reasons: [] },
-        { pri: 2, level: 'green', blocked: false, ruleId: 'HS-GREEN', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    const input: Record<string, number> = {}
-    for (const q of assessmentDefinitions.home_school.questions) input[q.id] = 3
-    // 9 questions × 3 = 27, so coopAvg and attAvg both = 27
-    const result = executeRules(hsConfig, input, assessmentDefinitions.home_school)
-    expect(result.level).toBe('yellow')
-  })
-
-  it('student_case: severity scoring', () => {
-    const scConfig: RuleConfig = {
-      module: 'student_case', version: '1.0',
-      computed: {
-        total: 'SUM(scores)',
-        max: 'MAX(scores)'
-      },
-      branches: [
-        { pri: 1, when: 'max >= 5', level: 'red', blocked: true, ruleId: 'SC-RED', reasons: [] },
-        { pri: 2, when: 'total >= 20', level: 'orange', blocked: false, ruleId: 'SC-ORANGE', reasons: [] },
-        { pri: 3, level: 'green', blocked: false, ruleId: 'SC-GREEN', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    const input: Record<string, number> = {}
-    for (const q of assessmentDefinitions.student_case.questions) input[q.id] = 1
-    const result = executeRules(scConfig, input, assessmentDefinitions.student_case)
-    expect(result.level).toBe('green')
-    expect(result.matchedRuleIds).toContain('SC-GREEN')
-  })
-})
-
-describe('ctx_ variable prefix and context chaining', () => {
-  it('resolves ctx_previousConsecutiveLowMeaning from ctx object', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: { total: 'SUM(scores)' },
-      branches: [
-        { pri: 1, when: 'ctx_previousConsecutiveLowMeaning >= 5', level: 'purple', blocked: true, ruleId: 'T-CTX', reasons: [] },
-        { pri: 2, level: 'green', blocked: false, ruleId: 'T-GREEN', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    const input = answers('self_growth', 1)
-    const result = executeRules(config, input, assessmentDefinitions.self_growth, { previousConsecutiveLowMeaning: 5 })
-    expect(result.level).toBe('purple')
-    expect(result.blocked).toBe(true)
-  })
-
-  it('returns green when ctx value does not meet threshold', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: {},
-      branches: [
-        { pri: 1, when: 'ctx_previousConsecutiveLowMeaning >= 5', level: 'purple', blocked: true, ruleId: 'T-CTX', reasons: [] },
-        { pri: 2, level: 'green', blocked: false, ruleId: 'T-GREEN', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    const input = answers('self_growth', 1)
-    const result = executeRules(config, input, assessmentDefinitions.self_growth, { previousConsecutiveLowMeaning: 2 })
-    expect(result.level).toBe('green')
-  })
-
-  it('treats missing ctx variable as 0 (graceful)', () => {
-    const config: RuleConfig = {
-      module: 'self_growth', version: '1.0',
-      computed: {},
-      branches: [
-        { pri: 1, when: 'ctx_missingVar >= 3', level: 'yellow', blocked: false, ruleId: 'T-MISS', reasons: [] },
-        { pri: 2, level: 'green', blocked: false, ruleId: 'T-GREEN', reasons: [] }
-      ],
-      actions: [], tools: []
-    }
-    const input = answers('self_growth', 1)
-    // no ctx passed → ctx_missingVar resolves to 0, condition is false
-    const result = executeRules(config, input, assessmentDefinitions.self_growth)
-    expect(result.level).toBe('green')
+describe('evaluateWithFallback 兜底路径', () => {
+  it('把硬编码单归因包成一条 share=1 的归因项', () => {
+    const result = evaluateWithFallback('self_growth', { q1: 5, q2: 5, q3: 1, q4: 1, q5: 5 })
+    expect(result.attributions).toHaveLength(1)
+    expect(result.attributions[0]!.share).toBe(1)
+    expect(result.attributions[0]!.strength).toBe('primary')
+    expect(result.severity).toBeDefined()
   })
 })

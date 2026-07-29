@@ -3,8 +3,7 @@ import { and, desc, eq, ne } from 'drizzle-orm'
 import { moduleIdSchema } from '../../../../../shared/contracts'
 import { requireUser } from '../../../../utils/auth'
 import { useDb, schema } from '../../../../utils/db'
-import { evaluateAssessment } from '../../../../domain/rules'
-import { executeRules } from '../../../../domain/rules-executor'
+import { executeRules, evaluateWithFallback } from '../../../../domain/rules-executor'
 import { resolveAssessmentDefinition, resolveAttributionConfig } from '../../../../domain/module-resources'
 import { encryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
@@ -98,13 +97,14 @@ export default defineEventHandler(async (event) => {
   const attributionConfig = publishedAttribution?.payload ?? null
   const result = attributionConfig
     ? executeRules(attributionConfig, body.answers, definition, { previousConsecutiveLowMeaning })
-    : evaluateAssessment(module, body.answers, { previousConsecutiveLowMeaning })
+    : evaluateWithFallback(module, body.answers, { previousConsecutiveLowMeaning })
 
   const report = result.blocked ? null : await generateAssessmentReport(event, {
     schoolId: user.schoolId,
     ownerUserId: user.id,
     module,
-    result
+    result,
+    definition
   })
   const narrative = report?.profile.summary || result.reasons.join('；')
   const presentedResult = { ...result, narrative: result.blocked ? null : narrative, report }
@@ -136,9 +136,8 @@ export default defineEventHandler(async (event) => {
   } else {
     const matchedTools = await resolveToolsForPlan(event, module, {
       dimensions: result.dimensions,
-      level: result.level,
-      primaryAttribution: result.primaryAttribution,
-      secondaryAttributions: result.secondaryAttributions,
+      severity: result.severity,
+      attributions: result.attributions.map(attribution => ({ code: attribution.code, share: attribution.share })),
       toolTags: result.toolTags,
       schoolId: user.schoolId
     })
@@ -170,8 +169,18 @@ export default defineEventHandler(async (event) => {
           assessment: { code: definition.code, version: definition.version },
           attribution: {
             level: result.level,
+            levelName: result.levelName,
+            severity: result.severity,
             primary: result.primaryAttribution,
             secondary: result.secondaryAttributions,
+            // 完整归因构成（含占比）留在方案快照里做溯源，前端只呈现强弱标签
+            items: result.attributions.map(attribution => ({
+              code: attribution.code,
+              name: attribution.name,
+              share: attribution.share,
+              strength: attribution.strength,
+              evidenceCodes: attribution.evidenceCodes
+            })),
             reasons: result.reasons
           },
           tools: planTools.map(tool => tool.title),

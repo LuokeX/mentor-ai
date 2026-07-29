@@ -60,6 +60,15 @@ export const assessmentReportSchema = z.object({
     description: z.string().trim().min(10).max(500),
     nonDiagnosticNote: z.string().trim().min(10).max(300)
   }),
+  /**
+   * 归因构成。只给强弱标签和排序，不给占比小数——占比是规则匹配强度，
+   * 直接展示百分比会被班主任当成测量精度承诺。完整占比留在方案快照里做溯源。
+   */
+  attributions: z.array(z.object({
+    name: z.string().trim().min(2).max(120),
+    strength: z.enum(['primary', 'secondary', 'reference']),
+    reasons: z.array(z.string().trim().min(2).max(500)).max(8).default([])
+  })).max(5).default([]),
   evidence: z.array(z.object({
     title: z.string().trim().min(2).max(100),
     detail: z.string().trim().min(4).max(400)
@@ -103,7 +112,8 @@ export const assessmentReportSchema = z.object({
     moduleTitle: z.string().trim().min(2).max(80),
     generatedAt: z.string().datetime(),
     assessmentVersion: z.string().trim().min(1).max(80),
-    ruleIds: z.array(z.string().trim().min(1).max(120)).min(1).max(12),
+    // 分级规则 ID + 全部命中的证据编码，条数随归因证据增长
+    ruleIds: z.array(z.string().trim().min(1).max(120)).min(1).max(40),
     source: z.enum(['ai', 'template']),
     disclaimer: z.string().trim().min(10).max(400)
   })

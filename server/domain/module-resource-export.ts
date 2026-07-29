@@ -173,35 +173,63 @@ function exportAttribution(payload: any): { sheetName: string; headers: string[]
   }
   sheets.push({ sheetName: '⑤b 归因-计算变量', headers: varHeaders, rows: varRows })
 
-  // ⑤c 归因-分级规则
-  const branchHeaders = [
-    '规则编码*', '所属模块*', '依据量表编码*', '优先级*', '触发条件',
-    '命中等级*', '等级中文名*', '是否红线熔断*', '主归因*', '次归因',
-    '归因理由*', '工具标签*', '结果说明*',
-    '输出动作摘要', '输出工具摘要', '升级条件', '升级目标', '复评触发条件', '手册出处',
+  // ⑤c 归因项
+  const attributionItemHeaders = [
+    '归因编码*', '归因名称*', '所属模块*', '权重基数*', '工具标签*',
+    '归因说明', '高分表现', '典型诱因', '建议动作', '手册出处',
   ]
-  const branchRows = (payload.branches || []).map((b: any) => [
-    b.ruleId || '',
-    payload.module || '',
-    b.assessmentCode || '',
-    String(b.pri ?? ''),
-    b.when || '',
-    b.level || '',
-    b.levelName || '',
-    boolStr(b.blocked),
-    b.primaryAttribution || '',
-    listStr(b.secondaryAttributions),
-    listStr(b.reasons),
-    listStr(b.toolTags),
-    b.resultDescription || '',
-    b.outputActionSummary || '',
-    b.outputToolSummary || '',
-    b.escalationCondition || '',
-    b.escalationTarget || '',
-    b.reEvaluationTrigger || '',
-    b.sourceRef || '',
+  const attributionItemRows = (payload.attributionItems || []).map((item: any) => [
+    item.code || '',
+    item.name || '',
+    item.module || payload.module || '',
+    String(item.baseWeight ?? 1),
+    listStr(item.toolTags),
+    item.description || '',
+    item.highManifestation || '',
+    item.typicalTrigger || '',
+    item.suggestedAction || '',
+    item.sourceRef || '',
   ])
-  sheets.push({ sheetName: '⑤c 归因-分级规则', headers: branchHeaders, rows: branchRows })
+  sheets.push({ sheetName: '⑤c 归因项', headers: attributionItemHeaders, rows: attributionItemRows })
+
+  // ⑤d 证据规则
+  const evidenceHeaders = [
+    '证据编码*', '归因编码*', '依据量表编码*', '触发条件*', '证据权重*', '证据说明*', '手册出处',
+  ]
+  const evidenceRows = (payload.evidences || []).map((evidence: any) => [
+    evidence.evidenceCode || '',
+    evidence.attributionCode || '',
+    evidence.assessmentCode || '',
+    evidence.condition || '',
+    String(evidence.weight ?? 1),
+    evidence.description || '',
+    evidence.sourceRef || '',
+  ])
+  sheets.push({ sheetName: '⑤d 证据规则', headers: evidenceHeaders, rows: evidenceRows })
+
+  // ⑤e 分级规则
+  const gradingHeaders = [
+    '规则编码*', '所属模块*', '依据量表编码', '优先级*', '触发条件',
+    '命中等级*', '等级中文名*', '严重度*', '是否红线熔断*', '结果说明*',
+    '升级条件', '升级目标', '复评触发条件', '手册出处',
+  ]
+  const gradingRows = (payload.gradingRules || []).map((rule: any) => [
+    rule.ruleId || '',
+    payload.module || '',
+    rule.assessmentCode || '',
+    String(rule.pri ?? ''),
+    rule.when || '',
+    rule.level || '',
+    rule.levelName || '',
+    rule.severity || '',
+    boolStr(rule.blocked),
+    rule.resultDescription || '',
+    rule.escalationCondition || '',
+    rule.escalationTarget || '',
+    rule.reEvaluationTrigger || '',
+    rule.sourceRef || '',
+  ])
+  sheets.push({ sheetName: '⑤e 分级规则', headers: gradingHeaders, rows: gradingRows })
 
   // ⑥ 归因-红线熔断
   const rlHeaders = [
@@ -234,8 +262,8 @@ function exportTool(payload: any): { sheetName: string; headers: string[]; rows:
   // ⑦ 工具-处方总表
   const toolHeaders = [
     '工具编码*', '工具名称*', '工具简称', '所属模块*', '工具形式*',
-    '适用学部*', '适用对象*', '适用症状场景*', '严重度*', '对应归因*',
-    '工具标签*', '作用维度', '操作步骤摘要*',
+    '适用学部*', '适用对象*', '适用症状场景*', '严重度*', '对应归因编码*',
+    '对应归因名称', '工具标签*', '作用维度编码', '效果说明', '操作步骤摘要*',
     '关键话术', '预期效果*', '单次耗时', '疗程与频次', '重评间隔天数',
     '禁止事项*', '禁忌说明',
     '前置工具编码', '替代工具编码', '进阶工具编码',
@@ -253,7 +281,8 @@ function exportTool(payload: any): { sheetName: string; headers: string[]; rows:
     t.targetUsers || '',
     t.symptoms || '',
     t.severity || '',
-    t.attribution || t.primaryAttribution || '',
+    t.attributionCode || '',
+    t.attributionLabel || '',
     listStr(t.toolTags || t.tags),
     listStr(t.dimensions),
     listStr(t.steps),

@@ -36,7 +36,8 @@ export interface ModuleResourceCounterpart {
 export function collectReferencedQuestionIds(config: AttributionConfig): string[] {
   const expressions = [
     ...Object.values(config.computed),
-    ...config.branches.map(branch => branch.when).filter((when): when is string => Boolean(when)),
+    ...config.evidences.map(evidence => evidence.condition),
+    ...config.gradingRules.map(rule => rule.when).filter((when): when is string => Boolean(when)),
     ...(config.crisis ? [config.crisis.when] : []),
     ...(config.redLines || []).map(rl => rl.condition)
   ]
@@ -160,14 +161,25 @@ export function validateModuleResourcePayload(input: {
     } else {
       const config = parsed.data
       if (config.module !== input.module) add('error', `归因库 module 与资源库不一致：${config.module}`)
-      if (!config.branches.some(branch => !branch.when)) add('error', '归因库必须有一条兜底规则')
-      // 熔断护栏：crisis 或 blocked 分支或 redLines 是评估侧唯一的红线出口。
-      // redLines 数组（V2）或 crisis 字段（V1）或 blocked 分支，三者至少有一种。
+
+      // 兜底分级规则必须存在，且优先级必须是最大值。
+      // 业务的直觉是「兜底 = 第 0 条」，但引擎按 pri 升序首条命中即停，
+      // pri 最小的无条件规则会吃掉全部作答，使其余规则永远不可达。
+      const fallbackRules = config.gradingRules.filter(rule => !rule.when)
+      if (!fallbackRules.length) add('error', '分级规则必须有一条不带触发条件的兜底规则')
+      const maxPri = Math.max(...config.gradingRules.map(rule => rule.pri))
+      for (const rule of fallbackRules) {
+        if (rule.pri < maxPri) {
+          add('error', `兜底分级规则 ${rule.ruleId} 的优先级 ${rule.pri} 不是最大值（当前最大 ${maxPri}），会使优先级更大的规则永远不可达`)
+        }
+      }
+
+      // 熔断护栏：crisis 或 blocked 分级规则或 redLines 是评估侧唯一的红线出口。
       const hasCrisis = Boolean(config.crisis)
       const hasRedLines = (config.redLines || []).length > 0
-      const hasBlockedBranch = config.branches.some(branch => branch.blocked)
-      if (!hasCrisis && !hasBlockedBranch && !hasRedLines) {
-        add('error', '归因库必须定义 crisis 红线、redLines 或至少保留一条 blocked 规则；三者都没有会使该模块的评估熔断失效')
+      const hasBlockedRule = config.gradingRules.some(rule => rule.blocked)
+      if (!hasCrisis && !hasBlockedRule && !hasRedLines) {
+        add('error', '归因库必须定义 crisis 红线、redLines 或至少保留一条 blocked 分级规则；三者都没有会使该模块的评估熔断失效')
       }
 
       // V2: redLines 独立校验
@@ -178,19 +190,43 @@ export function validateModuleResourcePayload(input: {
         if (!redLine.actions.length) add('warning', `redLines[${rIndex}] 缺少 actions，熔断后将无具体处置指引`)
       }
       const ruleIds = new Set<string>()
-      for (const branch of config.branches) {
-        if (ruleIds.has(branch.ruleId)) add('error', `规则编码重复：${branch.ruleId}`)
-        ruleIds.add(branch.ruleId)
-        if (!branch.toolTags.length) add('warning', `规则 ${branch.ruleId} 缺少工具标签，可能无法匹配工具`)
-        if ((branch.blocked || branch.level.toLowerCase().includes('red')) && !config.crisis) {
-          add('warning', `高风险/阻断规则 ${branch.ruleId} 建议配置 crisis 或 redLines`)
+      for (const rule of config.gradingRules) {
+        if (ruleIds.has(rule.ruleId)) add('error', `分级规则编码重复：${rule.ruleId}`)
+        ruleIds.add(rule.ruleId)
+        if ((rule.blocked || rule.severity === 'crisis') && !config.crisis && !hasRedLines) {
+          add('warning', `高风险/阻断规则 ${rule.ruleId} 建议配置 crisis 或 redLines`)
         }
-        // V2: 升级条件检查
-        if (branch.escalationCondition && !branch.escalationTarget) {
-          add('warning', `规则 ${branch.ruleId} 设置了升级条件但未指定升级目标`)
+        if (rule.escalationCondition && !rule.escalationTarget) {
+          add('warning', `分级规则 ${rule.ruleId} 设置了升级条件但未指定升级目标`)
         }
-        if (branch.reEvaluationTrigger && !branch.escalationCondition) {
-          add('warning', `规则 ${branch.ruleId} 设置了复评触发条件但未定义升级条件`)
+        if (rule.reEvaluationTrigger && !rule.escalationCondition) {
+          add('warning', `分级规则 ${rule.ruleId} 设置了复评触发条件但未定义升级条件`)
+        }
+      }
+
+      // 归因项：编码唯一，且每条都要有工具标签，否则工具匹配只剩归因编码一条通路
+      const attributionCodes = new Set<string>()
+      for (const item of config.attributionItems) {
+        if (attributionCodes.has(item.code)) add('error', `归因编码重复：${item.code}`)
+        attributionCodes.add(item.code)
+        if (!item.toolTags.length) add('warning', `归因项 ${item.code} 缺少工具标签，工具匹配将只依赖归因编码`)
+      }
+
+      // 证据规则：引用的归因项必须存在；每条归因项至少要有一条证据，否则永远算不出分
+      const evidenceCodes = new Set<string>()
+      const attributionsWithEvidence = new Set<string>()
+      for (const evidence of config.evidences) {
+        if (evidenceCodes.has(evidence.evidenceCode)) add('error', `证据编码重复：${evidence.evidenceCode}`)
+        evidenceCodes.add(evidence.evidenceCode)
+        if (!attributionCodes.has(evidence.attributionCode)) {
+          add('error', `证据 ${evidence.evidenceCode} 引用的归因编码 ${evidence.attributionCode} 不存在`)
+        } else {
+          attributionsWithEvidence.add(evidence.attributionCode)
+        }
+      }
+      for (const item of config.attributionItems) {
+        if (!attributionsWithEvidence.has(item.code)) {
+          add('error', `归因项 ${item.code} 没有任何证据规则，永远不会被命中`)
         }
       }
 
@@ -215,17 +251,17 @@ export function validateModuleResourcePayload(input: {
       for (const tool of parsed.data.tools) {
         if (codes.has(tool.code)) add('error', `工具编码重复：${tool.code}`)
         codes.add(tool.code)
+        // 归因编码是工具匹配的主通路（权重最高），缺了它基本推不出来
+        if (!tool.attributionCode && !(tool.attributionCodes || []).length) {
+          add('error', `工具 ${tool.code} 未填对应归因编码，不会被任何归因推荐出来`)
+        }
         const matchHints = [
-          tool.level,
           tool.severity,
-          tool.attribution,
-          tool.primaryAttribution,
-          ...(tool.attributions || []),
           ...(tool.tags || []),
           ...(tool.toolTags || []),
           ...(tool.dimensions || [])
         ].filter(Boolean)
-        if (!matchHints.length) add('warning', `工具 ${tool.code} 缺少等级、归因、标签或维度，匹配命中率会偏低`)
+        if (!matchHints.length) add('warning', `工具 ${tool.code} 缺少严重度、标签和维度，匹配得分只剩归因一项`)
         if (!tool.prohibitions && !(tool.contraindicationRules || []).length) {
           add('warning', `工具 ${tool.code} 缺少禁忌条件`)
         }
@@ -287,14 +323,9 @@ export function validateModuleResourcePayload(input: {
         if (template.module !== input.module) {
           add('warning', `模板 ${template.code} 的 module 与资源库不一致`)
         }
-        // 检查占位符标记 ${...} 是否存在
-        const placeholderMatches = template.content.match(/\$\{[^}]+\}/g)
-        if (!placeholderMatches || !placeholderMatches.length) {
-          add('warning', `模板 ${template.code} 不含占位符，可能是静态文本而非模板`)
-        }
       }
-      if (!levels.has('default') && !levels.has('stable')) {
-        add('warning', 'output_template 建议包含 default 或 stable 等级的兜底模板')
+      if (!levels.size) {
+        add('warning', 'output_template 至少需要包含一个命中等级')
       }
     }
   }
@@ -368,7 +399,7 @@ export function previewModuleResourcePayload(input: {
         code: tool.code,
         name: tool.name,
         form: tool.form,
-        matchHints: [tool.level, tool.severity, tool.primaryAttribution, ...(tool.toolTags || []), ...(tool.tags || [])].filter(Boolean)
+        matchHints: [tool.severity, tool.attributionCode, ...(tool.attributionCodes || []), ...(tool.toolTags || []), ...(tool.tags || [])].filter(Boolean)
       }))
     }
   }
@@ -412,7 +443,9 @@ export function previewModuleResourcePayload(input: {
   const answers = Object.fromEntries(definition.questions.map(question => [question.id, 3]))
   const base = {
     type: 'attribution' as const,
-    branchCount: parsed.data.branches.length,
+    attributionItemCount: parsed.data.attributionItems.length,
+    evidenceCount: parsed.data.evidences.length,
+    gradingRuleCount: parsed.data.gradingRules.length,
     computedVariables: Object.keys(parsed.data.computed),
     assessmentTitle: definition.title,
     usedFallbackDefinition

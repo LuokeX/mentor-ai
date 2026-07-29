@@ -6,7 +6,8 @@ import {
   outputTemplateLibraryPayloadSchema,
   keywordRouteLibraryPayloadSchema,
   type LibraryType,
-  type ModuleId
+  type ModuleId,
+  type Severity
 } from '../../shared/contracts'
 import { schema } from '../utils/db'
 
@@ -35,6 +36,7 @@ export interface AssessmentProjection {
   metadata: Record<string, unknown>
 }
 
+/** 分级规则投影：只承载等级与严重度，不再承载归因 */
 export interface AttributionProjection {
   libraryId: string
   versionId: string
@@ -46,10 +48,24 @@ export interface AttributionProjection {
   level: string
   blocked: boolean
   hasCondition: boolean
-  primaryAttribution: string
-  secondaryAttributions: string[]
+  severity: Severity
+  assessmentCode: string | null
+  metadata: Record<string, unknown>
+}
+
+/** 归因项投影：运营台按归因检索工具、查证据覆盖情况的入口 */
+export interface AttributionItemProjection {
+  libraryId: string
+  versionId: string
+  module: ModuleId
+  scope: Scope
+  schoolId: string | null
+  attributionCode: string
+  attributionName: string
+  baseWeight: number
   toolTags: string[]
-  reasonCount: number
+  evidenceCount: number
+  assessmentCodes: string[]
   metadata: Record<string, unknown>
 }
 
@@ -109,6 +125,7 @@ export interface KeywordRouteProjection {
 export interface ModuleResourceProjection {
   assessments: AssessmentProjection[]
   attributionRules: AttributionProjection[]
+  attributionItems: AttributionItemProjection[]
   tools: ToolProjection[]
   // V2 新增
   outputTemplates: OutputTemplateProjection[]
@@ -134,6 +151,7 @@ export function projectModuleResourcePayload(
         .map((item, index) => projectAssessmentItem(base, item as Partial<AssessmentDefinition>, index))
         .filter((item): item is AssessmentProjection => Boolean(item)),
       attributionRules: [],
+      attributionItems: [],
       tools: [],
       outputTemplates: [],
       keywordRoutes: []
@@ -142,29 +160,45 @@ export function projectModuleResourcePayload(
 
   if (context.libraryType === 'attribution') {
     const parsed = attributionConfigSchema.safeParse(payload)
-    if (!parsed.success) return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
+    if (!parsed.success) return { assessments: [], attributionRules: [], attributionItems: [], tools: [], outputTemplates: [], keywordRoutes: [] }
     return {
       assessments: [],
-      attributionRules: parsed.data.branches.map(branch => ({
+      // 分级规则投影：运营台按等级/严重度检索
+      attributionRules: parsed.data.gradingRules.map(rule => ({
         ...base,
-        ruleId: branch.ruleId,
-        priority: branch.pri,
-        level: branch.level,
-        blocked: branch.blocked,
-        hasCondition: Boolean(branch.when),
-        primaryAttribution: branch.primaryAttribution,
-        secondaryAttributions: branch.secondaryAttributions,
-        toolTags: branch.toolTags,
-        reasonCount: branch.reasons.length,
+        ruleId: rule.ruleId,
+        priority: rule.pri,
+        level: rule.level,
+        blocked: rule.blocked,
+        hasCondition: Boolean(rule.when),
+        severity: rule.severity,
+        assessmentCode: rule.assessmentCode || null,
         metadata: {
+          levelName: rule.levelName || null,
           hasCrisisConfig: Boolean(parsed.data.crisis),
           computedKeys: Object.keys(parsed.data.computed),
           actionCount: parsed.data.actions.length,
           toolCount: parsed.data.tools.length,
-          // V2 新增
           redLineCount: (parsed.data.redLines || []).length,
-          hasEscalation: parsed.data.branches.some(b => b.escalationCondition),
-          hasReEvaluation: parsed.data.branches.some(b => b.reEvaluationTrigger)
+          hasEscalation: Boolean(rule.escalationCondition),
+          hasReEvaluation: Boolean(rule.reEvaluationTrigger)
+        }
+      })),
+      // 归因项投影：这是业务真正要检索的实体（「哪些工具挂在这条归因下」）
+      attributionItems: parsed.data.attributionItems.map(item => ({
+        ...base,
+        attributionCode: item.code,
+        attributionName: item.name,
+        baseWeight: item.baseWeight,
+        toolTags: item.toolTags,
+        evidenceCount: parsed.data.evidences.filter(e => e.attributionCode === item.code).length,
+        assessmentCodes: [...new Set(
+          parsed.data.evidences.filter(e => e.attributionCode === item.code).map(e => e.assessmentCode)
+        )],
+        metadata: {
+          hasDescription: Boolean(item.description),
+          hasSuggestedAction: Boolean(item.suggestedAction),
+          sourceRef: item.sourceRef || null
         }
       })),
       tools: [],
@@ -173,14 +207,14 @@ export function projectModuleResourcePayload(
     }
   }
 
-  const parsed = toolLibraryPayloadSchema.safeParse(payload)
-  if (!parsed.success) return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
-
   // 工具库
   if (context.libraryType === 'tool') {
+    const parsed = toolLibraryPayloadSchema.safeParse(payload)
+    if (!parsed.success) return { assessments: [], attributionRules: [], attributionItems: [], tools: [], outputTemplates: [], keywordRoutes: [] }
     return {
       assessments: [],
       attributionRules: [],
+      attributionItems: [],
       tools: parsed.data.tools.map(tool => ({
         ...base,
         toolCode: tool.code,
@@ -188,8 +222,8 @@ export function projectModuleResourcePayload(
         form: tool.form,
         severity: tool.severity || null,
         level: tool.level || null,
-        primaryAttribution: tool.primaryAttribution || tool.attribution || null,
-        attributions: compactUnique([tool.attribution, tool.primaryAttribution, ...(tool.attributions || [])]),
+        primaryAttribution: tool.attributionCode || null,
+        attributions: compactUnique([tool.attributionCode, ...(tool.attributionCodes || [])]),
         tags: compactUnique(tool.tags || []),
         toolTags: compactUnique(tool.toolTags || []),
         dimensions: compactUnique(tool.dimensions || []),
@@ -221,10 +255,11 @@ export function projectModuleResourcePayload(
   // V2 新增: output_template 投影
   if (context.libraryType === 'output_template') {
     const parsedTemplate = outputTemplateLibraryPayloadSchema.safeParse(payload)
-    if (!parsedTemplate.success) return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
+    if (!parsedTemplate.success) return { assessments: [], attributionRules: [], attributionItems: [], tools: [], outputTemplates: [], keywordRoutes: [] }
     return {
       assessments: [],
       attributionRules: [],
+      attributionItems: [],
       tools: [],
       outputTemplates: parsedTemplate.data.templates.map(t => ({
         ...base,
@@ -245,10 +280,11 @@ export function projectModuleResourcePayload(
   // V2 新增: keyword_route 投影
   if (context.libraryType === 'keyword_route') {
     const parsedRoute = keywordRouteLibraryPayloadSchema.safeParse(payload)
-    if (!parsedRoute.success) return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
+    if (!parsedRoute.success) return { assessments: [], attributionRules: [], attributionItems: [], tools: [], outputTemplates: [], keywordRoutes: [] }
     return {
       assessments: [],
       attributionRules: [],
+      attributionItems: [],
       tools: [],
       outputTemplates: [],
       keywordRoutes: parsedRoute.data.routes.map(r => ({
@@ -272,7 +308,7 @@ export function projectModuleResourcePayload(
   }
 
   // Fallback: 无法识别的类型返回空结果
-  return { assessments: [], attributionRules: [], tools: [], outputTemplates: [], keywordRoutes: [] }
+  return { assessments: [], attributionRules: [], attributionItems: [], tools: [], outputTemplates: [], keywordRoutes: [] }
 }
 
 export async function rebuildModuleResourceProjection(
@@ -287,6 +323,8 @@ export async function rebuildModuleResourceProjection(
     .where(eq(schema.moduleResourceAssessmentItems.versionId, context.versionId))
   await db.delete(schema.moduleResourceAttributionRules)
     .where(eq(schema.moduleResourceAttributionRules.versionId, context.versionId))
+  await db.delete(schema.moduleResourceAttributionItems)
+    .where(eq(schema.moduleResourceAttributionItems.versionId, context.versionId))
   await db.delete(schema.moduleResourceToolItems)
     .where(eq(schema.moduleResourceToolItems.versionId, context.versionId))
 
@@ -295,6 +333,9 @@ export async function rebuildModuleResourceProjection(
   }
   if (projection.attributionRules.length) {
     await db.insert(schema.moduleResourceAttributionRules).values(projection.attributionRules)
+  }
+  if (projection.attributionItems.length) {
+    await db.insert(schema.moduleResourceAttributionItems).values(projection.attributionItems)
   }
   if (projection.tools.length) {
     await db.insert(schema.moduleResourceToolItems).values(projection.tools)

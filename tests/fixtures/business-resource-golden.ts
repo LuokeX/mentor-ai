@@ -41,25 +41,58 @@ export const goldenAttributionPayload = {
   module: goldenModule,
   version: '1.0.0',
   computed: { conflict: 'MAX(scores)' },
-  branches: [{
+  attributionItems: [{
+    code: 'HS_AT_CONFLICT',
+    name: '家校沟通冲突升级',
+    module: goldenModule,
+    baseWeight: 1.5,
+    toolTags: ['home_school', 'conflict', 'script'],
+    suggestedAction: '先完成事实澄清，再约定下一次沟通时间'
+  }, {
+    code: 'HS_AT_STRUCTURE',
+    name: '沟通结构待澄清',
+    module: goldenModule,
+    baseWeight: 1,
+    toolTags: ['home_school', 'stable'],
+    suggestedAction: '把沟通职责边界写清楚并与家长确认'
+  }],
+  evidences: [{
+    attributionCode: 'HS_AT_CONFLICT',
+    assessmentCode: 'HS-GOLD-A1',
+    evidenceCode: 'HS_GOLD_EV_01',
+    condition: 'conflict >= 4',
+    weight: 2,
+    description: '冲突题项偏高，需要先降温再澄清。'
+  }, {
+    attributionCode: 'HS_AT_CONFLICT',
+    assessmentCode: 'HS-GOLD-A1',
+    evidenceCode: 'HS_GOLD_EV_02',
+    condition: 'conflict >= 3',
+    weight: 1,
+    description: '冲突题项高于常模均值。'
+  }, {
+    attributionCode: 'HS_AT_STRUCTURE',
+    assessmentCode: 'HS-GOLD-A1',
+    evidenceCode: 'HS_GOLD_EV_03',
+    condition: '维度[clarity] <= 2',
+    weight: 1,
+    description: '事实聚焦维度偏低，沟通结构不清晰。'
+  }],
+  gradingRules: [{
     pri: 10,
     when: 'conflict >= 4',
     level: 'high',
+    levelName: '需重点支持',
+    severity: 'high' as const,
     blocked: true,
-    ruleId: 'hs-gold-high',
-    primaryAttribution: '家校沟通冲突升级',
-    secondaryAttributions: ['信息不同步'],
-    reasons: ['冲突题项偏高，需要先降温再澄清。'],
-    toolTags: ['home_school', 'conflict', 'script']
+    ruleId: 'hs-gold-high'
   }, {
-    pri: 100,
+    pri: 999,
     level: 'stable',
+    levelName: '状态平稳',
+    severity: 'low' as const,
     blocked: false,
-    ruleId: 'hs-gold-default',
-    primaryAttribution: '沟通结构待澄清',
-    secondaryAttributions: [],
-    reasons: ['未命中高风险规则，进入常规维护。'],
-    toolTags: ['home_school', 'stable']
+    ruleId: 'hs-gold-default'
   }],
   actions: [{
     title: '先完成事实澄清',
@@ -81,10 +114,12 @@ export const goldenToolPayload = {
     symptoms: '家长情绪激烈但未触发安全红线',
     expectedEffect: '完成情绪降温、事实澄清和下一步约定',
     level: 'high',
-    primaryAttribution: '家校沟通冲突升级',
+    severity: 'high' as const,
+    attributionCode: 'HS_AT_CONFLICT',
+    attributionLabel: '家校沟通冲突升级',
     tags: ['家校沟通'],
     toolTags: ['home_school', 'conflict', 'script'],
-    dimensions: ['事实聚焦'],
+    dimensions: ['clarity'],
     duration: '1 次沟通内完成',
     timePerSession: '10 分钟',
     steps: ['接住情绪', '复述事实', '约定下一步'],

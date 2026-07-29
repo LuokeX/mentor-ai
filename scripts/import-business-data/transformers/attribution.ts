@@ -37,38 +37,95 @@ function collectComputed(sheet: SheetData | undefined) {
   return computed
 }
 
-function collectBranches(sheet: SheetData | undefined, module: ModuleId) {
-  if (!sheet) throw new Error('归因库表格缺少"规则分支"Sheet')
+function parseFloatOrDefault(value: string | undefined, fallback: number): number {
+  if (!value) return fallback
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+const SEVERITY_ALIASES: Record<string, 'low' | 'medium' | 'high' | 'crisis'> = {
+  low: 'low', medium: 'medium', high: 'high', crisis: 'crisis',
+  轻度: 'low', 中度: 'medium', 重度: 'high', 危机: 'crisis',
+  低: 'low', 中: 'medium', 高: 'high'
+}
+
+function parseSeverity(value: string | undefined): 'low' | 'medium' | 'high' | 'crisis' {
+  const normalized = (value || '').trim().toLowerCase()
+  return SEVERITY_ALIASES[normalized] || 'medium'
+}
+
+/** ⑤c 归因项：模块级词表 */
+function collectAttributionItems(sheet: SheetData | undefined, module: ModuleId) {
+  if (!sheet) throw new Error('归因库表格缺少"归因项"Sheet')
+
+  return sheet.rows
+    .map(row => {
+      const code = extractValue(row, ['归因编码', 'attributionCode', 'code'])
+      const name = extractValue(row, ['归因名称', 'attributionName', 'name'])
+      if (!code || !name) return null
+      return {
+        code,
+        name,
+        module,
+        baseWeight: parseFloatOrDefault(extractValue(row, ['权重基数', 'baseWeight', '权重']), 1),
+        toolTags: splitList(extractValue(row, ['工具标签', '匹配标签', 'toolTags', 'tags'])),
+        description: extractValue(row, ['归因说明', 'description']),
+        highManifestation: extractValue(row, ['高分表现', 'highManifestation']),
+        typicalTrigger: extractValue(row, ['典型诱因', 'typicalTrigger']),
+        suggestedAction: extractValue(row, ['建议动作', 'suggestedAction']),
+        sourceRef: extractValue(row, ['手册出处', 'sourceRef'])
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+}
+
+/** ⑤d 证据规则：量表级 */
+function collectEvidences(sheet: SheetData | undefined) {
+  if (!sheet) throw new Error('归因库表格缺少"证据规则"Sheet')
+
+  return sheet.rows
+    .map((row, index) => {
+      const attributionCode = extractValue(row, ['归因编码', 'attributionCode'])
+      const assessmentCode = extractValue(row, ['依据量表编码', '量表编码', 'assessmentCode'])
+      const condition = extractValue(row, ['触发条件', '条件表达式', 'condition', 'when'])
+      const description = extractValue(row, ['证据说明', '归因理由', 'description'])
+      if (!attributionCode || !assessmentCode || !condition) return null
+      return {
+        attributionCode,
+        assessmentCode,
+        evidenceCode: extractValue(row, ['证据编码', 'evidenceCode']) || `${attributionCode}-EV${index + 1}`,
+        condition,
+        weight: parseFloatOrDefault(extractValue(row, ['证据权重', 'weight', '权重']), 1),
+        description: description || `命中条件 ${condition}`,
+        sourceRef: extractValue(row, ['手册出处', 'sourceRef'])
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+}
+
+/** ⑤e 分级规则：只产出等级与严重度 */
+function collectGradingRules(sheet: SheetData | undefined, module: ModuleId) {
+  if (!sheet) throw new Error('归因库表格缺少"分级规则"Sheet')
 
   return sheet.rows
     .map((row, index) => {
       const pri = parseIntOrDefault(extractValue(row, ['优先级', 'pri', 'priority']), index + 1)
-      const level = extractValue(row, ['等级', '输出等级', '命中等级', 'level'])
-      const ruleId = extractValue(row, ['规则编码', '规则ID', 'ruleId', 'rule_id']) || `${module}-attribution-${pri}`
-      const primaryAttribution = extractValue(row, ['主归因', 'primaryAttribution', 'primary_attribution'])
-      const reasons = splitList(extractValue(row, ['归因理由', '原因说明', '原因文案', 'reasons', 'reason']))
-      if (!level && !primaryAttribution && reasons.length === 0) return null
+      const level = extractValue(row, ['命中等级', '等级', '输出等级', 'level'])
+      if (!level) return null
       return {
+        ruleId: extractValue(row, ['规则编码', '规则ID', 'ruleId']) || `${module}-grading-${pri}`,
+        assessmentCode: extractValue(row, ['依据量表编码', '量表编码', 'assessmentCode']) || undefined,
         pri,
-        when: extractValue(row, ['条件表达式', '触发条件', '命中条件', 'when', 'condition']) || undefined,
-        level: level || '',
+        when: extractValue(row, ['触发条件', '条件表达式', '命中条件', 'when', 'condition']) || undefined,
+        level,
+        levelName: extractValue(row, ['等级中文名', 'levelName']),
+        severity: parseSeverity(extractValue(row, ['严重度', 'severity'])),
         blocked: parseBool(extractValue(row, ['是否红线熔断', '是否阻断', '阻断', 'blocked'])),
-        ruleId,
-        primaryAttribution: primaryAttribution || '',
-        secondaryAttributions: splitList(extractValue(row, ['次归因', 'secondaryAttributions', 'secondary_attributions'])),
-        reasons,
-        toolTags: splitList(extractValue(row, ['工具标签', '匹配标签', 'toolTags', 'tags'])),
-        // V2 新增 (⑤c)
-        outputActionSummary: extractValue(row, ['输出动作摘要']),
-        outputToolSummary: extractValue(row, ['输出工具摘要']),
-        escalationCondition: extractValue(row, ['升级条件']),
-        escalationTarget: extractValue(row, ['升级目标']),
-        reEvaluationTrigger: extractValue(row, ['复评触发条件']),
-        sourceRef: extractValue(row, ['手册出处']),
-        // V2 模板补齐
-        assessmentCode: extractValue(row, ['依据量表编码']),
-        levelName: extractValue(row, ['等级中文名']),
-        resultDescription: extractValue(row, ['结果说明']),
+        resultDescription: extractValue(row, ['结果说明', 'resultDescription']),
+        escalationCondition: extractValue(row, ['升级条件', 'escalationCondition']),
+        escalationTarget: extractValue(row, ['升级目标', 'escalationTarget']),
+        reEvaluationTrigger: extractValue(row, ['复评触发条件', 'reEvaluationTrigger']),
+        sourceRef: extractValue(row, ['手册出处', 'sourceRef'])
       }
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item))
@@ -148,9 +205,11 @@ function collectVersion(sheets: SheetData[]) {
 export function parseAttributionFile(filePath: string, module: ModuleId): AttributionConfig {
   const sheets = readXlsxFile(filePath)
 
-  // V2 Sheet 名检测
+  // V3 Sheet 名检测。归因项/证据规则/分级规则必须分开，先匹配更具体的名字。
   const computedSheet = findSheet(sheets, [/⑤b|计算变量/, /变量/, /computed/i])
-  const branchSheet = findSheet(sheets, [/⑤c|分级规则/, /规则/, /分支/, /branch/i])
+  const attributionItemSheet = findSheet(sheets, [/⑤c|归因项/, /归因清单/, /attribution[-_ ]?item/i])
+  const evidenceSheet = findSheet(sheets, [/⑤d|证据规则/, /证据/, /evidence/i])
+  const gradingSheet = findSheet(sheets, [/⑤e|分级规则/, /分级/, /grading/i])
   const actionSheet = findSheet(sheets, [/行动/, /action/i])
   const toolSheet = findSheet(sheets, [/提示工具/, /内置工具/, /tool/i])
   const crisisSheet = findSheet(sheets, [/危机/, /crisis/i])
@@ -160,7 +219,9 @@ export function parseAttributionFile(filePath: string, module: ModuleId): Attrib
     module,
     version: collectVersion(sheets),
     computed: collectComputed(computedSheet),
-    branches: collectBranches(branchSheet, module),
+    attributionItems: collectAttributionItems(attributionItemSheet, module),
+    evidences: collectEvidences(evidenceSheet),
+    gradingRules: collectGradingRules(gradingSheet, module),
     actions: collectActions(actionSheet),
     tools: collectTools(toolSheet),
     crisis: collectCrisis(crisisSheet),

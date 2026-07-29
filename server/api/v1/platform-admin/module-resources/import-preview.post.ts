@@ -31,7 +31,10 @@ export default defineEventHandler(async (event) => {
     projection: {
       assessmentCount: projection.assessments.length,
       attributionRuleCount: projection.attributionRules.length,
-      toolCount: projection.tools.length
+      attributionItemCount: projection.attributionItems.length,
+      toolCount: projection.tools.length,
+      templateCount: projection.outputTemplates.length,
+      routeCount: projection.keywordRoutes.length
     }
   }
 })

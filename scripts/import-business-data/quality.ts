@@ -13,7 +13,10 @@ export interface ImportQualityReport {
   summary: {
     assessmentCount: number
     attributionRuleCount: number
+    attributionItemCount: number
     toolCount: number
+    templateCount: number
+    routeCount: number
     warningCount: number
     errorCount: number
   }
@@ -55,7 +58,10 @@ export function evaluateImportQuality(input: {
     summary: {
       assessmentCount: projection.assessments.length,
       attributionRuleCount: projection.attributionRules.length,
+      attributionItemCount: projection.attributionItems.length,
       toolCount: projection.tools.length,
+      templateCount: projection.outputTemplates.length,
+      routeCount: projection.keywordRoutes.length,
       warningCount,
       errorCount
     },
@@ -69,7 +75,7 @@ export function evaluateImportQuality(input: {
 export function formatImportQualityReport(report: ImportQualityReport) {
   const lines = [
     `  Quality: ${report.status.toUpperCase()} score=${report.score}`,
-    `  Projection: assessments=${report.summary.assessmentCount}, rules=${report.summary.attributionRuleCount}, tools=${report.summary.toolCount}`
+    `  Projection: assessments=${report.summary.assessmentCount}, rules=${report.summary.attributionRuleCount}, attributions=${report.summary.attributionItemCount}, tools=${report.summary.toolCount}, templates=${report.summary.templateCount}, routes=${report.summary.routeCount}`
   ]
   const metricEntries = Object.entries(report.metrics)
   if (metricEntries.length) {
@@ -101,13 +107,28 @@ function calculateMetrics(projection: ReturnType<typeof projectModuleResourcePay
   if (projection.attributionRules.length) {
     metrics.fallbackRuleCount = projection.attributionRules.filter(item => !item.hasCondition).length
     metrics.blockedRuleCount = projection.attributionRules.filter(item => item.blocked).length
-    metrics.toolTaggedRuleRatio = ratio(
-      projection.attributionRules.filter(item => item.toolTags.length > 0).length,
-      projection.attributionRules.length
+  }
+
+  if (projection.attributionItems.length) {
+    metrics.attributionItemCount = projection.attributionItems.length
+    // 没有证据规则的归因项永远算不出分，是最致命的一类数据缺陷
+    metrics.attributionsWithoutEvidence = projection.attributionItems.filter(item => item.evidenceCount === 0).length
+    metrics.toolTaggedAttributionRatio = ratio(
+      projection.attributionItems.filter(item => item.toolTags.length > 0).length,
+      projection.attributionItems.length
+    )
+    metrics.evidencePerAttribution = ratio(
+      projection.attributionItems.reduce((sum, item) => sum + item.evidenceCount, 0),
+      projection.attributionItems.length
     )
   }
 
   if (projection.tools.length) {
+    // 归因编码是工具匹配的主通路，单独统计覆盖率
+    metrics.toolAttributionCodeRatio = ratio(
+      projection.tools.filter(item => item.primaryAttribution || item.attributions.length > 0).length,
+      projection.tools.length
+    )
     metrics.toolMatchHintRatio = ratio(
       projection.tools.filter(item =>
         Boolean(item.level || item.severity || item.primaryAttribution)

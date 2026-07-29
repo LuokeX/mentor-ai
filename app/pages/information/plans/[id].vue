@@ -132,6 +132,14 @@ const completedActionCount = computed(() =>
 )
 const report = computed(() => data.value?.report || {})
 const planStructure = computed(() => report.value?.planStructure || {})
+/** 归因构成。优先取报告里的，旧方案快照没有时回退到 planStructure.attribution.items。 */
+const attributions = computed<Array<{ name: string, strength: 'primary' | 'secondary' | 'reference' }>>(() =>
+  report.value?.attributions?.length ? report.value.attributions : (planStructure.value?.attribution?.items || [])
+)
+/** 只呈现强弱分组，不呈现占比小数——占比是规则匹配强度，不是测量精度。 */
+function attributionStrengthLabel(strength: 'primary' | 'secondary' | 'reference') {
+  return { primary: '主要', secondary: '次要', reference: '参考' }[strength] || '参考'
+}
 const supportGoal = computed(() => report.value?.supportGoal || {
   weeklyGoal: planStructure.value?.summary || data.value?.summary || '围绕当前问题先完成一个可观察、可复盘的小目标。',
   observableChange: report.value?.sevenDayFollowUp?.observationPoints?.[0] || '一周内能观察到行为、沟通或状态上的具体变化。',
@@ -686,11 +694,28 @@ useHead({ title: () => data.value?.title || '方案详情' })
 
         <div class="mt-5 grid gap-3 md:grid-cols-3">
           <div class="rounded-xl border border-emerald-100 bg-white p-4">
-            <p class="text-xs font-semibold text-emerald-700">主归因</p>
-            <p class="mt-2 text-sm font-semibold text-slate-800">{{ planStructure?.attribution?.primary || data.report.profile.primaryConcern }}</p>
-            <p v-if="planStructure?.attribution?.secondary?.length" class="mt-2 text-xs leading-5 text-slate-500">
-              次归因：{{ planStructure.attribution.secondary.join('、') }}
-            </p>
+            <p class="text-xs font-semibold text-emerald-700">归因构成</p>
+            <!-- 有完整归因构成时按强弱分组呈现，否则回退到旧的主/次归因文本 -->
+            <template v-if="attributions.length">
+              <div v-for="attribution in attributions" :key="attribution.name" class="mt-2 flex items-start gap-2">
+                <UBadge
+                  size="xs"
+                  :color="attribution.strength === 'primary' ? 'primary' : 'neutral'"
+                  :variant="attribution.strength === 'primary' ? 'solid' : 'soft'"
+                >
+                  {{ attributionStrengthLabel(attribution.strength) }}
+                </UBadge>
+                <p class="text-sm leading-5" :class="attribution.strength === 'primary' ? 'font-semibold text-slate-800' : 'text-slate-600'">
+                  {{ attribution.name }}
+                </p>
+              </div>
+            </template>
+            <template v-else>
+              <p class="mt-2 text-sm font-semibold text-slate-800">{{ planStructure?.attribution?.primary || data.report.profile.primaryConcern }}</p>
+              <p v-if="planStructure?.attribution?.secondary?.length" class="mt-2 text-xs leading-5 text-slate-500">
+                次归因：{{ planStructure.attribution.secondary.join('、') }}
+              </p>
+            </template>
           </div>
           <div class="rounded-xl border border-sky-100 bg-white p-4">
             <p class="text-xs font-semibold text-sky-700">本周支持目标</p>

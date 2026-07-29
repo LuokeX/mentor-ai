@@ -1,4 +1,4 @@
-import type { RuleConfig, RuleExecResult, ModuleId, AssessmentDimensionDef, RedLineConfig } from '../../shared/contracts'
+import type { RuleConfig, RuleExecResult, ModuleId, AssessmentDimensionDef, RedLineConfig, AttributionOutcome } from '../../shared/contracts'
 import { assessmentDefinitions } from '../../shared/assessments'
 import type { AssessmentDefinition } from '../../shared/assessments'
 
@@ -14,6 +14,42 @@ type Token =
   | { type: 'RPAREN'; value: ')' }
   | { type: 'OP'; value: string }
   | { type: 'COMMA'; value: ',' }
+
+/**
+ * 把业务模板里的中文写法翻译成求值器认识的 DSL。
+ *
+ * 业务在 ⑤a 条件写法速查里填的是「题[q1] >= 4 且 维度[EMOTION] <= 2」这种形式，
+ * 求值器只认 SCORE(q1) >= 4 && DIM(EMOTION) <= 2。没有这一层，模板里所有示例
+ * 写法都会在导入时报「Unexpected character」，业务无从下手。
+ */
+export function normalizeExpression(expr: string): string {
+  return expr
+    // 全角符号
+    .replace(/[＞>]\s*[＝=]/g, '>=')
+    .replace(/[＜<]\s*[＝=]/g, '<=')
+    .replace(/≥/g, '>=')
+    .replace(/≤/g, '<=')
+    .replace(/＞/g, '>')
+    .replace(/＜/g, '<')
+    .replace(/＝/g, '=')
+    .replace(/[，、]/g, ',')
+    .replace(/[（]/g, '(')
+    .replace(/[）]/g, ')')
+    // 取值写法
+    .replace(/题\s*\[\s*([^\]]+?)\s*\]/g, 'SCORE($1)')
+    .replace(/原始\s*\[\s*([^\]]+?)\s*\]/g, 'RAW($1)')
+    .replace(/维度\s*\[\s*([^\]]+?)\s*\]/g, 'DIM($1)')
+    // 聚合写法。前后不能紧邻中文，否则会把业务自定义的变量名切坏
+    //（例如计算变量叫「状态总分」时，不加边界会被替换成「状态SUM(scores)」）。
+    .replace(/(?<![一-鿿])总分(?![一-鿿])/g, 'SUM(scores)')
+    .replace(/(?<![一-鿿])均分(?![一-鿿])/g, 'AVG(scores)')
+    .replace(/(?<![一-鿿])主导维度(?![一-鿿])/g, 'TOP_DIM()')
+    .replace(/(?<![一-鿿])短板维度(?![一-鿿])/g, 'BOTTOM_DIM()')
+    // 逻辑连接词放在最后处理，且必须两侧带空格才视为运算符，
+    // 否则「疲惫且失意」这类变量名会被拆坏。
+    .replace(/\s+且\s+/g, ' && ')
+    .replace(/\s+或\s+/g, ' || ')
+}
 
 function tokenize(expr: string): Token[] {
   const tokens: Token[] = []
@@ -59,9 +95,11 @@ function tokenize(expr: string): Token[] {
       continue
     }
     // 标识符（含函数名和变量名，支持 a.b.c 点号分隔的嵌套变量）
-    if (/[a-zA-Z_]/.test(ch)) {
+    // 允许中文，因为 ⑤b 计算变量的变量名由业务用中文命名（如「情绪均分」）。
+    // 关键词（且/或/总分/均分等）在 normalizeExpression 阶段已经被替换掉，不会走到这里。
+    if (/[a-zA-Z_一-鿿]/.test(ch)) {
       let id = ''
-      while (i < expr.length && /[a-zA-Z0-9_.]/.test(expr[i]!)) { id += expr[i]!; i++ }
+      while (i < expr.length && /[a-zA-Z0-9_.一-鿿]/.test(expr[i]!)) { id += expr[i]!; i++ }
       // 不允许以点号开头或结尾，不允许连续点号
       if (id.startsWith('.') || id.endsWith('.') || id.includes('..')) {
         throw new Error(`Invalid identifier '${id}'`)
@@ -325,7 +363,7 @@ function evalLogic(op: string, a: number | string | boolean, b: number | string 
 function evalWhen(expr: string | undefined, env: EvalContext): boolean {
   if (!expr) return true
   try {
-    const tokens = tokenize(expr)
+    const tokens = tokenize(normalizeExpression(expr))
     const ast = new Parser(tokens).parse()
     const result = evaluate(ast, env)
     return Boolean(result)
@@ -410,32 +448,122 @@ export function executeRules(
   const ctxVars: Record<string, number> = {}
   for (const [k, v] of Object.entries(ctx)) { ctxVars[`ctx_${k}`] = v }
   const env: EvalContext = { vars: { ...ctxVars }, items, ctx, dimensions }
+  // 计算变量是模块级的，但表达式可能引用只属于某一张量表的题号或维度。
+  // 用另一张量表作答时这类变量算不出来，此时跳过而不是中断整场评估——
+  // 真正引用了它的分级规则应当用「依据量表编码」限定到对应量表。
+  const unavailableVariables: string[] = []
   for (const [name, expr] of Object.entries(config.computed)) {
     try {
-      const tokens = tokenize(expr)
+      const tokens = tokenize(normalizeExpression(expr))
       const ast = new Parser(tokens).parse()
       const val = evaluate(ast, env)
       if (typeof val !== 'number') throw new Error(`Computed variable '${name}' must resolve to a number`)
       env.vars[name] = val
-    } catch (err) {
-      throw new Error(`Failed to compute '${name}' = '${expr}': ${(err as Error).message}`)
+    } catch {
+      unavailableVariables.push(name)
     }
   }
 
-  // 4. 匹配分支（按 pri 升序，第一条命中即停止）
-  const sorted = [...config.branches].sort((a, b) => a.pri - b.pri)
-  let matchedBranch = sorted[sorted.length - 1] // fallback to last
-  for (const branch of sorted) {
-    if (evalWhen(branch.when, env)) {
-      matchedBranch = branch
+  // 4. 归因：只取适用于当前量表的证据规则，逐条求值后按权重累加到归因项。
+  //    按量表过滤是必须的——否则会拿 A 量表的题号去求值 B 量表的作答。
+  const instrumentCode = definition.instrumentCode || definition.code
+  const scoring = {
+    maxAttributions: config.scoring?.maxAttributions ?? 3,
+    minShare: config.scoring?.minShare ?? 0.05,
+    secondaryRankCutoff: config.scoring?.secondaryRankCutoff ?? 3
+  }
+  const itemByCode = new Map(config.attributionItems.map(item => [item.code, item]))
+  const buckets = new Map<string, { rawScore: number, reasons: string[], evidenceCodes: string[] }>()
+
+  for (const evidence of config.evidences) {
+    if (evidence.assessmentCode !== instrumentCode) continue
+    const attributionItem = itemByCode.get(evidence.attributionCode)
+    // 引用了不存在的归因项属于数据错误，交叉校验会拦住；执行期跳过而不是中断评估。
+    if (!attributionItem) continue
+
+    let hit: boolean
+    try {
+      hit = evalWhen(evidence.condition, env)
+    } catch (err) {
+      const hint = unavailableVariables.length
+        ? `（本次作答的量表无法计算这些变量：${unavailableVariables.join('、')}）`
+        : ''
+      throw new Error(`证据规则 '${evidence.evidenceCode}' 求值失败：${(err as Error).message}${hint}`)
+    }
+    if (!hit) continue
+
+    const bucket = buckets.get(attributionItem.code) || { rawScore: 0, reasons: [], evidenceCodes: [] }
+    bucket.rawScore += evidence.weight
+    bucket.reasons.push(evidence.description)
+    bucket.evidenceCodes.push(evidence.evidenceCode)
+    buckets.set(attributionItem.code, bucket)
+  }
+
+  // 乘上归因项权重基数后归一化成占比。并列时按 code 排序，保证同样作答必得同样结果。
+  const scored = [...buckets.entries()]
+    .map(([code, bucket]) => {
+      const attributionItem = itemByCode.get(code)!
+      return {
+        code,
+        name: attributionItem.name,
+        toolTags: attributionItem.toolTags || [],
+        suggestedAction: attributionItem.suggestedAction,
+        rawScore: Number((bucket.rawScore * attributionItem.baseWeight).toFixed(4)),
+        reasons: bucket.reasons,
+        evidenceCodes: bucket.evidenceCodes
+      }
+    })
+    .filter(entry => entry.rawScore > 0)
+    .sort((a, b) => b.rawScore - a.rawScore || a.code.localeCompare(b.code))
+
+  const totalScore = scored.reduce((sum, entry) => sum + entry.rawScore, 0)
+  const ranked = scored
+    .map((entry, rank) => ({
+      ...entry,
+      rank,
+      share: totalScore > 0 ? Number((entry.rawScore / totalScore).toFixed(4)) : 0
+    }))
+    // 首位无论占比多低都保留，否则弱信号作答会得到一个没有归因的方案
+    .filter(entry => entry.rank === 0 || entry.share >= scoring.minShare)
+    .slice(0, scoring.maxAttributions)
+
+  const attributions: AttributionOutcome[] = ranked.map(entry => ({
+    code: entry.code,
+    name: entry.name,
+    rawScore: entry.rawScore,
+    share: entry.share,
+    rank: entry.rank,
+    strength: entry.rank === 0 ? 'primary' : entry.rank < scoring.secondaryRankCutoff ? 'secondary' : 'reference',
+    reasons: entry.reasons,
+    evidenceCodes: entry.evidenceCodes
+  }))
+
+  // 5. 分级：与归因解耦，只产出等级与严重度。同样按当前量表过滤，未标注量表的视为模块通用。
+  const applicableGrading = config.gradingRules
+    .filter(rule => !rule.assessmentCode || rule.assessmentCode === instrumentCode)
+    .sort((a, b) => a.pri - b.pri)
+  if (!applicableGrading.length) {
+    throw new Error(`量表 '${instrumentCode}' 没有适用的分级规则`)
+  }
+  let matchedGrading = applicableGrading[applicableGrading.length - 1]!
+  for (const rule of applicableGrading) {
+    let hit: boolean
+    try {
+      hit = evalWhen(rule.when, env)
+    } catch (err) {
+      const hint = unavailableVariables.length
+        ? `（本次作答的量表 '${instrumentCode}' 无法计算这些变量：${unavailableVariables.join('、')}；请给该规则填写「依据量表编码」把它限定到对应量表）`
+        : ''
+      throw new Error(`分级规则 '${rule.ruleId}' 求值失败：${(err as Error).message}${hint}`)
+    }
+    if (hit) {
+      matchedGrading = rule
       break
     }
   }
-  if (!matchedBranch) throw new Error('No rule branch matched')
 
-  // 5. 检查 crisis 红线 + V2 redLines
-  let blocked = matchedBranch.blocked
-  const level = matchedBranch.level
+  // 6. 检查 crisis 红线 + V2 redLines
+  let blocked = matchedGrading.blocked
   const matchedRedLines: RedLineConfig[] = []
 
   if (config.crisis && evalWhen(config.crisis.when, env)) {
@@ -452,17 +580,36 @@ export function executeRules(
     }
   }
 
-  // 6. 生成输出
+  // 7. 生成输出
+  const reasons = attributions.flatMap(attribution => attribution.reasons)
+  // 行动项优先由命中的归因推导——「归因→方案」这一跳的落点就在这里。
+  // 归因项没填建议动作时才退回归因库里那份与归因无关的通用行动清单。
+  const attributionActions = ranked
+    .filter(entry => entry.suggestedAction)
+    .map(entry => ({
+      title: `针对「${entry.name}」`,
+      detail: entry.suggestedAction!,
+      status: 'pending' as const
+    }))
+  const actions = attributionActions.length ? attributionActions : config.actions
   return {
-    level,
-    reasons: matchedBranch.reasons,
+    level: matchedGrading.level,
+    levelName: matchedGrading.levelName,
+    severity: matchedGrading.severity,
+    reasons: reasons.length
+      ? reasons
+      : [matchedGrading.resultDescription || '本次作答未命中任何归因证据，请结合观察补充判断。'],
     blocked,
-    matchedRuleIds: [matchedBranch.ruleId],
-    primaryAttribution: matchedBranch.primaryAttribution || matchedBranch.reasons[0] || level,
-    secondaryAttributions: matchedBranch.secondaryAttributions || [],
-    toolTags: matchedBranch.toolTags || [],
+    matchedRuleIds: [matchedGrading.ruleId, ...attributions.flatMap(attribution => attribution.evidenceCodes)],
+    attributions,
+    primaryAttribution: attributions[0]?.name || '',
+    secondaryAttributions: attributions.filter(a => a.strength === 'secondary').map(a => a.name),
+    toolTags: [...new Set(ranked.flatMap(entry => entry.toolTags))],
     dimensions,
-    actions: config.actions,
+    dimensionLabels: Object.fromEntries(
+      (definition.dimensionDefs || []).map(def => [def.code, def.name])
+    ),
+    actions,
     tools: config.tools,
     matchedRedLines: matchedRedLines.length > 0 ? matchedRedLines : undefined
   }
@@ -481,15 +628,32 @@ export function evaluateWithFallback(
   ctx: Record<string, number> = {}
 ): RuleExecResult {
   const result = evaluateAssessment(module, answers, ctx)
+  // 硬编码兜底只有单一归因，包成一条 share=1 的归因项以对齐新契约。
+  const attributions: AttributionOutcome[] = result.primaryAttribution
+    ? [{
+        code: `fallback:${module}`,
+        name: result.primaryAttribution,
+        rawScore: 1,
+        share: 1,
+        rank: 0,
+        strength: 'primary',
+        reasons: result.reasons,
+        evidenceCodes: result.matchedRuleIds
+      }]
+    : []
   return {
     level: result.level,
+    severity: result.blocked ? 'crisis' : 'medium',
     reasons: result.reasons,
     blocked: result.blocked,
     matchedRuleIds: result.matchedRuleIds,
+    attributions,
     primaryAttribution: result.primaryAttribution,
     secondaryAttributions: result.secondaryAttributions,
     toolTags: result.toolTags,
     dimensions: result.dimensions,
+    // 硬编码兜底的维度本身就是中文名，映射到自身即可
+    dimensionLabels: Object.fromEntries(Object.keys(result.dimensions).map(k => [k, k])),
     actions: result.actions,
     tools: result.tools
   }

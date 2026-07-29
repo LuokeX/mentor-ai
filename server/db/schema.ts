@@ -5,6 +5,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   text,
   timestamp,
   uniqueIndex,
@@ -649,10 +650,8 @@ export const moduleResourceAttributionRules = pgTable('module_resource_attributi
   level: varchar('level', { length: 80 }).notNull(),
   blocked: boolean('blocked').default(false).notNull(),
   hasCondition: boolean('has_condition').default(false).notNull(),
-  primaryAttribution: varchar('primary_attribution', { length: 120 }).notNull(),
-  secondaryAttributions: jsonb('secondary_attributions').$type<string[]>().default([]).notNull(),
-  toolTags: jsonb('tool_tags').$type<string[]>().default([]).notNull(),
-  reasonCount: integer('reason_count').default(0).notNull(),
+  severity: varchar('severity', { length: 20 }).notNull(),
+  assessmentCode: varchar('assessment_code', { length: 40 }),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [
@@ -660,6 +659,28 @@ export const moduleResourceAttributionRules = pgTable('module_resource_attributi
   index('module_resource_attribution_rules_lookup_idx').on(table.module, table.scope, table.schoolId),
   index('module_resource_attribution_rules_level_idx').on(table.level, table.blocked),
   index('module_resource_attribution_rules_library_idx').on(table.libraryId)
+])
+
+/** 归因项投影。运营台按归因检索工具、核对证据覆盖的入口。 */
+export const moduleResourceAttributionItems = pgTable('module_resource_attribution_items', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  libraryId: uuid('library_id').notNull().references(() => moduleResourceLibraries.id, { onDelete: 'cascade' }),
+  versionId: uuid('version_id').notNull().references(() => moduleResourceVersions.id, { onDelete: 'cascade' }),
+  module: varchar('module', { length: 40 }).notNull(),
+  scope: varchar('scope', { length: 20 }).notNull(),
+  schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'cascade' }),
+  attributionCode: varchar('attribution_code', { length: 80 }).notNull(),
+  attributionName: varchar('attribution_name', { length: 120 }).notNull(),
+  baseWeight: real('base_weight').default(1).notNull(),
+  toolTags: jsonb('tool_tags').$type<string[]>().default([]).notNull(),
+  evidenceCount: integer('evidence_count').default(0).notNull(),
+  assessmentCodes: jsonb('assessment_codes').$type<string[]>().default([]).notNull(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('module_resource_attribution_items_version_code_uidx').on(table.versionId, table.attributionCode),
+  index('module_resource_attribution_items_lookup_idx').on(table.module, table.scope, table.schoolId),
+  index('module_resource_attribution_items_library_idx').on(table.libraryId)
 ])
 
 export const moduleResourceToolItems = pgTable('module_resource_tool_items', {

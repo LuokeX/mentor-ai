@@ -26,20 +26,30 @@ describe('module resource document ingestion', () => {
     const parsed = attributionConfigSchema.parse({
       module: 'home_school',
       version: '1.0.0',
-      computed: { conflict: 'MAX(q1,q2)' },
-      branches: [{
-        pri: 1,
-        when: 'conflict >= 4',
-        level: 'high',
-        blocked: false,
-        ruleId: 'home-school-high-conflict',
-        primaryAttribution: '家校沟通升级',
-        secondaryAttributions: ['信息不对称'],
-        reasons: ['家校互动中出现高冲突信号'],
+      computed: { conflict: 'MAX(scores)' },
+      attributionItems: [{
+        code: 'HS_AT_CONFLICT',
+        name: '家校沟通升级',
+        module: 'home_school',
         toolTags: ['conflict', 'follow-up']
+      }],
+      evidences: [{
+        attributionCode: 'HS_AT_CONFLICT',
+        assessmentCode: 'HS_SCALE_A',
+        evidenceCode: 'HS_EV_01',
+        condition: 'conflict >= 4',
+        description: '家校互动中出现高冲突信号'
+      }],
+      gradingRules: [{
+        ruleId: 'home-school-high-conflict',
+        pri: 999,
+        level: 'high',
+        severity: 'high',
+        blocked: false
       }]
     })
-    expect(parsed.branches[0]?.primaryAttribution).toBe('家校沟通升级')
+    expect(parsed.attributionItems[0]?.name).toBe('家校沟通升级')
+    expect(parsed.evidences[0]?.attributionCode).toBe('HS_AT_CONFLICT')
   })
 
   it('accepts a batch of validated 1024-dimensional Ollama embeddings', async () => {

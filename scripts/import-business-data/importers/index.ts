@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { createVersion, end as closeDb, findOrCreateLibrary, publishVersion } from '../db-client'
+import { createVersion, deleteGlobalResourceLibraries, end as closeDb, findOrCreateLibrary, publishVersion } from '../db-client'
 import { parseStandardToolFile, parseToolFile } from '../transformers/tool'
 import { parseAssessmentFile, toAssessmentPayload } from '../transformers/assessment'
 import { parseAttributionFile } from '../transformers/attribution'
@@ -12,7 +12,11 @@ import { attributionConfigSchema, type LibraryType, type ModuleId } from '../../
 import { evaluateImportQuality, formatImportQualityReport, type ImportQualityReport } from '../quality'
 
 const RAW_BASE = resolve('业务需求')
+// 标准三库源目录。业务正式交付放 business-libraries/<module>/，
+// 仓库内自带的样例数据放 business-libraries/test-data/<module>/，
+// resolveInputFile 会依次查找，因此两者都能被 pnpm import:business-data 直接导入。
 const STANDARD_BASE = resolve('business-libraries')
+const TEST_DATA_BASE = resolve('business-libraries/test-data')
 
 interface ImportTask {
   module: ModuleId
@@ -26,6 +30,13 @@ interface ImportTask {
 const MODULES: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
 // 核心三库（向后兼容旧 import:business-data；output_template/keyword_route 按需导入）
 const LIBRARY_TYPES: LibraryType[] = ['assessment', 'attribution', 'tool', 'keyword_route', 'output_template']
+const LIBRARY_TYPE_LABELS: Record<LibraryType, string> = {
+  assessment: '量表库',
+  attribution: '归因库',
+  tool: '工具库',
+  keyword_route: '关键词路由库',
+  output_template: '方案输出模板库'
+}
 
 const LEGACY_RAW_TASKS: ImportTask[] = [
   {
@@ -92,7 +103,7 @@ function buildStandardTasks() {
     module,
     type,
     filePath: `${STANDARD_BASE}/${module}/${type}`,
-    libName: `${module}·${type === 'assessment' ? '量表库' : type === 'attribution' ? '归因库' : '工具库'}`,
+    libName: `${module}·${LIBRARY_TYPE_LABELS[type]}`,
     notes: '业务按三库整理模板提交的标准资源'
   } satisfies ImportTask)))
 }
@@ -126,7 +137,7 @@ export async function runImport(task: ImportTask, options: { dryRun?: boolean; p
           ? Array.isArray((payload as { routes?: unknown[] }).routes) ? (payload as { routes: unknown[] }).routes.length : 0
           : task.type === 'output_template'
             ? Array.isArray((payload as { templates?: unknown[] }).templates) ? (payload as { templates: unknown[] }).templates.length : 0
-            : (payload as { branches: unknown[] }).branches.length
+            : (payload as { attributionItems?: unknown[] }).attributionItems?.length || 0
 
     if (count === 0) throw new Error('未解析出任何条目')
     if (quality.status === 'fail') {
@@ -146,7 +157,7 @@ export async function runImport(task: ImportTask, options: { dryRun?: boolean; p
   }
 }
 
-export async function importAll(options: { dryRun?: boolean; publish?: boolean; strictQuality?: boolean; requireComplete?: boolean; includeLegacyRaw?: boolean; module?: string; type?: string } = {}) {
+export async function importAll(options: { dryRun?: boolean; publish?: boolean; strictQuality?: boolean; requireComplete?: boolean; includeLegacyRaw?: boolean; module?: string; type?: string; replace?: boolean } = {}) {
   let tasks = options.includeLegacyRaw ? LEGACY_RAW_TASKS : buildStandardTasks()
   if (options.module) tasks = tasks.filter(task => task.module === options.module)
   if (options.type) tasks = tasks.filter(task => task.type === options.type)
@@ -155,6 +166,14 @@ export async function importAll(options: { dryRun?: boolean; publish?: boolean; 
   const missingTasks = options.includeLegacyRaw ? 0 : tasks.filter(task => !existsSync(task.filePath)).length
   if (!options.requireComplete) {
     tasks = tasks.filter(task => existsSync(task.filePath))
+  }
+
+  if (options.replace && !options.dryRun && !options.includeLegacyRaw) {
+    const uniqueTargets = Array.from(
+      new Map(tasks.map(task => [`${task.module}/${task.type}`, { module: task.module, type: task.type }])).values()
+    )
+    const deleted = await deleteGlobalResourceLibraries(uniqueTargets)
+    console.log(`Replaced global libraries: deleted=${deleted}`)
   }
 
   const results: ImportResult[] = []
@@ -215,16 +234,20 @@ async function loadPayload(task: ImportTask, filePath: string) {
 }
 
 function resolveInputFile(task: ImportTask) {
-  if (!task.filePath.endsWith('.xlsx') && !task.filePath.endsWith('.json')) {
-    const xlsx = `${task.filePath}.xlsx`
-    const json = `${task.filePath}.json`
-    if (existsSync(xlsx)) return xlsx
-    if (existsSync(json)) return json
+  // 依次尝试正式交付目录和仓库自带样例目录
+  const candidateBases = [task.filePath, task.filePath.replace(STANDARD_BASE, TEST_DATA_BASE)]
+  for (const base of candidateBases) {
+    if (!base.endsWith('.xlsx') && !base.endsWith('.json')) {
+      const xlsx = `${base}.xlsx`
+      const json = `${base}.json`
+      if (existsSync(xlsx)) return xlsx
+      if (existsSync(json)) return json
+    }
+    if (task.type === 'attribution') {
+      const tablePath = base.replace(/\.json$/i, '.xlsx')
+      if (existsSync(tablePath)) return tablePath
+    }
+    if (existsSync(base)) return base
   }
-  if (task.type === 'attribution') {
-    const tablePath = task.filePath.replace(/\.json$/i, '.xlsx')
-    if (existsSync(tablePath)) return tablePath
-  }
-  if (existsSync(task.filePath)) return task.filePath
   return null
 }

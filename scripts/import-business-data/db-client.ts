@@ -81,10 +81,32 @@ export async function createVersion(libraryId: string, version: string, payload:
   return versionId
 }
 
+export async function deleteGlobalResourceLibraries(targets: Array<{ module: string; type: string }>): Promise<number> {
+  const db = getDb()
+  let deleted = 0
+  for (const target of targets) {
+    const result = await db.query(
+      `DELETE FROM module_resource_libraries
+       WHERE module = $1 AND library_type = $2 AND scope = 'global' AND school_id IS NULL`,
+      [target.module, target.type]
+    )
+    deleted += result.rowCount ?? 0
+  }
+  return deleted
+}
+
 export async function publishVersion(versionId: string): Promise<void> {
   const db = getDb()
   const actor = await getImportActorId()
   await refreshResourceProjection(versionId)
+  await db.query(
+    `UPDATE module_resource_versions
+     SET status = 'retired', updated_at = NOW()
+     WHERE library_id = (SELECT library_id FROM module_resource_versions WHERE id = $1)
+       AND id <> $1
+       AND status = 'published'`,
+    [versionId]
+  )
   await db.query(
     `UPDATE module_resource_versions SET status = 'published', published_by = $2, published_at = NOW(), updated_at = NOW() WHERE id = $1`,
     [versionId, actor]
@@ -128,6 +150,7 @@ export async function refreshResourceProjection(versionId: string): Promise<void
   try {
     await db.query('DELETE FROM module_resource_assessment_items WHERE version_id = $1', [versionId])
     await db.query('DELETE FROM module_resource_attribution_rules WHERE version_id = $1', [versionId])
+    await db.query('DELETE FROM module_resource_attribution_items WHERE version_id = $1', [versionId])
     await db.query('DELETE FROM module_resource_tool_items WHERE version_id = $1', [versionId])
 
     for (const item of projection.assessments) {
@@ -154,8 +177,8 @@ export async function refreshResourceProjection(versionId: string): Promise<void
     for (const item of projection.attributionRules) {
       await db.query(
         `INSERT INTO module_resource_attribution_rules
-          (library_id, version_id, module, scope, school_id, rule_id, priority, level, blocked, has_condition, primary_attribution, secondary_attributions, tool_tags, reason_count, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+          (library_id, version_id, module, scope, school_id, rule_id, priority, level, blocked, has_condition, severity, assessment_code, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           item.libraryId,
           item.versionId,
@@ -167,10 +190,30 @@ export async function refreshResourceProjection(versionId: string): Promise<void
           item.level,
           item.blocked,
           item.hasCondition,
-          item.primaryAttribution,
-          JSON.stringify(item.secondaryAttributions),
+          item.severity,
+          item.assessmentCode,
+          JSON.stringify(item.metadata)
+        ]
+      )
+    }
+
+    for (const item of projection.attributionItems) {
+      await db.query(
+        `INSERT INTO module_resource_attribution_items
+          (library_id, version_id, module, scope, school_id, attribution_code, attribution_name, base_weight, tool_tags, evidence_count, assessment_codes, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          item.libraryId,
+          item.versionId,
+          item.module,
+          item.scope,
+          item.schoolId,
+          item.attributionCode,
+          item.attributionName,
+          item.baseWeight,
           JSON.stringify(item.toolTags),
-          item.reasonCount,
+          item.evidenceCount,
+          JSON.stringify(item.assessmentCodes),
           JSON.stringify(item.metadata)
         ]
       )

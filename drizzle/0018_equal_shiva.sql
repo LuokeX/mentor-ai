@@ -5,25 +5,25 @@
 
 -- ========== ALTER TABLE: add lifecycle fields ==========
 
-ALTER TABLE "classes" ADD COLUMN "archived_at" timestamp with time zone;
-ALTER TABLE "classes" ADD COLUMN "archived_by" uuid;
+ALTER TABLE "classes" ADD COLUMN IF NOT EXISTS "archived_at" timestamp with time zone;
+ALTER TABLE "classes" ADD COLUMN IF NOT EXISTS "archived_by" uuid;
 
-ALTER TABLE "communications" ADD COLUMN "status" varchar(20) DEFAULT 'active' NOT NULL;
-ALTER TABLE "communications" ADD COLUMN "archived_at" timestamp with time zone;
-ALTER TABLE "communications" ADD COLUMN "archived_by" uuid;
+ALTER TABLE "communications" ADD COLUMN IF NOT EXISTS "status" varchar(20) DEFAULT 'active' NOT NULL;
+ALTER TABLE "communications" ADD COLUMN IF NOT EXISTS "archived_at" timestamp with time zone;
+ALTER TABLE "communications" ADD COLUMN IF NOT EXISTS "archived_by" uuid;
 
-ALTER TABLE "guardians" ADD COLUMN "archived_at" timestamp with time zone;
-ALTER TABLE "guardians" ADD COLUMN "archived_by" uuid;
+ALTER TABLE "guardians" ADD COLUMN IF NOT EXISTS "archived_at" timestamp with time zone;
+ALTER TABLE "guardians" ADD COLUMN IF NOT EXISTS "archived_by" uuid;
 
-ALTER TABLE "students" ADD COLUMN "archived_at" timestamp with time zone;
-ALTER TABLE "students" ADD COLUMN "archived_by" uuid;
+ALTER TABLE "students" ADD COLUMN IF NOT EXISTS "archived_at" timestamp with time zone;
+ALTER TABLE "students" ADD COLUMN IF NOT EXISTS "archived_by" uuid;
 
-ALTER TABLE "users" ADD COLUMN "disabled_at" timestamp with time zone;
-ALTER TABLE "users" ADD COLUMN "disabled_by" uuid;
-ALTER TABLE "users" ADD COLUMN "disabled_reason" text;
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "disabled_at" timestamp with time zone;
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "disabled_by" uuid;
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "disabled_reason" text;
 
 -- 既有关系先按学生所属学校回填，再收紧 NOT NULL，避免非空数据库迁移失败。
-ALTER TABLE "student_guardians" ADD COLUMN "school_id" uuid;
+ALTER TABLE "student_guardians" ADD COLUMN IF NOT EXISTS "school_id" uuid;
 UPDATE "student_guardians" AS sg
 SET "school_id" = s."school_id"
 FROM "students" AS s
@@ -35,7 +35,7 @@ BEGIN
   END IF;
 END $$;
 ALTER TABLE "student_guardians" ALTER COLUMN "school_id" SET NOT NULL;
-ALTER TABLE "student_guardians" ADD COLUMN "status" varchar(20) DEFAULT 'active' NOT NULL;
+ALTER TABLE "student_guardians" ADD COLUMN IF NOT EXISTS "status" varchar(20) DEFAULT 'active' NOT NULL;
 
 -- ========== ALTER TABLE: modify FK constraints (cascade → restrict) ==========
 
@@ -56,16 +56,22 @@ ALTER TABLE "student_guardians" ADD CONSTRAINT "student_guardians_guardian_id_gu
 
 -- ========== ALTER TABLE: add new FKs for archive/disable references ==========
 
-ALTER TABLE "classes" ADD CONSTRAINT "classes_archived_by_users_id_fk" FOREIGN KEY ("archived_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "classes" DROP CONSTRAINT IF EXISTS "classes_archived_by_users_id_fk";--> statement-breakpoint
+ALTER TABLE "classes" ADD CONSTRAINT "classes_archived_by_users_id_fk" FOREIGN KEY ("archived_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 
-ALTER TABLE "communications" ADD CONSTRAINT "communications_archived_by_users_id_fk" FOREIGN KEY ("archived_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "communications" DROP CONSTRAINT IF EXISTS "communications_archived_by_users_id_fk";--> statement-breakpoint
+ALTER TABLE "communications" ADD CONSTRAINT "communications_archived_by_users_id_fk" FOREIGN KEY ("archived_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 
-ALTER TABLE "guardians" ADD CONSTRAINT "guardians_archived_by_users_id_fk" FOREIGN KEY ("archived_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "guardians" DROP CONSTRAINT IF EXISTS "guardians_archived_by_users_id_fk";--> statement-breakpoint
+ALTER TABLE "guardians" ADD CONSTRAINT "guardians_archived_by_users_id_fk" FOREIGN KEY ("archived_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 
-ALTER TABLE "students" ADD CONSTRAINT "students_archived_by_users_id_fk" FOREIGN KEY ("archived_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "students" DROP CONSTRAINT IF EXISTS "students_archived_by_users_id_fk";--> statement-breakpoint
+ALTER TABLE "students" ADD CONSTRAINT "students_archived_by_users_id_fk" FOREIGN KEY ("archived_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 
-ALTER TABLE "users" ADD CONSTRAINT "users_disabled_by_users_id_fk" FOREIGN KEY ("disabled_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "users" DROP CONSTRAINT IF EXISTS "users_disabled_by_users_id_fk";--> statement-breakpoint
+ALTER TABLE "users" ADD CONSTRAINT "users_disabled_by_users_id_fk" FOREIGN KEY ("disabled_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 
+ALTER TABLE "student_guardians" DROP CONSTRAINT IF EXISTS "student_guardians_school_id_schools_id_fk";--> statement-breakpoint
 ALTER TABLE "student_guardians" ADD CONSTRAINT "student_guardians_school_id_schools_id_fk" FOREIGN KEY ("school_id") REFERENCES "public"."schools"("id") ON DELETE restrict ON UPDATE no action;
 
 -- ========== CREATE INDEX: composite performance indexes ==========

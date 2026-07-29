@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import { and, asc, eq } from 'drizzle-orm'
 import { schema, useDb } from '../utils/db'
-import type { ToolStructuredStep, ToolContraindicationRule } from '../../shared/contracts'
+import type { ToolStructuredStep, ToolContraindicationRule, Severity } from '../../shared/contracts'
 
 type LegacyAction = { title: string, detail: string, status: string }
 
@@ -64,19 +64,135 @@ export async function createPlanActions(event: H3Event, input: {
   }))).returning()
 }
 
+/** 工具匹配的输入。归因来自 executeRules 的多归因结果，按占比参与加权。 */
+export interface ToolMatchInput {
+  dimensions: Record<string, number>
+  /** 分级规则产出的严重度，与工具库的严重度共用同一套枚举 */
+  severity?: Severity
+  attributions?: Array<{ code: string, share: number }>
+  toolTags?: string[]
+  /** 薄弱维度判定阈值 */
+  weakDimensionThreshold?: number
+}
+
+export interface ToolMatchScore {
+  tool: Record<string, unknown>
+  score: number
+  /** 每一项的得分明细，用于运营台解释「这个工具为什么被推出来」 */
+  breakdown: { attribution: number, tag: number, severity: number, dimension: number }
+}
+
+const TOOL_MATCH_WEIGHTS = { attribution: 10, tag: 3, severity: 2, dimension: 2 }
+const DEFAULT_WEAK_DIMENSION_THRESHOLD = 2.5
+const MAX_MATCHED_TOOLS = 5
+
+/**
+ * 给工具打分并排序。纯函数，不依赖数据库，可直接单测。
+ *
+ * 相比旧实现的关键差别：四个条件从 AND 硬过滤改为加权求和，只有 block 型禁忌仍是硬过滤。
+ * 旧实现里任一条件对不上就整个工具库返回空，班主任会拿到没有工具的方案。
+ */
+export function scoreTools(tools: Array<Record<string, unknown>>, input: ToolMatchInput): ToolMatchScore[] {
+  const weakDims = Object.entries(input.dimensions)
+    .filter(([, score]) => score <= (input.weakDimensionThreshold ?? DEFAULT_WEAK_DIMENSION_THRESHOLD))
+    .map(([dimension]) => normalize(dimension))
+  const shareByCode = new Map((input.attributions || []).map(a => [normalize(a.code), a.share]))
+  const requestedTags = (input.toolTags || []).map(normalize).filter(Boolean)
+  const severity = normalize(input.severity)
+
+  const scored: ToolMatchScore[] = []
+  for (const tool of tools) {
+    // 禁忌硬过滤：只有条件能够被当前评估结果确认时才一票否决。
+    const contraRules = Array.isArray(tool.contraindicationRules)
+      ? (tool.contraindicationRules as ToolContraindicationRule[])
+      : []
+    if (contraRules.some(rule => rule.type === 'block' && matchesContraindication(rule, input))) continue
+
+    // 归因：工具声明的归因编码命中了哪几条结果归因，按各自占比累加
+    const toolAttributionCodes = [
+      tool.attributionCode,
+      ...(Array.isArray(tool.attributionCodes) ? tool.attributionCodes : [])
+    ].map(normalize).filter(Boolean)
+    const attributionShare = toolAttributionCodes.reduce(
+      (sum, code) => sum + (shareByCode.get(code) ?? 0), 0
+    )
+    const attributionScore = attributionShare * TOOL_MATCH_WEIGHTS.attribution
+
+    // 标签：交集比例
+    const toolTags = [
+      ...(Array.isArray(tool.tags) ? tool.tags : []),
+      ...(Array.isArray(tool.toolTags) ? tool.toolTags : [])
+    ].map(normalize).filter(Boolean)
+    const tagHits = toolTags.filter(tag => requestedTags.includes(tag)).length
+    const tagScore = toolTags.length ? (tagHits / toolTags.length) * TOOL_MATCH_WEIGHTS.tag : 0
+
+    // 严重度：同枚举精确比对，不再做子串匹配
+    const toolSeverity = normalize(tool.severity)
+    const severityScore = severity && toolSeverity && severity === toolSeverity ? TOOL_MATCH_WEIGHTS.severity : 0
+
+    // 维度：工具作用维度填的是量表维度编码，与薄弱维度精确比对
+    const toolDims = Array.isArray(tool.dimensions) ? tool.dimensions.map(normalize) : []
+    const dimHits = toolDims.filter(dimension => weakDims.includes(dimension)).length
+    const dimensionScore = toolDims.length ? (dimHits / toolDims.length) * TOOL_MATCH_WEIGHTS.dimension : 0
+
+    const score = Number((attributionScore + tagScore + severityScore + dimensionScore).toFixed(4))
+    if (score <= 0) continue
+    scored.push({
+      tool,
+      score,
+      breakdown: {
+        attribution: Number(attributionScore.toFixed(4)),
+        tag: Number(tagScore.toFixed(4)),
+        severity: severityScore,
+        dimension: Number(dimensionScore.toFixed(4))
+      }
+    })
+  }
+
+  // 并列时按工具编码排序，保证同样的评估结果每次得到同样的推荐顺序
+  return scored.sort((a, b) =>
+    b.score - a.score || String(a.tool.code || '').localeCompare(String(b.tool.code || ''))
+  )
+}
+
+/** 把工具条目渲染成方案里展示的正文 */
+export function renderToolContent(tool: Record<string, unknown>): string {
+  const contraRules = Array.isArray(tool.contraindicationRules)
+    ? (tool.contraindicationRules as ToolContraindicationRule[])
+    : []
+  const structuredSteps = Array.isArray(tool.structuredSteps)
+    ? (tool.structuredSteps as ToolStructuredStep[])
+    : []
+
+  if (structuredSteps.length > 0) {
+    const sorted = [...structuredSteps].sort((a, b) => a.seq - b.seq)
+    const stepLines = sorted.map((s, idx) => {
+      const parts = [`${idx + 1}. ${s.title}: ${s.description}`]
+      if (s.keyTip) parts.push(`   提示：${s.keyTip}`)
+      if (s.scriptTemplate) parts.push(`   话术：${s.scriptTemplate}`)
+      if (s.successCriteria) parts.push(`   达标：${s.successCriteria}`)
+      return parts.join('\n')
+    })
+    let content = stepLines.join('\n\n')
+    const warnContras = contraRules.filter(rule => rule.type === 'warn')
+    if (warnContras.length > 0) {
+      content += '\n\n⚠ 注意事项：\n' + warnContras.map(rule => `- ${rule.description}`).join('\n')
+    }
+    return content
+  }
+
+  const steps = Array.isArray(tool.steps) ? (tool.steps as string[]).join('\n') : String(tool.steps || '')
+  const scripts = tool.scripts ? `\n\n关键话术：\n${tool.scripts}` : ''
+  const prohibitions = tool.prohibitions ? `\n\n禁止事项：\n${tool.prohibitions}` : ''
+  return `${steps}${scripts}${prohibitions}`
+}
+
 // 从 moduleResourceLibraries 加载工具库，根据评估结果匹配适用的工具处方
 export async function resolveToolsForPlan(
   event: H3Event,
   module: string,
-  input: {
-    dimensions: Record<string, number>
-    level?: string
-    primaryAttribution?: string
-    secondaryAttributions?: string[]
-    toolTags?: string[]
-    schoolId?: string | null
-  }
-): Promise<Array<{ title: string, content: string, code?: string, sourceVersionId?: string }>> {
+  input: ToolMatchInput & { schoolId?: string | null }
+): Promise<Array<{ title: string, content: string, code?: string, sourceVersionId?: string, matchScore?: number }>> {
   const { resolvePublishedModuleResource } = await import('./module-resources')
   const resource = await resolvePublishedModuleResource<{ tools?: Array<Record<string, unknown>> }>(
     event,
@@ -93,97 +209,36 @@ export async function resolveToolsForPlan(
 
   if (tools.length === 0) return []
 
-  const matchedTools: Array<{ title: string, content: string, code?: string, sourceVersionId?: string }> = []
-
-  for (const tool of tools) {
-    const toolSeverity = normalize(tool.severity || tool.severity_grade || tool.level)
-    const toolDims = Array.isArray(tool.dimensions) ? tool.dimensions.map(normalize) : []
-    const toolAttributions = [
-      tool.attribution,
-      tool.primaryAttribution,
-      ...(Array.isArray(tool.attributions) ? tool.attributions : [])
-    ].map(normalize).filter(Boolean)
-    const toolTags = [
-      tool.tag,
-      ...(Array.isArray(tool.tags) ? tool.tags : []),
-      ...(Array.isArray(tool.toolTags) ? tool.toolTags : [])
-    ].map(normalize).filter(Boolean)
-
-    // 维度匹配：工具的作用维度与评估结果的薄弱维度重叠
-    const weakDims = Object.entries(input.dimensions)
-      .filter(([, score]) => score <= 2.5) // 阈值：低于2.5视为薄弱
-      .map(([dim]) => normalize(dim))
-
-    const dimMatch = toolDims.length === 0 ||
-      toolDims.some(dimension => weakDims.some(weakDimension => dimension.includes(weakDimension) || weakDimension.includes(dimension)))
-
-    // 严重度匹配
-    const level = normalize(input.level)
-    const severityMatch = !level || !toolSeverity || toolSeverity.includes(level) || level.includes(toolSeverity)
-
-    const attributionTerms = [
-      input.primaryAttribution,
-      ...(input.secondaryAttributions || [])
-    ].map(normalize).filter(Boolean)
-    const attributionMatch = toolAttributions.length === 0 ||
-      toolAttributions.some(attribution => attributionTerms.some(term => attribution.includes(term) || term.includes(attribution)))
-
-    const requestedTags = (input.toolTags || []).map(normalize).filter(Boolean)
-    const tagMatch = toolTags.length === 0 ||
-      toolTags.some(tag => requestedTags.some(requested => tag.includes(requested) || requested.includes(tag)))
-
-    if (dimMatch && severityMatch && attributionMatch && tagMatch) {
-      // V2: 禁忌规则硬过滤
-      const contraRules = Array.isArray(tool.contraindicationRules)
-        ? (tool.contraindicationRules as ToolContraindicationRule[])
-        : []
-      const blockContra = contraRules.find(r => r.type === 'block')
-      if (blockContra) continue // 命中 block 型禁忌，跳过该工具
-
-      // V2: 结构化步骤优先
-      const structuredSteps = Array.isArray(tool.structuredSteps)
-        ? (tool.structuredSteps as ToolStructuredStep[])
-        : []
-
-      let content: string
-      if (structuredSteps.length > 0) {
-        // 按 seq 排序后组装为富文本
-        const sorted = [...structuredSteps].sort((a, b) => a.seq - b.seq)
-        const stepLines = sorted.map((s, idx) => {
-          const parts = [`${idx + 1}. ${s.title}: ${s.description}`]
-          if (s.keyTip) parts.push(`   提示：${s.keyTip}`)
-          if (s.scriptTemplate) parts.push(`   话术：${s.scriptTemplate}`)
-          if (s.successCriteria) parts.push(`   达标：${s.successCriteria}`)
-          return parts.join('\n')
-        })
-        content = stepLines.join('\n\n')
-        // 附加上警告标记（如果有 warn 型禁忌）
-        const warnContras = contraRules.filter(r => r.type === 'warn')
-        if (warnContras.length > 0) {
-          content += '\n\n⚠ 注意事项：\n' + warnContras.map(r => `- ${r.description}`).join('\n')
-        }
-      } else {
-        // 旧格式回退
-        const steps = Array.isArray(tool.steps) ? (tool.steps as string[]).join('\n') : String(tool.steps || '')
-        const scripts = tool.scripts ? `\n\n关键话术：\n${tool.scripts}` : ''
-        const prohibitions = tool.prohibitions ? `\n\n禁止事项：\n${tool.prohibitions}` : ''
-        content = `${steps}${scripts}${prohibitions}`
-      }
-
-      matchedTools.push({
-        title: String(tool.name || tool.title || ''),
-        code: String(tool.code || '').trim() || undefined,
-        sourceVersionId: resource.versionId,
-        content
-      })
-    }
-
-    if (matchedTools.length >= 5) break // 最多推荐5个工具
-  }
-
-  return matchedTools
+  return scoreTools(tools, input)
+    .slice(0, MAX_MATCHED_TOOLS)
+    .map(({ tool, score }) => ({
+      title: String(tool.name || tool.title || ''),
+      code: String(tool.code || '').trim() || undefined,
+      sourceVersionId: resource.versionId,
+      matchScore: score,
+      content: renderToolContent(tool)
+    }))
 }
 
 function normalize(value: unknown) {
   return String(value || '').trim().toLowerCase()
+}
+
+function matchesContraindication(rule: ToolContraindicationRule, input: ToolMatchInput) {
+  const condition = normalize(rule.condition)
+  if (!condition) return false
+  if (['always', 'true', '1', 'yes', '是', '始终'].includes(condition)) return true
+
+  const severityMatch = condition.match(/(?:severity|严重度)\s*(?:==|=|为|是)\s*([a-z_]+)/i)
+  if (severityMatch) return normalize(input.severity) === normalize(severityMatch[1])
+
+  const attributionCodes = new Set((input.attributions || []).filter(item => item.share > 0).map(item => normalize(item.code)))
+  const attributionMatch = condition.match(/(?:attribution|归因|对应归因)\s*(?:==|=|为|是)\s*([a-z0-9_.:-]+)/i)
+  if (attributionMatch) return attributionCodes.has(normalize(attributionMatch[1]))
+
+  const tags = new Set((input.toolTags || []).map(normalize))
+  const tagMatch = condition.match(/(?:tag|标签|工具标签)\s*(?:==|=|为|是)\s*([a-z0-9_.:-]+)/i)
+  if (tagMatch) return tags.has(normalize(tagMatch[1]))
+
+  return false
 }

@@ -315,7 +315,7 @@ export default defineEventHandler(async (event) => {
         }
 
         // ---- 分诊流程：AI 只推荐模块，不生成工具、方案或知识库引用 ----
-        const route = await routeWithDeepSeek(event, body.message)
+        const route = await routeWithDeepSeek(event, body.message, user.schoolId!)
         const triageMode = governance.effectiveMode === 'local' || !useRuntimeConfig(event).deepseekApiKey ? 'local_fallback' : 'deepseek'
 
         // 知识库检索：基于用户消息 + 路由确定的模块检索相关文档
