@@ -350,10 +350,17 @@ export default defineEventHandler(async (event) => {
           studentId: businessContext?.type === 'student' ? businessContext.id : undefined,
           classId: businessContext?.type === 'class' ? businessContext.id : undefined,
           guardianId: businessContext?.type === 'guardian' ? businessContext.id : undefined,
-          suggestedActions: [{ label: '进入建议模块完成量表评估', type: 'open_module', module: route.primaryModule }],
+          suggestedActions: [{
+            label: '进入建议模块完成量表评估',
+            type: 'open_module',
+            module: route.primaryModule,
+            // 带上路由关联的量表编码和教师原话，模块页据此推荐并直接定位到该量表
+            instrumentCode: route.suggestedInstrumentCode,
+            sourceText: body.message
+          }],
           citations: triageCitations.length > 0 ? triageCitations.slice(0, 5) : undefined,
           prepItems,
-          route: { primaryModule: route.primaryModule, secondaryModules: route.secondaryModules, confidence: route.confidence, rationale: route.rationale, decisionId: decision.id }
+          route: { primaryModule: route.primaryModule, secondaryModules: route.secondaryModules, confidence: route.confidence, rationale: route.rationale, suggestedInstrumentCode: route.suggestedInstrumentCode, decisionId: decision.id }
         }
         const [assistantMessage] = await db.insert(schema.chatMessages).values({
           schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,

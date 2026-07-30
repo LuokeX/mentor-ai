@@ -49,6 +49,26 @@ export function normalizeExpression(expr: string): string {
     // 否则「疲惫且失意」这类变量名会被拆坏。
     .replace(/\s+且\s+/g, ' && ')
     .replace(/\s+或\s+/g, ' || ')
+    // 业务习惯写英文 AND/OR，按同样的空格边界规则接受
+    .replace(/\s+AND\s+/gi, ' && ')
+    .replace(/\s+OR\s+/gi, ' || ')
+    // 单个 = 当相等判断。写在所有比较运算符归一化之后，
+    // 避免把 >= <= != == 里的 = 误伤，所以用「前后都不是比较符号」的边界。
+    .replace(/(?<![<>=!])=(?!=)/g, ' == ')
+}
+
+/**
+ * 反向计分。取值域来自题目自己的选项，不能写死 6 - value：
+ * 对 0/1 二值选项组，6 - 1 = 5 完全不在值域内。
+ */
+function reverseScore(
+  question: { reverse?: boolean, options?: Array<{ value: number }> },
+  raw: number
+): number {
+  if (!question.reverse) return raw
+  const values = (question.options || []).map(option => option.value)
+  if (!values.length) return 6 - raw
+  return Math.min(...values) + Math.max(...values) - raw
 }
 
 function tokenize(expr: string): Token[] {
@@ -132,7 +152,19 @@ class Parser {
   private pos = 0
   constructor(private tokens: Token[]) {}
 
-  parse(): ASTNode { return this.expr() }
+  parse(): ASTNode {
+    const node = this.expr()
+    // 必须消费完所有 token。否则「A >= 1 AND B >= 99」这类写法会被静默截断成
+    // 只判断前半段，条件看起来生效了但实际少判了一半，是最难发现的一类数据缺陷。
+    const rest = this.tokens[this.pos]
+    if (rest) {
+      throw new Error(
+        `表达式在 '${rest.value}' 处无法继续解析；`
+        + `多个条件请用「且」「或」（或 && ||）连接，相等判断请用 == 而不是 =`
+      )
+    }
+    return node
+  }
 
   private peek(): Token | undefined { return this.tokens[this.pos] }
   private consume(): Token {
@@ -435,10 +467,21 @@ export function executeRules(
     id: q.id,
     dimension: q.dimension,
     raw: Number(answers[q.id] || 0),
-    score: q.reverse ? 6 - Number(answers[q.id] || 0) : Number(answers[q.id] || 0)
+    score: reverseScore(q, Number(answers[q.id] ?? NaN))
   }))
 
-  if (items.some(item => item.raw < 1 || item.raw > 5)) throw new Error('所有题目都必须作答')
+  // 合法作答的判断必须基于题目自己的选项集合。写死 1..5 会让 ④b 里用
+  // 0/1 二值选项组（如「否（未命中）=0 / 是（已命中）=1」）的量表整张不可用：
+  // 教师全选「否」会被判成没作答。
+  const unanswered = definition.questions.filter(q => {
+    const raw = Number(answers[q.id] ?? NaN)
+    if (!Number.isFinite(raw)) return true
+    const allowed = (q.options || []).map(option => option.value)
+    return allowed.length ? !allowed.includes(raw) : raw < 1 || raw > 5
+  })
+  if (unanswered.length) {
+    throw new Error(`所有题目都必须作答（缺失或超出选项范围：${unanswered.slice(0, 5).map(q => q.id).join('、')}）`)
+  }
 
   // 2. 计算维度（V2：优先使用 dimensionDefs）
   const dimensions = computeDimensions(items, definition.dimensionDefs)

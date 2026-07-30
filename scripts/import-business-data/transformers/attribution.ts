@@ -1,5 +1,6 @@
 // 归因库 transformer：将业务表格 xlsx → AttributionConfig
-// V2 支持：⑤b 归因-计算变量 + ⑤c 归因-分级规则 + ⑥ 归因-红线熔断
+// V3 结构：⑤b 归因-计算变量 + ⑤c 归因项 + ⑤d 证据规则 + ⑤e 分级规则 + ⑥ 归因-红线熔断
+// 遇到 v2 结构（归因和分级混在一张 ⑤c 里）会明确报错提示换模板，不做静默兼容。
 import type { AttributionConfig, ModuleId } from '../../../shared/contracts'
 import { attributionConfigSchema } from '../../../shared/contracts'
 import { extractValue, readXlsxFile, type SheetData } from '../xlsx-reader'
@@ -55,8 +56,23 @@ function parseSeverity(value: string | undefined): 'low' | 'medium' | 'high' | '
 }
 
 /** ⑤c 归因项：模块级词表 */
-function collectAttributionItems(sheet: SheetData | undefined, module: ModuleId) {
-  if (!sheet) throw new Error('归因库表格缺少"归因项"Sheet')
+function collectAttributionItems(sheet: SheetData | undefined, module: ModuleId, allSheets: SheetData[] = []) {
+  if (!sheet) {
+    // v2 把归因和分级混在一张「⑤c 归因-分级规则」里，用「主归因」列承载归因。
+    // 报「缺少归因项 Sheet」业务会以为漏填了，其实是用错了模板版本。
+    // 表头可能带 * 后缀（主归因*），按键名前缀匹配而不是全等
+    const looksLikeV2 = allSheets.some(item =>
+      item.rows.some(row => Object.keys(row).some(key => key.startsWith('主归因')))
+    )
+    if (looksLikeV2) {
+      throw new Error(
+        '检测到 v2 版归因库结构（「⑤c 归因-分级规则」里带「主归因」列）。'
+        + 'v3 已拆成 ⑤c 归因项 / ⑤d 证据规则 / ⑤e 分级规则三张 sheet，'
+        + '请改用 business-libraries/templates/三库填写模板_v3.xlsx 重新填写。'
+      )
+    }
+    throw new Error('归因库表格缺少「⑤c 归因项」Sheet')
+  }
 
   return sheet.rows
     .map(row => {
@@ -81,7 +97,7 @@ function collectAttributionItems(sheet: SheetData | undefined, module: ModuleId)
 
 /** ⑤d 证据规则：量表级 */
 function collectEvidences(sheet: SheetData | undefined) {
-  if (!sheet) throw new Error('归因库表格缺少"证据规则"Sheet')
+  if (!sheet) throw new Error('归因库表格缺少「⑤d 证据规则」Sheet；没有证据规则，任何归因都算不出分')
 
   return sheet.rows
     .map((row, index) => {
@@ -105,7 +121,7 @@ function collectEvidences(sheet: SheetData | undefined) {
 
 /** ⑤e 分级规则：只产出等级与严重度 */
 function collectGradingRules(sheet: SheetData | undefined, module: ModuleId) {
-  if (!sheet) throw new Error('归因库表格缺少"分级规则"Sheet')
+  if (!sheet) throw new Error('归因库表格缺少「⑤e 分级规则」Sheet；至少需要一条不带触发条件的兜底规则')
 
   return sheet.rows
     .map((row, index) => {
@@ -168,7 +184,7 @@ function collectCrisis(sheet: SheetData | undefined) {
   return undefined
 }
 
-/** V2: 从 ⑥ 归因-红线熔断 提取 redLines */
+/** 从 ⑥ 归因-红线熔断 提取 redLines */
 function collectRedLines(sheet: SheetData | undefined, module: ModuleId) {
   if (!sheet) return []
   return sheet.rows
@@ -207,9 +223,11 @@ export function parseAttributionFile(filePath: string, module: ModuleId): Attrib
 
   // V3 Sheet 名检测。归因项/证据规则/分级规则必须分开，先匹配更具体的名字。
   const computedSheet = findSheet(sheets, [/⑤b|计算变量/, /变量/, /computed/i])
-  const attributionItemSheet = findSheet(sheets, [/⑤c|归因项/, /归因清单/, /attribution[-_ ]?item/i])
-  const evidenceSheet = findSheet(sheets, [/⑤d|证据规则/, /证据/, /evidence/i])
-  const gradingSheet = findSheet(sheets, [/⑤e|分级规则/, /分级/, /grading/i])
+  // 只按 sheet 的实义名匹配，不能用 ⑤c/⑤d/⑤e 这类序号前缀——
+  // v2 的「⑤c 归因-分级规则」会被 /⑤c/ 命中而被误当成归因项表。
+  const attributionItemSheet = findSheet(sheets, [/归因项/, /归因清单/, /attribution[-_ ]?item/i])
+  const evidenceSheet = findSheet(sheets, [/证据规则/, /证据/, /evidence/i])
+  const gradingSheet = findSheet(sheets, [/分级规则/, /grading/i])
   const actionSheet = findSheet(sheets, [/行动/, /action/i])
   const toolSheet = findSheet(sheets, [/提示工具/, /内置工具/, /tool/i])
   const crisisSheet = findSheet(sheets, [/危机/, /crisis/i])
@@ -219,7 +237,7 @@ export function parseAttributionFile(filePath: string, module: ModuleId): Attrib
     module,
     version: collectVersion(sheets),
     computed: collectComputed(computedSheet),
-    attributionItems: collectAttributionItems(attributionItemSheet, module),
+    attributionItems: collectAttributionItems(attributionItemSheet, module, sheets),
     evidences: collectEvidences(evidenceSheet),
     gradingRules: collectGradingRules(gradingSheet, module),
     actions: collectActions(actionSheet),

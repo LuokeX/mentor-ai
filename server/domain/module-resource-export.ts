@@ -1,6 +1,9 @@
 /**
- * 将版本的 payload 反向转换为 V2 模板格式的 xlsx buffer。
- * 每个 libraryType 输出对应的 sheet 结构（与导入模板一致）。
+ * 将版本的 payload 反向转换为 V3 模板格式的 xlsx buffer。
+ * 每个 libraryType 输出对应的 sheet 结构（与 business-libraries/templates/三库填写模板_v3.xlsx 一致），
+ * 因此导出的文件可以直接改完再导回来。
+ *
+ * 归因库导出三张 sheet：⑤c 归因项 / ⑤d 证据规则 / ⑤e 分级规则。
  */
 import XLSX from 'xlsx'
 import type { LibraryType, ModuleId } from '../../shared/contracts'

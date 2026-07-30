@@ -116,7 +116,7 @@ interface ImportResult {
   quality?: ImportQualityReport
 }
 
-export async function runImport(task: ImportTask, options: { dryRun?: boolean; publish?: boolean; strictQuality?: boolean } = {}): Promise<ImportResult> {
+export async function runImport(task: ImportTask, options: { dryRun?: boolean; publish?: boolean; strictQuality?: boolean; version?: string } = {}): Promise<ImportResult> {
   const { dryRun = false, publish = false, strictQuality = false } = options
 
   try {
@@ -146,9 +146,12 @@ export async function runImport(task: ImportTask, options: { dryRun?: boolean; p
     if (dryRun) return { task, count, success: true, quality }
 
     const libraryId = await findOrCreateLibrary(task.module, task.type, task.libName, task.notes)
-    const version = (task.type === 'attribution' || task.type === 'keyword_route' || task.type === 'output_template')
-      ? (payload as { version: string }).version || '1.0.0'
-      : '1.0.0'
+    // 显式指定版本号时优先使用。同一个库的版本号不可重复（唯一约束），
+    // 想在保留旧版本的前提下重新导入，用 --version=1.0.1 而不是 --replace 删库。
+    const version = options.version
+      || ((task.type === 'attribution' || task.type === 'keyword_route' || task.type === 'output_template')
+        ? (payload as { version: string }).version || '1.0.0'
+        : '1.0.0')
     const versionId = await createVersion(libraryId, version, payload, task.notes)
     if (publish) await publishVersion(versionId)
     return { task, count, success: true, quality }
@@ -157,7 +160,7 @@ export async function runImport(task: ImportTask, options: { dryRun?: boolean; p
   }
 }
 
-export async function importAll(options: { dryRun?: boolean; publish?: boolean; strictQuality?: boolean; requireComplete?: boolean; includeLegacyRaw?: boolean; module?: string; type?: string; replace?: boolean } = {}) {
+export async function importAll(options: { dryRun?: boolean; publish?: boolean; strictQuality?: boolean; requireComplete?: boolean; includeLegacyRaw?: boolean; module?: string; type?: string; replace?: boolean; version?: string } = {}) {
   let tasks = options.includeLegacyRaw ? LEGACY_RAW_TASKS : buildStandardTasks()
   if (options.module) tasks = tasks.filter(task => task.module === options.module)
   if (options.type) tasks = tasks.filter(task => task.type === options.type)

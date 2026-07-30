@@ -14,9 +14,11 @@ async function main() {
   const includeLegacyRaw = args.includes('--include-legacy-raw')
   const moduleArg = args.find(a => a.startsWith('--module='))
   const typeArg = args.find(a => a.startsWith('--type='))
+  const versionArg = args.find(a => a.startsWith('--version='))
 
   const module = moduleArg ? moduleArg.split('=')[1] : undefined
   const type = typeArg ? typeArg.split('=')[1] : undefined
+  const version = versionArg ? versionArg.split('=')[1] : undefined
 
   if (module) {
     const validModules = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
@@ -34,10 +36,10 @@ async function main() {
   }
 
   console.log('=== 业务数据导入工具 ===')
-  console.log(`Options: dryRun=${dryRun}, publish=${publish}, replace=${replace}, strictQuality=${strictQuality}, requireComplete=${requireComplete}, includeLegacyRaw=${includeLegacyRaw}, module=${module || 'all'}, type=${type || 'all'}`)
+  console.log(`Options: dryRun=${dryRun}, publish=${publish}, replace=${replace}, strictQuality=${strictQuality}, requireComplete=${requireComplete}, includeLegacyRaw=${includeLegacyRaw}, module=${module || 'all'}, type=${type || 'all'}, version=${version || '(payload/1.0.0)'}`)
   console.log()
 
-  const results = await importAll({ dryRun, publish, replace, strictQuality, requireComplete, includeLegacyRaw, module, type })
+  const results = await importAll({ dryRun, publish, replace, strictQuality, requireComplete, includeLegacyRaw, module, type, version })
   if (results.some(result => !result.success)) process.exit(1)
 }
 

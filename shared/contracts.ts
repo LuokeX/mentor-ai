@@ -460,7 +460,12 @@ export const routeDecisionSchema = z.object({
   confidence: z.number().min(0).max(1),
   needsClarification: z.boolean(),
   clarification: z.string().optional(),
-  rationale: z.string().max(500)
+  rationale: z.string().max(500),
+  /**
+   * 命中的关键词路由所关联的量表编码（⑨ 的「关联量表编码」列）。
+   * 分诊只负责把它带出来，是否真的可做由量表门禁判定，不在这里下结论。
+   */
+  suggestedInstrumentCode: z.string().trim().max(200).optional()
 })
 
 export type ModuleId = z.infer<typeof moduleIdSchema>

@@ -1062,7 +1062,9 @@ async function routeWithPublishedKeywords(event: H3Event, text: string, schoolId
     })),
     confidence: clamp(0.55 + (primary.route.routeWeight ?? 0.7) * 0.4, 0.55, 0.95),
     needsClarification: false,
-    rationale: `命中已发布关键词路由「${primary.route.semanticCategory || primary.route.code}」，建议先进入对应模块完成量表评估。`
+    rationale: `命中已发布关键词路由「${primary.route.semanticCategory || primary.route.code}」，建议先进入对应模块完成量表评估。`,
+    // ⑨ 里业务填的「关联量表编码」，一路带到前端，让分诊能直接指向具体量表
+    suggestedInstrumentCode: primary.route.linkedAssessmentCode || undefined
   })
 }
 

@@ -21,6 +21,18 @@ export interface AssessmentDefinition {
   questions: AssessmentQuestion[]
   // V2: 维度定义（从 ④c 量表-维度定义 导入）
   dimensionDefs?: AssessmentDimensionDef[]
+  // ---- 量表编排相关元数据（来自 ③ 量表-清单）----
+  // 运行时这些字段本来就在 versions.payload.instruments 里，这里补上声明，
+  // 供「一个模块多张量表时该做哪张」的判定使用。完整元数据见 contracts.ts 的 AssessmentPayload。
+  shortName?: string
+  /** 是否必做。用于量表列表排序与兜底推荐。 */
+  isRequired?: boolean
+  /** 使用时机，自由文本，展示给教师作参考 */
+  usageTiming?: string
+  /** 前置量表编码。未完成时该量表锁定；留空视为放行。 */
+  prerequisiteCodes?: string[]
+  /** 互斥量表编码。已完成其中任一张时该量表锁定。 */
+  exclusiveCodes?: string[]
 }
 
 const fivePoint: AssessmentOption[] = [

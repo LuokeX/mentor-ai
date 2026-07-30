@@ -549,6 +549,31 @@ function parseAttributionSheets(sheets: SheetData[], module: ModuleId) {
     if (toolTitle && toolContent) tools.push({ title: toolTitle, content: toolContent })
   }
 
+  // v2 结构识别：v2 把归因和分级混在一张「⑤c 归因-分级规则」里，用「主归因」列承载归因。
+  // 直接交给 zod 会抛出 attributionItems too_small 的原始报错，业务完全看不懂，
+  // 所以这里先给一条能照着改的提示。
+  const looksLikeV2 = sheets.some(sheet =>
+    sheet.rows.some(row => Object.keys(row).some(key => key.startsWith('主归因')))
+  )
+  if (!attributionItems.length && looksLikeV2) {
+    throw new Error(
+      '检测到 v2 版归因库结构（「⑤c 归因-分级规则」里带「主归因」列）。'
+      + 'v3 已把它拆成三张 sheet：⑤c 归因项（归因编码/归因名称/权重基数）、'
+      + '⑤d 证据规则（归因编码/依据量表编码/触发条件/证据权重）、'
+      + '⑤e 分级规则（只保留等级与严重度）。'
+      + '请改用 business-libraries/templates/三库填写模板_v3.xlsx 重新填写后再导入。'
+    )
+  }
+  if (!attributionItems.length) {
+    throw new Error('归因库缺少「⑤c 归因项」Sheet 或该 Sheet 没有有效行；请对照 v3 模板补齐归因编码与归因名称。')
+  }
+  if (!evidences.length) {
+    throw new Error('归因库缺少「⑤d 证据规则」Sheet；没有证据规则，任何归因都算不出分。')
+  }
+  if (!gradingRules.length) {
+    throw new Error('归因库缺少「⑤e 分级规则」Sheet；至少需要一条不带触发条件的兜底规则。')
+  }
+
   return attributionConfigSchema.parse({
     module, version, computed, attributionItems, evidences, gradingRules, actions, tools, redLines
   })
