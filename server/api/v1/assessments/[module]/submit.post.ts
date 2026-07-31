@@ -12,10 +12,13 @@ import { extractSourceResourceVersionIds, recordPlanOperationEvent } from '../..
 import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
 import { generateAssessmentReport } from '../../../../integrations/deepseek'
+import { findInvalidAnswers } from '../../../../domain/assessment-answers'
 
 const bodySchema = z.object({
   attemptId: z.string().uuid().optional(),
-  answers: z.record(z.string(), z.number().int().min(1).max(5)),
+  // 取值范围不能写死 1..5，否则 0/1 二值选项组的量表整张不可用。
+  // 实际值域按题目自己的选项集合校验，见 findInvalidAnswers。
+  answers: z.record(z.string(), z.number().int()),
   studentId: z.string().uuid().optional(),
   classId: z.string().uuid().optional(),
   guardianId: z.string().uuid().optional(),
@@ -34,8 +37,13 @@ export default defineEventHandler(async (event) => {
   const resolvedDefinition = await resolveAssessmentDefinition(event, module, user.schoolId, body.instrumentCode)
   const definition = resolvedDefinition.payload
 
-  if (definition.questions.some(question => !body.answers[question.id])) {
-    throw createError({ statusCode: 422, message: '请完成全部题目' })
+  // 不能用 !body.answers[id] 判断：0 是合法分值，会被判成未作答。
+  const invalidAnswers = findInvalidAnswers(definition.questions, body.answers)
+  if (invalidAnswers.length) {
+    throw createError({
+      statusCode: 422,
+      message: `请完成全部题目（缺失或超出选项范围：${invalidAnswers.slice(0, 5).join('、')}）`
+    })
   }
 
   // 上下文验证（学生/班级/家长/对话）
@@ -99,6 +107,20 @@ export default defineEventHandler(async (event) => {
     ? executeRules(attributionConfig, body.answers, definition, { previousConsecutiveLowMeaning })
     : evaluateWithFallback(module, body.answers, { previousConsecutiveLowMeaning })
 
+  // 工具匹配必须排在生成报告之前。
+  // 报告里的「工具处方」取自 result.tools，而 result.tools 是归因库的 config.tools——
+  // v3/v4 导入器根本不填这个字段，恒为空数组。加权匹配的结果如果只写进 plans.tools，
+  // 报告页渲染空数组、方案页因为「空数组也是 truthy」走不到回退分支，两边都看不到工具，
+  //「量表 → 归因 → 工具 → 方案」的最后一环在教师端就是断的。
+  const matchedTools = result.blocked ? [] : await resolveToolsForPlan(event, module, {
+    dimensions: result.dimensions,
+    severity: result.severity,
+    attributions: result.attributions.map(attribution => ({ code: attribution.code, share: attribution.share })),
+    toolTags: result.toolTags,
+    schoolId: user.schoolId
+  })
+  if (matchedTools.length) result.tools = [...result.tools, ...matchedTools]
+
   const report = result.blocked ? null : await generateAssessmentReport(event, {
     schoolId: user.schoolId,
     ownerUserId: user.id,
@@ -111,7 +133,11 @@ export default defineEventHandler(async (event) => {
 
   const [attempt] = body.attemptId
     ? await db.update(schema.assessmentAttempts).set({
-        answers: body.answers, result: presentedResult as unknown as Record<string, unknown>, status: 'submitted', submittedAt: new Date(), updatedAt: new Date()
+        answers: body.answers, result: presentedResult as unknown as Record<string, unknown>,
+        // 必须一并改写量表编码：草稿可能是在另一张量表上起的，不改写会把本次作答
+        // 记成那张量表，导致 completed 状态和跨量表触发条件（PRIOR_*）读错量表。
+        assessmentCode: definition.code, definitionVersion: definition.version,
+        status: 'submitted', submittedAt: new Date(), updatedAt: new Date()
       }).where(and(
         eq(schema.assessmentAttempts.id, body.attemptId),
         eq(schema.assessmentAttempts.ownerUserId, user.id),
@@ -134,14 +160,8 @@ export default defineEventHandler(async (event) => {
     })
     fuse = { eventId: referral.safety.id, referralId: referral.referral.id, crisisGuide: referral.crisisGuide }
   } else {
-    const matchedTools = await resolveToolsForPlan(event, module, {
-      dimensions: result.dimensions,
-      severity: result.severity,
-      attributions: result.attributions.map(attribution => ({ code: attribution.code, share: attribution.share })),
-      toolTags: result.toolTags,
-      schoolId: user.schoolId
-    })
-    const planTools = [...result.tools, ...matchedTools]
+    // result.tools 上面已经并入了 matchedTools，直接用即可，不要再拼一次
+    const planTools = result.tools
     const nextReviewAt = defaultReviewAt()
     const sourceResourceVersionIds = [
       resolvedDefinition.versionId,

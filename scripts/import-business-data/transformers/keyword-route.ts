@@ -20,9 +20,12 @@ function parseStringList(value: string | undefined): string[] | undefined {
  */
 export function parseKeywordRouteFile(filePath: string, moduleCode: ModuleId): KeywordRouteEntry[] {
   const sheets = readXlsxFile(filePath)
+  // 匹配不到就抛错，不能退回 sheets[0]：拿任意一张表当路由表解析出 0 条，
+  // 业务只会看到「导入成功但没数据」，查不出是 sheet 名写错了。
   const routeSheet = sheets.find(s => /⑨|关键词.*路由|路由.*关键词/.test(s.name))
-      || sheets[0]
-  if (!routeSheet) return []
+  if (!routeSheet) {
+    throw new Error(`关键词路由表缺少「⑨ 关键词-路由」Sheet（实际 sheet：${sheets.map(s => s.name).join('、') || '空文件'}）`)
+  }
 
   const entries: KeywordRouteEntry[] = []
 

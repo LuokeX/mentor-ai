@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 
@@ -16,7 +16,9 @@ export default defineEventHandler(async (event) => {
   }).from(schema.plans)
     .where(and(
       eq(schema.plans.ownerUserId, user.id),
-      eq(schema.plans.status, 'in_progress')
+      // 刚提交评估生成的方案是 pending_acceptance，只查 in_progress 的话
+      // 工作台「进行中的方案」横幅对新方案永远不亮——教师提交完就找不到它了。
+      inArray(schema.plans.status, ['pending_acceptance', 'accepted', 'in_progress', 'review_due', 'adjustment_needed'])
     ))
     .orderBy(schema.plans.updatedAt)
     .limit(10)

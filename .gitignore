@@ -11,6 +11,8 @@ test-results
 .DS_Store
 backups/*.sql*
 .understand-anything/
+.claude/
+.cursor/
 infra/certs/*.pem
 infra/certs/*.key
 infra/certs/*.crt

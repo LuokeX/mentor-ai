@@ -1,6 +1,7 @@
 import type { RuleConfig, RuleExecResult, ModuleId, AssessmentDimensionDef, RedLineConfig, AttributionOutcome } from '../../shared/contracts'
 import { assessmentDefinitions } from '../../shared/assessments'
 import type { AssessmentDefinition } from '../../shared/assessments'
+import { findInvalidAnswers } from './assessment-answers'
 
 // ---- 受限表达式求值器 ----
 // tokenize → parse → evaluate
@@ -35,6 +36,15 @@ export function normalizeExpression(expr: string): string {
     .replace(/[，、]/g, ',')
     .replace(/[（]/g, '(')
     .replace(/[）]/g, ')')
+    // 跨量表取值：引用该教师最近一次某张量表的结果。
+    // 必须排在 题[]/维度[]/总分/均分 之前，否则「量表[X].维度[Y]」里的内层写法会先被替换掉。
+    .replace(/量表\s*\[\s*([^\]]+?)\s*\]\s*\.\s*维度\s*\[\s*([^\]]+?)\s*\]/g, "PRIOR_DIM('$1','$2')")
+    .replace(/量表\s*\[\s*([^\]]+?)\s*\]\s*\.\s*题\s*\[\s*([^\]]+?)\s*\]/g, "PRIOR_SCORE('$1','$2')")
+    .replace(/量表\s*\[\s*([^\]]+?)\s*\]\s*\.\s*总分/g, "PRIOR_SUM('$1')")
+    .replace(/量表\s*\[\s*([^\]]+?)\s*\]\s*\.\s*均分/g, "PRIOR_AVG('$1')")
+    .replace(/量表\s*\[\s*([^\]]+?)\s*\]\s*\.\s*等级/g, "PRIOR_LEVEL('$1')")
+    .replace(/量表\s*\[\s*([^\]]+?)\s*\]\s*\.\s*严重度/g, "PRIOR_SEVERITY('$1')")
+    .replace(/量表\s*\[\s*([^\]]+?)\s*\]\s*\.\s*已完成/g, "PRIOR_DONE('$1')")
     // 取值写法
     .replace(/题\s*\[\s*([^\]]+?)\s*\]/g, 'SCORE($1)')
     .replace(/原始\s*\[\s*([^\]]+?)\s*\]/g, 'RAW($1)')
@@ -249,6 +259,22 @@ interface EvalContext {
   ctx: Record<string, number>
   /** 维度均值。班级短板、家校 P×A、学生五类、学习三层的归因规则都建立在维度上。 */
   dimensions: Record<string, number>
+  /**
+   * 该教师最近一次各量表的结果，按量表编码索引。
+   * 只用于 ③ 的「触发条件」——判断第 3 张量表要不要做，得看前两张测出了什么。
+   * 归因和分级规则不读它，那两处只看当前这次作答。
+   */
+  priors?: Record<string, PriorAssessmentResult>
+}
+
+/** 一张量表最近一次作答的结果摘要，供跨量表触发条件使用 */
+export interface PriorAssessmentResult {
+  level: string | null
+  severity: string | null
+  dimensions: Record<string, number>
+  scores: Record<string, number>
+  sum: number
+  avg: number
 }
 
 function evaluate(node: ASTNode, env: EvalContext): number | string | boolean {
@@ -309,8 +335,60 @@ function rankedDimensions(env: EvalContext): Array<[string, number]> {
   return Object.entries(env.dimensions).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
 }
 
+/** 取 PRIOR_* 的字符串字面量参数 */
+function priorArgs(args: ASTNode[], fnName: string, count: number): string[] {
+  if (args.length !== count) throw new Error(`${fnName} expects ${count} argument(s)`)
+  return args.map(arg => {
+    if (arg.type === 'string') return arg.value
+    if (arg.type === 'var') return arg.name
+    throw new Error(`${fnName} expects literal names`)
+  })
+}
+
+/** 取某张量表的历史结果。没做过就抛错——由调用方决定「没做过」算不算命中。 */
+function priorOf(env: EvalContext, code: string, fnName: string): PriorAssessmentResult {
+  const prior = env.priors?.[code]
+  if (!prior) throw new Error(`${fnName}: 量表 '${code}' 尚无已完成的作答`)
+  return prior
+}
+
 function evalBuiltin(name: string, args: ASTNode[], env: EvalContext): number | string {
   switch (name) {
+    // ---- 跨量表取值：读该教师最近一次某量表的结果 ----
+    case 'PRIOR_DONE': {
+      const [code] = priorArgs(args, 'PRIOR_DONE', 1)
+      return env.priors?.[code!] ? 1 : 0
+    }
+    case 'PRIOR_SUM': {
+      const [code] = priorArgs(args, 'PRIOR_SUM', 1)
+      return priorOf(env, code!, 'PRIOR_SUM').sum
+    }
+    case 'PRIOR_AVG': {
+      const [code] = priorArgs(args, 'PRIOR_AVG', 1)
+      return priorOf(env, code!, 'PRIOR_AVG').avg
+    }
+    case 'PRIOR_LEVEL': {
+      const [code] = priorArgs(args, 'PRIOR_LEVEL', 1)
+      return priorOf(env, code!, 'PRIOR_LEVEL').level ?? ''
+    }
+    case 'PRIOR_SEVERITY': {
+      const [code] = priorArgs(args, 'PRIOR_SEVERITY', 1)
+      return priorOf(env, code!, 'PRIOR_SEVERITY').severity ?? ''
+    }
+    case 'PRIOR_DIM': {
+      const [code, dimension] = priorArgs(args, 'PRIOR_DIM', 2)
+      const prior = priorOf(env, code!, 'PRIOR_DIM')
+      const value = prior.dimensions[dimension!]
+      if (value === undefined) throw new Error(`PRIOR_DIM: 量表 '${code}' 没有维度 '${dimension}'`)
+      return value
+    }
+    case 'PRIOR_SCORE': {
+      const [code, questionId] = priorArgs(args, 'PRIOR_SCORE', 2)
+      const prior = priorOf(env, code!, 'PRIOR_SCORE')
+      const value = prior.scores[questionId!]
+      if (value === undefined) throw new Error(`PRIOR_SCORE: 量表 '${code}' 没有题号 '${questionId}'`)
+      return value
+    }
     case 'SUM': {
       // SUM(scores) — 参数必须是标识符 "scores"
       const arg0 = args[0]
@@ -470,17 +548,11 @@ export function executeRules(
     score: reverseScore(q, Number(answers[q.id] ?? NaN))
   }))
 
-  // 合法作答的判断必须基于题目自己的选项集合。写死 1..5 会让 ④b 里用
-  // 0/1 二值选项组（如「否（未命中）=0 / 是（已命中）=1」）的量表整张不可用：
-  // 教师全选「否」会被判成没作答。
-  const unanswered = definition.questions.filter(q => {
-    const raw = Number(answers[q.id] ?? NaN)
-    if (!Number.isFinite(raw)) return true
-    const allowed = (q.options || []).map(option => option.value)
-    return allowed.length ? !allowed.includes(raw) : raw < 1 || raw > 5
-  })
+  // 合法作答的判断基于题目自己的选项集合，实现见 assessment-answers.ts。
+  // API 层（submit / draft）必须复用同一份判定，否则会出现「前端能提交、引擎算不出」的错位。
+  const unanswered = findInvalidAnswers(definition.questions, answers)
   if (unanswered.length) {
-    throw new Error(`所有题目都必须作答（缺失或超出选项范围：${unanswered.slice(0, 5).map(q => q.id).join('、')}）`)
+    throw new Error(`所有题目都必须作答（缺失或超出选项范围：${unanswered.slice(0, 5).join('、')}）`)
   }
 
   // 2. 计算维度（V2：优先使用 dimensionDefs）
@@ -550,6 +622,7 @@ export function executeRules(
         code,
         name: attributionItem.name,
         toolTags: attributionItem.toolTags || [],
+        description: attributionItem.description,
         suggestedAction: attributionItem.suggestedAction,
         rawScore: Number((bucket.rawScore * attributionItem.baseWeight).toFixed(4)),
         reasons: bucket.reasons,
@@ -578,7 +651,9 @@ export function executeRules(
     rank: entry.rank,
     strength: entry.rank === 0 ? 'primary' : entry.rank < scoring.secondaryRankCutoff ? 'secondary' : 'reference',
     reasons: entry.reasons,
-    evidenceCodes: entry.evidenceCodes
+    evidenceCodes: entry.evidenceCodes,
+    description: entry.description,
+    suggestedAction: entry.suggestedAction
   }))
 
   // 5. 分级：与归因解耦，只产出等级与严重度。同样按当前量表过滤，未标注量表的视为模块通用。
@@ -654,7 +729,62 @@ export function executeRules(
     ),
     actions,
     tools: config.tools,
+    escalationTarget: matchedGrading.escalationTarget || undefined,
     matchedRedLines: matchedRedLines.length > 0 ? matchedRedLines : undefined
+  }
+}
+
+/**
+ * 只做语法检查，不求值。用于导入期校验：表达式写错要在导入时报出来，
+ * 而不是等到运行时被当作「条件未满足」静默吞掉。
+ */
+export function checkExpressionSyntax(expr: string): { ok: boolean, error?: string } {
+  if (!expr?.trim()) return { ok: true }
+  try {
+    new Parser(tokenize(normalizeExpression(expr))).parse()
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: (error as Error).message }
+  }
+}
+
+/** 提取触发条件里引用的量表编码，供交叉校验检查它们是否存在 */
+export function extractReferencedInstrumentCodes(expr: string): string[] {
+  if (!expr?.trim()) return []
+  const codes = new Set<string>()
+  for (const match of expr.matchAll(/量表\s*\[\s*([^\]]+?)\s*\]/g)) {
+    const code = match[1]?.trim()
+    if (code) codes.add(code)
+  }
+  return [...codes]
+}
+
+/**
+ * 求值 ③ 量表-清单 的「触发条件」。
+ *
+ * 与归因/分级条件的区别：它只看该教师的历史作答（跨量表），不看当前这次作答，
+ * 因为要回答的是「这张量表现在需不需要做」，此时教师还没开始答。
+ *
+ * 语法示例：
+ *   量表[SG_FIVE_Q].总分 >= 17
+ *   量表[SG_FIVE_Q].维度[SG_EMOTION] >= 4 或 量表[SG_FIVE_Q].等级 == 'orange'
+ *   量表[HS_QUICK].已完成 == 1
+ *
+ * 引用的量表尚无作答时求值会抛错，此处按「条件未满足」处理——
+ * 前置关系由「前置量表编码」表达，触发条件不该越俎代庖去锁人。
+ */
+export function evaluateTriggerCondition(
+  condition: string,
+  priors: Record<string, PriorAssessmentResult>
+): { met: boolean, error?: string } {
+  if (!condition?.trim()) return { met: true }
+  const env: EvalContext = { vars: {}, items: [], ctx: {}, dimensions: {}, priors }
+  try {
+    const tokens = tokenize(normalizeExpression(condition))
+    const ast = new Parser(tokens).parse()
+    return { met: Boolean(evaluate(ast, env)) }
+  } catch (error) {
+    return { met: false, error: (error as Error).message }
   }
 }
 

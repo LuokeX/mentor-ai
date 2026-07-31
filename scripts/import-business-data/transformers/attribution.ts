@@ -68,7 +68,7 @@ function collectAttributionItems(sheet: SheetData | undefined, module: ModuleId,
       throw new Error(
         '检测到 v2 版归因库结构（「⑤c 归因-分级规则」里带「主归因」列）。'
         + 'v3 已拆成 ⑤c 归因项 / ⑤d 证据规则 / ⑤e 分级规则三张 sheet，'
-        + '请改用 business-libraries/templates/三库填写模板_v3.xlsx 重新填写。'
+        + '请改用 business-libraries/templates/三库填写模板_v4.xlsx 重新填写。'
       )
     }
     throw new Error('归因库表格缺少「⑤c 归因项」Sheet')

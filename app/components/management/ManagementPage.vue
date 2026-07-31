@@ -11,6 +11,7 @@ const route = useRoute()
 // 除「总览」外，每项 label 必须与目标页面的 title 一致，否则点进去标题会“变名字”。
 const informationNav = [
   { label: '总览', to: '/information', icon: 'i-lucide-layout-dashboard' },
+  { label: '方案', to: '/information/plans', icon: 'i-lucide-clipboard-check' },
   { label: '负责班级', to: '/information/classes', icon: 'i-lucide-school' },
   { label: '我负责的学生', to: '/information/students', icon: 'i-lucide-users' },
   { label: '关联家长', to: '/information/guardians', icon: 'i-lucide-user-round' },

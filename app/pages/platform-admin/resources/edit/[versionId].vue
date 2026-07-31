@@ -27,6 +27,13 @@ const moduleOptions = [
 const schoolSectionOptions = ['all', 'primary', 'junior', 'senior', 'repeat']
 const triggerMethodOptions = ['manual', 'auto', 'scheduled']
 const frequencyOptions = ['once', 'daily', 'weekly', 'monthly', 'per_case', 'semester']
+const instrumentRoleOptions = [
+  { label: '未指定', value: '' },
+  { label: '入口筛查', value: 'screening' },
+  { label: '深度诊断', value: 'deep_dive' },
+  { label: '专项/情境', value: 'situational' },
+  { label: '红线检查', value: 'red_line' }
+]
 const visibilityOptions = ['teacher_only', 'teacher_and_student', 'psychologist']
 const calcMethodOptions = ['mean', 'sum', 'weighted', 'count']
 /** 严重度取值必须与工具库一致，这是分级规则与工具能咬合的唯一键 */
@@ -183,12 +190,15 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
         triggerMethod: instrument.triggerMethod || 'manual',
         frequency: instrument.frequency || 'once',
         isRequired: Boolean(instrument.isRequired),
+        instrumentRole: instrument.instrumentRole || '',
         timeLimitMinutes: toNumber(instrument.timeLimitMinutes),
         minQuestions: toNumber(instrument.minQuestions),
         usageTiming: instrument.usageTiming || '',
         reAssessmentIntervalDays: toNumber(instrument.reAssessmentIntervalDays),
         prerequisiteCodesText: listText(instrument.prerequisiteCodes),
         exclusiveCodesText: listText(instrument.exclusiveCodes),
+        triggerCondition: instrument.triggerCondition || '',
+        triggerConditionNote: instrument.triggerConditionNote || '',
         // V2 信效度与元数据
         resultVisibility: instrument.resultVisibility || 'teacher_only',
         responsibleRole: instrument.responsibleRole || '',
@@ -433,12 +443,15 @@ function buildVisualPayload() {
         triggerMethod: instrument.triggerMethod || undefined,
         frequency: instrument.frequency || undefined,
         isRequired: instrument.isRequired || undefined,
+        instrumentRole: instrument.instrumentRole || undefined,
         timeLimitMinutes: toNumber(instrument.timeLimitMinutes) || undefined,
         minQuestions: toNumber(instrument.minQuestions) || undefined,
         usageTiming: instrument.usageTiming || undefined,
         reAssessmentIntervalDays: toNumber(instrument.reAssessmentIntervalDays) || undefined,
         prerequisiteCodes: splitList(instrument.prerequisiteCodesText).length ? splitList(instrument.prerequisiteCodesText) : undefined,
         exclusiveCodes: splitList(instrument.exclusiveCodesText).length ? splitList(instrument.exclusiveCodesText) : undefined,
+        triggerCondition: instrument.triggerCondition || undefined,
+        triggerConditionNote: instrument.triggerConditionNote || undefined,
         resultVisibility: instrument.resultVisibility || undefined,
         responsibleRole: instrument.responsibleRole || undefined,
         dataSensitivity: instrument.dataSensitivity || undefined,
@@ -749,6 +762,7 @@ function addInstrument() {
     applicableSchoolSection: '', targetAudience: '', formType: '', triggerMethod: 'manual',
     frequency: 'once', isRequired: false, timeLimitMinutes: 0, minQuestions: 0,
     usageTiming: '', reAssessmentIntervalDays: 0, prerequisiteCodesText: '', exclusiveCodesText: '',
+    instrumentRole: '', triggerCondition: '', triggerConditionNote: '',
     resultVisibility: 'teacher_only', responsibleRole: '', dataSensitivity: '', sourceType: '',
     externalAuthorizationNote: '', sourceRef: '', normReference: '', reliabilityNote: '',
     validityNote: '', privacyNotice: '', applicabilityPreconditions: '', contraindications: '',
@@ -1052,6 +1066,11 @@ function inlineInput(model: any, key: string) {
                 <UFormField label="重评间隔天数"><UInput v-bind="inlineInput(instrument, 'reAssessmentIntervalDays')" type="number" size="sm" /></UFormField>
                 <UFormField label="前置量表编码"><UInput v-bind="inlineInput(instrument, 'prerequisiteCodesText')" size="sm" /></UFormField>
                 <UFormField label="互斥量表编码"><UInput v-bind="inlineInput(instrument, 'exclusiveCodesText')" size="sm" /></UFormField>
+                <UFormField label="量表角色">
+                  <USelect v-bind="inlineInput(instrument, 'instrumentRole')" :items="instrumentRoleOptions" size="sm" />
+                </UFormField>
+                <UFormField label="触发条件"><UInput v-bind="inlineInput(instrument, 'triggerCondition')" size="sm" placeholder="量表[X].总分 >= 17" /></UFormField>
+                <UFormField label="触发条件说明"><UInput v-bind="inlineInput(instrument, 'triggerConditionNote')" size="sm" /></UFormField>
                 <UFormField label="是否必做">
                   <UCheckbox v-bind="inlineInput(instrument, 'isRequired')" />
                 </UFormField>

@@ -5,7 +5,11 @@ import {
   toolLibraryPayloadSchema,
   outputTemplateLibraryPayloadSchema,
   keywordRouteLibraryPayloadSchema,
+  instrumentRoleSchema,
+  INSTRUMENT_ROLE_LABELS,
+  OUTPUT_TEMPLATE_PLACEHOLDERS,
   type AttributionConfig,
+  type InstrumentRole,
   type LibraryType,
   type ModuleId
 } from '../../shared/contracts'
@@ -150,6 +154,59 @@ export function validateModuleResourcePayload(input: {
       }
       if (instrument.frequency && !['once', 'daily', 'weekly', 'monthly', 'per_case', 'semester'].includes(String(instrument.frequency))) {
         add('warning', `frequency 值无效：${instrument.frequency}`, `instruments.${index}.frequency`)
+      }
+      if (instrument.instrumentRole && !instrumentRoleSchema.safeParse(instrument.instrumentRole).success) {
+        // 提示语要给规范码：这个字段存的是 screening/deep_dive/…，
+        // 只列中文标签会让人照着填「入口筛查」然后一直报同一个错。
+        // xlsx 导入会自动把中文归一化，走到这里的只可能是 JSON 直传或手改 payload。
+        add('error',
+          `量表角色值无效：${instrument.instrumentRole}（可选：`
+          + Object.entries(INSTRUMENT_ROLE_LABELS).map(([code, label]) => `${code}（${label}）`).join(' / ')
+          + '；xlsx 里填中文即可，系统会自动转换）',
+          `instruments.${index}.instrumentRole`)
+      }
+    }
+
+    // ③d 编排自检：只在业务开始填「量表角色」后启用。
+    // 存量库没有角色列，硬校验会把它们全部挡在导入门外，所以先给提示。
+    const roleOf = (instrument: Record<string, unknown>) =>
+      instrumentRoleSchema.safeParse(instrument.instrumentRole).success
+        ? instrument.instrumentRole as InstrumentRole
+        : undefined
+    const withRoles = instruments
+      .map((instrument, index) => ({ instrument, index, role: roleOf(instrument) }))
+      .filter(item => item.role)
+    if (!withRoles.length) {
+      if (instruments.length > 1) {
+        add('warning', '该模块有多张量表但未填「量表角色」；建议按 ③b 标注入口筛查/深度诊断/专项情境，否则教师端只能平铺展示，编排纪律无法自动检查')
+      }
+    } else {
+      const screenings = withRoles.filter(item => item.role === 'screening')
+      if (!screenings.length) {
+        add('error', '已填量表角色但没有任何一张「入口筛查」；每模块需要恰好一张入口筛查作为教师进入模块的第一张量表')
+      }
+      if (screenings.length > 1) {
+        add('error', `「入口筛查」超过一张：${screenings.map(item => String(item.instrument.code || item.index)).join('、')}；入口筛查唯一，教师进模块才知道从哪开始`)
+      }
+      for (const item of withRoles) {
+        const code = String(item.instrument.code || item.instrument.instrumentCode || item.index)
+        const isRequired = item.instrument.isRequired === true
+        const hasTrigger = Boolean(String(item.instrument.triggerCondition || '').trim())
+        const hasPrerequisites = Array.isArray(item.instrument.prerequisiteCodes) && item.instrument.prerequisiteCodes.length > 0
+        if (item.role === 'screening') {
+          if (!isRequired) add('warning', `入口筛查量表 ${code} 未标「是否必做=是」；入口筛查应是模块内唯一必做量表`, `instruments.${item.index}.isRequired`)
+          continue
+        }
+        // 非入口量表：触发条件是「不被滥用也不被闲置」的唯一闸门
+        if (!hasTrigger) {
+          add('error', `${INSTRUMENT_ROLE_LABELS[item.role!]}量表 ${code} 未填「触发条件」；非入口量表没有触发条件，要么人人做一遍，要么永远没人做`, `instruments.${item.index}.triggerCondition`)
+        }
+        if (isRequired) {
+          add('warning', `${INSTRUMENT_ROLE_LABELS[item.role!]}量表 ${code} 标了「是否必做=是」；必做标记只应给入口筛查`, `instruments.${item.index}.isRequired`)
+        }
+        if ((item.role === 'deep_dive' || item.role === 'red_line') && !hasPrerequisites) {
+          add('warning', `${INSTRUMENT_ROLE_LABELS[item.role!]}量表 ${code} 未填「前置量表编码」；教师可能在没有基线结果的情况下直接做这张`, `instruments.${item.index}.prerequisiteCodes`)
+        }
       }
     }
   }
@@ -316,12 +373,20 @@ export function validateModuleResourcePayload(input: {
     } else {
       const codes = new Set<string>()
       const levels = new Set<string>()
+      const allowedPlaceholders = new Set<string>(OUTPUT_TEMPLATE_PLACEHOLDERS)
       for (const template of parsed.data.templates) {
         if (codes.has(template.code)) add('error', `模板编码重复：${template.code}`)
         codes.add(template.code)
         levels.add(template.attributionLevel)
         if (template.module !== input.module) {
           add('warning', `模板 ${template.code} 的 module 与资源库不一致`)
+        }
+        // 占位符白名单：渲染器对未知占位符静默置空，必须在导入期拦下（S16 编码都能引用）
+        for (const match of template.content.matchAll(/\$\{([^}]+)\}/g)) {
+          const key = (match[1] || '').trim()
+          if (!allowedPlaceholders.has(key)) {
+            add('error', `模板 ${template.code} 使用了未注册的占位符 \${${key}}，渲染时会被静默置空；可用占位符：${OUTPUT_TEMPLATE_PLACEHOLDERS.join('、')}`, `templates.${template.code}.content`)
+          }
         }
       }
       if (!levels.size) {

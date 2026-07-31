@@ -59,6 +59,12 @@ const selfGrowth = {
       code: 'SG_HERO_AS', title: '教师心理资本与状态深度评估', shortName: 'HERO深评', optionGroup: AGREE_5,
       description: '基于 HERO 心理资本框架，用于状态五问提示需支持后的深度评估。',
       minutes: 8, frequency: 'per_case', required: false,
+      // 递进关系：必须先完成速评。前置未完成时该量表在教师端置灰并提示。
+      prerequisiteCodes: ['SG_FIVE_Q'],
+      // 阈值触发：速评总分达到「需支持」档位（>=17，对应 orange）才建议做深度评估。
+      // 达不到不禁止，只是标为「当前不需要做」，教师仍可手动选择。
+      triggerCondition: '量表[SG_FIVE_Q].总分 >= 17',
+      triggerConditionNote: '状态五问总分达到需支持档位（17 分及以上）时建议做深度评估',
       dimensions: [
         { code: 'SG_HOPE', name: '希望', questionIds: ['h1', 'h2'], high: '对目标路径有清晰规划', low: '看不到可行路径' },
         { code: 'SG_EFFICACY', name: '效能信心', questionIds: ['e1', 'e2'], high: '相信自己能应对挑战', low: '对自身能力持续怀疑' },
@@ -136,6 +142,12 @@ const selfGrowth = {
       '出现需要关注的波动，建议做针对性调整。', '连续两次黄色', '年级组长', '30天后复评'],
     ['SG_GRADE_BLUE', 'SG_FIVE_Q', 50, '状态总分 >= 10', 'blue', '轻微波动', 'low', false,
       '存在轻微波动，保持现有节奏并留意变化即可。', '复评转为黄色或以上', '年级组长', '90天后复评'],
+    ['SG_GRADE_DEEP_RED', 'SG_HERO_AS', 15, '均分 >= 4', 'red', '需关注', 'high', false,
+      '心理资本多个维度处于低位，建议本周内安排一次支持性沟通。', '连续两次深评仍为红色', '年级组长', '14天后复评'],
+    ['SG_GRADE_DEEP_YELLOW', 'SG_HERO_AS', 25, '均分 >= 3', 'yellow', '关注', 'medium', false,
+      '心理资本出现波动，建议做针对性调整。', '连续两次深评均分未下降', '年级组长', '30天后复评'],
+    ['SG_GRADE_DEEP_BLUE', 'SG_HERO_AS', 35, '均分 >= 2', 'blue', '轻微波动', 'low', false,
+      '心理资本整体尚可，留意变化即可。', '', '', ''],
     ['SG_GRADE_GREEN', '', 999, '', 'green', '状态良好', 'low', false,
       '当前状态整体稳定，保持现有节奏。', '', '', '']
   ],
@@ -253,6 +265,9 @@ const classSystem = {
     },
     {
       code: 'CS_ENERGY', title: '班级能量场问卷', shortName: '能量场', optionGroup: AGREE_5,
+      prerequisiteCodes: ['CS_FIVE_SYS'],
+      triggerCondition: "量表[CS_FIVE_SYS].均分 >= 3.2 或 量表[CS_FIVE_SYS].维度[CS_RELATION] >= 3.5",
+      triggerConditionNote: '五大系统整体偏弱、或师生关系维度突出时，再往下测班级能量场',
       description: '教师端观察问卷，与五系统速评交叉验证，用于判断班级氛围的稳定性。',
       minutes: 4, frequency: 'per_case', required: false,
       dimensions: [
@@ -318,6 +333,12 @@ const classSystem = {
       '班级处于规范期，重点是把薄弱系统补成可重复执行的机制。', '连续两次规范期', '年级组长', '30天后复评'],
     ['CS_GRADE_OPERATING', 'CS_FIVE_SYS', 30, '系统均分 >= 2.4', 'operating', '运行期', 'medium', false,
       '班级基本能够自主运行，可以聚焦单个子系统做精细建设。', '复评退回规范期或生存期', '年级组长', '60天后复评'],
+    ['CS_GRADE_ENERGY_SURVIVAL', 'CS_ENERGY', 15, '均分 >= 4', 'survival', '生存期', 'crisis', false,
+      '能量场问卷显示班级秩序高度依赖教师在场，先稳住秩序再谈建设。', '连续两次仍为生存期', '年级组长', '14天后复评'],
+    ['CS_GRADE_ENERGY_NORMING', 'CS_ENERGY', 25, '均分 >= 3', 'norming', '规范期', 'high', false,
+      '班级能量场存在明显薄弱环节，重点是补成可重复执行的机制。', '连续两次仍为规范期', '年级组长', '30天后复评'],
+    ['CS_GRADE_ENERGY_OPERATING', 'CS_ENERGY', 35, '均分 >= 2', 'operating', '运行期', 'medium', false,
+      '班级能量场基本稳定，可聚焦单个环节做精细建设。', '', '', ''],
     ['CS_GRADE_MATURE', '', 999, '', 'mature', '成熟期', 'low', false,
       '班级系统运行成熟，建议把已有经验沉淀成可交接的班级手册。', '复评退回运行期以下', '年级组长', '90天后复评']
   ],
@@ -424,6 +445,9 @@ const homeSchool = {
     },
     {
       code: 'HS_PARENT_TYPE', title: '家长分型与沟通策略评估', shortName: '家长分型', optionGroup: AGREE_5,
+      prerequisiteCodes: ['HS_QUICK'],
+      triggerCondition: "量表[HS_QUICK].维度[HS_ATTITUDE] >= 3 或 量表[HS_QUICK].均分 >= 3.2",
+      triggerConditionNote: '沟通态度维度偏高时才需要判断家长类型，否则不用做',
       description: '在双维速查提示需要重点沟通后使用，用于判断家长互动模式并匹配沟通策略。',
       minutes: 6, frequency: 'per_case', required: false,
       dimensions: [
@@ -494,6 +518,12 @@ const homeSchool = {
       '沟通存在明显阻力，建议先稳住情绪和事实边界，再决定沟通节奏。', '连续两次 C 级', '年级组长', '14天后复评'],
     ['HS_GRADE_B', 'HS_QUICK', 40, '风险总分 >= 18', 'B', 'B 级需铺垫', 'medium', false,
       '沟通前需要做一定铺垫，重点是先修复关系容器。', '复评升级到 C 级或以上', '年级组长', '30天后复评'],
+    ['HS_GRADE_TYPE_D', 'HS_PARENT_TYPE', 15, '均分 >= 4', 'D', 'D 级高冲突', 'high', false,
+      '家长分型显示焦虑或控制倾向偏高、信任基础薄弱，建议由年级组长陪同沟通。', '连续两次 D 级', '年级组长', '7天后复评'],
+    ['HS_GRADE_TYPE_C', 'HS_PARENT_TYPE', 25, '均分 >= 3', 'C', 'C 级需谨慎', 'high', false,
+      '家长分型提示沟通存在明显阻力，先稳住情绪和事实边界再决定节奏。', '连续两次 C 级', '年级组长', '14天后复评'],
+    ['HS_GRADE_TYPE_B', 'HS_PARENT_TYPE', 35, '均分 >= 2', 'B', 'B 级需铺垫', 'medium', false,
+      '家长分型提示沟通前需要一定铺垫，重点是先修复关系容器。', '', '', ''],
     ['HS_GRADE_A', '', 999, '', 'A', 'A 级常规沟通', 'low', false,
       '家校关系状况良好，可按常规节奏沟通。', '', '', '']
   ],
@@ -617,6 +647,9 @@ const studentCase = {
     },
     {
       code: 'SC_EBRCA', title: 'EBRCA 结构化观察记录', shortName: 'EBRCA', optionGroup: AGREE_5,
+      prerequisiteCodes: ['SC_FIVE_CAT'],
+      triggerCondition: "量表[SC_FIVE_CAT].均分 >= 3.2 或 量表[SC_FIVE_CAT].维度[SC_EMOTION] >= 3.5",
+      triggerConditionNote: '五类问题整体偏重、或情绪维度突出时，再做 EBRCA 深度归因',
       description: '在五类筛查提示需要深入了解后使用，按事件—行为—结果—诱因—已尝试支持做结构化观察。',
       minutes: 8, frequency: 'per_case', required: false,
       dimensions: [
@@ -681,6 +714,10 @@ const studentCase = {
       '多个维度同时处于高位，已达到专业会商层级，请整理材料并启动转介。', '', '心理专员', ''],
     ['SC_GRADE_L2', 'SC_FIVE_CAT', 20, '筛查总分 >= 38', 'L2', 'L2 年级协同', 'high', false,
       '问题已超出单个教师可独立处理的范围，建议启动年级协同。', '连续两次 L2', '年级组长', '14天后复评'],
+    ['SC_GRADE_EBRCA_L3', 'SC_EBRCA', 15, '均分 >= 4', 'L3', 'L3 专业会商', 'crisis', true,
+      '结构化观察显示功能影响明显且既有支持无效，已达专业会商层级。', '', '心理专员', ''],
+    ['SC_GRADE_EBRCA_L2', 'SC_EBRCA', 25, '均分 >= 3', 'L2', 'L2 年级协同', 'high', false,
+      '结构化观察显示需要年级协同，建议整理材料后共同制定支持方案。', '连续两次 L2', '年级组长', '14天后复评'],
     ['SC_GRADE_L1', '', 999, '', 'L1', 'L1 教师支持', 'medium', false,
       '当前可由教师通过结构化观察和低压力谈话提供支持。', '复评升级到 L2 或以上', '年级组长', '30天后复评']
   ],
@@ -788,6 +825,9 @@ const learningProblem = {
     },
     {
       code: 'LP_MOTIVATION', title: '学习动机与学业情绪评估', shortName: '动机情绪', optionGroup: AGREE_5,
+      prerequisiteCodes: ['LP_THREE_LAYER'],
+      triggerCondition: "量表[LP_THREE_LAYER].维度[LP_RELATION] >= 3 或 量表[LP_THREE_LAYER].均分 >= 3.2",
+      triggerConditionNote: '关系层卡点明显或三层整体偏重时，再深入测学习动机',
       description: '在三层诊断提示关系层或行为层为主导后使用，用于区分动机类型和学业情绪状态。',
       minutes: 6, frequency: 'per_case', required: false,
       dimensions: [
@@ -855,6 +895,10 @@ const learningProblem = {
       '多个层面同时受阻，建议整合教师、年级和家庭支持，制定系统干预计划。', '连续两次 LP3 或伴随安全风险', '年级组长', '14天后复评'],
     ['LP_GRADE_LP2', 'LP_THREE_LAYER', 20, '诊断总分 >= 27', 'LP2', 'LP2 深入诊断', 'high', false,
       '需要进一步诊断，建议结合课堂观察做交叉验证后再匹配工具。', '连续两次 LP2', '教研组长', '30天后复评'],
+    ['LP_GRADE_MOT_LP3', 'LP_MOTIVATION', 15, '均分 >= 4', 'LP3', 'LP3 系统干预', 'crisis', false,
+      '动机与学业情绪多项处于高位，建议整合教师、年级和家庭支持。', '连续两次 LP3', '年级组长', '14天后复评'],
+    ['LP_GRADE_MOT_LP2', 'LP_MOTIVATION', 25, '均分 >= 3', 'LP2', 'LP2 深入诊断', 'high', false,
+      '动机或学业情绪存在明显问题，建议结合课堂观察做交叉验证。', '连续两次 LP2', '教研组长', '30天后复评'],
     ['LP_GRADE_LP1', '', 999, '', 'LP1', 'LP1 教师自主支持', 'medium', false,
       '当前可由教师通过教学策略调整自主支持。', '复评升级到 LP2 或以上', '教研组长', '30天后复评']
   ],

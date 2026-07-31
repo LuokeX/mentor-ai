@@ -1,6 +1,6 @@
 # 量表库规范
 
-量表库回答“评估什么、怎么采集”。每个模块至少维护一个可发布量表版本。业务侧统一填写 `business-libraries/templates/三库填写模板_v3.xlsx`，系统导入时转换为发布数据，运行时发布到 `module_resource_libraries.library_type = assessment`。
+量表库回答“评估什么、怎么采集”。每个模块至少维护一个可发布量表版本。业务侧统一填写 `business-libraries/templates/三库填写模板_v4.xlsx`，系统导入时转换为发布数据，运行时发布到 `module_resource_libraries.library_type = assessment`。
 
 ## 必填字段
 

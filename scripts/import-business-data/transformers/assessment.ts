@@ -3,7 +3,8 @@
 // - V2 模板: 固定 Sheet 名 ③ 量表-清单 / ④ 量表-题目 / ④b 量表-选项组 / ④c 量表-维度定义
 // - 旧格式: 每个 Sheet 作为一个独立的量表 instrument
 import type { AssessmentPayload, AssessmentDimensionDef } from '../../../shared/contracts'
-import type { ModuleId } from '../../../shared/contracts'
+import type { ModuleId, InstrumentRole } from '../../../shared/contracts'
+import { parseInstrumentRole } from '../../../shared/contracts'
 import { extractValue, readXlsxFile, type SheetData } from '../xlsx-reader'
 
 export interface AssessmentInstrument {
@@ -27,6 +28,8 @@ export interface AssessmentInstrument {
     options: Array<{ label: string, value: number }>
   }>
   // V2 元数据
+  /** 量表角色（③「量表角色」列）：入口筛查/深度诊断/专项情境/红线检查 */
+  instrumentRole?: InstrumentRole
   shortName?: string
   applicableSchoolSection?: string
   applicableGrades?: number[]
@@ -41,6 +44,8 @@ export interface AssessmentInstrument {
   usageTiming?: string
   reAssessmentIntervalDays?: number
   prerequisiteCodes?: string[]
+  triggerCondition?: string
+  triggerConditionNote?: string
   exclusiveCodes?: string[]
   resultVisibility?: 'teacher_only' | 'teacher_and_student' | 'psychologist'
   responsibleRole?: string
@@ -81,8 +86,9 @@ const defaultAgree = [
 export function parseAssessmentFile(filePath: string, moduleCode: ModuleId): AssessmentInstrument[] {
   const allSheets = readXlsxFile(filePath)
 
-  // 检测 V2 格式：是否有 ③ 量表-清单 或带编号的 Sheet
-  const isV2 = allSheets.some(s => /③|量表-清单/.test(s.name))
+  // 检测标准模板格式：是否有 ③ 量表-清单。
+  // 序号后加字母边界，否则 v4 的 ③a~③d 编排说明页会被误判成量表清单。
+  const isV2 = allSheets.some(s => /③(?![a-zA-Z])|量表-清单/.test(s.name))
 
   if (isV2) {
     return parseAssessmentFileV2(allSheets, moduleCode)
@@ -94,8 +100,8 @@ export function parseAssessmentFile(filePath: string, moduleCode: ModuleId): Ass
 
 /** V2 模板解析：从 ③ 量表-清单 + ④ 量表-题目 + ④b 量表-选项组 + ④c 量表-维度定义 组装 */
 function parseAssessmentFileV2(allSheets: SheetData[], moduleCode: ModuleId): AssessmentInstrument[] {
-  const instrumentSheet = allSheets.find(s => /③|量表-清单/.test(s.name))
-  const questionSheet = allSheets.find(s => /④[^bc]|量表-题目/.test(s.name))
+  const instrumentSheet = allSheets.find(s => /③(?![a-zA-Z])|量表-清单/.test(s.name))
+  const questionSheet = allSheets.find(s => /④(?![a-zA-Z])|量表-题目/.test(s.name))
   const optionSheet = allSheets.find(s => /④b|选项组/.test(s.name))
   const dimensionSheet = allSheets.find(s => /④c|维度定义/.test(s.name))
 
@@ -124,6 +130,7 @@ function parseAssessmentFileV2(allSheets: SheetData[], moduleCode: ModuleId): As
       estimatedMinutes: Number(extractValue(row, ['预计用时分钟', '预计用时', 'estimatedMinutes'])) || Math.max(1, Math.ceil(questions.length * 12 / 60)),
       questions,
       // V2 元数据
+      instrumentRole: parseInstrumentRole(extractValue(row, ['量表角色', 'instrumentRole', 'role'])),
       shortName: extractValue(row, ['量表简称', 'shortName']),
       applicableSchoolSection: extractValue(row, ['适用学部']),
       applicableGrades: parseNumberList(extractValue(row, ['适用年级'])),
@@ -138,6 +145,8 @@ function parseAssessmentFileV2(allSheets: SheetData[], moduleCode: ModuleId): As
       usageTiming: extractValue(row, ['使用时机']),
       reAssessmentIntervalDays: Number(extractValue(row, ['重评间隔天数'])) || undefined,
       prerequisiteCodes: parseStringList(extractValue(row, ['前置量表编码'])),
+      triggerCondition: extractValue(row, ['触发条件']),
+      triggerConditionNote: extractValue(row, ['触发条件说明']),
       exclusiveCodes: parseStringList(extractValue(row, ['互斥量表编码'])),
       resultVisibility: extractValue(row, ['结果可见性']) as AssessmentInstrument['resultVisibility'],
       responsibleRole: extractValue(row, ['责任角色']),
@@ -430,6 +439,7 @@ export function toAssessmentPayload(instrument: AssessmentInstrument, _module: M
       options: q.options,
     })),
     // V2 元数据
+    instrumentRole: instrument.instrumentRole,
     shortName: instrument.shortName,
     applicableSchoolSection: instrument.applicableSchoolSection,
     applicableGrades: instrument.applicableGrades,
@@ -445,6 +455,8 @@ export function toAssessmentPayload(instrument: AssessmentInstrument, _module: M
     reAssessmentIntervalDays: instrument.reAssessmentIntervalDays,
     prerequisiteCodes: instrument.prerequisiteCodes,
     exclusiveCodes: instrument.exclusiveCodes,
+    triggerCondition: instrument.triggerCondition,
+    triggerConditionNote: instrument.triggerConditionNote,
     resultVisibility: instrument.resultVisibility,
     responsibleRole: instrument.responsibleRole,
     dataSensitivity: instrument.dataSensitivity,

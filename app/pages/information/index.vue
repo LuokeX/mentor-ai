@@ -173,9 +173,12 @@ const rateStatus = computed(() => {
       <h2 class="text-lg font-semibold text-gray-900">最近评估</h2>
       <div class="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div class="divide-y divide-gray-50">
-          <div
+          <!-- 整行可点：报告一直存在 assessment_attempts.result.report 里，
+               此前没有任何入口能把它重新打开。 -->
+          <NuxtLink
             v-for="a in data.assessments.slice(0, 5)"
             :key="a.id"
+            :to="`/information/assessments/${a.id}`"
             class="flex items-center justify-between px-5 py-3.5 transition-colors hover:bg-gray-50/50"
           >
             <div>
@@ -191,7 +194,7 @@ const rateStatus = computed(() => {
             >
               {{ a.levelLabel || '—' }}
             </span>
-          </div>
+          </NuxtLink>
         </div>
       </div>
     </div>

@@ -50,7 +50,7 @@ const config: RuleConfig = {
   version: '3.0.0',
   computed: { 均值: 'AVG(scores)' },
   attributionItems: [
-    { code: 'AT_LOAD', name: '负荷过载', module: 'self_growth', baseWeight: 1, toolTags: ['load'], suggestedAction: '先做减法' },
+    { code: 'AT_LOAD', name: '负荷过载', module: 'self_growth', baseWeight: 1, toolTags: ['load'], description: '负荷维度长期处于高位', suggestedAction: '先做减法' },
     { code: 'AT_METHOD', name: '方法不足', module: 'self_growth', baseWeight: 1, toolTags: ['method'], suggestedAction: '补一个最小流程' },
     { code: 'AT_SUPPORT', name: '支持缺失', module: 'self_growth', baseWeight: 2, toolTags: ['support'] }
   ],
@@ -63,7 +63,7 @@ const config: RuleConfig = {
   ],
   gradingRules: [
     { ruleId: 'G_RED', pri: 10, when: '均值 >= 4.5', level: 'red', levelName: '需立即关注', severity: 'crisis', blocked: true },
-    { ruleId: 'G_ORANGE', pri: 20, when: '均值 >= 3.5', level: 'orange', levelName: '需重点支持', severity: 'high', blocked: false },
+    { ruleId: 'G_ORANGE', pri: 20, when: '均值 >= 3.5', level: 'orange', levelName: '需重点支持', severity: 'high', blocked: false, escalationTarget: '年级组长' },
     { ruleId: 'G_DEFAULT', pri: 999, level: 'none', levelName: '状态平稳', severity: 'low', blocked: false }
   ],
   actions: [{ title: '通用行动', detail: '归因项没填建议动作时才用这条', status: 'pending' }],
@@ -211,6 +211,14 @@ describe('executeRules 分级与归因解耦', () => {
     expect(result.matchedRuleIds[0]).toBe('G_ORANGE')
     expect(result.matchedRuleIds).toContain('EV_L1')
     expect(result.matchedRuleIds).toContain('EV_L2')
+  })
+
+  it('透传归因说明/建议动作与分级升级目标，供输出模板占位符使用', () => {
+    const result = executeRules(config, answersA({ q1: 5, q2: 5 }), scaleA)
+    expect(result.attributions[0]!.code).toBe('AT_LOAD')
+    expect(result.attributions[0]!.description).toBe('负荷维度长期处于高位')
+    expect(result.attributions[0]!.suggestedAction).toBe('先做减法')
+    expect(result.escalationTarget).toBe('年级组长')
   })
 })
 

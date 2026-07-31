@@ -1,6 +1,7 @@
 import XLSX from 'xlsx'
 import {
   attributionConfigSchema,
+  parseInstrumentRole,
   type AssessmentDimensionDef,
   type KeywordRouteEntry,
   type LibraryType,
@@ -18,12 +19,16 @@ interface SheetData {
   rows: Record<string, string | undefined>[]
 }
 
+/**
+ * @param diagnostics 可选的收集器。解析走到「不报错但很可能解析错」的兜底分支时
+ *   会往里推一条中文提示，供预检面板展示。不传则这些提示被丢弃，行为与从前一致。
+ */
 export function parseModuleResourceFile(input: {
   module: ModuleId
   libraryType: LibraryType
   filename: string
   contentBase64: string
-}): Record<string, unknown> {
+}, diagnostics?: string[]): Record<string, unknown> {
   const buffer = Buffer.from(input.contentBase64, 'base64')
   if (input.filename.toLowerCase().endsWith('.json')) {
     return JSON.parse(buffer.toString('utf8')) as Record<string, unknown>
@@ -32,17 +37,24 @@ export function parseModuleResourceFile(input: {
     throw new Error('仅支持 .xlsx、.xls 或 .json 文件')
   }
   const sheets = readWorkbook(buffer)
-  if (input.libraryType === 'assessment') return { instruments: parseAssessmentSheets(sheets, input.module) }
+  if (input.libraryType === 'assessment') return { instruments: parseAssessmentSheets(sheets, input.module, diagnostics) }
   if (input.libraryType === 'tool') return { tools: parseToolSheets(sheets) }
   if (input.libraryType === 'keyword_route') return { routes: parseKeywordRouteSheets(sheets, input.module) }
   if (input.libraryType === 'output_template') return { templates: parseOutputTemplateSheets(sheets, input.module) }
   return parseAttributionSheets(sheets, input.module) as unknown as Record<string, unknown>
 }
 
+/**
+ * 纯说明页，永远不含数据，必须在读取阶段就剔除。
+ * 它们是散文而不是表格，一旦漏进来，任何走「逐 sheet 兜底」的解析分支
+ * （assessment 的 legacy、attribution 的 genericRows）都会把整页散文当成业务数据。
+ */
+const GUIDE_SHEET_PATTERN = /使用说明|字段映射|填写总览|严格填写说明|枚举字典|条件写法速查|编排指南|角色说明|路径示意|编排自检/i
+
 function readWorkbook(buffer: Buffer): SheetData[] {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
   return workbook.SheetNames
-    .filter(name => !/使用说明|字段映射/i.test(name))
+    .filter(name => !GUIDE_SHEET_PATTERN.test(name))
     .map((name) => {
       const sheet = workbook.Sheets[name]
       const raw = sheet ? XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: undefined }) : []
@@ -96,12 +108,22 @@ function findSheet(sheets: SheetData[], patterns: RegExp[]) {
   return sheets.find(sheet => patterns.some(pattern => pattern.test(sheet.name)))
 }
 
-function parseAssessmentSheets(sheets: SheetData[], module: ModuleId): AssessmentDefinition[] {
-  const instrumentSheet = findSheet(sheets, [/③|量表-清单/])
-  const questionSheet = findSheet(sheets, [/④(?!b|c)|量表-题目/])
+function parseAssessmentSheets(sheets: SheetData[], module: ModuleId, diagnostics?: string[]): AssessmentDefinition[] {
+  // 序号后必须加字母边界：v4 起 ③a~③d 是编排说明页，裸 /③/ 会把「③a 量表编排指南」
+  // 当成量表清单。findSheet 取第一个匹配，今天靠 sheet 顺序侥幸正确——业务一旦
+  // 只保留说明页而删掉 ③，就会拿散文当表格解析，且不报错。
+  const instrumentSheet = findSheet(sheets, [/③(?![a-zA-Z])|量表-清单/])
+  const questionSheet = findSheet(sheets, [/④(?![a-zA-Z])|量表-题目/])
   if (instrumentSheet && questionSheet) {
     return parseAssessmentSheetsV3(sheets, module, instrumentSheet, questionSheet)
   }
+  // legacy 分支把「每张 sheet 当成一个量表」，对标准模板文件而言基本必然解析错，
+  // 但它不抛错。不留痕的话业务只会看到题目莫名其妙，查不到是模板结构不对。
+  diagnostics?.push(
+    `未找到「③ 量表-清单」或「④ 量表-题目」Sheet（实际 sheet：${sheets.map(sheet => sheet.name).join('、') || '空文件'}），`
+    + '已退回旧版逐 Sheet 解析——每张 sheet 会被当成一个独立量表，结果大概率不是你想要的。'
+    + '请改用 三库填写模板_v4.xlsx 的标准结构。'
+  )
   return parseAssessmentSheetsLegacy(sheets, module)
 }
 
@@ -130,6 +152,7 @@ function parseAssessmentSheetsV3(
         title,
         description: read(row, ['description', '说明', '量表说明']) || `${title}（${questions.length}题）`,
         estimatedMinutes: Number(read(row, ['estimatedMinutes', '预计完成时间', '预计用时分钟'])) || Math.max(1, Math.ceil(questions.length / 5)),
+        instrumentRole: parseInstrumentRole(read(row, ['量表角色', 'instrumentRole', 'role'])),
         shortName: read(row, ['量表简称', 'shortName']),
         applicableSchoolSection: read(row, ['适用学部']),
         applicableGrades: parseNumberList(read(row, ['适用年级'])),
@@ -145,6 +168,8 @@ function parseAssessmentSheetsV3(
         reAssessmentIntervalDays: Number(read(row, ['重评间隔天数'])) || undefined,
         prerequisiteCodes: parseStringList(read(row, ['前置量表编码'])),
         exclusiveCodes: parseStringList(read(row, ['互斥量表编码'])),
+        triggerCondition: read(row, ['触发条件', 'triggerCondition']),
+        triggerConditionNote: read(row, ['触发条件说明', 'triggerConditionNote']),
         resultVisibility: read(row, ['结果可见性']),
         responsibleRole: read(row, ['责任角色']),
         dataSensitivity: read(row, ['数据敏感级']),
@@ -372,8 +397,16 @@ function parseToolSheets(sheets: SheetData[]): ToolRxEntry[] {
       assignIfPresent(tool, 'expectedEffect', read(row, ['expectedEffect', '预期输出或效果', '预期效果', '输出物']))
       assignIfPresent(tool, 'severity', parseSeverity(read(row, ['severity', '严重度分级', '严重度'])))
       assignIfPresent(tool, 'level', read(row, ['level', '适用等级', '等级']))
-      assignIfPresent(tool, 'attributionCode', read(row, ['attributionCode', '对应归因编码', '归因编码']))
-      assignIfPresent(tool, 'attributionCodes', splitList(read(row, ['attributionCodes', '对应归因编码列表', '归因编码列表'])))
+      // 「对应归因编码」列允许分号/逗号分隔多值：第一个进单值字段，全量进列表字段供匹配
+      const attributionRefs = splitList(read(row, ['attributionCode', '对应归因编码', '归因编码']))
+      const attributionListOnly = splitList(read(row, ['attributionCodes', '对应归因编码列表', '归因编码列表']))
+      const mergedAttributionRefs = attributionRefs.length > 1
+        ? attributionRefs
+        : attributionRefs.length === 1 && attributionListOnly.length
+          ? [...new Set([...attributionRefs, ...attributionListOnly])]
+          : attributionRefs.length ? attributionRefs : attributionListOnly
+      assignIfPresent(tool, 'attributionCode', mergedAttributionRefs[0])
+      if (mergedAttributionRefs.length > 1) assignIfPresent(tool, 'attributionCodes', mergedAttributionRefs)
       assignIfPresent(tool, 'attributionLabel', read(row, ['attributionLabel', '对应归因名称', '对应归因']))
       assignIfPresent(tool, 'tags', splitList(read(row, ['tags', '场景标签', '标签'])))
       assignIfPresent(tool, 'toolTags', splitList(read(row, ['toolTags', '工具标签', '匹配标签'])))
@@ -440,7 +473,9 @@ function parseAttributionSheets(sheets: SheetData[], module: ModuleId) {
   let version = '1.0.0'
 
   const computedSheet = findSheet(sheets, [/⑤b|计算变量/])
-  const attributionItemSheet = findSheet(sheets, [/⑤c|归因项/])
+  // 只按实义名匹配，不能用 ⑤c 序号前缀——v2 的「⑤c 归因-分级规则」会被误命中，
+  // 于是 v2 文件走进 v3 解析路径、抽不出归因项，报出的错还指向别处。
+  const attributionItemSheet = findSheet(sheets, [/归因项|归因清单/])
   const evidenceSheet = findSheet(sheets, [/⑤d|证据规则/])
   const gradingSheet = findSheet(sheets, [/⑤e|分级规则/])
   const redLineSheet = findSheet(sheets, [/⑥|红线熔断/])
@@ -561,11 +596,11 @@ function parseAttributionSheets(sheets: SheetData[], module: ModuleId) {
       + 'v3 已把它拆成三张 sheet：⑤c 归因项（归因编码/归因名称/权重基数）、'
       + '⑤d 证据规则（归因编码/依据量表编码/触发条件/证据权重）、'
       + '⑤e 分级规则（只保留等级与严重度）。'
-      + '请改用 business-libraries/templates/三库填写模板_v3.xlsx 重新填写后再导入。'
+      + '请改用 business-libraries/templates/三库填写模板_v4.xlsx 重新填写后再导入。'
     )
   }
   if (!attributionItems.length) {
-    throw new Error('归因库缺少「⑤c 归因项」Sheet 或该 Sheet 没有有效行；请对照 v3 模板补齐归因编码与归因名称。')
+    throw new Error('归因库缺少「⑤c 归因项」Sheet 或该 Sheet 没有有效行；请对照 v4 模板补齐归因编码与归因名称。')
   }
   if (!evidences.length) {
     throw new Error('归因库缺少「⑤d 证据规则」Sheet；没有证据规则，任何归因都算不出分。')

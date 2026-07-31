@@ -6,8 +6,8 @@
 //   node scripts/generate-test-data.mjs               生成并导入到本地 dev server
 //   node scripts/generate-test-data.mjs --type=tool   只处理某一类库
 //
-// 业务内容在 scripts/test-data/modules.mjs，这里只负责按 v3 模板的 sheet 结构落盘。
-// sheet 名必须与 v3 模板一致，否则 transformer 会走回退分支、按 sheet 名猜编码。
+// 业务内容在 scripts/test-data/modules.mjs，这里只负责按 v4 模板的 sheet 结构落盘。
+// sheet 名必须与 v4 模板一致，否则 transformer 会走回退分支、按 sheet 名猜编码。
 
 import XLSX from 'xlsx'
 import { mkdirSync, rmSync } from 'node:fs'
@@ -17,6 +17,9 @@ const BASE_URL = 'http://localhost:3300'
 const ADMIN_EMAIL = 'platform.admin@demo.local'
 const ADMIN_PASSWORD = 'Mentor@2026'
 const BASE_DIR = 'business-libraries/test-data'
+// 版本号在 (library, version) 上有唯一约束，重复导入必须换号。
+// 默认 1.0.0，重跑时用 --version=1.0.1 之类。
+const VERSION = (process.argv.find(a => a.startsWith('--version=')) || '').split('=')[1] || '1.0.0'
 
 const TYPE_LABELS = {
   assessment: '量表库',
@@ -30,9 +33,14 @@ const LIB_TYPES = ['assessment', 'attribution', 'tool', 'keyword_route', 'output
 // ---- 量表库 ③④④b④c ----
 
 function makeAssessmentSheets(m) {
-  const instrumentRows = m.scales.map(s => [
+  // v4 新增的「量表角色」必须填：多量表模块不标角色时教师端只能平铺展示，
+  // 编排纪律也无法自动检查（导入质量校验会因此报警告）。
+  const instrumentRows = m.scales.map((s, index) => [
     s.code, s.title, s.shortName, m.code, 'all', 'teacher', 'self_report',
     'manual', s.frequency, s.required ? '是' : '否', String(s.minutes),
+    s.role || (index === 0 ? '入口筛查' : '深度诊断'),
+    (s.prerequisiteCodes || []).join(','), (s.exclusiveCodes || []).join(','),
+    s.triggerCondition || '', s.triggerConditionNote || '',
     'teacher_only', 'sensitive', 'proprietary', `${m.label}手册v1`, '1.0.0', s.description,
   ])
 
@@ -57,8 +65,9 @@ function makeAssessmentSheets(m) {
   return buildWorkbook({
     '③ 量表-清单': {
       headers: ['量表编码*', '量表名称*', '量表简称', '所属模块*', '适用学部*', '施测对象*', '施测形式*',
-        '触发方式*', '作答频次*', '是否必做*', '预计用时分钟*', '结果可见性*', '数据敏感级*',
-        '来源属性*', '手册出处*', '版本*', '量表说明'],
+        '触发方式*', '作答频次*', '是否必做*', '预计用时分钟*', '量表角色*', '前置量表编码', '互斥量表编码',
+        '触发条件', '触发条件说明',
+        '结果可见性*', '数据敏感级*', '来源属性*', '手册出处*', '版本*', '量表说明'],
       rows: instrumentRows,
     },
     '④ 量表-题目': {
@@ -220,7 +229,7 @@ async function importFile(cookie, module, libraryType, libraryName, workbook) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
     body: JSON.stringify({
-      module, libraryType, scope: 'global', libraryName, version: '1.0.0',
+      module, libraryType, scope: 'global', libraryName, version: VERSION,
       notes: 'v3 三库样例数据 1.0.0',
       filename: `${module}_${libraryType}.xlsx`,
       contentBase64, confirmNoPersonalData: true, publish: true,

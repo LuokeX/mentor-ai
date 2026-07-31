@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { adminAccessRequestSchema, chatMessageSchema, loginRequestSchema, routeDecisionSchema } from '../shared/contracts'
+import { adminAccessRequestSchema, chatMessageSchema, loginRequestSchema, parseInstrumentRole, routeDecisionSchema } from '../shared/contracts'
 import { redactPii } from '../server/integrations/deepseek'
+
+describe('instrument role parsing (③ 量表角色)', () => {
+  it('maps template labels to canonical enums and keeps unknown values visible', () => {
+    expect(parseInstrumentRole('入口筛查')).toBe('screening')
+    expect(parseInstrumentRole('深度诊断')).toBe('deep_dive')
+    expect(parseInstrumentRole('专项/情境')).toBe('situational')
+    expect(parseInstrumentRole('红线检查')).toBe('red_line')
+    expect(parseInstrumentRole('SCREENING')).toBe('screening')
+    expect(parseInstrumentRole('')).toBeUndefined()
+    // 无法识别的值原样保留，由导入校验报错，而不是静默当作没填
+    expect(parseInstrumentRole('入口卷')).toBe('入口卷')
+  })
+})
 
 describe('shared API contracts', () => {
   it('accepts an omitted or empty OTP for roles without MFA', () => {

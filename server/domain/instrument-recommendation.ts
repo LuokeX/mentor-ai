@@ -12,14 +12,17 @@
  */
 import type { H3Event } from 'h3'
 import type { ModuleId } from '../../shared/contracts'
+import { INSTRUMENT_ROLE_LABELS } from '../../shared/contracts'
 import { moduleMeta } from '../../shared/assessments'
 import { schema, useDb } from '../utils/db'
 import { redactPii } from '../integrations/deepseek'
 import {
   fallbackInstrument,
+  filterTeacherVisibleInstruments,
   listInstrumentOptions,
   resolveReachableInstrument,
-  type InstrumentOption
+  type InstrumentOption,
+  type InstrumentRef
 } from './assessment-instruments'
 
 export interface InstrumentRecommendation {
@@ -28,22 +31,49 @@ export interface InstrumentRecommendation {
   instrumentTitle: string | null
   /** 给教师看的一句话理由 */
   rationale: string
-  /** ai = LLM 挑的；redirected = LLM 挑的那张被前置锁住、已改推前置；fallback = 规则兜底 */
-  source: 'ai' | 'redirected' | 'fallback'
+  /**
+   * ai           LLM 挑的，且与业务触发条件不冲突
+   * ai_override  LLM 挑的那张被业务触发条件标为「当前不需要」，或跳过了业务标为「建议做」的那张
+   * redirected   LLM 挑的那张被前置锁住，已改推前置
+   * fallback     规则兜底（无描述、只剩一张可选、或模型不可用）
+   */
+  source: 'ai' | 'ai_override' | 'redirected' | 'fallback'
+  /** LLM 跳过了业务标为「建议做」的那张时，记录它。教师可以据此改选。 */
+  overriddenSuggestion: InstrumentRef | null
+  /** LLM 挑的这张被业务标为「当前不需要做」时为 true */
+  pickedNotNeeded: boolean
   /** 被改推时，原本想推的那张 */
   originalCode: string | null
   options: InstrumentOption[]
 }
 
+/**
+ * 喂给模型的量表清单。
+ *
+ * 关键：必须把业务在 ③ 里用「触发条件」表达的判断一起给模型。
+ * 否则会出现逻辑倒置——DeepSeek 关掉时业务规则生效，开着时反而被忽略。
+ * 确定性规则应该约束 AI，而不是 AI 一开就绕过规则。
+ */
 function describeForPrompt(options: InstrumentOption[]) {
   return options.map(option => ({
     code: option.code,
     title: option.title,
     questionCount: option.questionCount,
     estimatedMinutes: option.estimatedMinutes,
+    role: option.role ? INSTRUMENT_ROLE_LABELS[option.role] : undefined,
     isRequired: option.isRequired,
     usageTiming: option.usageTiming || undefined,
-    description: option.description
+    description: option.description,
+    // 业务侧的确定性判断，由 ③ 的「触发条件」按该教师历史作答算出
+    businessAdvice: option.status === 'suggested'
+      ? '业务规则判定：现在该做这张'
+      : option.status === 'not_needed'
+        ? '业务规则判定：当前还不需要做这张'
+        : option.status === 'completed'
+          ? '该教师已经做过这张'
+          : '无特定条件，随时可做',
+    businessAdviceReason: option.triggerConditionNote || undefined,
+    lastLevel: option.lastLevelName || option.lastLevel || undefined
   }))
 }
 
@@ -55,6 +85,8 @@ function fallbackResult(options: InstrumentOption[], reason: string): Instrument
     rationale: picked ? reason : '当前模块暂无可做的量表，请联系平台管理员检查量表库发布状态。',
     source: 'fallback',
     originalCode: null,
+    overriddenSuggestion: null,
+    pickedNotNeeded: false,
     options
   }
 }
@@ -72,7 +104,8 @@ export async function recommendInstrument(
     sessionId?: string | null
   }
 ): Promise<InstrumentRecommendation> {
-  const options = await listInstrumentOptions(event, input.module, input.user)
+  // 红线检查量表只对教师和 LLM 在「高危阈值已命中」时可见，详见该函数注释
+  const options = filterTeacherVisibleInstruments(await listInstrumentOptions(event, input.module, input.user))
   if (!options.length) return fallbackResult(options, '')
 
   const selectable = options.filter(option => option.status !== 'locked')
@@ -98,6 +131,10 @@ export async function recommendInstrument(
 1. code 必须是清单里已有的量表编码，不得编造。
 2. rationale 面向班主任，说清「为什么先做这张」，不要复述量表名称。
 3. 不做任何诊断性判断，不要提及疾病、障碍等表述。
+4. businessAdvice 是业务方按该教师的历史作答算出的确定性判断，优先级高于你的推测：
+   · 有量表标着「现在该做这张」时，除非教师描述明确指向别的方向，否则就选它；
+   · 标着「当前还不需要做」的量表，只有在教师描述强烈指向它时才选，并在 rationale 里说明理由；
+   · 标着「已经做过」的量表，一般不重复推荐，除非教师明确说要重测。
 
 可选量表清单：${JSON.stringify(describeForPrompt(selectable))}
 
@@ -150,15 +187,31 @@ export async function recommendInstrument(
         rationale: `你的情况更适合做「${resolved.redirectedFrom.title}」，但它需要先完成这张量表。`,
         source: 'redirected',
         originalCode: resolved.redirectedFrom.code,
+        overriddenSuggestion: null,
+        pickedNotNeeded: false,
         options
       }
     }
+
+    // LLM 的选择与业务触发条件冲突时要留痕：要么它挑了业务标为「当前不需要」的，
+    // 要么业务标了「该做这张」而它挑了别的。两种都记成 ai_override，前端会标注出来。
+    const businessSuggestion = options.find(option => option.status === 'suggested') || null
+    const pickedNotNeeded = resolved.instrument.status === 'not_needed'
+    const skippedSuggestion = Boolean(businessSuggestion) && businessSuggestion!.code !== resolved.instrument.code
+    const overridden = pickedNotNeeded || skippedSuggestion
+
     return {
       instrumentCode: resolved.instrument.code,
       instrumentTitle: resolved.instrument.title,
       rationale: rationale || `${moduleMeta[input.module].title}模块建议先完成这张量表。`,
-      source: 'ai',
+      source: overridden ? 'ai_override' : 'ai',
       originalCode: null,
+      // 只在「业务另有建议」时才填，指向业务建议的那张，供教师一键改选。
+      // 之前这里在没有业务建议时错填成了推荐的那张本身，导致提示语说反。
+      overriddenSuggestion: skippedSuggestion && businessSuggestion
+        ? { code: businessSuggestion.code, title: businessSuggestion.title }
+        : null,
+      pickedNotNeeded,
       options
     }
   } catch (error) {

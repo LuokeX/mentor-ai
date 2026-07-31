@@ -7,9 +7,11 @@ import { readXlsxFile, extractValue, type SheetData } from '../xlsx-reader'
  */
 export function parseOutputTemplateFile(filePath: string, moduleCode: ModuleId): OutputTemplateEntry[] {
   const sheets = readXlsxFile(filePath)
+  // 同 keyword-route：匹配不到就抛错，不退回 sheets[0]
   const templateSheet = sheets.find(s => /⑩|输出模板/.test(s.name))
-      || sheets[0]
-  if (!templateSheet) return []
+  if (!templateSheet) {
+    throw new Error(`输出模板表缺少「⑩ 方案输出模板」Sheet（实际 sheet：${sheets.map(s => s.name).join('、') || '空文件'}）`)
+  }
 
   const entries: OutputTemplateEntry[] = []
 

@@ -17,7 +17,7 @@ interface ClarificationSummaryData {
   rationale: string
   primaryModule: ModuleId
   moduleProportions: Record<string, number>
-  suggestedActions: Array<{ label: string; type: string; module?: ModuleId }>
+  suggestedActions: Array<{ label: string; type: string; module?: ModuleId; instrumentCode?: string; sourceText?: string }>
 }
 
 interface SourceItem {
@@ -62,6 +62,14 @@ const assistantMode = ref<'deepseek' | 'local_fallback'>(assistantStatus.value?.
 const messageViewport = ref<HTMLElement | null>(null)
 const copiedMessage = ref<number | null>(null)
 const confirmingModule = ref<ModuleId | null>(null)
+/** 最后一条教师发言。进入模块时带给量表推荐用，让 AI 知道教师在说什么。 */
+const lastUserMessage = computed(() => {
+  for (let i = timeline.value.length - 1; i >= 0; i--) {
+    const item = timeline.value[i]
+    if (item?.role === 'user' && item.text?.trim()) return item.text.trim()
+  }
+  return ''
+})
 const routeConfirmError = ref('')
 const selectedOptions = ref<Record<number, string>>({})
 const pendingPlanSuggestion = ref<{ item: TimelineItem, index: number } | null>(null)
@@ -443,7 +451,17 @@ async function confirmModule(module: ModuleId) {
   } finally {
     confirmingModule.value = null
   }
-  await navigateTo({ path: `/module/${module}`, query: selectedContext.value ? { contextType: selectedContext.value.type, contextId: selectedContext.value.id, sourceChatSessionId: sessionId.value } : undefined })
+  // 带上分诊建议的量表编码和教师原话：模块页据此推荐并直接定位到该量表
+  await navigateTo({
+    path: `/module/${module}`,
+    query: {
+      ...(selectedContext.value
+        ? { contextType: selectedContext.value.type, contextId: selectedContext.value.id, sourceChatSessionId: sessionId.value }
+        : { sourceChatSessionId: sessionId.value }),
+      ...(route.value?.suggestedInstrumentCode ? { instrumentCode: route.value.suggestedInstrumentCode } : {}),
+      ...(lastUserMessage.value ? { q: lastUserMessage.value.slice(0, 500) } : {})
+    }
+  })
 }
 
 onMounted(async () => {
@@ -645,7 +663,7 @@ onUnmounted(() => {
         </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
 
-        <NuxtLink v-if="activePlans?.count" to="/information?tab=cases" class="mx-4 mt-2 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm transition hover:bg-emerald-100 sm:mx-6"><UIcon name="i-lucide-clipboard-list" class="size-5 text-emerald-600" /><div class="flex-1"><strong class="text-emerald-800">您有 {{ activePlans.count }} 个进行中的方案</strong><p class="text-xs text-emerald-600">点击查看之前的方案及执行情况，避免重复规划</p></div><UIcon name="i-lucide-arrow-right" class="size-4 text-emerald-400" /></NuxtLink>
+        <NuxtLink v-if="activePlans?.count" to="/information/plans" class="mx-4 mt-2 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm transition hover:bg-emerald-100 sm:mx-6"><UIcon name="i-lucide-clipboard-list" class="size-5 text-emerald-600" /><div class="flex-1"><strong class="text-emerald-800">您有 {{ activePlans.count }} 个进行中的方案</strong><p class="text-xs text-emerald-600">点击查看之前的方案及执行情况，避免重复规划</p></div><UIcon name="i-lucide-arrow-right" class="size-4 text-emerald-400" /></NuxtLink>
 
         <div ref="messageViewport" class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/70 to-white px-4 py-6 sm:px-6" :class="{'opacity-60':loadingSession}">
           <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-7">
@@ -680,7 +698,11 @@ onUnmounted(() => {
                       :key="action.label"
                       color="primary"
                       size="sm"
-                      @click="() => { if (action.module) navigateTo(`/module/${action.module}`) }"
+                      @click="() => { if (action.module) navigateTo({ path: `/module/${action.module}`, query: {
+                        ...(action.instrumentCode ? { instrumentCode: action.instrumentCode } : {}),
+                        ...(action.sourceText ? { q: action.sourceText.slice(0, 500) } : {}),
+                        sourceChatSessionId: sessionId
+                      } }) }"
                     >{{ action.label }}</UButton>
                   </div>
                 </div>
@@ -775,7 +797,7 @@ onUnmounted(() => {
             <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-800">
               <UIcon name="i-lucide-clipboard-check" class="size-4 text-emerald-600" />今日动作
             </h3>
-            <NuxtLink to="/notifications?tab=actions" class="text-xs font-medium text-emerald-600 transition hover:text-emerald-800">查看全部</NuxtLink>
+            <NuxtLink to="/notifications?tab=action" class="text-xs font-medium text-emerald-600 transition hover:text-emerald-800">查看全部</NuxtLink>
           </div>
           <div class="mt-4 flex-1 space-y-2">
             <NuxtLink v-for="action in today.actions.slice(0, 4)" :key="action.id" :to="`/information/plans/${action.planId}`" class="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-emerald-200 hover:bg-emerald-50/50">

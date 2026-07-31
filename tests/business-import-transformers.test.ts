@@ -1,6 +1,6 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import XLSX from 'xlsx'
 import { describe, expect, it } from 'vitest'
 import { evaluateImportQuality } from '../scripts/import-business-data/quality'
@@ -54,6 +54,16 @@ describe('business import transformers', () => {
     // 兜底规则：无触发条件且优先级最大
     expect(parsed.gradingRules[1]?.when).toBeUndefined()
     expect(parsed.gradingRules[1]?.pri).toBe(999)
+  })
+
+  it('parses the v4 template including the ③ instrument role column', () => {
+    // 用仓库内的真实 v4 模板做集成测试，锁死模板列名与解析候选词的对应关系
+    const parsed = parseAssessmentFile(resolve('business-libraries/templates/三库填写模板_v4.xlsx'), 'self_growth')
+    expect(parsed.length).toBeGreaterThan(0)
+    expect(parsed[0]?.code).toBe('SG_FIVE_Q')
+    expect(parsed[0]?.instrumentRole).toBe('screening')
+    expect(parsed[0]?.isRequired).toBe(true)
+    expect(parsed[0]?.questions.length).toBeGreaterThan(0)
   })
 
   it('cleans assessment rows by filtering metadata and making repeated ids unique', () => {

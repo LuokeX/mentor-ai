@@ -3,8 +3,8 @@
  * 生成《三库填写讲解与计算推演》工作簿。
  *
  * 设计要点：
- * 1. 不改 v3 模板的任何字段和填写规则——标准 sheet 的名称、列名、列序与
- *    business-libraries/templates/三库填写模板_v3.xlsx 完全一致。
+ * 1. 不改 v4 模板的任何字段和填写规则——标准 sheet 的名称、列名、列序与
+ *    business-libraries/templates/三库填写模板_v4.xlsx 完全一致。
  * 2. 用真实的「班主任状态五问」（scripts/test-data/modules.mjs 里 self_growth 的内容，
  *    也就是 business-libraries/test-data/self_growth/ 那份）把标准 sheet 填满，
  *    所以这个文件本身可以直接导入五次（每次选一个库类型）。
@@ -179,10 +179,10 @@ const guideOverview = [
   ['《三库填写讲解与计算推演》— 以「班主任状态五问」为例'],
   [''],
   ['这份文件有两个用途：'],
-  ['  1. 教业务怎么填 v3 模板 —— 见「使用说明」开头的几张 sheet'],
+  ['  1. 教业务怎么填 v4 模板 —— 见「使用说明」开头的几张 sheet'],
   ['  2. 它本身就是一份可导入的完整数据 —— ③ 到 ⑩ 这些标准 sheet 已经按真实内容填满'],
   [''],
-  ['字段和填写规则与 三库填写模板_v3.xlsx 完全一致，没有任何改动。'],
+  ['字段和填写规则与 三库填写模板_v4.xlsx 完全一致，没有任何改动。'],
   ['「使用说明」开头的 sheet 在导入时会被系统自动跳过，不会污染数据。'],
   [''],
   ['【怎么用这份文件导入】'],
@@ -444,7 +444,7 @@ const SHEETS = [
   { name: '使用说明-3 咬合关系', rows: guideJoints },
   { name: '使用说明-4 计算推演', rows: walk },
   { name: '使用说明-5 交付自检清单', rows: guideChecklist },
-  // ---- 以下是 v3 标准 sheet，名称/列名/列序与 三库填写模板_v3.xlsx 完全一致 ----
+  // ---- 以下是 v4 标准 sheet，名称/列名/列序与 三库填写模板_v4.xlsx 完全一致 ----
   { name: '② 枚举字典', rows: [['枚举类别', '取值（填这个）', '中文含义', '用在哪些列'], ...ENUM_ROWS()] },
   { name: '③ 量表-清单', rows: [['量表编码*', '量表名称*', '量表简称', '所属模块*', '适用学部*', '施测对象*', '施测形式*',
     '触发方式*', '作答频次*', '是否必做*', '预计用时分钟*', '结果可见性*', '数据敏感级*',
@@ -580,7 +580,7 @@ XLSX.writeFile(wb, OUT)
 console.log(`已生成 ${OUT}`)
 console.log(`共 ${SHEETS.length} 个 sheet：`)
 console.log(`  讲解（导入时自动跳过）：${SHEETS.filter(s => s.name.startsWith('使用说明')).length} 张`)
-console.log(`  v3 标准（可直接导入）：${SHEETS.filter(s => !s.name.startsWith('使用说明')).length} 张`)
+console.log(`  v4 标准（可直接导入）：${SHEETS.filter(s => !s.name.startsWith('使用说明')).length} 张`)
 console.log('\n三个推演案例的引擎实算结果：')
 for (const { who, r, matched } of results) {
   console.log(`  ${who}: 等级=${r.level}/${r.levelName} 严重度=${r.severity} 熔断=${r.blocked ? '是' : '否'}`

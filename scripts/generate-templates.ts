@@ -1,5 +1,5 @@
 /**
- * 从 V3 通用模板中提取 per-library-type 模板文件（仅保留表头行）。
+ * 从 V4 通用模板中提取 per-library-type 模板文件（填写页仅保留表头行，说明页整页保留）。
  * 输出到 public/templates/{libraryType}.xlsx
  *
  * 运行: pnpm tsx scripts/generate-templates.ts
@@ -8,12 +8,18 @@ import XLSX from 'xlsx'
 import fs from 'node:fs'
 import path from 'node:path'
 
-// V3 模板中 sheet 名 → libraryType 的映射
+// V4 模板中 sheet 名 → libraryType 的映射
 const SHEET_MAP: Record<string, string> = {
   '③ 量表-清单': 'assessment',
   '④ 量表-题目': 'assessment',
   '④b 量表-选项组': 'assessment',
   '④c 量表-维度定义': 'assessment',
+  // ③a~③d 是编排说明页，随量表库模板一起发给业务——不先定角色和关系，
+  // 多量表模块导进去就是一堆互不相干的问卷。
+  '③a 量表编排指南': 'assessment',
+  '③b 角色说明': 'assessment',
+  '③c 路径示意': 'assessment',
+  '③d 编排自检': 'assessment',
   '⑤b 归因-计算变量': 'attribution',
   '⑤c 归因项': 'attribution',
   '⑤d 证据规则': 'attribution',
@@ -35,7 +41,10 @@ const TYPE_LABELS: Record<string, string> = {
   output_template: '输出模板模板',
 }
 
-const SRC = path.resolve('business-libraries/templates/三库填写模板_v3.xlsx')
+/** 说明页：整页复制，不能像填写页那样只留表头（它们是散文，第一行不是表头） */
+const GUIDE_SHEETS = new Set(['③a 量表编排指南', '③b 角色说明', '③c 路径示意', '③d 编排自检'])
+
+const SRC = path.resolve('business-libraries/templates/三库填写模板_v4.xlsx')
 const OUT_DIR = path.resolve('public/templates')
 
 function main() {
@@ -46,7 +55,7 @@ function main() {
 
   const workbook = XLSX.readFile(SRC)
   fs.mkdirSync(OUT_DIR, { recursive: true })
-  fs.copyFileSync(SRC, path.join(OUT_DIR, '三库填写模板_v3.xlsx'))
+  fs.copyFileSync(SRC, path.join(OUT_DIR, '三库填写模板_v4.xlsx'))
 
   // 按 libraryType 分组 sheet
   const groups: Record<string, { name: string; data: unknown[][] }[]> = {}
@@ -57,14 +66,19 @@ function main() {
     const sheet = workbook.Sheets[sheetName]
     const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: undefined })
 
-    // 只保留表头行（第一行），去掉数据行
+    if (!groups[libType]) groups[libType] = []
+
+    if (GUIDE_SHEETS.has(sheetName)) {
+      groups[libType].push({ name: sheetName, data: raw })
+      continue
+    }
+
+    // 填写页只保留表头行（第一行），去掉示例数据行
     const headerRow = raw[0] || []
     if (headerRow.length === 0) {
       console.warn(`⚠ ${sheetName}: 表头为空，跳过`)
       continue
     }
-
-    if (!groups[libType]) groups[libType] = []
     groups[libType].push({ name: sheetName, data: [headerRow] })
   }
 
@@ -83,7 +97,7 @@ function main() {
 
   console.log(`\n已生成 ${Object.keys(groups).length} 个模板文件到 ${OUT_DIR}`)
 
-  // 知识库模板：直接复制（独立模板，不来自三库 V3）
+  // 知识库模板：直接复制（独立模板，不来自三库 V4）
   const knowledgeSrc = path.resolve('business-libraries/templates/知识库填写模板.xlsx')
   const knowledgeDst = path.join(OUT_DIR, 'knowledge.xlsx')
   if (fs.existsSync(knowledgeSrc)) {

@@ -91,6 +91,23 @@ describe.each(MODULES)('三库链路 — %s', (module) => {
     }
   })
 
+  it('每张量表都有能判出非兜底等级的分级规则', () => {
+    // 只被模块兜底规则覆盖的量表，无论怎么作答都只会得到同一个等级——
+    // 归因算出「信任基础薄弱」而等级永远是「常规」，二者自相矛盾，且不会报错。
+    const data = load(module)
+    const failures: string[] = []
+    for (const instrument of data.assessments) {
+      const applicable = data.attribution.gradingRules
+        .filter(rule => !rule.assessmentCode || rule.assessmentCode === instrument.code)
+      if (!applicable.length) {
+        failures.push(`${instrument.code} 没有任何适用的分级规则`)
+      } else if (!applicable.some(rule => rule.when?.trim())) {
+        failures.push(`${instrument.code} 只有兜底规则可用，等级恒定`)
+      }
+    }
+    expect(failures).toEqual([])
+  })
+
   it('每条归因项都至少有一条证据规则', () => {
     const { attributionItems, evidences } = load(module).attribution
     const covered = new Set(evidences.map(e => e.attributionCode))
@@ -163,5 +180,64 @@ describe.each(MODULES)('三库链路 — %s', (module) => {
     const covered = new Set(data.templates.map(t => t.attributionLevel))
     const missing = [...levels].filter(level => !covered.has(level))
     expect(missing, '这些等级命中时方案文案会空缺').toEqual([])
+  })
+})
+
+// 合成用例：针对链 8（工具→④c 维度编码）与链 5b（等级→模板覆盖）的定向验证，
+// 不依赖 golden 数据，避免业务数据演进把断言语义冲掉。
+describe('跨库引用校验 — 合成用例', () => {
+  const module: ModuleId = 'home_school'
+  const libs = ['assessment', 'attribution', 'tool', 'output_template'].map(libraryType => ({ libraryType }))
+  const base = new Map<string, Record<string, unknown>>([
+    ['assessment', {
+      instruments: [{
+        code: 'HS_SIX_DIM',
+        dimensionDefs: [{ code: 'HS_DIM_TRUST', name: '信任关系', questionIds: ['q1'], calcMethod: 'mean' }]
+      }]
+    }],
+    ['attribution', {
+      attributionItems: [{ code: 'HS_AT_TRUST_LOSS', name: '信任缺失' }],
+      evidences: [],
+      gradingRules: [
+        { ruleId: 'G1', pri: 10, when: '均分 < 3', level: 'orange', severity: 'high' },
+        { ruleId: 'G2', pri: 999, level: 'none', severity: 'low' }
+      ]
+    }]
+  ])
+  const withParts = (parts: Record<string, Record<string, unknown>>) => new Map([...base, ...Object.entries(parts)])
+
+  it('工具作用维度编码与 ④c 不一致时给 warning（链 8），一致时不报', () => {
+    const bad = checkCrossReferences(module, libs, withParts({
+      tool: { tools: [{ code: 'RX1', name: 't', attributionCode: 'HS_AT_TRUST_LOSS', dimensions: ['TRUST'] }] },
+      output_template: { templates: [{ code: 'T1', attributionLevel: 'orange' }, { code: 'T2', attributionLevel: 'none' }] }
+    }))
+    const dimIssues = bad.issues.filter(i => i.sourceField === 'dimensions')
+    expect(dimIssues).toHaveLength(1)
+    expect(dimIssues[0]!.severity).toBe('warning')
+    expect(dimIssues[0]!.sourceValue).toBe('TRUST')
+
+    const good = checkCrossReferences(module, libs, withParts({
+      tool: { tools: [{ code: 'RX1', name: 't', attributionCode: 'HS_AT_TRUST_LOSS', dimensions: ['HS_DIM_TRUST'] }] },
+      output_template: { templates: [{ code: 'T1', attributionLevel: 'orange' }, { code: 'T2', attributionLevel: 'none' }] }
+    }))
+    expect(good.issues.filter(i => i.sourceField === 'dimensions')).toEqual([])
+  })
+
+  it('等级无专属模板但有兜底时给 info，无兜底时升级为 warning（链 5b）', () => {
+    const withFallback = checkCrossReferences(module, libs, withParts({
+      tool: { tools: [] },
+      output_template: { templates: [{ code: 'T2', attributionLevel: 'none' }] }
+    }))
+    const info = withFallback.issues.filter(i => i.message.includes('没有专属输出模板'))
+    expect(info.map(i => i.sourceCode)).toEqual(['orange'])
+    expect(info[0]!.severity).toBe('info')
+
+    const noFallback = checkCrossReferences(module, libs, withParts({
+      tool: { tools: [] },
+      output_template: { templates: [{ code: 'T1', attributionLevel: 'orange' }] }
+    }))
+    const warnings = noFallback.issues.filter(i => i.severity === 'warning')
+    expect(warnings.some(i => i.message.includes('缺少 none/default 兜底模板'))).toBe(true)
+    expect(warnings.some(i => i.sourceCode === 'none' && i.message.includes('没有任何可用输出模板'))).toBe(true)
   })
 })

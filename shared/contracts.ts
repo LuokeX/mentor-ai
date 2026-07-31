@@ -216,6 +216,19 @@ export const outputTemplateEntrySchema = z.object({
 export const outputTemplateLibraryPayloadSchema = z.object({ templates: z.array(outputTemplateEntrySchema).min(1) }).passthrough()
 export type OutputTemplateEntry = z.infer<typeof outputTemplateEntrySchema>
 
+/**
+ * ⑩ 方案输出模板允许使用的占位符合法集合（渲染器注入口径，与
+ * server/domain/reports.ts renderOutputTemplate 的 replacements 一一对应）。
+ * 渲染器对未知占位符会静默置空，因此导入校验必须按此表拦截（S16），
+ * 否则方案文案会出现无声的空洞。新增占位符时两边必须同步。
+ */
+export const OUTPUT_TEMPLATE_PLACEHOLDERS = [
+  '主要归因', '次要归因', '命中等级', '等级', '等级中文名', '严重度',
+  '薄弱维度', '优势维度', '最薄弱维度', '最优势维度',
+  '归因说明', '关键撬动点', '工具名称', '操作步骤摘要', '责任人'
+] as const
+export type OutputTemplatePlaceholder = typeof OUTPUT_TEMPLATE_PLACEHOLDERS[number]
+
 // ---- V2 新增: 关键词-路由 (keyword_route) ----
 // V2 字段映射: ⑨ 关键词-路由
 export const keywordRouteEntrySchema = z.object({
@@ -507,6 +520,37 @@ export type ClarificationSummary = z.infer<typeof clarificationSummarySchema>
 // V2 字段映射: ③ 量表-清单 + ④ 量表-题目 + ④b 量表-选项组 + ④c 量表-维度定义
 // 题库 payload 存入 content_packages (type='assessment')
 
+// ---- 量表角色（③ 量表-清单「量表角色」列，对应 ③b 角色说明）----
+// 编排语义：每模块 1 张入口筛查（必做），筛查报警后才解锁深度诊断，
+// 专项/情境按场景触发，红线检查由系统在高危阈值命中时触发、不向教师主动展示。
+export const instrumentRoleSchema = z.enum(['screening', 'deep_dive', 'situational', 'red_line'])
+export type InstrumentRole = z.infer<typeof instrumentRoleSchema>
+
+export const INSTRUMENT_ROLE_LABELS: Record<InstrumentRole, string> = {
+  screening: '入口筛查',
+  deep_dive: '深度诊断',
+  situational: '专项/情境',
+  red_line: '红线检查'
+}
+
+const INSTRUMENT_ROLE_ALIASES: Record<string, InstrumentRole> = {
+  screening: 'screening', 入口筛查: 'screening', 筛查: 'screening',
+  deep_dive: 'deep_dive', 'deep-dive': 'deep_dive', 深度诊断: 'deep_dive', 深度: 'deep_dive',
+  situational: 'situational', 专项情境: 'situational', '专项/情境': 'situational', 专项: 'situational',
+  red_line: 'red_line', 'red-line': 'red_line', 红线检查: 'red_line', 红线: 'red_line'
+}
+
+/**
+ * 解析 ③「量表角色」列。无法识别的非空值原样保留返回，
+ * 由导入校验报「量表角色值无效」——静默当作没填会让编排自检失去意义。
+ */
+export function parseInstrumentRole(value: string | undefined): InstrumentRole | undefined {
+  const normalized = (value || '').trim()
+  if (!normalized) return undefined
+  const hit = INSTRUMENT_ROLE_ALIASES[normalized] || INSTRUMENT_ROLE_ALIASES[normalized.toLowerCase()]
+  return (hit ?? normalized) as InstrumentRole
+}
+
 export interface AssessmentDimensionDef {
   code: string
   name: string
@@ -544,6 +588,8 @@ export interface AssessmentPayload {
     options: Array<{ label: string, value: number }>
   }>
   // ---- V2 新增: 量表元数据 ----
+  /** 量表角色（③「量表角色」列）。驱动教师端分区展示与 ③d 编排自检。 */
+  instrumentRole?: InstrumentRole
   shortName?: string
   applicableGrades?: number[]
   applicableSubjects?: string[]
@@ -558,6 +604,9 @@ export interface AssessmentPayload {
   reAssessmentIntervalDays?: number
   prerequisiteCodes?: string[]
   exclusiveCodes?: string[]
+  /** 触发条件：引用前面量表的结果决定这张现在要不要做。留空表示随时可做。 */
+  triggerCondition?: string
+  triggerConditionNote?: string
   resultVisibility?: 'teacher_only' | 'teacher_and_student' | 'psychologist'
   responsibleRole?: string
   dataSensitivity?: string      // 数据敏感级
@@ -662,6 +711,10 @@ export interface AttributionOutcome {
   /** 命中证据的说明文案，进入方案的「依据」栏 */
   reasons: string[]
   evidenceCodes: string[]
+  /** 归因项的「归因说明」（⑤c），供输出模板 ${归因说明} 占位符使用 */
+  description?: string
+  /** 归因项的「建议动作」（⑤c），供输出模板 ${关键撬动点} 占位符使用 */
+  suggestedAction?: string
 }
 
 // 规则执行结果
@@ -685,6 +738,8 @@ export interface RuleExecResult {
   dimensionLabels: Record<string, string>
   actions: Array<{ title: string, detail: string, status: 'pending' }>
   tools: Array<{ title: string, content: string }>
+  /** 命中分级规则的「升级目标」（⑤e），供输出模板 ${责任人} 占位符使用 */
+  escalationTarget?: string
   // V2 新增: 命中的红线信息
   matchedRedLines?: RedLineConfig[]
 }

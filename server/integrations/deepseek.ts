@@ -964,6 +964,8 @@ export async function generateAssessmentReport(event: H3Event, input: {
       report.firstAction = deterministic.firstAction
       report.escalationConditions = deterministic.escalationConditions
       report.sevenDayFollowUp.reviewQuestions = deterministic.sevenDayFollowUp.reviewQuestions
+      if (deterministic.attributionNarrative) report.attributionNarrative = deterministic.attributionNarrative
+      if (deterministic.toolIntro) report.toolIntro = deterministic.toolIntro
     }
     await useDb(event).insert(schema.aiModelCalls).values({
       schoolId: input.schoolId,

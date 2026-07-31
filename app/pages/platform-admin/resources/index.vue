@@ -119,6 +119,23 @@ function buildBody(extra: Record<string, unknown> = {}) {
   }
 }
 
+// ===== 量表编排诊断 =====
+// triggerError 一直声明「供运营台排查」却没有任何入口。这里补上：
+// 把编排关系摊开，并标出会让量表永远激活不了的问题。
+const mapModule = ref(moduleOptions[0]!.value)
+const { data: instrumentMap, pending: mapPending, refresh: refreshInstrumentMap } = await useFetch<any>(
+  '/api/v1/platform-admin/module-resources/instrument-map',
+  { query: computed(() => ({ module: mapModule.value })) }
+)
+const INSTRUMENT_ROLE_TEXT: Record<string, string> = {
+  screening: '入口筛查', deep_dive: '深度诊断', situational: '专项/情境', red_line: '红线检查'
+}
+
+const crossRefErrors = computed(() =>
+  (previewResult.value?.crossRef?.issues || []).filter((issue: any) => issue.severity === 'error'))
+const crossRefWarnings = computed(() =>
+  (previewResult.value?.crossRef?.issues || []).filter((issue: any) => issue.severity === 'warning'))
+
 async function previewImport() {
   pending.value = true
   try {
@@ -126,7 +143,12 @@ async function previewImport() {
       method: 'POST',
       body: buildBody()
     })
-    toast.add({ title: previewResult.value.validation.ok ? '预检完成' : '预检发现错误', color: previewResult.value.validation.ok ? 'success' : 'error' })
+    // canImport = 库内校验通过 且 跨库引用无 error
+    toast.add({
+      title: previewResult.value.canImport ? '预检完成' : '预检发现错误',
+      description: previewResult.value.canImport ? undefined : '库内校验或跨库引用存在错误，请先修正',
+      color: previewResult.value.canImport ? 'success' : 'error'
+    })
   } catch (error: any) {
     toast.add({ title: '预检失败', description: error?.data?.message || '请检查文件和字段', color: 'error' })
   } finally {
@@ -156,13 +178,30 @@ async function commitImport() {
   }
 }
 
+/** 发布被校验拦下时的结构化明细。只弹 toast 的话管理员不知道该改哪一行。 */
+const blockedIssues = ref<Array<{ severity: string, message: string, source?: string }>>([])
+const blockedTitle = ref('')
+
 async function versionAction(id: string, action: 'publish' | 'retire' | 'rollback') {
   pending.value = true
+  blockedIssues.value = []
   try {
     await $fetch(`/api/v1/platform-admin/module-resources/versions/${id}`, { method: 'PATCH', body: { action } })
     await refreshResources()
     toast.add({ title: action === 'retire' ? '版本已停用' : '版本已发布', color: 'success' })
   } catch (error: any) {
+    const data = error?.data?.data
+    const crossRef = (data?.crossRef?.issues || []).filter((issue: any) => issue.severity === 'error')
+      .map((issue: any) => ({
+        severity: 'error',
+        message: issue.message,
+        source: [issue.sourceLibraryType, issue.sourceCode, issue.sourceField].filter(Boolean).join(' · ')
+      }))
+    const validation = (data?.validation?.errors || []).map((issue: any) => ({
+      severity: 'error', message: issue.message, source: issue.path
+    }))
+    blockedIssues.value = [...validation, ...crossRef]
+    blockedTitle.value = crossRef.length ? '跨库引用校验未通过，已阻止发布' : '资源版本校验未通过，已阻止发布'
     toast.add({ title: '版本操作失败', description: error?.data?.message || '请稍后重试', color: 'error' })
   } finally {
     pending.value = false
@@ -225,6 +264,62 @@ function fileToBase64(file: File) {
         <strong class="mt-1 block text-2xl text-slate-800">{{ coverageRate }}%</strong>
       </div>
     </div>
+
+    <!-- ===== 量表编排诊断 ===== -->
+    <section class="mb-6 rounded-xl border border-slate-100 bg-white p-6">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold text-slate-800">量表编排</h2>
+          <p class="mt-0.5 text-sm text-slate-400">
+            该模块已发布量表的角色与前置/触发关系。触发条件写错时教师端只会显示「当前不需要做」，不会报错——在这里能看出来。
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <USelect v-model="mapModule" :items="moduleOptions" class="w-40" />
+          <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" :loading="mapPending" @click="() => refreshInstrumentMap()" />
+        </div>
+      </div>
+
+      <div v-if="instrumentMap?.summary?.length" class="mt-4 space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 p-3">
+        <p v-for="(text, index) in instrumentMap.summary" :key="`ms-${index}`" class="text-xs leading-5 text-amber-700">{{ text }}</p>
+      </div>
+
+      <div v-if="!instrumentMap?.instruments?.length" class="mt-4 rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-400">
+        本模块还没有已发布的量表。
+      </div>
+      <div v-else class="mt-4 grid gap-3 lg:grid-cols-2">
+        <article
+          v-for="node in instrumentMap.instruments"
+          :key="node.code"
+          class="rounded-xl border p-4"
+          :class="node.problems.length ? 'border-red-200 bg-red-50' : 'border-slate-100 bg-white'"
+        >
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <strong class="text-sm text-slate-800">{{ node.title }}</strong>
+              <p class="mt-0.5 font-mono text-xs text-slate-400">{{ node.code }} · {{ node.questionCount }} 题</p>
+            </div>
+            <div class="flex flex-wrap gap-1">
+              <UBadge v-if="node.role" size="xs" :color="node.role === 'screening' ? 'primary' : 'neutral'" variant="soft">{{ INSTRUMENT_ROLE_TEXT[node.role] || node.role }}</UBadge>
+              <UBadge v-else size="xs" color="warning" variant="soft">未标角色</UBadge>
+              <UBadge v-if="node.isRequired" size="xs" color="success" variant="soft">必做</UBadge>
+            </div>
+          </div>
+
+          <dl class="mt-3 space-y-1 text-xs text-slate-500">
+            <div v-if="node.prerequisiteCodes.length"><dt class="inline font-medium">前置：</dt><dd class="inline font-mono">{{ node.prerequisiteCodes.join('、') }}</dd></div>
+            <div v-if="node.exclusiveCodes.length"><dt class="inline font-medium">互斥：</dt><dd class="inline font-mono">{{ node.exclusiveCodes.join('、') }}</dd></div>
+            <div v-if="node.triggerCondition"><dt class="inline font-medium">触发条件：</dt><dd class="inline font-mono">{{ node.triggerCondition }}</dd></div>
+            <div v-if="node.triggerConditionNote"><dt class="inline font-medium">说明：</dt><dd class="inline">{{ node.triggerConditionNote }}</dd></div>
+            <div v-if="!node.prerequisiteCodes.length && !node.triggerCondition" class="text-slate-400">无门禁，随时可做</div>
+          </dl>
+
+          <ul v-if="node.problems.length" class="mt-3 space-y-1 border-t border-red-200 pt-2">
+            <li v-for="(problem, index) in node.problems" :key="`p-${index}`" class="text-xs leading-5 text-red-700">{{ problem.message }}</li>
+          </ul>
+        </article>
+      </div>
+    </section>
 
     <!-- ===== 质量反哺 ===== -->
     <section class="rounded-xl border border-slate-100 bg-white p-6">
@@ -344,7 +439,7 @@ function fileToBase64(file: File) {
           </div>
           <div class="flex gap-3">
             <UButton type="submit" icon="i-lucide-shield-check" :disabled="!selectedFile || !form.confirmNoPersonalData || (form.libraryId === AUTO_LIBRARY_ID && matchingLibraries.length === 0 && form.libraryName.trim().length < 2)" :loading="pending">预检</UButton>
-            <UButton color="primary" variant="soft" icon="i-lucide-upload-cloud" :disabled="!previewResult?.validation?.ok" :loading="pending" @click="commitImport">确认导入</UButton>
+            <UButton color="primary" variant="soft" icon="i-lucide-upload-cloud" :disabled="!previewResult?.canImport" :loading="pending" @click="commitImport">确认导入</UButton>
           </div>
         </form>
 
@@ -373,9 +468,49 @@ function fileToBase64(file: File) {
             <p class="text-xs font-semibold text-amber-700">警告</p>
             <p v-for="issue in previewResult.validation.warnings.slice(0, 12)" :key="`${issue.path}:${issue.message}`" class="mt-1.5 text-xs text-amber-700">{{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}</p>
           </div>
+
+          <!-- 跨库引用校验。以前只有编辑器手动点才跑，勾了「直接发布」就整段跳过。 -->
+          <div v-if="crossRefErrors.length" class="rounded-lg border border-red-200 bg-red-50 p-3">
+            <p class="text-xs font-semibold text-red-700">跨库引用错误（无法导入）</p>
+            <p v-for="(issue, index) in crossRefErrors.slice(0, 12)" :key="`cre-${index}`" class="mt-1.5 text-xs text-red-700">
+              <span class="font-medium">{{ issue.sourceLibraryType }} · {{ issue.sourceCode }}</span>
+              <span v-if="issue.sourceField"> · {{ issue.sourceField }}</span> — {{ issue.message }}
+            </p>
+          </div>
+          <div v-if="crossRefWarnings.length" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p class="text-xs font-semibold text-amber-700">跨库引用警告</p>
+            <p v-for="(issue, index) in crossRefWarnings.slice(0, 8)" :key="`crw-${index}`" class="mt-1.5 text-xs text-amber-700">
+              <span class="font-medium">{{ issue.sourceLibraryType }} · {{ issue.sourceCode }}</span> — {{ issue.message }}
+            </p>
+          </div>
+          <div v-else-if="previewResult.crossRef && !crossRefErrors.length" class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+            跨库引用校验通过
+          </div>
+
+          <!-- 解析走了兜底分支：不报错，但结果大概率不是业务想要的 -->
+          <div v-if="previewResult.parseWarnings?.length" class="rounded-lg border border-orange-200 bg-orange-50 p-3">
+            <p class="text-xs font-semibold text-orange-700">文件结构提示</p>
+            <p v-for="(text, index) in previewResult.parseWarnings" :key="`pw-${index}`" class="mt-1.5 text-xs leading-5 text-orange-700">{{ text }}</p>
+          </div>
         </div>
       </template>
     </USlideover>
+
+    <!-- 发布被校验拦下时的逐条明细。之前只有一个泛泛的 toast，管理员看不出该改哪一行。 -->
+    <div v-if="blockedIssues.length" class="mb-5 rounded-xl border border-red-200 bg-red-50 p-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-sm font-semibold text-red-700">{{ blockedTitle }}</p>
+          <p class="mt-1 text-xs text-red-600">发布是最后一道闸门。修正后重新发布即可。</p>
+        </div>
+        <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-x" @click="blockedIssues = []" />
+      </div>
+      <ul class="mt-3 space-y-1.5">
+        <li v-for="(issue, index) in blockedIssues.slice(0, 15)" :key="`bi-${index}`" class="text-xs text-red-700">
+          <span v-if="issue.source" class="font-medium">{{ issue.source }} — </span>{{ issue.message }}
+        </li>
+      </ul>
+    </div>
 
     <!-- ===== 资源库与版本（合并表格） ===== -->
     <div class="rounded-xl border border-slate-100 bg-white">
@@ -432,6 +567,10 @@ function fileToBase64(file: File) {
                         <UButton v-if="version.status !== 'published'" size="xs" variant="soft" @click.stop="versionAction(version.id, 'publish')">发布</UButton>
                         <UButton v-if="version.status === 'published'" size="xs" color="neutral" variant="soft" @click.stop="versionAction(version.id, 'retire')">停用</UButton>
                         <UButton v-if="version.status === 'retired'" size="xs" color="neutral" variant="soft" @click.stop="versionAction(version.id, 'rollback')">回滚</UButton>
+                        <!-- inspectPreview / inspectProjection 与它们的 modal 之前没有任何调用点，
+                             两个接口因此一直是孤儿。这里把入口补上。 -->
+                        <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-eye" :loading="pending" @click.stop="inspectPreview(version.id)">预览</UButton>
+                        <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-layers" :loading="pending" @click.stop="inspectProjection(version.id)">投影</UButton>
                       </div>
                     </div>
                   </td>

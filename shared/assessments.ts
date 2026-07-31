@@ -1,4 +1,4 @@
-import type { ModuleId } from './contracts'
+import type { ModuleId, InstrumentRole } from './contracts'
 import type { AssessmentDimensionDef } from './contracts'
 
 export interface AssessmentOption { label: string, value: number }
@@ -24,6 +24,8 @@ export interface AssessmentDefinition {
   // ---- 量表编排相关元数据（来自 ③ 量表-清单）----
   // 运行时这些字段本来就在 versions.payload.instruments 里，这里补上声明，
   // 供「一个模块多张量表时该做哪张」的判定使用。完整元数据见 contracts.ts 的 AssessmentPayload。
+  /** 量表角色（③「量表角色」列）：入口筛查 / 深度诊断 / 专项情境 / 红线检查 */
+  instrumentRole?: InstrumentRole
   shortName?: string
   /** 是否必做。用于量表列表排序与兜底推荐。 */
   isRequired?: boolean
@@ -33,6 +35,14 @@ export interface AssessmentDefinition {
   prerequisiteCodes?: string[]
   /** 互斥量表编码。已完成其中任一张时该量表锁定。 */
   exclusiveCodes?: string[]
+  /**
+   * 触发条件。留空表示「随时可做」。
+   * 用跨量表写法引用前面量表的结果，例如：量表[SG_FIVE_Q].总分 >= 17
+   * 条件不满足时该量表标为「当前不需要做」，教师仍可手动选择。
+   */
+  triggerCondition?: string
+  /** 触发条件说明，给业务和教师看的一句话 */
+  triggerConditionNote?: string
 }
 
 const fivePoint: AssessmentOption[] = [

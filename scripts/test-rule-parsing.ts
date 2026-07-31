@@ -1,6 +1,6 @@
 /**
  * 一次性脚本：验证 normalizeExpression → tokenize → Parser.parse 能否解析
- * v3 模板中的所有示例条件表达式（仅测试解析，不求值）。
+ * v4 模板中的所有示例条件表达式（仅测试解析，不求值）。
  *
  * 用法: node --import tsx/esm scripts/test-rule-parsing.ts
  */

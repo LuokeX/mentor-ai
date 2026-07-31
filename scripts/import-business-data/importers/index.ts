@@ -10,6 +10,7 @@ import { parseKeywordRouteFile } from '../transformers/keyword-route'
 import { parseOutputTemplateFile } from '../transformers/output-template'
 import { attributionConfigSchema, type LibraryType, type ModuleId } from '../../../shared/contracts'
 import { evaluateImportQuality, formatImportQualityReport, type ImportQualityReport } from '../quality'
+import { checkCrossReferences } from '../../../server/domain/module-resource-cross-ref'
 
 const RAW_BASE = resolve('业务需求')
 // 标准三库源目录。业务正式交付放 business-libraries/<module>/，
@@ -114,6 +115,8 @@ interface ImportResult {
   success: boolean
   error?: string
   quality?: ImportQualityReport
+  /** 解析后的 payload，供模块级跨库引用校验 */
+  payload?: Record<string, unknown>
 }
 
 export async function runImport(task: ImportTask, options: { dryRun?: boolean; publish?: boolean; strictQuality?: boolean; version?: string } = {}): Promise<ImportResult> {
@@ -143,7 +146,7 @@ export async function runImport(task: ImportTask, options: { dryRun?: boolean; p
     if (quality.status === 'fail') {
       return { task, count, success: false, quality, error: '导入质量校验未通过' }
     }
-    if (dryRun) return { task, count, success: true, quality }
+    if (dryRun) return { task, count, success: true, quality, payload }
 
     const libraryId = await findOrCreateLibrary(task.module, task.type, task.libName, task.notes)
     // 显式指定版本号时优先使用。同一个库的版本号不可重复（唯一约束），
@@ -154,7 +157,7 @@ export async function runImport(task: ImportTask, options: { dryRun?: boolean; p
         : '1.0.0')
     const versionId = await createVersion(libraryId, version, payload, task.notes)
     if (publish) await publishVersion(versionId)
-    return { task, count, success: true, quality }
+    return { task, count, success: true, quality, payload }
   } catch (err: any) {
     return { task, count: 0, success: false, error: err.message }
   }
@@ -189,15 +192,43 @@ export async function importAll(options: { dryRun?: boolean; publish?: boolean; 
     if (result.quality) console.log(formatImportQualityReport(result.quality))
   }
 
+  // 模块级跨库引用校验：归因→量表、工具→归因/④c 维度、模板→等级、路由→量表/工具。
+  // 单库契约校验发现不了「编码写错导致通路静默失效」这类缺陷（S16 编码都能引用），
+  // 必须在同模块全部 payload 上交叉验证。只导了部分库类型时，缺失方向的校验降级为 info。
+  const payloadsByModule = new Map<string, Map<string, Record<string, unknown>>>()
+  for (const result of results) {
+    if (!result.success || !result.payload) continue
+    if (!payloadsByModule.has(result.task.module)) payloadsByModule.set(result.task.module, new Map())
+    payloadsByModule.get(result.task.module)!.set(result.task.type, result.payload)
+  }
+  let crossRefErrors = 0
+  for (const [moduleId, payloads] of payloadsByModule) {
+    const report = checkCrossReferences(
+      moduleId as ModuleId,
+      [...payloads.keys()].map(libraryType => ({ libraryType })),
+      payloads
+    )
+    const errors = report.issues.filter(i => i.severity === 'error')
+    const warnings = report.issues.filter(i => i.severity === 'warning')
+    const infos = report.issues.filter(i => i.severity === 'info')
+    crossRefErrors += errors.length
+    console.log(`CrossRef ${moduleId}: errors=${errors.length} warnings=${warnings.length} info=${infos.length}`)
+    for (const issue of [...errors, ...warnings].slice(0, 10)) {
+      console.log(`  ${issue.severity.toUpperCase()}: [${issue.sourceLibraryType} ${issue.sourceCode}.${issue.sourceField}] ${issue.message}`)
+    }
+    if (errors.length + warnings.length > 10) console.log(`  ... 还有 ${errors.length + warnings.length - 10} 条未显示`)
+  }
+  if (crossRefErrors > 0) console.error(`Cross-reference check failed: ${crossRefErrors} errors`)
+
   const succeeded = results.filter(result => result.success).length
   const totalEntries = results.reduce((sum, result) => sum + result.count, 0)
   const warningTasks = results.filter(result => result.quality?.status === 'warn').length
   const failedQualityTasks = results.filter(result => result.quality?.status === 'fail').length
   if (missingTasks > 0) console.log(`Missing standard resource files: ${missingTasks}`)
-  console.log(`\nDone: ${succeeded}/${results.length} tasks, ${totalEntries} total entries, qualityWarnings=${warningTasks}, qualityFailures=${failedQualityTasks}`)
+  console.log(`\nDone: ${succeeded}/${results.length} tasks, ${totalEntries} total entries, qualityWarnings=${warningTasks}, qualityFailures=${failedQualityTasks}, crossRefErrors=${crossRefErrors}`)
 
   await closeDb()
-  if (options.requireComplete && missingTasks > 0) {
+  if ((options.requireComplete && missingTasks > 0) || crossRefErrors > 0) {
     process.exitCode = 1
   }
   return results

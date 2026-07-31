@@ -1,5 +1,6 @@
 import { and, eq, ne } from 'drizzle-orm'
 import { moduleResourceVersionActionSchema } from '../../../../../../shared/contracts'
+import { runCrossRefCheck } from '../../../../../domain/module-resource-cross-ref-runner'
 import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
 import { schema, useDb } from '../../../../../utils/db'
@@ -44,7 +45,21 @@ export default defineEventHandler(async (event) => {
     if (!validation.ok) {
       throw createError({
         statusCode: 422,
-        message: `资源版本校验失败：${validation.errors.map(item => item.message).join('；')}`
+        message: `资源版本校验失败：${validation.errors.map(item => item.message).join('；')}`,
+        // 结构化明细放进 data，前端才能逐条展示。只拍平成一句 message 的话，
+        // 管理员只能看到一个泛泛的 toast，不知道该改哪一行。
+        data: { validation }
+      })
+    }
+    // 发布是最后一道闸门，跨库引用必须在这里拦住：草稿允许引用还没导入的库，
+    // 发布不允许——发布后教师立刻就会拿到这套资源。
+    const crossRef = await runCrossRefCheck(event, version.module as any, { kind: 'byVersion', versionId: id })
+    const crossRefErrors = crossRef.issues.filter(issue => issue.severity === 'error')
+    if (crossRefErrors.length) {
+      throw createError({
+        statusCode: 422,
+        message: `跨库引用校验失败，无法发布：${crossRefErrors.slice(0, 3).map(item => item.message).join('；')}`,
+        data: { crossRef }
       })
     }
   }

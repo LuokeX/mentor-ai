@@ -25,7 +25,12 @@ interface CenterEvent {
 const toast = useToast()
 const { user } = useAuth()
 const { targetTypeLabel } = useDisplayLabels()
-const activeFilter = ref<EventFilter>('all')
+// 从工作台「查看全部」等入口过来时会带 ?tab=actions，之前这个参数没人读，
+// 点进来永远落在「全部」。
+const route = useRoute()
+const FILTER_VALUES: EventFilter[] = ['all', 'notification', 'action', 'review', 'draft', 'assignment', 'student_event']
+const routedFilter = String(route.query.tab || '') as EventFilter
+const activeFilter = ref<EventFilter>(FILTER_VALUES.includes(routedFilter) ? routedFilter : 'all')
 const completingActionId = ref<string | null>(null)
 const selectedEventId = ref<string | null>(null)
 

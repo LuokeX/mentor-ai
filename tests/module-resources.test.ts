@@ -71,6 +71,69 @@ describe('module resource contracts', () => {
   })
 })
 
+describe('module resource validation · instrument role orchestration (③d)', () => {
+  const baseInstrument = (code: string, over: Record<string, unknown> = {}) => ({
+    code,
+    title: code,
+    estimatedMinutes: 3,
+    questions: [{ id: 'q1', text: '题1', dimension: 'D', options: [{ label: '少', value: 1 }, { label: '多', value: 5 }] }],
+    ...over
+  })
+  const validate = (instruments: Array<Record<string, unknown>>) => validateModuleResourcePayload({
+    module: 'self_growth',
+    libraryType: 'assessment',
+    payload: { instruments }
+  })
+
+  it('warns instead of failing when a multi-instrument library has no roles yet', () => {
+    const result = validate([baseInstrument('SG_A'), baseInstrument('SG_B')])
+    expect(result.ok).toBe(true)
+    expect(result.warnings.map(issue => issue.message).join('；')).toContain('量表角色')
+  })
+
+  it('requires exactly one screening instrument once roles are used', () => {
+    const none = validate([
+      baseInstrument('SG_A', { instrumentRole: 'deep_dive', triggerCondition: '量表[SG_B].总分 >= 4', prerequisiteCodes: ['SG_B'] }),
+      baseInstrument('SG_B', { instrumentRole: 'situational', triggerCondition: '量表[SG_A].总分 >= 4' })
+    ])
+    expect(none.ok).toBe(false)
+    expect(none.errors.map(issue => issue.message).join('；')).toContain('没有任何一张「入口筛查」')
+
+    const two = validate([
+      baseInstrument('SG_A', { instrumentRole: 'screening', isRequired: true }),
+      baseInstrument('SG_B', { instrumentRole: 'screening', isRequired: true })
+    ])
+    expect(two.ok).toBe(false)
+    expect(two.errors.map(issue => issue.message).join('；')).toContain('超过一张')
+  })
+
+  it('requires trigger conditions on non-screening roles', () => {
+    const result = validate([
+      baseInstrument('SG_A', { instrumentRole: 'screening', isRequired: true }),
+      baseInstrument('SG_B', { instrumentRole: 'deep_dive' })
+    ])
+    expect(result.ok).toBe(false)
+    expect(result.errors.map(issue => issue.message).join('；')).toContain('未填「触发条件」')
+  })
+
+  it('accepts a compliant orchestration', () => {
+    const result = validate([
+      baseInstrument('SG_A', { instrumentRole: 'screening', isRequired: true }),
+      baseInstrument('SG_B', { instrumentRole: 'deep_dive', triggerCondition: '量表[SG_A].总分 >= 4', prerequisiteCodes: ['SG_A'] })
+    ])
+    expect(result.errors).toEqual([])
+  })
+
+  it('rejects unknown role values instead of silently dropping them', () => {
+    const result = validate([
+      baseInstrument('SG_A', { instrumentRole: '入口卷' }),
+      baseInstrument('SG_B', { instrumentRole: 'screening', isRequired: true })
+    ])
+    expect(result.ok).toBe(false)
+    expect(result.errors.map(issue => issue.message).join('；')).toContain('量表角色值无效')
+  })
+})
+
 describe('module resource visibility', () => {
   it('uses school resources before global resources for the same library type', () => {
     const libraries = [

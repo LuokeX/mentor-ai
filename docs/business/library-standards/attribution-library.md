@@ -2,7 +2,7 @@
 
 归因库回答“为什么是这个问题、属于什么等级”。业务侧按 Excel 表格整理，系统导入时转换为规则引擎需要的 JSON；业务不需要直接维护 JSON。
 
-统一模板见 `business-libraries/templates/三库填写模板_v3.xlsx`。如果需要按模块拆分导入，可把归因相关 Sheet 拆到 `business-libraries/[module]/attribution.xlsx`，运行时发布到 `module_resource_libraries.library_type = attribution`。
+统一模板见 `business-libraries/templates/三库填写模板_v4.xlsx`。如果需要按模块拆分导入，可把归因相关 Sheet 拆到 `business-libraries/[module]/attribution.xlsx`，运行时发布到 `module_resource_libraries.library_type = attribution`。
 
 ## 归因变量表
 

@@ -1,5 +1,5 @@
 import { assessmentDefinitions, moduleMeta, type AssessmentDefinition } from '../../shared/assessments'
-import type { ModuleId, AttributionOutcome, OutputTemplateEntry, Severity } from '../../shared/contracts'
+import type { ModuleId, AttributionOutcome, OutputTemplateEntry, RedLineConfig, Severity } from '../../shared/contracts'
 import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
 import type { RuleOutput } from './rules'
 
@@ -12,6 +12,8 @@ type ReportResult = RuleOutput & {
   severity?: Severity
   levelName?: string
   dimensionLabels?: Record<string, string>
+  matchedRedLines?: RedLineConfig[]
+  escalationTarget?: string
 }
 
 /** 把维度编码换成中文名。缺映射时退回编码，至少不会崩。 */
@@ -29,8 +31,13 @@ const moduleRiskLabels: Record<ModuleId, Record<string, string>> = {
   learning_problem: { LP1: 'LP1 教师自主支持', LP2: 'LP2 深入诊断', LP3: 'LP3 系统干预' }
 }
 
-function riskLabel(module: ModuleId, level: string) {
-  return moduleRiskLabels[module][level] || level
+/**
+ * 等级中文名。优先用业务在 ⑤e 分级规则「等级中文名」列填的 levelName——
+ * moduleRiskLabels 只是内置兜底词表，业务自定义的等级码不在里面，
+ * 不看 levelName 的话会把 "HS_L2" 这类编码原样打给班主任。
+ */
+function riskLabel(module: ModuleId, level: string, levelName?: string) {
+  return levelName?.trim() || moduleRiskLabels[module]?.[level] || level
 }
 
 function weakestDimension(result: ReportResult) {
@@ -108,7 +115,7 @@ function moduleProfile(module: ModuleId, result: ReportResult, weak: string, str
 }
 
 function moduleRiskDescription(module: ModuleId, result: ReportResult) {
-  const label = riskLabel(module, result.level)
+  const label = riskLabel(module, result.level, result.levelName)
   const descriptions: Record<ModuleId, string> = {
     self_growth: `规则判断为"${label}"。该等级用于提示班主任当前消耗和支持优先级，重点是恢复节奏、减少独自承接和及时求助。`,
     class_system: `规则判断班级更接近"${label}"。该等级用于判断班级系统成熟度，重点是把薄弱系统补成可重复执行的班级机制。`,
@@ -287,7 +294,12 @@ function fitReportText(value: string, max: number) {
   return text.length > max ? text.slice(0, max) : text
 }
 
+// 占位符注入口径与 shared/contracts.ts 的 OUTPUT_TEMPLATE_PLACEHOLDERS 一一对应。
+// 未知占位符在这里仍静默置空——拦截责任在导入校验（module-resource-validation），
+// 运行期对存量旧数据保持容忍。
 function renderOutputTemplate(content: string, result: ReportResult, weak: string, strong: string) {
+  const primary = result.attributions?.[0]
+  const firstTool = result.tools?.[0]
   const replacements: Record<string, string> = {
     主要归因: result.primaryAttribution || weak,
     次要归因: result.secondaryAttributions?.length ? result.secondaryAttributions.join('、') : '暂无明显次要归因',
@@ -296,7 +308,15 @@ function renderOutputTemplate(content: string, result: ReportResult, weak: strin
     等级中文名: result.levelName || result.level,
     严重度: result.severity || '',
     薄弱维度: weak,
-    优势维度: strong
+    优势维度: strong,
+    // BOTTOM_DIM()/TOP_DIM() 的别名，业务更习惯带「最」字的写法
+    最薄弱维度: weak,
+    最优势维度: strong,
+    归因说明: primary?.description || '',
+    关键撬动点: primary?.suggestedAction || '',
+    工具名称: firstTool?.title || '',
+    操作步骤摘要: firstTool?.content || '',
+    责任人: result.matchedRedLines?.[0]?.responsibleRole || result.escalationTarget || ''
   }
   return content.replace(/\$\{([^}]+)\}/g, (_, key: string) => replacements[key.trim()] ?? '')
 }
@@ -331,7 +351,8 @@ export function createTemplateAssessmentReport(input: {
     })),
     risk: {
       level: result.level,
-      label: riskLabel(input.module, result.level),
+      label: riskLabel(input.module, result.level, result.levelName),
+      severity: result.severity,
       description: fitReportText(
         conclusionTemplate
           ? renderOutputTemplate(conclusionTemplate.content, result, weak, strong)
@@ -397,12 +418,24 @@ export function createTemplateAssessmentReport(input: {
       ...report.sevenDayFollowUp.reviewQuestions
     ].slice(0, 5)
   }
+  // attribution/tool 类型：无归因命中或无匹配工具时跳过，避免占位符全空的残句进入报告
+  const attributionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'attribution')
+  if (attributionTemplate && attributions.length) {
+    report.attributionNarrative = fitReportText(renderOutputTemplate(attributionTemplate.content, result, weak, strong), 500)
+  }
+  const toolTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'tool')
+  if (toolTemplate && result.tools.length) {
+    report.toolIntro = fitReportText(renderOutputTemplate(toolTemplate.content, result, weak, strong), 400)
+  }
   return assessmentReportSchema.parse(report)
 }
 
 export function validateAssessmentReport(input: unknown, module: ModuleId, result: ReportResult): AssessmentReport {
   const parsed = assessmentReportSchema.parse(input)
   if (parsed.risk.level !== result.level) throw new Error('AI report changed rule level')
+  // severity 是确定性结果，AI 润色时经常整字段丢掉。它决定前端等级徽章的颜色，
+  // 丢了就恒为灰，所以这里无条件用引擎的值覆盖，而不是校验后放行。
+  parsed.risk.severity = result.severity
   if (parsed.printMeta.module !== module) throw new Error('AI report changed module')
   if (parsed.printMeta.ruleIds.some(id => !result.matchedRuleIds.includes(id))) throw new Error('AI report used unknown rule id')
   // 归因是确定性规则算出来的，AI 只能复述，不能新增或改名

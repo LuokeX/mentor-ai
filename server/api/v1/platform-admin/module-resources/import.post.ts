@@ -3,6 +3,8 @@ import { moduleResourceFileImportSchema, type ModuleResourceFileImport } from '.
 import { parseModuleResourceFile } from '../../../../domain/module-resource-file-import'
 import { rebuildModuleResourceProjection } from '../../../../domain/module-resource-projection'
 import { validateModuleResourcePayload } from '../../../../domain/module-resource-validation'
+import { runCrossRefCheck } from '../../../../domain/module-resource-cross-ref-runner'
+import { resolveModuleResourceCounterpart } from '../../../../domain/module-resources'
 import { requireUser } from '../../../../utils/auth'
 import { writeAudit } from '../../../../utils/audit'
 import { schema, useDb } from '../../../../utils/db'
@@ -24,14 +26,52 @@ export default defineEventHandler(async (event) => {
   } catch (error: any) {
     throw createError({ statusCode: 400, message: error?.message || '资源文件解析失败' })
   }
-  const validation = validateModuleResourcePayload({ module: body.module, libraryType: body.libraryType, payload })
+  const validation = validateModuleResourcePayload({
+    module: body.module,
+    libraryType: body.libraryType,
+    payload,
+    counterpart: await resolveModuleResourceCounterpart(event, {
+      module: body.module,
+      libraryType: body.libraryType,
+      schoolId: body.schoolId || null
+    })
+  })
   if (!validation.ok) {
-    throw createError({ statusCode: 422, message: `资源文件校验失败：${validation.errors.map(issue => issue.message).join('；')}` })
+    throw createError({
+      statusCode: 422,
+      message: `资源文件校验失败：${validation.errors.map(issue => issue.message).join('；')}`,
+      data: { validation }
+    })
+  }
+  // 勾了「预检通过后直接发布」时必须过跨库校验，否则可以一步把跨库断裂的资源推上线。
+  // 只存草稿则放行——草稿本来就允许引用还没导入的库。
+  if (body.publish) {
+    const crossRef = await runCrossRefCheck(event, body.module, {
+      kind: 'byPayload', libraryType: body.libraryType, payload
+    })
+    const errors = crossRef.issues.filter(issue => issue.severity === 'error')
+    if (errors.length) {
+      throw createError({
+        statusCode: 422,
+        message: `跨库引用校验失败，无法直接发布：${errors.slice(0, 3).map(item => item.message).join('；')}`,
+        data: { crossRef }
+      })
+    }
   }
 
   const now = new Date()
   const result = await db.transaction(async (tx) => {
     const library = await resolveLibrary(tx, body, admin.id)
+    // 停用旧版必须排在插入之前。module_resource_versions_published_uidx 是
+    // 「WHERE status='published'」的部分唯一索引，先插一条 published 会当场撞索引：
+    // 库里已经有已发布版本时，「导入并直接发布」必然 500，且报错只说 duplicate key。
+    if (body.publish) {
+      await tx.update(schema.moduleResourceVersions).set({ status: 'retired', updatedAt: now })
+        .where(and(
+          eq(schema.moduleResourceVersions.libraryId, library.id),
+          eq(schema.moduleResourceVersions.status, 'published')
+        ))
+    }
     const [version] = await tx.insert(schema.moduleResourceVersions).values({
       libraryId: library.id,
       version: body.version,
@@ -52,14 +92,6 @@ export default defineEventHandler(async (event) => {
       scope: body.scope,
       schoolId: library.schoolId
     }, payload)
-    if (body.publish) {
-      await tx.update(schema.moduleResourceVersions).set({ status: 'retired', updatedAt: now })
-        .where(and(
-          eq(schema.moduleResourceVersions.libraryId, library.id),
-          eq(schema.moduleResourceVersions.status, 'published'),
-          ne(schema.moduleResourceVersions.id, version.id)
-        ))
-    }
     return { library, version }
   })
 

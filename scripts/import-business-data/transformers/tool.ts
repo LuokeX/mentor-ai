@@ -27,6 +27,21 @@ function splitList(value: string | undefined): string[] {
     .filter(Boolean)
 }
 
+/**
+ * ⑦「对应归因编码」列：业务很自然地会用分号填多个归因（一个工具对多个归因）。
+ * 不拆开的话整串会变成一个永不匹配的假编码——正是模板总览警告的
+ * 「静默失败：方案里没有工具」。第一个值进单值字段兼容旧消费方，全量进列表字段供匹配。
+ */
+function parseAttributionRefs(row: Record<string, string | undefined>): { attributionCode?: string, attributionCodes?: string[] } {
+  const refs = splitList(extractValue(row, ['对应归因编码', '归因编码', 'attributionCode']))
+  const listOnly = splitList(extractValue(row, ['对应归因编码列表', '归因编码列表', 'attributionCodes']))
+  const merged = refs.length > 1 ? refs : (refs.length === 1 && listOnly.length ? [...new Set([...refs, ...listOnly])] : refs.length ? refs : listOnly)
+  return {
+    attributionCode: merged[0],
+    attributionCodes: merged.length > 1 ? merged : undefined
+  }
+}
+
 function parseStringList(value: string | undefined): string[] | undefined {
   if (!value) return undefined
   const result = splitList(value)
@@ -56,6 +71,7 @@ function parseToolFileV2(sheets: SheetData[]): ToolRxEntry[] {
 
     const stepsRaw = extractValue(row, ['操作步骤摘要', '执行步骤', '操作步骤'])
     const steps = splitList(stepsRaw)
+    const attributionRefs = parseAttributionRefs(row)
 
     entries.push({
       code,
@@ -65,8 +81,8 @@ function parseToolFileV2(sheets: SheetData[]): ToolRxEntry[] {
       expectedEffect: extractValue(row, ['预期效果', 'expectedEffect']),
       severity: parseSeverity(extractValue(row, ['严重度', '严重度分级', 'severity'])),
       level: extractValue(row, ['适用等级', 'level']),
-      attributionCode: extractValue(row, ['对应归因编码', '归因编码', 'attributionCode']),
-      attributionCodes: parseStringList(extractValue(row, ['对应归因编码列表', '归因编码列表', 'attributionCodes'])),
+      attributionCode: attributionRefs.attributionCode,
+      attributionCodes: attributionRefs.attributionCodes,
       attributionLabel: extractValue(row, ['对应归因名称', '对应归因', 'attributionLabel']),
       tags: parseStringList(extractValue(row, ['tags', '场景标签', '标签'])),
       toolTags: parseStringList(extractValue(row, ['工具标签', '匹配标签', 'toolTags'])),
@@ -327,6 +343,7 @@ export function parseStandardToolFile(filePath: string): ToolRxEntry[] {
       const stepsRaw = extractValue(row, ['steps', '执行步骤', '操作步骤', '操作步骤（详细）', '具体操作步骤', '核心操作'])
       const steps = splitList(stepsRaw)
       if (!steps.length) continue
+      const attributionRefs = parseAttributionRefs(row)
 
       entries.push({
         code, name,
@@ -335,8 +352,8 @@ export function parseStandardToolFile(filePath: string): ToolRxEntry[] {
         expectedEffect: extractValue(row, ['expectedEffect', '预期输出或效果', '预期效果', '输出物']),
         severity: parseSeverity(extractValue(row, ['severity', '严重度', '严重度分级'])),
         level: extractValue(row, ['level', '适用等级', '等级']),
-        attributionCode: extractValue(row, ['attributionCode', '对应归因编码', '归因编码']),
-        attributionCodes: splitList(extractValue(row, ['attributionCodes', '对应归因编码列表', '归因编码列表'])),
+        attributionCode: attributionRefs.attributionCode,
+        attributionCodes: attributionRefs.attributionCodes,
         attributionLabel: extractValue(row, ['attributionLabel', '对应归因名称', '对应归因']),
         tags: splitList(extractValue(row, ['tags', '场景标签', '标签'])),
         toolTags: splitList(extractValue(row, ['toolTags', '工具标签', '匹配标签'])),

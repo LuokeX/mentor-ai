@@ -12,7 +12,7 @@ type PlanAction = {
 
 const route = useRoute()
 const id = String(route.params.id)
-const { data, refresh } = await useFetch<any>(`/api/v1/plans/${id}`)
+const { data, error: loadError, refresh } = await useFetch<any>(`/api/v1/plans/${id}`)
 const pending = ref(false)
 const actionPendingId = ref<string | null>(null)
 const sourceExpanded = ref(false)
@@ -74,11 +74,16 @@ function moduleTitle(module: string) {
   return (moduleMeta as Record<string, { title: string }>)[module]?.title || module
 }
 
-function riskVariant(level: string): 'error' | 'warning' | 'success' | 'neutral' {
+/**
+ * 按严重度取色，不能按等级码取色：等级码是业务在 ⑤e 自定义的
+ * （green / L1 / LP2 / norming…），映射表里一个都对不上，徽章会恒为灰。
+ * severity 是 low/medium/high/crisis 固定枚举，才是稳定的取色依据。
+ */
+function riskVariant(severity?: string): 'error' | 'warning' | 'success' | 'neutral' {
   const map: Record<string, 'error' | 'warning' | 'success' | 'neutral'> = {
-    high: 'error', medium: 'warning', low: 'success',
+    crisis: 'error', high: 'error', medium: 'warning', low: 'success',
   }
-  return map[level] || 'neutral'
+  return map[severity || ''] || 'neutral'
 }
 
 function statusText(status: string) {
@@ -146,7 +151,11 @@ const supportGoal = computed(() => report.value?.supportGoal || {
   avoidGoal: '不要把目标设成一次性解决所有问题。'
 })
 const firstAction = computed(() => report.value?.firstAction || activeActions.value[0] || null)
-const toolPrescriptions = computed(() => report.value?.toolPrescriptions || (data.value?.tools || []).map((tool: any) => {
+// 用 length 判断而不是直接 ||：空数组也是 truthy，回退分支会永远进不去，
+// 老方案（报告里没有 toolPrescriptions）的工具处方就整块消失了。
+const toolPrescriptions = computed(() => report.value?.toolPrescriptions?.length
+  ? report.value.toolPrescriptions
+  : (data.value?.tools || []).map((tool: any) => {
   // V2: 优先使用 structuredSteps，fallback 到 content 文本拆分
   const hasStructuredSteps = tool.structuredSteps && tool.structuredSteps.length > 0
   return {
@@ -345,14 +354,29 @@ useHead({ title: () => data.value?.title || '方案详情' })
   <div class="mx-auto max-w-4xl px-5 py-10">
     <!-- 返回 -->
     <div class="mb-6">
-      <UButton to="/information?tab=plans" color="neutral" variant="ghost" icon="i-lucide-arrow-left" size="sm">
+      <UButton to="/information/plans" color="neutral" variant="ghost" icon="i-lucide-arrow-left" size="sm">
         返回方案列表
       </UButton>
     </div>
 
+    <!-- 失败态。之前这里没有分支，拉取失败时 data 恒为 null，页面会永远转圈。 -->
+    <UAlert
+      v-if="loadError"
+      color="error"
+      variant="soft"
+      icon="i-lucide-triangle-alert"
+      title="方案加载失败"
+      :description="(loadError as any)?.data?.message || '请检查网络后重试；若方案已被删除，请返回方案列表。'"
+    >
+      <template #actions>
+        <UButton size="xs" color="error" variant="soft" @click="() => refresh()">重试</UButton>
+        <UButton size="xs" color="neutral" variant="ghost" to="/information/plans">返回列表</UButton>
+      </template>
+    </UAlert>
+
     <!-- 加载态 -->
     <div
-      v-if="!data"
+      v-else-if="!data"
       class="grid min-h-64 place-items-center text-sm text-slate-400"
     >
       <div class="text-center">
@@ -383,7 +407,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
           </div>
           <div class="flex items-center gap-2">
             <UBadge
-              :color="riskVariant(data.report?.risk?.level)"
+              :color="riskVariant(data.report?.risk?.severity)"
               variant="soft"
               size="md"
             >

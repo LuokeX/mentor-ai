@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { moduleIdSchema } from './contracts'
+import { moduleIdSchema, severitySchema } from './contracts'
 
 export const reportActionSchema = z.object({
   title: z.string().trim().min(2).max(80),
@@ -57,6 +57,9 @@ export const assessmentReportSchema = z.object({
   risk: z.object({
     level: z.string().trim().min(1).max(40),
     label: z.string().trim().min(1).max(80),
+    // 等级码由业务在 ⑤e 自定义（green / L1 / LP2 / norming…），前端无法据此取色。
+    // severity 是固定枚举，是唯一能稳定映射到颜色的字段。
+    severity: severitySchema.optional(),
     description: z.string().trim().min(10).max(500),
     nonDiagnosticNote: z.string().trim().min(10).max(300)
   }),
@@ -69,6 +72,8 @@ export const assessmentReportSchema = z.object({
     strength: z.enum(['primary', 'secondary', 'reference']),
     reasons: z.array(z.string().trim().min(2).max(500)).max(8).default([])
   })).max(5).default([]),
+  /** 归因叙述：attribution 类型输出模板的渲染结果。无归因命中时不生成。 */
+  attributionNarrative: z.string().trim().min(4).max(500).optional(),
   evidence: z.array(z.object({
     title: z.string().trim().min(2).max(100),
     detail: z.string().trim().min(4).max(400)
@@ -105,6 +110,8 @@ export const assessmentReportSchema = z.object({
     outputArtifact: z.string().trim().max(160).optional(),
     estimatedTime: z.string().trim().max(80).optional()
   })).max(6).optional(),
+  /** 工具导读：tool 类型输出模板的渲染结果，置于工具处方列表前。无匹配工具时不生成。 */
+  toolIntro: z.string().trim().min(4).max(400).optional(),
   escalationConditions: z.array(z.string().trim().min(2).max(200)).max(6).optional(),
   successCriteria: z.array(z.string().trim().min(2).max(200)).max(6).optional(),
   printMeta: z.object({
