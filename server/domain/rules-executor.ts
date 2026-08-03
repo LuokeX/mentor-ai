@@ -723,6 +723,12 @@ export function executeRules(
     primaryAttribution: attributions[0]?.name || '',
     secondaryAttributions: attributions.filter(a => a.strength === 'secondary').map(a => a.name),
     toolTags: [...new Set(ranked.flatMap(entry => entry.toolTags))],
+    // 暴露出去供运营台排查「这条规则为什么没命中」，以及 ⑪ 推演算例展示中间量
+    computedValues: Object.fromEntries(
+      Object.keys(config.computed)
+        .flatMap(name => typeof env.vars[name] === 'number' ? [[name, env.vars[name] as number] as const] : [])
+    ),
+    unavailableVariables,
     dimensions,
     dimensionLabels: Object.fromEntries(
       (definition.dimensionDefs || []).map(def => [def.code, def.name])
@@ -817,6 +823,9 @@ export function evaluateWithFallback(
   return {
     level: result.level,
     severity: result.blocked ? 'crisis' : 'medium',
+    // 兜底路径没有归因库，也就没有 ⑤b 计算变量
+    computedValues: {},
+    unavailableVariables: [],
     reasons: result.reasons,
     blocked: result.blocked,
     matchedRuleIds: result.matchedRuleIds,

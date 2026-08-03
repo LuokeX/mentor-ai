@@ -8,6 +8,7 @@ import {
 import XLSX from 'xlsx'
 import { parseModuleResourceFile } from '../server/domain/module-resource-file-import'
 import { filterVisiblePublishedLibraries } from '../server/domain/module-resources'
+import { selectEffectiveCrossRefPayloads } from '../server/domain/module-resource-cross-ref-runner'
 import { projectModuleResourcePayload } from '../server/domain/module-resource-projection'
 import { previewModuleResourcePayload, validateModuleResourcePayload } from '../server/domain/module-resource-validation'
 
@@ -143,6 +144,21 @@ describe('module resource visibility', () => {
       { id: 'other-school-attribution', libraryType: 'attribution', scope: 'school', schoolId: 'school-2' }
     ]
     expect(filterVisiblePublishedLibraries(libraries, 'school-1').map(item => item.id)).toEqual(['school-tool', 'global-attribution'])
+  })
+
+  it('uses school payloads before global payloads during cross-reference checks', () => {
+    const effective = selectEffectiveCrossRefPayloads([
+      { libraryType: 'assessment', scope: 'global', schoolId: null, payload: { source: 'global-assessment' } },
+      { libraryType: 'assessment', scope: 'school', schoolId: 'school-1', payload: { source: 'school-assessment' } },
+      { libraryType: 'tool', scope: 'global', schoolId: null, payload: { source: 'global-tool' } },
+      { libraryType: 'tool', scope: 'school', schoolId: 'school-2', payload: { source: 'other-school-tool' } },
+      { libraryType: 'attribution', scope: 'global', schoolId: null, payload: { source: 'global-attribution' } }
+    ], 'school-1')
+
+    expect(effective.payloads.get('assessment')).toEqual({ source: 'school-assessment' })
+    expect(effective.payloads.get('tool')).toEqual({ source: 'global-tool' })
+    expect(effective.payloads.get('attribution')).toEqual({ source: 'global-attribution' })
+    expect(effective.libraries.map(item => item.libraryType)).toEqual(['assessment', 'attribution', 'tool'])
   })
 })
 

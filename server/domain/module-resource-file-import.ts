@@ -38,7 +38,7 @@ export function parseModuleResourceFile(input: {
   }
   const sheets = readWorkbook(buffer)
   if (input.libraryType === 'assessment') return { instruments: parseAssessmentSheets(sheets, input.module, diagnostics) }
-  if (input.libraryType === 'tool') return { tools: parseToolSheets(sheets) }
+  if (input.libraryType === 'tool') return { tools: parseToolSheets(sheets, diagnostics) }
   if (input.libraryType === 'keyword_route') return { routes: parseKeywordRouteSheets(sheets, input.module) }
   if (input.libraryType === 'output_template') return { templates: parseOutputTemplateSheets(sheets, input.module) }
   return parseAttributionSheets(sheets, input.module) as unknown as Record<string, unknown>
@@ -49,7 +49,7 @@ export function parseModuleResourceFile(input: {
  * 它们是散文而不是表格，一旦漏进来，任何走「逐 sheet 兜底」的解析分支
  * （assessment 的 legacy、attribution 的 genericRows）都会把整页散文当成业务数据。
  */
-const GUIDE_SHEET_PATTERN = /使用说明|字段映射|填写总览|严格填写说明|枚举字典|条件写法速查|编排指南|角色说明|路径示意|编排自检/i
+const GUIDE_SHEET_PATTERN = /使用说明|字段映射|填写总览|严格填写说明|枚举字典|条件写法速查|编排指南|角色说明|路径示意|编排自检|推演算例/i
 
 function readWorkbook(buffer: Buffer): SheetData[] {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
@@ -260,20 +260,27 @@ function parseAssessmentSheetsLegacy(sheets: SheetData[], module: ModuleId): Ass
 }
 
 function parseAssessmentOptionGroups(sheet: SheetData | undefined) {
-  const groups: Record<string, Array<{ label: string, value: number }>> = {}
+  // 数组顺序就是教师端的展示顺序。④b 有「选项顺序」列，之前被完全无视、
+  // 一律按分值升序排——反向计分题想按「程度由高到低」展示时业务无从下手。
+  const groups: Record<string, Array<{ label: string, value: number, order: number }>> = {}
   if (!sheet) return groups
   for (const row of sheet.rows) {
     const code = read(row, ['选项组编码', 'optionGroupCode'])
     const label = read(row, ['选项文本', 'label'])
     const value = Number(read(row, ['分值', 'value']))
     if (!code || !label || !Number.isFinite(value)) continue
+    const rawOrder = Number(read(row, ['选项顺序', 'optionOrder', 'order']))
     if (!groups[code]) groups[code] = []
-    groups[code]!.push({ label, value })
+    // 没填顺序就退回按分值排，与从前行为一致
+    groups[code]!.push({ label, value, order: Number.isFinite(rawOrder) ? rawOrder : value })
   }
+  const result: Record<string, Array<{ label: string, value: number }>> = {}
   for (const code of Object.keys(groups)) {
-    groups[code]!.sort((a, b) => a.value - b.value)
+    result[code] = groups[code]!
+      .sort((a, b) => a.order - b.order || a.value - b.value)
+      .map(({ label, value }) => ({ label, value }))
   }
-  return groups
+  return result
 }
 
 function parseAssessmentDimensionDefs(sheet: SheetData | undefined) {
@@ -336,7 +343,7 @@ function parseAssessmentQuestions(
   return questions
 }
 
-function parseToolSheets(sheets: SheetData[]): ToolRxEntry[] {
+function parseToolSheets(sheets: SheetData[], diagnostics?: string[]): ToolRxEntry[] {
   const tools: ToolRxEntry[] = []
   const stepMap = new Map<string, ToolStructuredStep[]>()
   const contraMap = new Map<string, ToolContraindicationRule[]>()
@@ -394,7 +401,7 @@ function parseToolSheets(sheets: SheetData[]): ToolRxEntry[] {
         symptoms: read(row, ['symptoms', '适用症状/场景', '适用问题/场景', '适用场景', '触发情景', '适用症状场景']) || '',
         steps
       }
-      assignIfPresent(tool, 'expectedEffect', read(row, ['expectedEffect', '预期输出或效果', '预期效果', '输出物']))
+      assignIfPresent(tool, 'expectedEffect', read(row, ['expectedEffect', '预期效果', '预期输出或效果', '输出物']))
       assignIfPresent(tool, 'severity', parseSeverity(read(row, ['severity', '严重度分级', '严重度'])))
       assignIfPresent(tool, 'level', read(row, ['level', '适用等级', '等级']))
       // 「对应归因编码」列允许分号/逗号分隔多值：第一个进单值字段，全量进列表字段供匹配
@@ -442,6 +449,7 @@ function parseToolSheets(sheets: SheetData[]): ToolRxEntry[] {
   }
 
   // 合并结构化步骤和禁忌规则到对应工具
+  const toolCodes = new Set(tools.map(tool => tool.code))
   for (const tool of tools) {
     const toolCode = tool.code
     if (stepMap.has(toolCode)) {
@@ -450,6 +458,25 @@ function parseToolSheets(sheets: SheetData[]): ToolRxEntry[] {
     if (contraMap.has(toolCode)) {
       tool.contraindicationRules = contraMap.get(toolCode)
     }
+  }
+
+  // ⑦b/⑧ 靠「工具编码」挂到 ⑦ 上。编码对不上的行既不会报错也不会进 payload，
+  // 业务写错一个字母就整条消失。禁忌规则尤其严重——它是工具匹配里唯一的硬过滤，
+  // 悄悄丢掉意味着本该被拦住的工具照样推给教师。
+  const orphanContra = [...contraMap.keys()].filter(code => !toolCodes.has(code))
+  if (orphanContra.length) {
+    diagnostics?.push(
+      `⑧ 工具-禁忌规则里有 ${orphanContra.length} 条的「工具编码」在 ⑦ 工具-处方总表中不存在`
+      + `（${orphanContra.join('、')}），这些禁忌规则已被丢弃。`
+      + '禁忌是工具推荐唯一的硬过滤，丢失后本该被拦住的工具会照常推给教师，请核对编码。'
+    )
+  }
+  const orphanSteps = [...stepMap.keys()].filter(code => !toolCodes.has(code))
+  if (orphanSteps.length) {
+    diagnostics?.push(
+      `⑦b 工具-步骤明细里有 ${orphanSteps.length} 条的「工具编码」在 ⑦ 工具-处方总表中不存在`
+      + `（${orphanSteps.join('、')}），这些步骤已被丢弃，对应工具在教师端只会显示摘要文本。`
+    )
   }
 
   return tools
@@ -711,13 +738,13 @@ export function parseKnowledgeSheets(sheets: SheetData[], defaultModule: ModuleI
 }
 
 function read(row: Record<string, string | undefined>, keys: string[]) {
+  // 逐 key 先精确、后模糊：否则「预期效果*」这类带必填星号的列会输给排在后面的
+  // 无星号别名（如 输出物），同一行两个列都被填时读到错的一列。
   for (const key of keys) {
     if (row[key]) return row[key]
-  }
-  const headers = Object.keys(row)
-  for (const key of keys) {
     const normalizedKey = normalizeKey(key)
-    const match = headers.find(header => normalizeKey(header) === normalizedKey || normalizeKey(header).includes(normalizedKey))
+    const match = Object.keys(row).find(header =>
+      normalizeKey(header) === normalizedKey || normalizeKey(header).includes(normalizedKey))
     if (match && row[match]) return row[match]
   }
   return undefined

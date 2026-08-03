@@ -244,7 +244,7 @@ export default defineEventHandler(async (event) => {
 
 - 三库固定为 `assessment`、`attribution`、`tool`，运行时发布版本来自 `moduleResourceLibraries` 和 `moduleResourceVersions`，明细落在 `moduleResourceAssessmentItems`、`moduleResourceAttributionRules`、`moduleResourceToolItems`，文档与切块在 `moduleResourceDocuments`、`moduleResourceChunks`。
 - 导入链路：XLSX 模板（`business-libraries/templates/`）→ `scripts/import-business-data/`（`xlsx-reader` → `transformers/*` → `quality` → `importers`）或平台后台的 `server/domain/module-resource-file-import.ts`。
-- 业务填写模板当前为 **v4**（`三库填写模板_v4.xlsx`，22 个 sheet）。改模板必须走 `pnpm template:build` 重新生成，再 `pnpm template:split` 同步 `public/templates/` 下的分库模板；两条链路的 sheet 名匹配（`module-resource-file-import.ts` 与 `transformers/*`）要一起改，否则新 sheet 会被静默丢弃或误认。测试数据用 `pnpm testdata:build` 重出。
+- 业务填写模板当前为 **v4**（`三库填写模板_v4.xlsx`，23 个 sheet）。改模板必须走 `pnpm template:build` 重新生成，再 `pnpm template:split` 同步 `public/templates/` 下的分库模板；两条链路的 sheet 名匹配（`module-resource-file-import.ts` 与 `transformers/*`）要一起改，否则新 sheet 会被静默丢弃或误认。测试数据用 `pnpm testdata:build` 重出。
 - 写入前必须经 `validateModuleResourcePayload()` 校验、`previewModuleResourcePayload()` 预览，发布时用 `projectModuleResourcePayload()` / `rebuildModuleResourceProjection()` 生成运行时投影。不要绕过校验直接写明细表。
 - 运行时读取用 `resolvePublishedModuleResource()` 等函数，并遵守 `scope`（全局/校级）可见性规则。
 - 量表计分、等级、主归因、次归因、工具匹配、方案结构和风险判断必须由确定性代码执行。

@@ -7,6 +7,7 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const module = moduleIdSchema.parse(query.module)
   const versionId = typeof query.versionId === 'string' && query.versionId.length > 0 ? query.versionId : undefined
+  const schoolId = typeof query.schoolId === 'string' && query.schoolId.length > 0 ? query.schoolId : null
   // payload 组装逻辑见 module-resource-cross-ref-runner，导入预检与发布共用同一份
-  return runCrossRefCheck(event, module, versionId ? { kind: 'byVersion', versionId } : undefined)
+  return runCrossRefCheck(event, module, versionId ? { kind: 'byVersion', versionId } : undefined, { schoolId })
 })

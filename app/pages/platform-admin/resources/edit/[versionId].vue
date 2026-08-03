@@ -224,6 +224,7 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
           required: question.required !== false,
           displayCondition: question.displayCondition || '',
           dataUsage: question.dataUsage || '',
+          help: question.help || '',
           questionNote: question.questionNote || '',
           example: question.example || '',
           options: (question.options || []).map((option: any) => ({
@@ -379,6 +380,7 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
       prohibitions: tool.prohibitions || '',
       targetUsers: tool.targetUsers || '',
       dimensionsText: listText(tool.dimensions),
+      effectNote: tool.effectNote || '',
       // V2 new
       applicableSchoolSection: tool.applicableSchoolSection || '',
       reAssessmentIntervalDays: toNumber(tool.reAssessmentIntervalDays),
@@ -476,6 +478,7 @@ function buildVisualPayload() {
           required: Boolean(question.required),
           displayCondition: question.displayCondition || undefined,
           dataUsage: question.dataUsage || undefined,
+          help: question.help || undefined,
           questionNote: question.questionNote || undefined,
           example: question.example || undefined,
           options: (question.options || []).map((option: any) => ({
@@ -632,6 +635,7 @@ function buildVisualPayload() {
       prohibitions: tool.prohibitions,
       targetUsers: tool.targetUsers,
       dimensions: splitList(tool.dimensionsText),
+      effectNote: tool.effectNote || undefined,
       applicableSchoolSection: tool.applicableSchoolSection || undefined,
       reAssessmentIntervalDays: toNumber(tool.reAssessmentIntervalDays) || undefined,
       contraindicationNote: tool.contraindicationNote || undefined,
@@ -883,6 +887,31 @@ function addTemplate() {
   })
 }
 
+// ---- 导出 ----
+async function exportVersion() {
+  try {
+    const response = await fetch(`/api/v1/platform-admin/module-resources/versions/${versionId}/export`)
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ message: `HTTP ${response.status}` }))
+      throw new Error(err.message || '导出失败')
+    }
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    // 从 Content-Disposition 提取文件名，fallback 到默认名称
+    const disposition = response.headers.get('Content-Disposition') || ''
+    const filenameMatch = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/)
+    a.download = filenameMatch?.[1]?.replace(/%([0-9A-F]{2})/g, (_: string, hex: string) => String.fromCharCode(parseInt(hex, 16))) || 'export.xlsx'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    toast.add({ title: '导出失败', description: e?.message || '请稍后重试', color: 'error' })
+  }
+}
+
 // ---- 保存 ----
 async function saveEditedVersion() {
   if (editPayloadError.value) {
@@ -983,13 +1012,11 @@ function inlineInput(model: any, key: string) {
               @click="runCrossRefCheck"
             >校验关联</UButton>
             <UButton
-              as="a"
-              :href="`/api/v1/platform-admin/module-resources/versions/${versionId}/export`"
-              download
               color="neutral"
               variant="soft"
               size="sm"
               icon="i-lucide-download"
+              @click="exportVersion"
             >导出</UButton>
             <UButton icon="i-lucide-save" size="sm" :disabled="Boolean(editPayloadError)" :loading="pending" @click="saveEditedVersion">
               保存新版本
@@ -1093,7 +1120,7 @@ function inlineInput(model: any, key: string) {
                       <th class="p-2 w-16">题号</th><th class="p-2 w-40">题干</th><th class="p-2 w-20">维度</th>
                       <th class="p-2 w-20">子维度</th><th class="p-2 w-14">权重</th><th class="p-2 w-14">反向</th>
                       <th class="p-2 w-14">必答</th><th class="p-2 w-24">显示条件</th><th class="p-2 w-20">数据用途</th>
-                      <th class="p-2 w-24">题目说明</th><th class="p-2 w-24">题干举例</th>
+                      <th class="p-2 w-24">答题提示</th><th class="p-2 w-24">题目说明</th><th class="p-2 w-24">题干举例</th>
                       <th class="p-2 w-48">选项</th><th class="p-2 w-14">操作</th>
                     </tr>
                   </thead>
@@ -1108,6 +1135,7 @@ function inlineInput(model: any, key: string) {
                       <td class="p-1 text-center"><UCheckbox v-bind="inlineInput(q, 'required')" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(q, 'displayCondition')" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(q, 'dataUsage')" size="xs" /></td>
+                      <td class="p-1"><UInput v-bind="inlineInput(q, 'help')" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(q, 'questionNote')" size="xs" /></td>
                       <td class="p-1"><UInput v-bind="inlineInput(q, 'example')" size="xs" /></td>
                       <td class="p-1">
@@ -1456,7 +1484,7 @@ function inlineInput(model: any, key: string) {
                     <th class="p-2">适用情形</th><th class="p-2">预期效果</th><th class="p-2">严重度</th>
                     <th class="p-2">等级</th><th class="p-2">对应归因编码</th><th class="p-2">附加归因编码</th>
                     <th class="p-2">标签</th><th class="p-2">工具标签</th><th class="p-2">作用维度编码</th>
-                    <th class="p-2">步骤</th><th class="p-2">话术</th><th class="p-2">禁忌</th>
+                    <th class="p-2">效果说明</th><th class="p-2">步骤</th><th class="p-2">话术</th><th class="p-2">禁忌</th>
                     <th class="p-2">周期</th><th class="p-2">单次时长</th><th class="p-2">对象</th>
                     <th class="p-2">适用学部</th><th class="p-2 w-16">重评间隔</th><th class="p-2">版本</th>
                     <th class="p-2 w-14">操作</th>
@@ -1477,6 +1505,7 @@ function inlineInput(model: any, key: string) {
                     <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'tagsText')" :rows="2" size="xs" /></td>
                     <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'toolTagsText')" :rows="2" size="xs" /></td>
                     <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'dimensionsText')" :rows="2" size="xs" /></td>
+                    <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'effectNote')" :rows="2" size="xs" /></td>
                     <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'stepsText')" :rows="2" size="xs" /></td>
                     <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'scripts')" :rows="2" size="xs" /></td>
                     <td class="p-1"><UTextarea v-bind="inlineInput(tool, 'prohibitions')" :rows="2" size="xs" /></td>

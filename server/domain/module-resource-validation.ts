@@ -33,27 +33,66 @@ interface ValidationIssue {
  */
 export interface ModuleResourceCounterpart {
   assessmentDefinition?: AssessmentDefinition | null
+  /** 模块下全部已发布量表。归因库是模块级的，校验必须按证据的「依据量表编码」分表查。 */
+  assessmentInstruments?: AssessmentDefinition[] | null
   attributionConfig?: AttributionConfig | null
 }
 
-/** 抽取归因表达式引用到的题目 id，覆盖 SCORE(q1)、RAW('q1') 两种写法。 */
-export function collectReferencedQuestionIds(config: AttributionConfig): string[] {
-  const expressions = [
+function attributionExpressions(config: AttributionConfig): string[] {
+  return [
     ...Object.values(config.computed),
     ...config.evidences.map(evidence => evidence.condition),
     ...config.gradingRules.map(rule => rule.when).filter((when): when is string => Boolean(when)),
     ...(config.crisis ? [config.crisis.when] : []),
     ...(config.redLines || []).map(rl => rl.condition)
   ]
-  const pattern = /\b(?:SCORE|RAW)\s*\(\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\s*\)/g
+}
+
+/**
+ * 抽取归因表达式引用到的题目 id。
+ *
+ * 必须同时认「题[q1]」和「SCORE(q1)」：⑤a 条件写法速查教业务写的是中文形式，
+ * 转成 SCORE()/RAW() 是运行期 normalizeExpression 干的事，payload 里存的是原文。
+ * 只匹配英文形式的话，这条守卫对真实业务数据完全失效——引用了不存在的题号
+ * 会一路放行，那条证据永远不命中，对应归因永远算不出分，且不报错。
+ */
+export function collectReferencedQuestionIds(config: AttributionConfig): string[] {
+  const patterns = [
+    /\b(?:SCORE|RAW)\s*\(\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\s*\)/g,
+    /题\s*\[\s*([^\]]+?)\s*\]/g,
+    /原始\s*\[\s*([^\]]+?)\s*\]/g
+  ]
   const ids = new Set<string>()
-  for (const expression of expressions) {
-    for (const match of expression.matchAll(pattern)) {
-      const id = match[1] || match[2] || match[3]
-      if (id) ids.add(id)
+  for (const expression of attributionExpressions(config)) {
+    // 跨量表引用 量表[X].题[Y] 的题号属于另一张量表，不能拿本量表的题库去判
+    const local = expression.replace(/量表\s*\[[^\]]*\]\s*\.\s*(?:题|维度)\s*\[[^\]]*\]/g, ' ')
+    for (const pattern of patterns) {
+      for (const match of local.matchAll(pattern)) {
+        const id = (match[1] || match[2] || match[3] || '').trim()
+        if (id) ids.add(id)
+      }
     }
   }
   return [...ids]
+}
+
+/** 同上，抽取表达式引用到的维度编码，覆盖「维度[CODE]」与 DIM(CODE)。 */
+export function collectReferencedDimensionCodes(config: AttributionConfig): string[] {
+  const patterns = [
+    /\bDIM\s*\(\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\s*\)/g,
+    /维度\s*\[\s*([^\]]+?)\s*\]/g
+  ]
+  const codes = new Set<string>()
+  for (const expression of attributionExpressions(config)) {
+    const local = expression.replace(/量表\s*\[[^\]]*\]\s*\.\s*(?:题|维度)\s*\[[^\]]*\]/g, ' ')
+    for (const pattern of patterns) {
+      for (const match of local.matchAll(pattern)) {
+        const code = (match[1] || match[2] || match[3] || '').trim()
+        if (code) codes.add(code)
+      }
+    }
+  }
+  return [...codes]
 }
 
 function instrumentQuestionIds(instruments: Array<Record<string, unknown>>): Set<string> {
@@ -287,13 +326,24 @@ export function validateModuleResourcePayload(input: {
         }
       }
 
-      // 正向交叉校验：归因表达式引用的题目必须在现行量表里存在。
-      const definition = input.counterpart?.assessmentDefinition
-      if (definition) {
-        const available = new Set(definition.questions.map(question => question.id))
-        const missing = collectReferencedQuestionIds(config).filter(id => !available.has(id))
+      // 正向交叉校验：归因表达式引用的题目和维度必须在现行量表里存在。
+      // 按模块下全部量表取并集，不能只看默认那一张——归因库是模块级的，
+      // 它的证据规则会分别打在不同量表上（⑤d 的「依据量表编码」列）。
+      const instruments = input.counterpart?.assessmentInstruments
+        || (input.counterpart?.assessmentDefinition ? [input.counterpart.assessmentDefinition] : [])
+      if (instruments.length) {
+        const titles = instruments.map(item => item.title).join('》《')
+        const availableQuestions = new Set(instruments.flatMap(item => item.questions.map(q => q.id)))
+        const missing = collectReferencedQuestionIds(config).filter(id => !availableQuestions.has(id))
         if (missing.length) {
-          add('error', `归因库引用的题目在现行量表《${definition.title}》中不存在：${missing.join('、')}`)
+          add('error', `归因库引用的题目在现行量表《${titles}》中都不存在：${missing.join('、')}；该条件永远不会命中，对应归因永远算不出分`)
+        }
+        const availableDims = new Set(instruments.flatMap(item => (item.dimensionDefs || []).map(dim => dim.code)))
+        if (availableDims.size) {
+          const missingDims = collectReferencedDimensionCodes(config).filter(code => !availableDims.has(code))
+          if (missingDims.length) {
+            add('error', `归因库引用的维度在现行量表《${titles}》中都不存在：${missingDims.join('、')}；该条件永远不会命中`)
+          }
         }
       }
     }

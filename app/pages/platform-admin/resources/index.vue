@@ -389,6 +389,8 @@ function fileToBase64(file: File) {
       <h2 class="text-lg font-semibold text-slate-800">资源库与版本</h2>
       <div class="flex items-center gap-2">
         <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-refresh-cw" @click="() => refreshResources()">刷新</UButton>
+        <!-- 业务不是技术人员，逐列填 Excel 基本填不出来；向导只问中文，编码和表达式由系统生成 -->
+        <UButton to="/platform-admin/resources/wizard" color="primary" size="xs" variant="soft" icon="i-lucide-wand-sparkles">业务填写向导</UButton>
         <UButton color="primary" size="xs" icon="i-lucide-upload-cloud" @click="() => { importOpen = true }">导入资源</UButton>
       </div>
     </div>

@@ -732,6 +732,10 @@ export interface RuleExecResult {
   /** 派生自 attributions[1..]，仅含 strength 非 reference 的项 */
   secondaryAttributions: string[]
   toolTags: string[]
+  /** ⑤b 计算变量的求值结果。算不出的不在这里，见 unavailableVariables。 */
+  computedValues: Record<string, number>
+  /** 本次作答算不出的计算变量。不中断评估，但引用它们的规则不会命中。 */
+  unavailableVariables: string[]
   /** 维度得分，按维度编码索引 */
   dimensions: Record<string, number>
   /** 维度编码 → 中文名。面向班主任的文案必须用名称，不能把编码露出去。 */

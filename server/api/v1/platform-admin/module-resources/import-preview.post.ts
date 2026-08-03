@@ -34,7 +34,13 @@ export default defineEventHandler(async (event) => {
   // 跨库校验必须在导入时就跑。只在编辑器手动点的话，勾了「预检通过后直接发布」
   // 就能把跨库断裂的资源直接推上线。
   const crossRef = await runCrossRefCheck(event, body.module, {
-    kind: 'byPayload', libraryType: body.libraryType, payload
+    kind: 'byPayload',
+    libraryType: body.libraryType,
+    payload,
+    scope: body.scope,
+    schoolId: body.schoolId || null
+  }, {
+    schoolId: body.schoolId || null
   })
   const crossRefErrors = crossRef.issues.filter(issue => issue.severity === 'error')
   const projection = projectModuleResourcePayload({

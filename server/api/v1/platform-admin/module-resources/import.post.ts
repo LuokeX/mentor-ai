@@ -47,7 +47,13 @@ export default defineEventHandler(async (event) => {
   // 只存草稿则放行——草稿本来就允许引用还没导入的库。
   if (body.publish) {
     const crossRef = await runCrossRefCheck(event, body.module, {
-      kind: 'byPayload', libraryType: body.libraryType, payload
+      kind: 'byPayload',
+      libraryType: body.libraryType,
+      payload,
+      scope: body.scope,
+      schoolId: body.schoolId || null
+    }, {
+      schoolId: body.schoolId || null
     })
     const errors = crossRef.issues.filter(issue => issue.severity === 'error')
     if (errors.length) {

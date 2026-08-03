@@ -22,9 +22,9 @@
     "db:seed": "tsx scripts/seed.ts",
     "resources:reindex": "tsx scripts/reindex-module-resource-embeddings.ts",
     "import:business-data": "tsx scripts/import-business-data/index.ts",
-    "template:build": "node scripts/build-template-v4.mjs",
+    "template:build": "tsx scripts/build-template-v4.mjs",
     "template:split": "tsx scripts/generate-templates.ts",
-    "template:guide": "node scripts/build-filling-guide.mjs",
+    "template:guide": "tsx scripts/build-filling-guide.mjs",
     "testdata:build": "node scripts/generate-test-data.mjs --no-import",
     "scaffold:management": "tsx scripts/scaffold-management.ts"
   },

@@ -274,7 +274,13 @@ export async function resolveModuleResourceCounterpart(
 ): Promise<ModuleResourceCounterpart> {
   if (input.libraryType === 'attribution') {
     const assessment = await resolveAssessmentDefinition(event, input.module, input.schoolId)
-    return { assessmentDefinition: assessment.payload }
+    // 归因库是模块级的，它的证据规则会按「依据量表编码」分别打在不同量表上。
+    // 只给默认那一张的话，引用第二张量表题号/维度的规则会被误判成「引用不存在」。
+    const instruments = await listAssessmentInstruments(event, input.module, input.schoolId)
+    return {
+      assessmentDefinition: assessment.payload,
+      assessmentInstruments: instruments.length ? instruments : [assessment.payload]
+    }
   }
   if (input.libraryType === 'assessment') {
     const attribution = await resolveAttributionConfig(event, input.module, input.schoolId)

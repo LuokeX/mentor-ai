@@ -12,10 +12,18 @@
  * 1. ⑤c 拆成「归因项 / 证据规则 / 分级规则」三张表。归因从「单分支分级」变成「多因素加权」。
  * 2. 严重度统一到 low/medium/high/crisis，归因侧和工具侧共用，消除双枚举比对。
  * 3. 工具的「作用维度」改填量表维度编码；自由描述挪到新增的「效果说明」列。
+ *
+ * 用法：pnpm template:build（走 tsx——本脚本要 import 引擎来现算 ⑪ 推演，
+ *      而引擎里的 TS 引用是无扩展名的，裸 node 解析不了）
  */
 import XLSX from 'xlsx'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+// ⑪ 推演算例里的每个数字都由真引擎现算，不是手写常量——
+// 引擎逻辑一改，重跑本脚本推演就跟着更新，不会出现讲解和系统对不上。
+import { parseModuleResourceFile } from '../server/domain/module-resource-file-import.ts'
+import { executeRules } from '../server/domain/rules-executor.ts'
+import { scoreTools, renderToolContent } from '../server/domain/plan-actions.ts'
 
 const OUT = resolve('business-libraries/templates/三库填写模板_v4.xlsx')
 
@@ -335,7 +343,16 @@ sheet('④c 量表-维度定义',
 // ---------- ⑤a 条件写法 ----------
 sheet('⑤a 条件写法速查',
   ['你要表达的意思', '就这样写', '示例', '说明'],
-  ['某道题的得分', '题[题号]', '题[q1] >= 4', '反向计分题已自动折算后再取值'],
+  ['某道题的得分', '题[题号]', '题[q1] >= 4', '取的是折算后的分，不是教师点的那个选项——反向题看下面一行'],
+  ['【反向题的方向别写反】', '', '', '这是最容易出错、且没有任何校验能拦住的一处'],
+  ['  正向题（问题越严重分越高）', '题[q1] >= 4', '「身心疲惫」答 4/5 分 → 题[q1] = 4/5',
+    'q1 反向计分=否。题[q1] >= 4 就是「疲惫程度高」，符合直觉'],
+  ['  反向题（状态越好分越高）', '题[q3] >= 4', '「当班主任值得」答 1 分 → 题[q3] = 5',
+    'q3 反向计分=是，系统按 最小值+最大值−原始分 折算。'
+    + '所以 题[q3] >= 4 表示「意义感低」，不是「意义感高」。'],
+  ['  写反了会怎样', '', '', '表达式合法、题号也存在，导入校验全部通过——'
+    + '但红线会打在状态好的教师身上，或者对真正高危的人永不触发。'
+    + '填完请对照 ④ 的「反向计分」列逐条确认方向。'],
   ['某个维度的得分', '维度[维度编码]', '维度[EMOTION] >= 4', '维度编码取自 ④c，不是维度名称'],
   ['所有题目的总分', '总分', '总分 >= 20', '反向计分题已折算'],
   ['所有题目的均分', '均分', '均分 >= 3.5', ''],
@@ -438,7 +455,7 @@ sheet('⑦b 工具-步骤明细',
 
 sheet('⑧ 工具-禁忌规则',
   ['工具编码*', '禁忌条件*', '禁忌类型*', '禁忌说明*', '替代建议', '适用教师群体', '依据'],
-  ['SG_RX_012', '互动模式 = A型', 'block', 'A型（过度负责）教师禁止推送含「少付出／别那么负责」语义的内容',
+  ['SG_RX_001', '互动模式 = A型', 'block', 'A型（过度负责）教师禁止推送含「少付出／别那么负责」语义的内容',
     '推荐使用「资源盘点表」替代，聚焦教师已有的资源而非削减付出', '互动模式为A型的教师', 'PRD 8.2.1 依恋知情禁忌'])
 
 sheet('⑨ 关键词-路由',
@@ -446,16 +463,202 @@ sheet('⑨ 关键词-路由',
     '语义分类', '关联量表编码', '关联工具编码', '情境限定', '路由权重', '时效性', '场景描述'],
   ['KW_R01', '不想活', '想死；活着没意思；结束生命；生无可恋', '不想活了（开玩笑）；累死了', 'student_case', '1',
     'exact', 'red', '自杀意念', '', '', '', '1.0', 'always',
-    '学生或教师在任意对话中表达自杀意念，任一命中即走危机流程'])
+    '危机关键词直接走危机流程，不关联量表和工具——这两列留空是对的'],
+  ['KW_R02', '心累；撑不住', '身心俱疲；喘不过气；快扛不住了', '累了想睡觉', 'self_growth', '5',
+    'fuzzy', 'yellow', '情绪耗竭', 'SG_FIVE_Q', 'SG_RX_001', '教师自述状态时', '0.85', 'always',
+    '常规路由：命中后引导教师做 ③ 里的量表，并预推 ⑦ 里的工具。这两列填的编码必须已存在'])
 
 sheet('⑩ 方案输出模板',
   ['模板编码*', '所属模块*', '命中归因等级*', '模板类型*', '模板内容*', '占位符说明', '排序*'],
   ['TPL_SG_RED_SUMMARY', 'self_growth', 'red', 'summary',
     '评估显示，您在「${主要归因}」上的信号最为突出，同时「${次要归因}」也需要一并关注。这通常意味着您正在经历较高程度的身心负荷。',
     '${主要归因} 替换为占比最高的归因名称；${次要归因} 替换为第2-3条归因名称，逗号分隔', '1'],
+  ['TPL_SG_ORANGE_SUMMARY', 'self_growth', 'orange', 'summary',
+    '评估显示您当前处于需要主动支持的区间，主导因素是「${主要归因}」，「${次要归因}」同时在起作用。建议本周内安排一次减负动作，不要等状态继续下滑。',
+    '同上。⑤e 能判出的每个等级都应有一套，否则命中时只能退回兜底文案', '2'],
+  ['TPL_SG_YELLOW_SUMMARY', 'self_growth', 'yellow', 'summary',
+    '评估显示您有需要关注的信号，主要集中在「${主要归因}」。目前尚可自主调节，建议先从推荐工具里选一项本周试用并记录效果。',
+    '同上', '3'],
   ['TPL_SG_DEFAULT_SUMMARY', 'self_growth', 'none', 'summary',
     '本次评估未发现需要重点干预的信号，当前状态相对平稳。建议保持现有节奏。',
     '兜底模板：每个模块必须有一条，否则命中未覆盖等级时方案文案会空缺', '9'])
+
+// ---------- ⑪ 全链路推演算例 ----------
+// 做法：先把上面这些示例行写成一个内存工作簿，用**真实导入器**解析回来，
+// 再用**真实引擎**跑一遍。这样推演用的就是模板示例行本身，
+// 顺带证明了这些示例行确实可导入。
+function buildWalkthroughSheet() {
+  const tmp = XLSX.utils.book_new()
+  for (const { name, headers, rows } of SHEETS) {
+    XLSX.utils.book_append_sheet(tmp, XLSX.utils.aoa_to_sheet([headers, ...rows]), name)
+  }
+  const b64 = XLSX.write(tmp, { type: 'buffer', bookType: 'xlsx' }).toString('base64')
+  const load = type => parseModuleResourceFile({ module: 'self_growth', libraryType: type, filename: 'v4.xlsx', contentBase64: b64 })
+
+  const inst = load('assessment').instruments[0]
+  const cfg = load('attribution')
+  const tools = load('tool').tools
+  const templates = load('output_template').templates
+
+  // 主算例选一位「有信号但未到红线」的教师：证据有命中也有未命中、
+  // 判出非兜底等级、且不熔断，这样十步链路每一步都有内容可看。
+  // 注意 q3/q4 是反向题，这里填的是教师点的原始选项。
+  const answers = { q1: 4, q2: 4, q3: 4, q4: 4, q5: 3 }
+  const result = executeRules(cfg, answers, inst, { previousConsecutiveLowMeaning: 0 })
+  if (result.blocked) throw new Error('推演主算例不应触发红线，请调整 answers')
+  const matched = scoreTools(tools, {
+    dimensions: result.dimensions,
+    severity: result.severity,
+    attributions: result.attributions.map(a => ({ code: a.code, share: a.share })),
+    toolTags: result.toolTags
+  }).slice(0, 5)
+
+  const optLabel = (q, v) => (q.options.find(o => o.value === v) || {}).label || v
+  const dimName = code => ((inst.dimensionDefs || []).find(d => d.code === code) || {}).name || code
+  const R = []
+  const row = (...cells) => R.push(cells)
+
+  row('全链路推演算例 —— 用本模板 ③~⑩ 的示例数据，走一遍完整计算')
+  row('')
+  row('这张表不进系统，是给业务看的。所有数字由真实引擎现算，引擎改了重出模板就会同步更新。')
+  row('对照它可以回答一个问题：我填的这些格子，最后是怎么变成班主任看到的那份方案的。')
+  row('')
+  row('【第 0 步】输入：一位班主任的作答')
+  row('题号', '题干', '教师选了', '原始分', '反向计分', '来源')
+  for (const q of inst.questions) {
+    row(q.id, q.text, optLabel(q, answers[q.id]), String(answers[q.id]), q.reverse ? '是' : '否', '④ 量表-题目 / ④b 选项组')
+  }
+  row('')
+  row('【第 1 步】计分：反向题按「最小值＋最大值−原始分」折算')
+  row('题号', '原始分', '反向', '折算公式', '计分后', '说明')
+  for (const q of inst.questions) {
+    const vals = q.options.map(o => o.value)
+    const min = Math.min(...vals), max = Math.max(...vals)
+    const raw = answers[q.id]
+    const scored = q.reverse ? min + max - raw : raw
+    row(q.id, String(raw), q.reverse ? '是' : '否',
+      q.reverse ? `${min} + ${max} − ${raw}` : '（不折算）', String(scored),
+      q.reverse ? '状态越好分越高的题，折算后统一变成「分越高越需要关注」' : '')
+  }
+  row('', '', '', '总分 =', String(Object.entries(result.dimensions).length ? inst.questions.reduce((sum, q) => {
+    const vals = q.options.map(o => o.value); const min = Math.min(...vals), max = Math.max(...vals)
+    return sum + (q.reverse ? min + max - answers[q.id] : answers[q.id])
+  }, 0) : 0), '⑤e 里写「总分」取的就是这个值，不是原始作答之和')
+  row('')
+  row('【第 2 步】维度得分（④c 的「所属题号列表」+「计算方式」）')
+  row('维度编码', '维度名称', '所属题号', '计算方式', '得分', '来源')
+  for (const d of inst.dimensionDefs || []) {
+    row(d.code, d.name, (d.questionIds || []).join('、'), d.calcMethod || 'mean',
+      String(result.dimensions[d.code] ?? '—'), '④c 量表-维度定义')
+  }
+  row('')
+  row('【第 3 步】计算变量（⑤b）')
+  row('变量名', '表达式', '算出的值', '说明')
+  for (const [name, expr] of Object.entries(cfg.computed || {})) {
+    row(name, expr, String(result.computedValues?.[name] ?? '（本次未用到或算不出）'),
+      '算不出不会中断评估，只是引用它的规则不会命中')
+  }
+  if (!Object.keys(cfg.computed || {}).length) row('（本模板示例未使用计算变量）', '', '', '')
+  row('')
+  row('【第 4 步】证据命中判定（⑤d，按「依据量表编码」只取本量表的）')
+  row('证据编码', '归因编码', '触发条件', '是否命中', '证据权重', '说明')
+  const hitCodes = new Set(result.attributions.flatMap(a => a.evidenceCodes || []))
+  for (const e of cfg.evidences) {
+    row(e.evidenceCode || '—', e.attributionCode, e.condition,
+      hitCodes.has(e.evidenceCode) ? '✓ 命中' : '✗ 未命中', String(e.weight ?? 1), e.description || '')
+  }
+  row('')
+  row('【第 5 步】归因加权（⑤c 的权重基数 × Σ命中证据权重 → 归一化占比）')
+  row('归因编码', '归因名称', '权重基数', '命中证据', '原始得分', '占比', '强度')
+  for (const a of result.attributions) {
+    const item = cfg.attributionItems.find(x => x.code === a.code) || {}
+    row(a.code, a.name, String(item.baseWeight ?? 1), (a.evidenceCodes || []).join('、'),
+      String(a.rawScore), `${(a.share * 100).toFixed(1)}%`,
+      { primary: '主要', secondary: '次要', reference: '参考' }[a.strength] || a.strength)
+  }
+  row('', '', '', '', '', '', '占比 = 本归因得分 ÷ 所有命中归因得分之和')
+  row('', '', '', '', '', '', '按占比降序取前 3 条；班主任只看到「主要/次要」分组，看不到百分比')
+  row('')
+  row('【第 6 步】分级（⑤e，按优先级从小到大，第一条命中就停）')
+  row('规则编码', '优先级', '依据量表', '触发条件', '是否命中', '判出等级', '严重度')
+  for (const g of [...cfg.gradingRules].sort((a, b) => a.pri - b.pri)) {
+    row(g.ruleId, String(g.pri), g.assessmentCode || '（不限定）', g.when || '（兜底，无条件）',
+      result.matchedRuleIds.includes(g.ruleId) ? '✓ 命中并停止' : '✗', g.level, g.severity || '')
+  }
+  row('', '', '', '', '最终等级 →', `${result.level}${result.levelName ? '（' + result.levelName + '）' : ''}`, result.severity)
+  row('', '', '', '', '', '注意：分级与归因是解耦的——等级由 ⑤e 判，归因由 ⑤c/⑤d 算，两者互不决定', '')
+  row('')
+  row('【第 7 步】红线检查（⑥）')
+  row('红线条件', '是否命中', '后果')
+  for (const rl of cfg.redLines || []) {
+    row(rl.condition, result.blocked ? '✓ 命中' : '✗ 未命中',
+      result.blocked ? '熔断：不生成方案，直接转安全流程' : '未熔断，继续生成方案')
+  }
+  row('')
+  row('【第 8 步】工具加权匹配（⑦）：四项加权求和，不是「全都要满足」')
+  row('打分项', '权重', '本次情况')
+  row('对应归因命中（按该归因占比加权）', '×10', result.attributions.map(a => `${a.name} ${(a.share * 100).toFixed(0)}%`).join('；'))
+  row('工具标签 ∩ 归因的工具标签', '×3', (result.toolTags || []).join('、') || '（无）')
+  row('严重度相同', '×2', `本次严重度 ${result.severity}`)
+  // 引擎里薄弱维度的判据是「得分 <= 2.5」，不是越高越薄弱
+  const weakDims = Object.entries(result.dimensions).filter(([, v]) => v <= 2.5).map(([k]) => dimName(k))
+  row('作用维度命中薄弱维度（得分 <= 2.5）', '×2', weakDims.join('、') || '（本次无薄弱维度，这一项不加分）')
+  row('')
+  row('工具编码', '工具名称', '对应归因', '严重度', '作用维度', '得分')
+  for (const { tool, score } of matched) {
+    row(tool.code, tool.name || tool.title, tool.attributionLabel || tool.attributionCode,
+      tool.severity || '', (tool.dimensions || []).map(dimName).join('、'), score.toFixed(2))
+  }
+  if (!matched.length) row('（本次没有匹配到工具）', '', '', '', '', '')
+  row('', '', '', '', '', '禁忌规则（⑧）里 type=block 的是唯一硬过滤，命中直接剔除该工具')
+  row('')
+  row('【第 9 步】输出模板渲染（⑩，按判出的等级取）')
+  const tpl = templates.find(t => t.attributionLevel === result.level && t.type === 'summary')
+    || templates.find(t => ['none', 'default'].includes(t.attributionLevel))
+  row('命中模板', tpl ? tpl.code : '（无，用系统内置文案）')
+  row('模板原文', tpl ? tpl.content : '')
+  row('${主要归因}', (result.attributions.find(a => a.strength === 'primary') || {}).name || '')
+  row('${次要归因}', result.attributions.filter(a => a.strength === 'secondary').map(a => a.name).join('、'))
+  row('渲染结果', tpl
+    ? tpl.content
+        .replace(/\$\{主要归因\}/g, (result.attributions.find(a => a.strength === 'primary') || {}).name || '')
+        .replace(/\$\{次要归因\}/g, result.attributions.filter(a => a.strength === 'secondary').map(a => a.name).join('、'))
+    : '')
+  row('')
+  row('【第 10 步】班主任最终看到什么')
+  row('报告等级徽章', result.levelName || result.level)
+  row('归因构成', result.attributions.map(a => `${{ primary: '主要', secondary: '次要', reference: '参考' }[a.strength]} ${a.name}`).join('  |  '))
+  row('关键依据', result.attributions.flatMap(a => a.reasons || []).join('；'))
+  row('3 天行动', result.actions.map(a => a.title).join('  |  ') || '（无）')
+  row('工具卡', matched.map(m => m.tool.name || m.tool.title).join('  |  ') || '（无）')
+  row('')
+  row('【对照案例：同一套规则，另一位教师触发红线】')
+  const redAnswers = { q1: 4, q2: 4, q3: 2, q4: 3, q5: 4 }
+  const redResult = executeRules(cfg, redAnswers, inst, { previousConsecutiveLowMeaning: 0 })
+  row('这位教师的作答', inst.questions.map(q => `${q.id}=${redAnswers[q.id]}`).join('  '))
+  row('折算后', inst.questions.map(q => {
+    const vals = q.options.map(o => o.value); const min = Math.min(...vals), max = Math.max(...vals)
+    return `${q.id}=${q.reverse ? min + max - redAnswers[q.id] : redAnswers[q.id]}`
+  }).join('  '))
+  row('差别在哪', 'q3 原始分从 4 变成 2。q3 是反向题，折算后从 2 变成 4，正好越过红线阈值。')
+  row('红线条件', (cfg.redLines || [])[0]?.condition || '')
+  row('是否熔断', redResult.blocked ? '✓ 熔断' : '✗ 未熔断')
+  row('后果', '不生成方案。第 8~10 步全部不发生：教师看到的是安全转介提示，'
+    + '不是评估报告，也没有工具卡和 3 天行动。')
+  row('这说明什么', '反向题上「原始分低」＝「状态差」。写 ⑤e/⑥ 的条件时，'
+    + '方向写反不会报错，但红线会打在状态好的人身上、或对真正高危的人永不触发。'
+    + '详见 ⑤a 的「反向题的方向别写反」。')
+  row('')
+  row('【看不到的东西，以及为什么】')
+  row('占比百分比', '占比是规则匹配强度，不是测量精度。直接给百分比会被当成诊断承诺，所以只呈现主要/次要分组。')
+  row('归因编码、维度编码', '面向班主任的文案一律用中文名。编码泄漏到界面上就是事故。')
+  row('触发条件原文', '业务的阈值是内部判断依据，不对教师展示。教师只看到「触发条件说明」那一列的人话。')
+
+  const width = Math.max(...R.map(r => r.length))
+  return { name: '⑪ 全链路推演算例', headers: R[0], rows: R.slice(1).map(r => [...r, ...Array(width - r.length).fill('')]) }
+}
+
+SHEETS.push(buildWalkthroughSheet())
 
 // ---------- 写盘 ----------
 const wb = XLSX.utils.book_new()

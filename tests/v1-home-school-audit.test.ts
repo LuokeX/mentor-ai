@@ -4,7 +4,7 @@
  *       跨库引用一致性 → 规则引擎逐表试算 → 编排状态机 → 敏感数据嗅探。
  * 跑完即删，不入库。
  */
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { parseAssessmentFile, toAssessmentPayload } from '../scripts/import-business-data/transformers/assessment'
 import { parseAttributionFile } from '../scripts/import-business-data/transformers/attribution'
@@ -18,6 +18,13 @@ import type { AssessmentDefinition } from '../shared/assessments'
 import type { AttributionConfig } from '../shared/contracts'
 
 const BASE = 'business-libraries/home_school - V1'
+
+/**
+ * 这是针对某一次业务交付的一次性审计，数据不在仓库里（git 未跟踪）。
+ * 交付文件不在时整体跳过，而不是让整个测试文件加载失败——
+ * 文件放回来时会自动恢复运行。
+ */
+const HAS_FIXTURE = existsSync(`${BASE}/assessment.xlsx`)
 const MODULE = 'home_school' as const
 
 const issues: string[] = []
@@ -26,12 +33,24 @@ const fail = (msg: string) => issues.push(msg)
 const note = (msg: string) => notes.push(msg)
 
 // ---------- 1. 解析五库 ----------
-const instruments = parseAssessmentFile(`${BASE}/assessment.xlsx`, MODULE)
-  .map(item => toAssessmentPayload(item, MODULE)) as AssessmentDefinition[]
-const attribution: AttributionConfig = parseAttributionFile(`${BASE}/attribution.xlsx`, MODULE)
-const tools = parseStandardToolFile(`${BASE}/tool.xlsx`)
-const routes = parseKeywordRouteFile(`${BASE}/keyword_route.xlsx`, MODULE)
-const templates = parseOutputTemplateFile(`${BASE}/output_template.xlsx`, MODULE)
+// 交付文件不在时整个文件不做任何解析，直接短路——
+// vitest 会在模块顶层就抛 ENOENT，describe.skipIf 拦不住。
+if (!HAS_FIXTURE) {
+  describe.skip('home_school V1 业务数据全链路校验（交付文件不在仓库中，已跳过）', () => {
+    it('skipped', () => { expect(true).toBe(true) })
+  })
+}
+
+const instruments = HAS_FIXTURE
+  ? parseAssessmentFile(`${BASE}/assessment.xlsx`, MODULE)
+      .map(item => toAssessmentPayload(item, MODULE)) as AssessmentDefinition[]
+  : []
+const attribution: AttributionConfig = HAS_FIXTURE
+  ? parseAttributionFile(`${BASE}/attribution.xlsx`, MODULE)
+  : { module: MODULE, version: '0', computed: {}, attributionItems: [], evidences: [], gradingRules: [], redLines: [], actions: [], tools: [] } as any
+const tools = HAS_FIXTURE ? parseStandardToolFile(`${BASE}/tool.xlsx`) : []
+const routes = HAS_FIXTURE ? parseKeywordRouteFile(`${BASE}/keyword_route.xlsx`, MODULE) : []
+const templates = HAS_FIXTURE ? parseOutputTemplateFile(`${BASE}/output_template.xlsx`, MODULE) : []
 
 note(`量表 ${instruments.length} 张：${instruments.map(i => `${i.code}(${i.questions.length}题,角色=${i.instrumentRole || '未填'},必做=${i.isRequired ? '是' : '否'})`).join('、')}`)
 note(`归因项 ${attribution.attributionItems.length}、证据 ${attribution.evidences.length}、分级 ${attribution.gradingRules.length}、红线 ${(attribution.redLines || []).length}、计算变量 ${Object.keys(attribution.computed).length}`)
@@ -143,14 +162,14 @@ for (const o of options) {
 // ---------- 7. 敏感数据嗅探（S01） ----------
 const phonePattern = /1[3-9]\d{9}/
 const idCardPattern = /\d{17}[\dXx]/
-for (const file of ['assessment.xlsx', 'attribution.xlsx', 'tool.xlsx', 'keyword_route.xlsx', 'output_template.xlsx']) {
+for (const file of HAS_FIXTURE ? ['assessment.xlsx', 'attribution.xlsx', 'tool.xlsx', 'keyword_route.xlsx', 'output_template.xlsx'] : []) {
   const raw = readFileSync(`${BASE}/${file}`)
   const text = raw.toString('utf8') + raw.toString('latin1')
   if (phonePattern.test(text)) note(`[S01] ${file} 疑似包含手机号模式（xlsx 二进制内嵌字符串，需人工确认）`)
   if (idCardPattern.test(text)) note(`[S01] ${file} 疑似包含身份证号模式（需人工确认）`)
 }
 
-describe('home_school V1 业务数据全链路校验', () => {
+describe.skipIf(!HAS_FIXTURE)('home_school V1 业务数据全链路校验', () => {
   it('解析出全部五库内容', () => {
     expect(instruments.length).toBeGreaterThan(0)
     expect(attribution.attributionItems.length).toBeGreaterThan(0)

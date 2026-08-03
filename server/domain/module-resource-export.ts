@@ -27,27 +27,20 @@ function exportAssessment(payload: any): { sheetName: string; headers: string[];
   const instruments = Array.isArray(payload.instruments) ? payload.instruments : [payload]
   const sheets: { sheetName: string; headers: string[]; rows: string[][] }[] = []
 
-  // ③ 量表-清单
+  // ③ 量表-清单（列序与 v4 模板逐列一致，见 V4_HEADERS）
   const instrumentHeaders = [
-    '量表编码*', '量表名称*', '量表简称', '所属模块*', '版本*',
-    '量表说明', '预计用时分钟*',
-    '适用学部*', '适用年级', '适用学科',
-    '施测对象*', '施测形式*', '触发方式*', '作答频次*', '是否必做*',
-    '作答时限分钟', '最低题数', '使用时机', '重评间隔天数',
-    '前置量表编码', '互斥量表编码',
-    '结果可见性*', '责任角色', '数据敏感级*', '来源属性*',
-    '外部授权说明', '手册出处*',
-    '常模参照', '信度说明', '效度说明',
-    '隐私声明', '适用前提', '不适合情况', '后续建议动作',
+    '量表编码*', '量表名称*', '量表简称', '所属模块*', '适用学部*', '适用年级', '适用学科',
+    '施测对象*', '施测形式*', '触发方式*', '作答频次*', '是否必做*', '预计用时分钟*',
+    '作答时限分钟', '最低题数', '使用时机', '重评间隔天数', '前置量表编码', '互斥量表编码',
+    '触发条件', '触发条件说明', '结果可见性*', '责任角色', '数据敏感级*', '来源属性*',
+    '外部授权说明', '手册出处*', '版本*', '量表说明', '常模参照', '信度说明', '效度说明',
+    '隐私声明', '适用前提', '不适合情况', '后续建议动作', '量表角色*', '做完导向什么*',
   ]
   const instrumentRows = instruments.map((inst: any) => [
     inst.code || inst.instrumentCode || '',
     inst.title || '',
     inst.shortName || '',
     inst.module || '',
-    inst.version || '',
-    inst.description || '',
-    String(inst.estimatedMinutes ?? ''),
     inst.applicableSchoolSection || '',
     listStr(inst.applicableGrades),
     listStr(inst.applicableSubjects),
@@ -56,18 +49,23 @@ function exportAssessment(payload: any): { sheetName: string; headers: string[];
     inst.triggerMethod || '',
     inst.frequency || '',
     boolStr(inst.isRequired),
+    String(inst.estimatedMinutes ?? ''),
     String(inst.timeLimitMinutes ?? ''),
     String(inst.minQuestions ?? ''),
     inst.usageTiming || '',
     String(inst.reAssessmentIntervalDays ?? ''),
     listStr(inst.prerequisiteCodes),
     listStr(inst.exclusiveCodes),
+    inst.triggerCondition || '',
+    inst.triggerConditionNote || '',
     inst.resultVisibility || '',
     inst.responsibleRole || '',
     inst.dataSensitivity || '',
     inst.sourceType || '',
     inst.externalAuthorizationNote || '',
     inst.sourceRef || '',
+    inst.version || '',
+    inst.description || '',
     inst.normReference || '',
     inst.reliabilityNote || '',
     inst.validityNote || '',
@@ -75,6 +73,8 @@ function exportAssessment(payload: any): { sheetName: string; headers: string[];
     inst.applicabilityPreconditions || '',
     inst.contraindications || '',
     inst.postAssessmentActions || '',
+    inst.instrumentRole || '',
+    '', // 做完导向什么 — payload 不保存（模板里是给业务看的定位说明），导出留空
   ])
   sheets.push({ sheetName: '③ 量表-清单', headers: instrumentHeaders, rows: instrumentRows })
 
@@ -88,6 +88,8 @@ function exportAssessment(payload: any): { sheetName: string; headers: string[];
   const questionRows: string[][] = []
   for (const inst of instruments) {
     for (const q of inst.questions || []) {
+      // 与下方 ④b 的生成规则保持一致：OPT-<量表编码>-<题号>
+      const groupCode = `OPT-${inst.code || inst.instrumentCode || 'X'}-${q.id || ''}`
       questionRows.push([
         inst.code || inst.instrumentCode || '',
         q.id || '',
@@ -96,13 +98,13 @@ function exportAssessment(payload: any): { sheetName: string; headers: string[];
         q.subDimension || '',
         q.text || '',
         q.example || '',
-        '', // 选项组编码 — 选项以内联形式在模板中，此处暂留空
+        groupCode,
         boolStr(q.reverse),
         String(q.weight ?? ''),
         boolStr(q.required !== false),
         q.displayCondition || '',
         q.dataUsage || '',
-        '', // 答题提示
+        q.help || '',
         q.questionNote || '',
         '', // 默认分值
       ])
@@ -113,12 +115,10 @@ function exportAssessment(payload: any): { sheetName: string; headers: string[];
   // ④b 量表-选项组
   const optionHeaders = ['选项组编码*', '选项顺序*', '选项文本*', '分值*']
   const optionRows: string[][] = []
-  let optionGroupIndex = 0
   for (const inst of instruments) {
     for (const q of inst.questions || []) {
       if (!q.options?.length) continue
-      optionGroupIndex++
-      const groupCode = `OPT-${inst.code || inst.instrumentCode || 'X'}-${q.id || optionGroupIndex}`
+      const groupCode = `OPT-${inst.code || inst.instrumentCode || 'X'}-${q.id || ''}`
       q.options.forEach((opt: any, oi: number) => {
         optionRows.push([
           groupCode,
@@ -288,7 +288,9 @@ function exportTool(payload: any): { sheetName: string; headers: string[]; rows:
     t.attributionLabel || '',
     listStr(t.toolTags || t.tags),
     listStr(t.dimensions),
-    listStr(t.steps),
+    t.effectNote || '',
+    // 步骤摘要：导入端按「；」或换行拆分，必须用「；」连接（逗号连接会拆不开）
+    Array.isArray(t.steps) ? t.steps.join('；') : String(t.steps || ''),
     t.scripts || '',
     t.expectedEffect || '',
     t.timePerSession || '',
