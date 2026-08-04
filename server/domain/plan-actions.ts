@@ -191,7 +191,7 @@ export function renderToolContent(tool: Record<string, unknown>): string {
 export async function resolveToolsForPlan(
   event: H3Event,
   module: string,
-  input: ToolMatchInput & { schoolId?: string | null }
+  input: ToolMatchInput & { schoolId?: string | null, requiredCodes?: string[] }
 ): Promise<Array<{ title: string, content: string, code?: string, sourceVersionId?: string, matchScore?: number }>> {
   const { resolvePublishedModuleResource } = await import('./module-resources')
   const resource = await resolvePublishedModuleResource<{ tools?: Array<Record<string, unknown>> }>(
@@ -209,15 +209,27 @@ export async function resolveToolsForPlan(
 
   if (tools.length === 0) return []
 
-  return scoreTools(tools, input)
-    .slice(0, MAX_MATCHED_TOOLS)
-    .map(({ tool, score }) => ({
-      title: String(tool.name || tool.title || ''),
-      code: String(tool.code || '').trim() || undefined,
-      sourceVersionId: resource.versionId,
-      matchScore: score,
-      content: renderToolContent(tool)
-    }))
+  const render = (tool: Record<string, unknown>, score?: number) => ({
+    title: String(tool.name || tool.title || ''),
+    code: String(tool.code || '').trim() || undefined,
+    sourceVersionId: resource.versionId,
+    matchScore: score,
+    content: renderToolContent(tool)
+  })
+
+  // 等级干预通道：命中等级直选的工具按编码无条件入选（跳过打分），且优先于归因加权结果
+  const required = new Set((input.requiredCodes || []).map(normalize).filter(Boolean))
+  const direct = required.size
+    ? tools.filter(tool => required.has(normalize(tool.code))).map(tool => render(tool, undefined))
+    : []
+
+  // 归因加权匹配照常打分；与直选工具按编码去重（直选优先），总量仍受 MAX_MATCHED_TOOLS 约束
+  const scored = scoreTools(tools, input)
+    .filter(({ tool }) => !required.has(normalize(tool.code)))
+    .slice(0, Math.max(0, MAX_MATCHED_TOOLS - direct.length))
+    .map(({ tool, score }) => render(tool, score))
+
+  return [...direct, ...scored]
 }
 
 function normalize(value: unknown) {

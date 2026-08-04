@@ -314,6 +314,13 @@ export function compileWizardInput(input: WizardInput): CompileResult {
   const hasRedLine = input.levels.some(l => l.redLine)
   const templateCode = (level: string, seqNo: number) =>
     `TPL_${P}_${level === 'green' ? 'DEFAULT' : level.toUpperCase()}_${seqNo}`
+  // 等级干预通道：工具名称 → 工具编码（参照 ⑦ 的 attrCodes 做法），映射失败直接报错
+  const interventionToolCodesOf = (names: string[], owner: string) =>
+    names.map(n => {
+      const c = codes.tools.get(n)
+      if (!c) add('error', `等级「${owner}」的干预工具「${n}」不在工具清单里，请先在第 7 步添加它。`)
+      return c || n
+    })
   input.levels.forEach((lv, i) => {
     const levelCode = `L${i + 1}`
     const level = levelEnum[i]!
@@ -323,7 +330,9 @@ export function compileWizardInput(input: WizardInput): CompileResult {
     s5e.push([`${P}_GR_${seq(i + 1)}`, input.module, codes.scales.get(scaleName) || '',
       String((i + 1) * 10), cond, level, lv.name, severity,
       lv.redLine ? '是' : '否', lv.resultNote || lv.name,
-      lv.escalationCondition || '', lv.escalationTarget || '', lv.reAssessTrigger || '', ref])
+      lv.escalationCondition || '', lv.escalationTarget || '', lv.reAssessTrigger || '',
+      interventionToolCodesOf(lv.interventionTools || [], lv.name).join(';'),
+      (lv.interventionActions || []).join('；'), ref])
     if (lv.teacherMessage) {
       s10.push([templateCode(level, i + 1), input.module, level, 'summary', lv.teacherMessage,
         '可用占位符见 ⑩ 说明', String(i + 1)])
@@ -359,7 +368,7 @@ export function compileWizardInput(input: WizardInput): CompileResult {
       s5e.push([`${P}_GR_AUTO_${seq(autoSeq)}`, input.module, code,
         String(500 + autoSeq), `均分 >= ${threshold}`, levelEnum[idx]!, lv.name,
         severityForLevel(levelEnum[idx]!),
-        '否', lv.resultNote || lv.name, '', '', '', ref])
+        '否', lv.resultNote || lv.name, '', '', '', '', '', ref])
     })
     if (ladder.length) {
       add('warning', `量表《${scale.name}》没有自己的分级规则，系统按「平均分 ≥ ${AUTO_THRESHOLDS.slice(0, ladder.length).join(' / ')}」自动补了一套。`
@@ -369,7 +378,7 @@ export function compileWizardInput(input: WizardInput): CompileResult {
 
   // 兜底：优先级必须是最大值，否则会吃掉全部作答让前面的规则永远执行不到
   s5e.push([`${P}_GR_DEFAULT`, input.module, '', '999', '', 'green',
-    input.defaultLevelName, 'low', '否', '本次评估未发现需要重点干预的信号', '', '', '', ref])
+    input.defaultLevelName, 'low', '否', '本次评估未发现需要重点干预的信号', '', '', '', '', '', ref])
   s10.push([`TPL_${P}_DEFAULT`, input.module, 'green', 'summary',
     input.defaultMessage || '本次评估未发现需要重点干预的信号，当前状态相对平稳，建议保持现有节奏。',
     '兜底模板：命中未覆盖等级时使用', '99'])
@@ -380,6 +389,9 @@ export function compileWizardInput(input: WizardInput): CompileResult {
   const s8: string[][] = []
   input.tools.forEach((t) => {
     const code = codes.tools.get(t.name)!
+    if (!t.attributions.length) {
+      add('warning', `工具《${t.name}》没有关联任何原因，它只能通过「等级干预」（第 5 步的干预工具）被推出来，请确认这不是漏填。`)
+    }
     const attrCodes = t.attributions.map(n => {
       const c = codes.attributions.get(n)
       if (!c) add('error', `工具《${t.name}》对应的原因「${n}」不在原因清单里。`)

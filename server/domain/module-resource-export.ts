@@ -214,7 +214,7 @@ function exportAttribution(payload: any): { sheetName: string; headers: string[]
   const gradingHeaders = [
     '规则编码*', '所属模块*', '依据量表编码', '优先级*', '触发条件',
     '命中等级*', '等级中文名*', '严重度*', '是否红线熔断*', '结果说明*',
-    '升级条件', '升级目标', '复评触发条件', '手册出处',
+    '升级条件', '升级目标', '复评触发条件', '干预工具', '干预动作', '手册出处',
   ]
   const gradingRows = (payload.gradingRules || []).map((rule: any) => [
     rule.ruleId || '',
@@ -230,6 +230,8 @@ function exportAttribution(payload: any): { sheetName: string; headers: string[]
     rule.escalationCondition || '',
     rule.escalationTarget || '',
     rule.reEvaluationTrigger || '',
+    listStr(rule.interventionTools),
+    listStr(rule.interventionActions),
     rule.sourceRef || '',
   ])
   sheets.push({ sheetName: '⑤e 分级规则', headers: gradingHeaders, rows: gradingRows })

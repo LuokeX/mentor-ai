@@ -709,7 +709,14 @@ export function executeRules(
       detail: entry.suggestedAction!,
       status: 'pending' as const
     }))
-  const actions = attributionActions.length ? attributionActions : config.actions
+  // 等级干预通道：命中等级配置的干预动作并入 actions，与归因通道并行（任一命中即出干预）。
+  const baseActions = attributionActions.length ? attributionActions : config.actions
+  const interventionActions = (matchedGrading.interventionActions || []).map(detail => ({
+    title: `按「${matchedGrading.levelName || matchedGrading.level}」干预`,
+    detail,
+    status: 'pending' as const
+  }))
+  const actions = [...baseActions, ...interventionActions]
   return {
     level: matchedGrading.level,
     levelName: matchedGrading.levelName,
@@ -736,6 +743,8 @@ export function executeRules(
     actions,
     tools: config.tools,
     escalationTarget: matchedGrading.escalationTarget || undefined,
+    // 等级干预通道：命中等级直选的工具编码，由 API 层从工具库解析成正文
+    interventionToolCodes: matchedGrading.interventionTools?.length ? matchedGrading.interventionTools : undefined,
     matchedRedLines: matchedRedLines.length > 0 ? matchedRedLines : undefined
   }
 }

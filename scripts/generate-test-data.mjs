@@ -107,10 +107,11 @@ function makeAttributionSheets(m) {
     },
     '⑤e 分级规则': {
       headers: ['规则编码*', '所属模块*', '依据量表编码', '优先级*', '触发条件', '命中等级*', '等级中文名*', '严重度*',
-        '是否红线熔断*', '结果说明*', '升级条件', '升级目标', '复评触发条件', '手册出处'],
-      rows: m.gradingRules.map(([id, scale, pri, when, level, levelName, severity, blocked, desc, esc, escTarget, reEval]) => [
+        '是否红线熔断*', '结果说明*', '升级条件', '升级目标', '复评触发条件', '干预工具', '干预动作', '手册出处'],
+      rows: m.gradingRules.map(([id, scale, pri, when, level, levelName, severity, blocked, desc, esc, escTarget, reEval, ...rest]) => [
         id, m.code, scale, String(pri), when, level, levelName, severity,
-        blocked ? '是' : '否', desc, esc, escTarget, reEval, `${m.label}手册v1`,
+        blocked ? '是' : '否', desc, esc, escTarget, reEval,
+        rest[0] || '', rest[1] || '', `${m.label}手册v1`,
       ]),
     },
     '⑥ 归因-红线熔断': {

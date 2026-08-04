@@ -203,7 +203,8 @@ const addEvidence = () => form.evidences.push({
 const addLevel = () => form.levels.push({
   name: '', scale: '', conditions: [emptyCondition()], redLine: false,
   redLineAction: '', teacherMessage: '', resultNote: '', notificationTemplate: '',
-  escalationCondition: '', escalationTarget: '', reAssessTrigger: ''
+  escalationCondition: '', escalationTarget: '', reAssessTrigger: '',
+  interventionTools: [], interventionActions: []
 })
 const addTool = () => form.tools.push({
   name: '', attributions: [], whenToUse: '', steps: [''], stepDetails: [], form: 'framework',
@@ -1026,6 +1027,17 @@ const canNext = computed(() => {
               <UInput v-model="lv.reAssessTrigger" placeholder="如：14 天后复评" class="w-full" />
             </UFormField>
           </div>
+          <div class="mt-3 grid gap-3 sm:grid-cols-2">
+            <UFormField label="这一级直接推哪些工具（可选）"
+              hint="判到这一级时无条件进方案，和归因匹配出的工具并存去重；不选就只靠归因推工具">
+              <USelectMenu v-model="lv.interventionTools" multiple :items="toolNames" class="w-full" />
+            </UFormField>
+            <UFormField label="这一级直接让老师做什么（可选）" hint="判到这一级时直接进方案的干预动作，和归因建议并存">
+              <UTextarea :model-value="(lv.interventionActions || []).join('\n')" :rows="2" class="w-full"
+                placeholder="每行一条动作，如：&#10;本周内完成一次一对一沟通并记录反馈"
+                @update:model-value="(v: string) => lv.interventionActions = v.split('\n').map((s: string) => s.trim()).filter(Boolean)" />
+            </UFormField>
+          </div>
           <div class="mt-3 flex flex-wrap items-center gap-4">
             <UCheckbox v-model="lv.redLine" label="这一级触发红线（不出方案，直接转安全流程）" />
             <UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="form.levels.splice(li, 1)">删除</UButton>
@@ -1047,8 +1059,8 @@ const canNext = computed(() => {
 
       <!-- 7 工具 -->
       <div v-else-if="step.key === 'tools'" class="mt-5 space-y-3">
-        <UAlert color="info" variant="soft" title="工具必须挂到原因上"
-          description="没挂原因的工具永远不会被推荐出来。一个工具可以对应多个原因。" />
+        <UAlert color="info" variant="soft" title="工具可以挂原因，也可以只被等级引用"
+          description="挂原因的工具由归因匹配推出来；不挂原因的工具只能在「分级」步骤里被某一级直接引用（干预工具）。两种方式任一命中就会进方案。" />
         <div v-for="(t, ti) in (form.tools as any[])" :key="ti" class="rounded-lg border border-slate-200 p-4">
           <div class="grid gap-3 sm:grid-cols-2">
             <UFormField label="工具名称"><UInput v-model="t.name" placeholder="如：三步共情沟通法" class="w-full" /></UFormField>

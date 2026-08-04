@@ -116,6 +116,9 @@ describe('向导往返无损', () => {
     expect(round.input.levels.map(l => l.escalationCondition)).toEqual(WIZARD_SAMPLE.levels.map(l => l.escalationCondition))
     expect(round.input.levels.map(l => l.escalationTarget)).toEqual(WIZARD_SAMPLE.levels.map(l => l.escalationTarget))
     expect(round.input.levels.map(l => l.reAssessTrigger)).toEqual(WIZARD_SAMPLE.levels.map(l => l.reAssessTrigger))
+    // 等级干预通道：干预工具/干预动作必须编译→反编译无损，否则业务在向导里填的干预会丢
+    expect(round.input.levels.map(l => l.interventionTools || [])).toEqual(WIZARD_SAMPLE.levels.map(l => l.interventionTools || []))
+    expect(round.input.levels.map(l => l.interventionActions || [])).toEqual(WIZARD_SAMPLE.levels.map(l => l.interventionActions || []))
     for (let i = 0; i < WIZARD_SAMPLE.levels.length; i++) {
       expect(round.input.levels[i]!.conditions).toEqual(WIZARD_SAMPLE.levels[i]!.conditions)
     }

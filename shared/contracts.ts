@@ -303,7 +303,11 @@ export const gradingRuleSchema = z.object({
   escalationCondition: z.string().trim().max(1000).optional(),
   escalationTarget: z.string().trim().max(200).optional(),
   reEvaluationTrigger: z.string().trim().max(1000).optional(),
-  sourceRef: z.string().trim().max(500).optional()
+  sourceRef: z.string().trim().max(500).optional(),
+  // 等级干预通道：命中该等级后直接产出的干预，与归因通道并行（任一命中即出干预）。
+  // 工具编码指向同模块工具库（交叉校验保证存在）；动作文案直接进入方案 actions。
+  interventionTools: z.array(z.string().trim().min(1).max(120)).default([]),
+  interventionActions: z.array(z.string().trim().min(1).max(1000)).default([])
 })
 export type GradingRule = z.infer<typeof gradingRuleSchema>
 
@@ -732,7 +736,7 @@ export interface RuleConfig {
     description: string
     sourceRef?: string
   }>
-  // 分级规则：按 pri 升序首条命中即停，只产出等级与严重度
+  // 分级规则：按 pri 升序首条命中即停，产出等级与严重度，可可选配置干预（与归因通道并行）
   gradingRules: Array<{
     ruleId: string
     assessmentCode?: string   // 留空表示模块内通用
@@ -747,6 +751,9 @@ export interface RuleConfig {
     escalationTarget?: string
     reEvaluationTrigger?: string
     sourceRef?: string
+    // 等级干预通道：命中该等级后直选的工具编码与动作文案
+    interventionTools?: string[]
+    interventionActions?: string[]
   }>
   scoring?: { maxAttributions: number, minShare: number, secondaryRankCutoff: number }
   // 输出模板
@@ -807,6 +814,8 @@ export interface RuleExecResult {
   tools: Array<{ title: string, content: string }>
   /** 命中分级规则的「升级目标」（⑤e），供输出模板 ${责任人} 占位符使用 */
   escalationTarget?: string
+  /** 命中分级规则配置的等级直选工具编码（⑤e 干预工具），由 API 层解析成工具正文 */
+  interventionToolCodes?: string[]
   // V2 新增: 命中的红线信息
   matchedRedLines?: RedLineConfig[]
 }

@@ -155,6 +155,8 @@ export const WIZARD_SAMPLE: WizardInput = {
       escalationCondition: '连续两次 D 级',
       escalationTarget: '年级组长',
       reAssessTrigger: '7天后复评',
+      interventionTools: ['先跟后带话术卡'],
+      interventionActions: ['由年级组长陪同完成一次家校沟通，并记录沟通纪要。'],
       conditions: [{ targetType: 'average', target: '', comparator: '达到或超过', value: 4, join: '且' }]
     },
     {

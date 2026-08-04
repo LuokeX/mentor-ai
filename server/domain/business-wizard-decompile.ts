@@ -406,7 +406,10 @@ export function decompileToWizardInput(
       resultNote: r.resultDescription || undefined,
       escalationCondition: r.escalationCondition || undefined,
       escalationTarget: r.escalationTarget || undefined,
-      reAssessTrigger: r.reEvaluationTrigger || undefined
+      reAssessTrigger: r.reEvaluationTrigger || undefined,
+      // 等级干预通道：编码回读成工具名称，向导表单才能继续编辑；回读不到时保留原值让业务核对
+      interventionTools: (r.interventionTools || []).map((code: string) => toolCodeToName.get(code) || code),
+      interventionActions: (r.interventionActions || []).map((action: string) => action)
     })
   }
   // ⑥ 红线参数：向导按「每个红线等级一行」生成，这里把第一行的通知模板/处置要求挂到对应等级上

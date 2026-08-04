@@ -578,6 +578,9 @@ function parseAttributionSheets(sheets: SheetData[], module: ModuleId) {
         escalationCondition: read(row, ['升级条件']),
         escalationTarget: read(row, ['升级目标']),
         reEvaluationTrigger: read(row, ['复评触发条件']),
+        // 等级干预通道：命中该等级直接产出的工具编码与动作文案（可选）
+        interventionTools: splitList(read(row, ['干预工具'])),
+        interventionActions: splitActions(read(row, ['干预动作'])),
         sourceRef: read(row, ['手册出处'])
       })
     }
@@ -779,6 +782,11 @@ function parseOptions(row: Record<string, string | undefined>) {
 
 function splitList(value: string | undefined): string[] {
   return (value || '').split(/[,，、;；\n]/).map(item => item.trim()).filter(Boolean)
+}
+
+/** 干预动作：按分号/换行分隔。动作文案里常见中文逗号，不能复用 splitList 的逗号分隔。 */
+function splitActions(value: string | undefined): string[] {
+  return (value || '').split(/[;；\n]/).map(item => item.trim()).filter(Boolean)
 }
 
 function parseStringList(value: string | undefined): string[] | undefined {

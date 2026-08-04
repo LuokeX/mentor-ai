@@ -258,7 +258,13 @@ export const wizardLevelSchema = z.object({
   /** 多久之后要重新评一次 */
   reAssessTrigger: z.string().trim().max(200).optional(),
   /** ⑥ 通知模板：触发红线后发给责任人的通知文案 */
-  notificationTemplate: z.string().trim().max(500).optional()
+  notificationTemplate: z.string().trim().max(500).optional(),
+  /**
+   * 等级干预通道：判到这一级直接出的干预，与归因通道并行（任一命中即出干预）。
+   * 干预工具填工具名称（编译期转编码，须存在于本模块工具库）；干预动作直接进方案。
+   */
+  interventionTools: z.array(z.string().trim()).optional(),
+  interventionActions: z.array(z.string().trim()).optional()
 })
 
 export const wizardToolContraSchema = z.object({
@@ -287,8 +293,11 @@ export const wizardStepDetailSchema = z.object({
 
 export const wizardToolSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  /** 对应哪些原因（原因名称）。不填就永远不会被推荐。 */
-  attributions: z.array(z.string().trim()).min(1),
+  /**
+   * 对应哪些原因（原因名称）。可留空——工具也可被「等级干预」直接引用（⑤e 干预工具列），
+   * 归因通道与等级通道任一命中即可推出该工具。
+   */
+  attributions: z.array(z.string().trim()).default([]),
   whenToUse: z.string().trim().max(300),
   steps: z.array(z.string().trim().min(2)).min(1),
   /** ⑦b 每步的附加信息 */

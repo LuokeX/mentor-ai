@@ -181,7 +181,10 @@ export function projectModuleResourcePayload(
           toolCount: parsed.data.tools.length,
           redLineCount: (parsed.data.redLines || []).length,
           hasEscalation: Boolean(rule.escalationCondition),
-          hasReEvaluation: Boolean(rule.reEvaluationTrigger)
+          hasReEvaluation: Boolean(rule.reEvaluationTrigger),
+          // 等级干预通道：命中该等级直出的工具/动作数量，运营台可据此核对配置
+          interventionToolCount: (rule.interventionTools || []).length,
+          interventionActionCount: (rule.interventionActions || []).length
         }
       })),
       // 归因项投影：这是业务真正要检索的实体（「哪些工具挂在这条归因下」）

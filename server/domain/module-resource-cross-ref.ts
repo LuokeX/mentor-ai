@@ -53,6 +53,7 @@ function extractAttributionIndex(payload: Record<string, unknown>): {
   assessmentCodes: Array<{ code: string, from: string }>
   /** 分级规则的量表限定与是否带触发条件，用于「每张量表都要有能判出等级的规则」这条校验 */
   grading: Array<{ ruleId: string, assessmentCode: string | null, hasCondition: boolean }>
+  interventionToolRefs: Array<{ ruleId: string, value: string }>
 } {
   const attributionCodes = new Set<string>()
   const levels = new Set<string>()
@@ -76,6 +77,7 @@ function extractAttributionIndex(payload: Record<string, unknown>): {
 
   const gradingRules = (payload as Record<string, unknown>).gradingRules
   const grading: Array<{ ruleId: string, assessmentCode: string | null, hasCondition: boolean }> = []
+  const interventionToolRefs: Array<{ ruleId: string, value: string }> = []
   if (Array.isArray(gradingRules)) {
     for (const rule of gradingRules as Array<Record<string, unknown>>) {
       if (rule.level) levels.add(String(rule.level))
@@ -87,10 +89,16 @@ function extractAttributionIndex(payload: Record<string, unknown>): {
         assessmentCode: rule.assessmentCode ? String(rule.assessmentCode) : null,
         hasCondition: Boolean(rule.when && String(rule.when).trim())
       })
+      // 等级干预通道：命中等级直选的工具编码，须存在于同模块工具库（链 9）
+      if (Array.isArray(rule.interventionTools)) {
+        for (const code of rule.interventionTools as Array<unknown>) {
+          if (code) interventionToolRefs.push({ ruleId: String(rule.ruleId || '分级规则'), value: String(code) })
+        }
+      }
     }
   }
 
-  return { attributionCodes, levels, assessmentCodes, grading }
+  return { attributionCodes, levels, assessmentCodes, grading, interventionToolRefs }
 }
 
 /** 从 assessment payload 提取所有量表的维度编码集合（④c 维度定义） */
@@ -343,6 +351,16 @@ export function checkCrossReferences(
             add('warning', 'tool', ref.code, 'dimensions', ref.value, 'assessment', 'dimensionDefs.code',
               `工具的作用维度编码 "${ref.value}" 在量表 ④c 维度定义中不存在，按维度匹配将静默失效`)
           }
+        }
+      }
+    }
+
+    // 链 9: gradingRule.interventionTools → tool.code（等级干预直选的工具必须存在，否则该等级命中时方案里没有这个工具）
+    if (attributionPayload) {
+      for (const ref of extractAttributionIndex(attributionPayload).interventionToolRefs) {
+        if (!toolCodes.has(ref.value)) {
+          add('error', 'attribution', ref.ruleId, 'interventionTools', ref.value, 'tool', 'code',
+            `分级规则 "${ref.ruleId}" 的干预工具编码 "${ref.value}" 在工具库中不存在，该等级命中时无法产出这个工具`)
         }
       }
     }

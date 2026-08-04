@@ -293,6 +293,8 @@ function normalizeVisualPayload(libraryType: string, module: string, payload: Re
         escalationCondition: rule.escalationCondition || '',
         escalationTarget: rule.escalationTarget || '',
         reEvaluationTrigger: rule.reEvaluationTrigger || '',
+        interventionTools: Array.isArray(rule.interventionTools) ? [...rule.interventionTools] : [],
+        interventionActions: Array.isArray(rule.interventionActions) ? [...rule.interventionActions] : [],
         sourceRef: rule.sourceRef || ''
       })),
       actions: (source.actions || []).map((action: any) => ({
@@ -548,6 +550,12 @@ function buildVisualPayload() {
         escalationCondition: rule.escalationCondition || undefined,
         escalationTarget: rule.escalationTarget || undefined,
         reEvaluationTrigger: rule.reEvaluationTrigger || undefined,
+        interventionTools: Array.isArray(rule.interventionTools)
+          ? rule.interventionTools.filter((c: string) => c.trim())
+          : undefined,
+        interventionActions: Array.isArray(rule.interventionActions)
+          ? rule.interventionActions.filter((a: string) => a.trim())
+          : undefined,
         sourceRef: rule.sourceRef || undefined
       })),
       actions: (editStructured.value.actions || []).filter((action: any) => action.title && action.detail)
@@ -818,7 +826,7 @@ function addGradingRule() {
     ruleId: '', assessmentCode: '', pri: 100, when: '',
     level: 'stable', levelName: '', severity: 'medium', blocked: false,
     resultDescription: '', escalationCondition: '', escalationTarget: '',
-    reEvaluationTrigger: '', sourceRef: ''
+    reEvaluationTrigger: '', interventionTools: [], interventionActions: [], sourceRef: ''
   })
 }
 
@@ -1322,9 +1330,9 @@ function inlineInput(model: any, key: string) {
               <div>
                 <h3 class="font-semibold">分级规则</h3>
                 <p class="mt-1 text-xs text-slate-500">
-                  只产出等级与严重度，与归因解耦。按优先级从小到大匹配、首条命中即停，
+                  按优先级从小到大匹配、首条命中即停，
                   <span class="font-semibold text-amber-700">兜底规则（条件留空）的优先级必须是全表最大值</span>，否则其余规则永远不可达。
-                  严重度与工具库共用同一套取值，这是二者能对上的唯一键。
+                  严重度与工具库共用同一套取值。命中等级可配置「干预工具/干预动作」直接产出干预，与归因通道并行（任一命中即出干预）。
                 </p>
               </div>
               <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" @click="addGradingRule">新增规则</UButton>
@@ -1337,6 +1345,7 @@ function inlineInput(model: any, key: string) {
                     <th class="p-2">命中等级</th><th class="p-2">等级中文名</th><th class="p-2 w-24">严重度</th>
                     <th class="p-2 w-14">阻断</th><th class="p-2">依据量表</th><th class="p-2">结果说明</th>
                     <th class="p-2">升级条件</th><th class="p-2">升级目标</th><th class="p-2">复评触发</th>
+                    <th class="p-2">干预工具</th><th class="p-2">干预动作</th>
                     <th class="p-2">手册出处</th><th class="p-2 w-14">操作</th>
                   </tr>
                 </thead>
@@ -1354,6 +1363,12 @@ function inlineInput(model: any, key: string) {
                     <td class="p-1"><UInput v-bind="inlineInput(rule, 'escalationCondition')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(rule, 'escalationTarget')" size="xs" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(rule, 'reEvaluationTrigger')" size="xs" /></td>
+                    <td class="p-1"><UInput :model-value="(rule.interventionTools || []).join(';')" size="xs"
+                      placeholder="工具编码，多个用;分隔"
+                      @update:model-value="(v: string) => rule.interventionTools = v.split(/[;,；，]/).map((s: string) => s.trim()).filter(Boolean)" /></td>
+                    <td class="p-1"><UTextarea :model-value="(rule.interventionActions || []).join('\n')" :rows="2" size="xs"
+                      placeholder="每行一条动作"
+                      @update:model-value="(v: string) => rule.interventionActions = v.split('\n').map((s: string) => s.trim()).filter(Boolean)" /></td>
                     <td class="p-1"><UInput v-bind="inlineInput(rule, 'sourceRef')" size="xs" /></td>
                     <td class="p-1"><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="editStructured.gradingRules.splice(ri, 1)" /></td>
                   </tr>

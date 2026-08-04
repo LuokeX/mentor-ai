@@ -58,9 +58,10 @@ const attributionItemRows = M.attributions.map(a => [
 const evidenceRows = M.evidences.map(([code, at, scale, cond, weight, desc]) => [
   code, at, scale, cond, String(weight), desc, `${M.label}手册v1`,
 ])
-const gradingRows = M.gradingRules.map(([id, scale, pri, when, level, levelName, severity, blocked, desc, esc, escTarget, reEval]) => [
+const gradingRows = M.gradingRules.map(([id, scale, pri, when, level, levelName, severity, blocked, desc, esc, escTarget, reEval, ...rest]) => [
   id, M.code, scale, String(pri), when, level, levelName, severity,
-  blocked ? '是' : '否', desc, esc, escTarget, reEval, `${M.label}手册v1`,
+  blocked ? '是' : '否', desc, esc, escTarget, reEval,
+  rest[0] || '', rest[1] || '', `${M.label}手册v1`,
 ])
 const redLineRows = M.redLines.map(([cond, desc, scope, required, actions, recovery, role, notice]) => [
   M.code, cond, desc, scope, required, actions, recovery, role, notice, `${M.label}手册v1`,
@@ -255,6 +256,8 @@ const guideColumns = [
   ['⑤e  ', '严重度', '是', 'low / medium / high / crisis', '见 ② 枚举字典', '与 ⑦ 的严重度共用同一套值，这是二者能对上的唯一键'],
   ['⑤e   ', '依据量表编码', '否', '留空表示模块内所有量表通用', '③', '条件引用了某张量表专属变量时必须限定，否则别的量表作答会报错'],
   ['⑤e    ', '是否红线熔断', '是', '是 / 否', '', '填「是」则命中后不生成方案，转走转介流程'],
+  ['⑤e     ', '干预工具', '否', '命中该等级直接进方案的工具编码，多个用 ; 分隔', '⑦ 工具编码', '须存在于本模块工具库（导入会校验）；与归因匹配出的工具并存去重'],
+  ['⑤e      ', '干预动作', '否', '命中该等级直接进方案的动作文案，多个用 ；分隔', '', '归因通道与等级通道任一命中即出干预，两者都命中则合并'],
   ['⑥ 归因-红线熔断', '红线条件', '是', '独立于分级规则，任一命中即熔断', '见 ⑤a', '表达式写错不会报错、只当作没命中，所以要单独人工复核'],
   ['⑦ 工具-处方总表', '对应归因编码', '是', '必须等于 ⑤c 里的某条归因编码', '⑤c', '留空则这个工具永远不会被任何归因推荐出来（校验会报错）'],
   ['⑦', '严重度', '是', 'low / medium / high / crisis', '与 ⑤e 同一套枚举', '与分级规则的严重度相同时加 2 分'],
@@ -458,7 +461,7 @@ const SHEETS = [
   { name: '⑤c 归因项', rows: [['归因编码*', '归因名称*', '所属模块*', '权重基数*', '工具标签*', '归因说明', '高分表现', '典型诱因', '建议动作', '手册出处'], ...attributionItemRows] },
   { name: '⑤d 证据规则', rows: [['证据编码*', '归因编码*', '依据量表编码*', '触发条件*', '证据权重*', '证据说明*', '手册出处'], ...evidenceRows] },
   { name: '⑤e 分级规则', rows: [['规则编码*', '所属模块*', '依据量表编码', '优先级*', '触发条件', '命中等级*', '等级中文名*', '严重度*',
-    '是否红线熔断*', '结果说明*', '升级条件', '升级目标', '复评触发条件', '手册出处'], ...gradingRows] },
+    '是否红线熔断*', '结果说明*', '升级条件', '升级目标', '复评触发条件', '干预工具', '干预动作', '手册出处'], ...gradingRows] },
   { name: '⑥ 归因-红线熔断', rows: [['所属模块*', '红线条件*', '红线说明*', '熔断范围*', '处置要求*', '熔断后动作', '恢复条件', '责任人', '通知模板', '手册出处'], ...redLineRows] },
   { name: '⑦ 工具-处方总表', rows: [['工具编码*', '工具名称*', '工具简称', '所属模块*', '工具形式*', '适用学部*', '适用对象*',
     '适用症状场景*', '严重度*', '对应归因编码*', '对应归因名称', '工具标签*', '作用维度编码', '效果说明',
