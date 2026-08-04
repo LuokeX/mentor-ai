@@ -738,6 +738,7 @@ onUnmounted(() => {
             <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
           </div>
           <div class="mt-2 flex items-center justify-between px-1 text-[11px] text-slate-400"><span>Enter 发送 · Shift + Enter 换行</span><span>{{ input.length }}/4000</span></div>
+          <p class="mt-1 text-center text-[11px] text-slate-300">AI 辅助建议，需人工专业判断</p>
         </form>
       </div>
     </section>

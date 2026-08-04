@@ -4,6 +4,7 @@ import { schoolAdminClassUpdateSchema } from '../../../../../shared/contracts'
 import { uuidParam } from '../../../../utils/params'
 import { assertActiveDepartment, assertActiveTeacher, requireSchoolManagement, transferClassOwner } from '../../../../domain/school-management'
 import { writeAudit } from '../../../../utils/audit'
+import { encryptSensitive } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
@@ -12,6 +13,7 @@ export default defineEventHandler(async (event) => {
   const body = schoolAdminClassUpdateSchema.parse(await readBody(event))
   const expectedUpdatedAt = z.string().datetime().optional().parse(getQuery(event).expectedUpdatedAt)
   const db = useDb(event)
+  const secret = useRuntimeConfig(event).encryptionKey
   const [klass] = await db.select().from(schema.classes).where(and(eq(schema.classes.id, id), eq(schema.classes.schoolId, schoolId))).limit(1)
   if (!klass) throw createError({ statusCode: 404, message: '班级不存在' })
   if (expectedUpdatedAt && klass.updatedAt.toISOString() !== expectedUpdatedAt) {
@@ -19,6 +21,9 @@ export default defineEventHandler(async (event) => {
   }
   if (body.ownerUserId) await assertActiveTeacher(event, schoolId, body.ownerUserId)
   if (body.departmentId !== undefined) await assertActiveDepartment(event, schoolId, body.departmentId)
+  if (body.deputyOwnerUserId !== undefined && body.deputyOwnerUserId !== null) {
+    await assertActiveTeacher(event, schoolId, body.deputyOwnerUserId)
+  }
   try {
     const updated = await db.transaction(async (tx) => {
       const patch: Partial<typeof schema.classes.$inferInsert> = {
@@ -31,6 +36,17 @@ export default defineEventHandler(async (event) => {
       if (body.studentCount !== undefined) patch.studentCount = body.studentCount
       if (body.establishedAt !== undefined) patch.establishedAt = body.establishedAt ? new Date(body.establishedAt) : null
       if (body.status !== undefined) patch.status = body.status
+      if (body.section !== undefined) patch.section = body.section || null
+      if (body.classType !== undefined) patch.classType = body.classType
+      if (body.deputyOwnerUserId !== undefined) patch.deputyOwnerUserId = body.deputyOwnerUserId || null
+      if (body.location !== undefined) patch.location = body.location || null
+      if (body.schoolYear !== undefined) patch.schoolYear = body.schoolYear || null
+      if (body.notes !== undefined) patch.notesEnc = body.notes ? encryptSensitive(body.notes, secret) : null
+      if (body.overrides !== undefined) {
+        const merged = { ...(klass.overrides || {}), ...body.overrides }
+        for (const [k, v] of Object.entries(merged)) if (!v) delete merged[k]
+        patch.overrides = merged
+      }
       const finalConditions = [eq(schema.classes.id, id), eq(schema.classes.schoolId, schoolId)]
       if (expectedUpdatedAt) finalConditions.push(eq(schema.classes.updatedAt, new Date(expectedUpdatedAt)))
       const [row] = await tx.update(schema.classes).set(patch).where(and(...finalConditions)).returning()

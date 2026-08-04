@@ -69,6 +69,10 @@ describe('向导往返无损', () => {
         expect(d.description).toBe(e.description)
         expect(d.highInterpretation).toBe(e.highInterpretation)
       }
+      // ③ 附加元数据
+      expect(round.input.scales[i]!.externalAuthorizationNote).toBe(WIZARD_SAMPLE.scales[i]!.externalAuthorizationNote)
+      // 模块通用设置的量表级覆盖（与默认不同的值往返保留）
+      expect(round.input.scales[i]!.frequency ?? undefined).toBe(WIZARD_SAMPLE.scales[i]!.frequency)
     }
   })
 
@@ -84,12 +88,12 @@ describe('向导往返无损', () => {
   })
 
   it('自定义选项组：引用稳定，选项文本与分值无损', () => {
-    // 题目对自定义组的引用：第 6 题用的是 cg-1，往返后应仍指向同一组
-    const q6Group = round.input.scales[0]!.questions[5]!.optionGroup
+    // 题目对自定义组的引用：第 10 题用的是 cg-1，往返后应仍指向同一组
+    const q10Group = round.input.scales[0]!.questions[9]!.optionGroup
     const expectGroup = WIZARD_SAMPLE.optionGroups[0]!
-    expect(q6Group).not.toBe('FREQ_5')
+    expect(q10Group).not.toBe('FREQ_5')
     // 反编译拿不到组的原名（④b 没有名称列），按签名还原；断言选项文本与分值一致
-    const actual = round.input.optionGroups.find(g => g.id === q6Group)
+    const actual = round.input.optionGroups.find(g => g.id === q10Group)
     expect(actual).toBeTruthy()
     expect(actual!.options).toEqual(expectGroup.options)
   })
@@ -133,6 +137,12 @@ describe('向导往返无损', () => {
     expect(round.input.tools.map(t => t.evidenceSource)).toEqual(WIZARD_SAMPLE.tools.map(t => t.evidenceSource))
     expect(round.input.tools.map(t => t.reAssessmentIntervalDays)).toEqual(WIZARD_SAMPLE.tools.map(t => t.reAssessmentIntervalDays))
     expect(round.input.tools.map(t => t.alternativeTools)).toEqual(WIZARD_SAMPLE.tools.map(t => t.alternativeTools))
+    expect(round.input.tools.map(t => t.outputArtifact)).toEqual(WIZARD_SAMPLE.tools.map(t => t.outputArtifact))
+    expect(round.input.tools.map(t => t.contraindicationNote)).toEqual(WIZARD_SAMPLE.tools.map(t => t.contraindicationNote))
+    expect(round.input.tools.map(t => t.collaborativeTools || [])).toEqual(WIZARD_SAMPLE.tools.map(t => t.collaborativeTools || []))
+    // 模块通用设置的工具级覆盖
+    expect(round.input.tools.map(t => t.targetUsers ?? undefined)).toEqual(WIZARD_SAMPLE.tools.map(t => t.targetUsers))
+    expect(round.input.tools.map(t => t.evidenceLevel ?? undefined)).toEqual(WIZARD_SAMPLE.tools.map(t => t.evidenceLevel))
     for (let i = 0; i < WIZARD_SAMPLE.tools.length; i++) {
       // 步骤细节：全空对象等价「没填」；有内容的字段必须逐项一致
       const expectDetails = (WIZARD_SAMPLE.tools[i]!.stepDetails || []).filter(d => Object.keys(d).some(k => d[k]))

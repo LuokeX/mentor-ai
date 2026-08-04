@@ -134,7 +134,8 @@ const ENUMS = [
   ['风险等级', 'red', '红线·立即熔断', '⑤e 分级规则的「命中等级」/ ⑨ 关键词-路由　【只用于展示与输出模板，不参与工具匹配】'],
   ['风险等级', 'orange', '橙·4小时内响应', '同上'],
   ['风险等级', 'yellow', '黄·关注', '同上'],
-  ['风险等级', 'none', '无风险标记', '同上'],
+  ['风险等级', 'blue', '蓝·持续观察', '同上'],
+  ['风险等级', 'green', '绿·正常（兜底）', '同上'],
   ['适用学部', 'all', '全学部', '量表-清单 / 工具-处方总表'],
   ['适用学部', 'primary', '小学部', '同上'],
   ['适用学部', 'junior', '初中部', '同上'],
@@ -418,7 +419,7 @@ sheet('⑤e 分级规则',
     '否', '多项指标偏高，建议本周内安排支持。', '连续两次橙色', '年级组长', '30天后复评', 'PRD 8.3'],
   ['SG_GRADE_YELLOW', 'self_growth', 'SG_FIVE_Q', '30', '总分 >= 12', 'yellow', '需关注', 'medium',
     '否', '部分维度低于常模，建议做针对性调整。', '连续两次黄色', '年级组长', '90天后复评', 'PRD 8.3'],
-  ['SG_GRADE_DEFAULT', 'self_growth', '', '999', '', 'none', '状态平稳', 'low',
+  ['SG_GRADE_DEFAULT', 'self_growth', '', '999', '', 'green', '状态平稳', 'low',
     '否', '当前状态平稳，保持现有节奏即可。', '', '', '', 'PRD 8.3　【兜底：留空触发条件，优先级必须是全表最大】'])
 
 sheet('⑥ 归因-红线熔断',
@@ -479,7 +480,7 @@ sheet('⑩ 方案输出模板',
   ['TPL_SG_YELLOW_SUMMARY', 'self_growth', 'yellow', 'summary',
     '评估显示您有需要关注的信号，主要集中在「${主要归因}」。目前尚可自主调节，建议先从推荐工具里选一项本周试用并记录效果。',
     '同上', '3'],
-  ['TPL_SG_DEFAULT_SUMMARY', 'self_growth', 'none', 'summary',
+  ['TPL_SG_DEFAULT_SUMMARY', 'self_growth', 'green', 'summary',
     '本次评估未发现需要重点干预的信号，当前状态相对平稳。建议保持现有节奏。',
     '兜底模板：每个模块必须有一条，否则命中未覆盖等级时方案文案会空缺', '9'])
 
@@ -614,7 +615,7 @@ function buildWalkthroughSheet() {
   row('')
   row('【第 9 步】输出模板渲染（⑩，按判出的等级取）')
   const tpl = templates.find(t => t.attributionLevel === result.level && t.type === 'summary')
-    || templates.find(t => ['none', 'default'].includes(t.attributionLevel))
+    || templates.find(t => ['green', 'none', 'default'].includes(t.attributionLevel))
   row('命中模板', tpl ? tpl.code : '（无，用系统内置文案）')
   row('模板原文', tpl ? tpl.content : '')
   row('${主要归因}', (result.attributions.find(a => a.strength === 'primary') || {}).name || '')

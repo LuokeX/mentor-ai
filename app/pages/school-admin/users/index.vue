@@ -10,6 +10,15 @@ interface UserRow {
   status: 'active' | 'invited' | 'disabled'
   activatedAt: string | null
   lastLoginAt: string | null
+  employeeNo: string | null
+  gender: string | null
+  teachingGrades: number[]
+  subject: string | null
+  isClassTeacher: boolean
+  title: string | null
+  hiredAt: string | null
+  selfStatusLevel: string | null
+  overrides: Record<string, string>
   updatedAt: string
 }
 interface OptionRow { id: string; name: string; role?: string }
@@ -23,6 +32,7 @@ const columns = [
   { key: 'name', label: '姓名', sortable: true },
   { key: 'email', label: '邮箱', sortable: true },
   { key: 'role', label: '角色', sortable: true },
+  { key: 'selfStatusLevel', label: '自我状态', sortable: true },
   { key: 'status', label: '状态', sortable: true },
   { key: 'lastLoginAt', label: '最近登录', sortable: true, mobileHidden: true },
   { key: 'actions', label: '操作' },
@@ -39,6 +49,20 @@ const roleOptions = [
 ]
 const roleLabels: Record<string, string> = { teacher: '教师', psychologist: '心理专员' }
 const statusLabels: Record<string, string> = { active: '正常', invited: '待激活', disabled: '已停用' }
+const genderOptions = [
+  { label: '未知', value: '__none__' }, { label: '男', value: '男' }, { label: '女', value: '女' },
+]
+const titleOptions = [
+  { label: '无/其他', value: '__none__' }, { label: '正高级', value: '正高级' }, { label: '副高级', value: '副高级' },
+  { label: '一级', value: '一级' }, { label: '二级', value: '二级' },
+]
+const gradeItems = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'].map(g => `${g} 年级`)
+/** 自我状态等级修正：未操作不发送；显式“改回按评估结果”清除；选择具体等级写入 */
+const selfStatusOptions = [
+  { label: '（当前按评估结果）', value: '__auto__' },
+  { label: '改回按评估结果', value: '__clear__' },
+  { label: '需转介', value: '需转介' }, { label: '需关注', value: '需关注' }, { label: '关注', value: '关注' }, { label: '良好', value: '良好' },
+]
 
 const { data: teacherData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/teachers', {
   query: { page: 1, pageSize: 100, status: 'active' },
@@ -52,7 +76,12 @@ const drawerOpen = ref(false)
 const editing = ref<UserRow | null>(null)
 const saving = ref(false)
 const formError = ref('')
-const form = reactive({ name: '', email: '', role: 'teacher' as 'teacher' | 'psychologist', reactivate: false })
+const form = reactive({
+  name: '', email: '', role: 'teacher' as 'teacher' | 'psychologist', reactivate: false,
+  employeeNo: '', phone: '', gender: '__none__', teachingGrades: [] as string[],
+  subject: '', isClassTeacher: false, hiredAt: '', title: '__none__', certNote: '',
+  selfStatusLevel: '__auto__',
+})
 const invitation = ref<InvitationResult | null>(null)
 const activationLink = computed(() => invitation.value ? `/activate?token=${encodeURIComponent(invitation.value.activationToken)}` : '')
 const copied = ref(false)
@@ -63,7 +92,11 @@ const deleteTarget = ref<UserRow | null>(null)
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', email: '', role: 'teacher', reactivate: false })
+  Object.assign(form, {
+    name: '', email: '', role: 'teacher', reactivate: false,
+    employeeNo: '', phone: '', gender: '__none__', teachingGrades: [],
+    subject: '', isClassTeacher: false, hiredAt: '', title: '__none__', certNote: '', selfStatusLevel: '__auto__',
+  })
   formError.value = ''
   drawerOpen.value = true
 }
@@ -72,7 +105,14 @@ function openEdit(rowOrId: UserRow | string) {
   const row = typeof rowOrId === 'string' ? list.rows.value.find(item => item.id === rowOrId) : rowOrId
   if (!row) return
   editing.value = row
-  Object.assign(form, { name: row.name, email: row.email, role: row.role, reactivate: false })
+  Object.assign(form, {
+    name: row.name, email: row.email, role: row.role, reactivate: false,
+    employeeNo: row.employeeNo || '', phone: '', gender: row.gender || '__none__',
+    teachingGrades: row.teachingGrades?.map(g => `${g} 年级`) || [],
+    subject: row.subject || '', isClassTeacher: row.isClassTeacher,
+    hiredAt: row.hiredAt ? row.hiredAt.slice(0, 10) : '', title: row.title || '__none__',
+    certNote: '', selfStatusLevel: row.overrides?.selfStatusLevel || '__auto__',
+  })
   formError.value = ''
   drawerOpen.value = true
 }
@@ -88,22 +128,38 @@ async function saveUser() {
   }
   saving.value = true
   formError.value = ''
+  const body: Record<string, unknown> = {
+    name: form.name,
+    email: form.email,
+    role: form.role,
+    employeeNo: form.employeeNo || undefined,
+    gender: form.gender === '__none__' ? null : form.gender,
+    teachingGrades: form.teachingGrades.map(g => Number(g.replace(' 年级', ''))),
+    subject: form.subject || undefined,
+    isClassTeacher: form.isClassTeacher,
+    hiredAt: form.hiredAt || undefined,
+    title: form.title === '__none__' ? null : form.title,
+    status: editing.value && editing.value.status === 'disabled' && form.reactivate ? 'active' : undefined,
+  }
+  // 电话/心理资质备注是加密字段：编辑时留空表示不修改
+  if (form.phone) body.phone = form.phone
+  if (form.certNote) body.certNote = form.certNote
+  // 自我状态三态：未操作不发送；显式“改回按评估结果”清除；选择具体等级写入
+  if (editing.value) {
+    if (form.selfStatusLevel === '__clear__') body.overrides = { selfStatusLevel: '' }
+    else if (form.selfStatusLevel !== '__auto__') body.overrides = { selfStatusLevel: form.selfStatusLevel }
+  }
   try {
     if (editing.value) {
       await $fetch(`/api/v1/school-admin/users/${editing.value.id}`, {
         method: 'PATCH',
         query: { expectedUpdatedAt: editing.value.updatedAt },
-        body: {
-          name: form.name,
-          email: form.email,
-          role: form.role,
-          status: editing.value.status === 'disabled' && form.reactivate ? 'active' : undefined,
-        },
+        body,
       })
     } else {
       invitation.value = await $fetch<InvitationResult>('/api/v1/school-admin/users', {
         method: 'POST',
-        body: { name: form.name, email: form.email, role: form.role },
+        body,
       })
     }
     drawerOpen.value = false
@@ -183,6 +239,10 @@ async function copyActivationLink() {
     <TableToolbar :search-value="list.q.value" :status-filter="list.statusFilter.value" :status-options="statusOptions" search-placeholder="搜索姓名或邮箱..." :loading="list.loading.value" @search="list.onSearch" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #role-data="{ row }">{{ roleLabels[row.role] || row.role }}</template>
+      <template #selfStatusLevel-data="{ row }">
+        <UBadge v-if="row.selfStatusLevel" :color="row.selfStatusLevel === '需转介' ? 'error' : row.selfStatusLevel === '需关注' ? 'warning' : row.selfStatusLevel === '关注' ? 'info' : 'success'" variant="subtle">{{ row.selfStatusLevel }}</UBadge>
+        <span v-else class="text-xs text-slate-400">未评估</span>
+      </template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : row.status === 'invited' ? 'info' : 'neutral'" variant="subtle">{{ statusLabels[row.status] || row.status }}</UBadge></template>
       <template #lastLoginAt-data="{ value }">{{ value ? new Date(String(value)).toLocaleString('zh-CN') : '从未登录' }}</template>
       <template #actions-data="{ row }">
@@ -202,9 +262,27 @@ async function copyActivationLink() {
     <EntityFormDrawer :open="drawerOpen" :title="editing ? '编辑账号' : '邀请用户'" @close="drawerOpen = false">
       <form class="space-y-4" @submit.prevent="saveUser">
         <UFormField label="姓名" required><UInput v-model="form.name" class="w-full" /></UFormField>
-        <UFormField label="邮箱" required><UInput v-model="form.email" type="email" class="w-full" /></UFormField>
-        <UFormField label="角色" required><USelect v-model="form.role" :items="roleOptions" :disabled="Boolean(editing && editing.status !== 'invited')" class="w-full" /></UFormField>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <UFormField label="邮箱" required><UInput v-model="form.email" type="email" class="w-full" /></UFormField>
+          <UFormField label="工号"><UInput v-model="form.employeeNo" class="w-full" /></UFormField>
+          <UFormField label="角色" required><USelect v-model="form.role" :items="roleOptions" :disabled="Boolean(editing && editing.status !== 'invited')" class="w-full" /></UFormField>
+          <UFormField :label="editing ? '更新手机号（留空表示不修改）' : '手机号'"><UInput v-model="form.phone" class="w-full" /></UFormField>
+          <UFormField label="性别"><USelect v-model="form.gender" :items="genderOptions" class="w-full" /></UFormField>
+          <UFormField label="任教年级"><USelectMenu v-model="form.teachingGrades" multiple :items="gradeItems" class="w-full" /></UFormField>
+          <UFormField label="任教学科"><UInput v-model="form.subject" placeholder="如：语文" class="w-full" /></UFormField>
+          <UFormField label="职称"><USelect v-model="form.title" :items="titleOptions" class="w-full" /></UFormField>
+          <UFormField label="入职时间"><UInput v-model="form.hiredAt" type="date" class="w-full" /></UFormField>
+          <UFormField label="是否班主任"><UCheckbox v-model="form.isClassTeacher" label="当前承担班主任工作" /></UFormField>
+        </div>
+        <UFormField v-if="editing?.role === 'psychologist'" :label="editing ? '更新资质说明（留空表示不修改）' : '心理资质说明'">
+          <UTextarea v-model="form.certNote" :rows="2" placeholder="如：国家二级心理咨询师" class="w-full" />
+        </UFormField>
         <UCheckbox v-if="editing?.status === 'disabled'" v-model="form.reactivate" label="重新启用该账号" />
+        <div v-if="editing" class="rounded-lg bg-amber-50/60 p-3">
+          <UFormField label="自我状态等级（手动修正）" hint="按最近一次自我成长评估展示；手动指定后将在下次评估前覆盖显示">
+            <USelect v-model="form.selfStatusLevel" :items="selfStatusOptions" class="w-full" />
+          </UFormField>
+        </div>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         <div class="flex justify-end gap-2"><UButton color="neutral" variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">{{ editing ? '保存' : '生成邀请' }}</UButton></div>
       </form>

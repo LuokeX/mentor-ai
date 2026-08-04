@@ -46,8 +46,11 @@ export const WIZARD_COMPARATORS = {
   正好等于: '=='
 } as const
 
-/** 模板 ② 枚举字典里「命中等级」实际用的是风险等级四档（含 none 兜底）。 */
-export const WIZARD_LEVEL_ENUM = ['red', 'orange', 'yellow', 'none'] as const
+/**
+ * 模板 ② 枚举字典里「命中等级」实际用的是五色分级五档（含 green 兜底）：
+ * 红(危机) → 橙(警告) → 黄(预警) → 蓝(关注) → 绿(正常)。
+ */
+export const WIZARD_LEVEL_ENUM = ['red', 'orange', 'yellow', 'blue', 'green'] as const
 
 /**
  * 模块级默认设置（轨 2）。
@@ -184,6 +187,8 @@ export const wizardScaleSchema = z.object({
   applicableGrades: z.array(z.coerce.number().min(0).max(12)).default([]),
   /** ③ 适用学科 */
   applicableSubjects: z.array(z.string().trim()).default([]),
+  /** ③ 外部授权说明：引用外部量表/工具时的授权备注 */
+  externalAuthorizationNote: z.string().trim().max(300).optional(),
   /** ③ 常模参照 */
   normReference: z.string().trim().max(300).optional(),
   /** ③ 信度说明 */
@@ -200,6 +205,17 @@ export const wizardScaleSchema = z.object({
   postAssessmentActions: z.string().trim().max(300).optional(),
   /** ④c 维度附加属性，按维度中文名对齐 */
   dimensionDefs: z.array(wizardDimensionSchema).default([]),
+  /** 覆盖模块通用设置（可选）：V4 模板这些列是量表级的，每张量表可不同。
+   *  留空 = 用模块通用设置里的默认值。 */
+  schoolSection: z.enum(['all', 'primary', 'junior', 'senior', 'repeat']).optional(),
+  targetAudience: z.enum(['teacher', 'student', 'guardian', 'class']).optional(),
+  formType: z.enum(['self_report', 'observation', 'interview', 'checklist']).optional(),
+  triggerMethod: z.enum(['manual', 'auto', 'scheduled']).optional(),
+  frequency: z.enum(['once', 'daily', 'weekly', 'monthly', 'per_case']).optional(),
+  resultVisibility: z.enum(['teacher_only', 'teacher_and_student', 'psychologist']).optional(),
+  responsibleRole: z.string().trim().max(40).optional(),
+  dataSensitivity: z.enum(['internal', 'sensitive', 'highly_sensitive']).optional(),
+  sourceType: z.enum(['proprietary', 'external', 'adapted']).optional(),
   questions: z.array(wizardQuestionSchema).min(1)
 })
 
@@ -290,6 +306,12 @@ export const wizardToolSchema = z.object({
   expectedEffect: z.string().trim().max(300).optional(),
   /** ⑦ 效果说明 */
   effectNote: z.string().trim().max(300).optional(),
+  /** ⑦ 输出物：做完这个工具会得到什么 */
+  outputArtifact: z.string().trim().max(80).optional(),
+  /** ⑦ 工具级禁忌说明 */
+  contraindicationNote: z.string().trim().max(300).optional(),
+  /** ⑦ 协同工具（工具名称，编译期转编码） */
+  collaborativeTools: z.array(z.string().trim()).default([]),
   /** ⑦ 作用维度（维度中文名，编译期转编码） */
   dimensions: z.array(z.string().trim()).default([]),
   /** ⑦ 重评间隔天数 */
@@ -298,6 +320,12 @@ export const wizardToolSchema = z.object({
   evidenceSource: z.string().trim().max(300).optional(),
   /** ⑦ 跨模块标签 */
   crossModuleTags: z.array(z.string().trim()).default([]),
+  /** 覆盖模块通用设置（可选）：V4 模板这些列是工具级的 */
+  schoolSection: z.enum(['all', 'primary', 'junior', 'senior', 'repeat']).optional(),
+  /** 适用对象（同施测对象枚举），留空用模块通用设置的施测对象 */
+  targetUsers: z.enum(['teacher', 'student', 'guardian', 'class']).optional(),
+  /** 证据等级，留空用模块通用设置 */
+  evidenceLevel: z.enum(['A', 'B', 'C', 'D']).optional(),
   /** ⑦ 前置工具（工具名称） */
   prerequisiteTools: z.array(z.string().trim()).default([]),
   /** ⑦ 替代工具（工具名称） */
@@ -326,7 +354,8 @@ export const wizardKeywordSchema = z.object({
   tool: z.string().trim().optional(),
   /** 匹配模式：精确（危机词用）或模糊 */
   matchMode: z.enum(['exact', 'fuzzy']).default('fuzzy'),
-  risk: z.enum(['red', 'orange', 'yellow', 'none']).default('yellow'),
+  /** 五色风险等级；旧数据的 none（兜底）兼容为 green */
+  risk: z.enum(['red', 'orange', 'yellow', 'blue', 'green', 'none']).transform(v => v === 'none' ? 'green' : v).default('yellow'),
   /** ⑨ 情境限定：什么场景下这条路由生效 */
   contextConstraint: z.string().trim().max(120).optional(),
   description: z.string().trim().max(200).optional()
@@ -358,7 +387,7 @@ export const wizardInputSchema = z.object({
   scales: z.array(wizardScaleSchema).min(1),
   attributions: z.array(wizardAttributionSchema).min(1),
   evidences: z.array(wizardEvidenceSchema).min(1),
-  /** 从重到轻排列，严重度和优先级由顺序推出，兜底等级自动补。最多 4 个（模板风险等级四档）。 */
+  /** 从重到轻排列，严重度和优先级由顺序推出，兜底等级自动补。最多 5 个（模板五色分级）。 */
   levels: z.array(wizardLevelSchema).min(1),
   tools: z.array(wizardToolSchema).min(1),
   keywords: z.array(wizardKeywordSchema).default([]),

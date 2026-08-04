@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, or } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
@@ -9,7 +9,7 @@ import { paginateResult } from '../../../../utils/pagination'
 import { decryptSensitive, searchableHash } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 
-const SORT_WHITELIST = createSortWhitelist('name', 'classId', 'status', 'updatedAt', 'createdAt')
+const SORT_WHITELIST = createSortWhitelist('name', 'classId', 'caseLevel', 'learningLevel', 'status', 'updatedAt', 'createdAt')
 
 export default defineEventHandler(async (event) => {
   const { schoolId, actor: user, delegatedGrantId } = await requireSchoolManagement(event, ['students'])
@@ -53,6 +53,15 @@ export default defineEventHandler(async (event) => {
       departmentName: schema.departments.name,
       nameEnc: schema.students.nameEnc,
       gender: schema.students.gender,
+      birthDate: schema.students.birthDate,
+      ethnicity: schema.students.ethnicity,
+      enrolledAt: schema.students.enrolledAt,
+      boardingType: schema.students.boardingType,
+      /** 个体支持/学习问题等级（评估回写），管理员修正优先 */
+      caseLevel: sql<string | null>`coalesce(${schema.students.overrides}->>'caseLevel', ${schema.students.caseLevel})`,
+      learningLevel: sql<string | null>`coalesce(${schema.students.overrides}->>'learningLevel', ${schema.students.learningLevel})`,
+      /** 管理员修正原始值（编辑表单回显用） */
+      overrides: schema.students.overrides,
       status: schema.students.status,
       createdAt: schema.students.createdAt,
       updatedAt: schema.students.updatedAt,
@@ -91,6 +100,13 @@ export default defineEventHandler(async (event) => {
       departmentName: row.departmentName,
       name: decryptSensitive(row.nameEnc, secret),
       gender: row.gender,
+      birthDate: row.birthDate,
+      ethnicity: row.ethnicity,
+      enrolledAt: row.enrolledAt,
+      boardingType: row.boardingType,
+      caseLevel: row.caseLevel,
+      learningLevel: row.learningLevel,
+      overrides: row.overrides,
       status: row.status,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

@@ -855,6 +855,9 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
       </section>
 
+      <!-- AI 合规声明（《生成式人工智能服务管理暂行办法》） -->
+      <p class="mt-3 text-center text-xs text-slate-400">AI 辅助建议，需人工专业判断</p>
+
       <!-- ══════════ 5. 复盘时间线 ══════════ -->
       <section class="rounded-2xl border border-slate-200 bg-white p-5">
         <h3 class="flex items-center gap-2 font-semibold text-slate-800">

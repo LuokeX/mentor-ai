@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, or } from 'drizzle-orm'
+import { and, asc, desc, eq, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
@@ -9,7 +9,7 @@ import { paginateResult } from '../../../../utils/pagination'
 import { decryptSensitive, searchableHash } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 
-const SORT_WHITELIST = createSortWhitelist('name', 'relation', 'status', 'updatedAt', 'createdAt')
+const SORT_WHITELIST = createSortWhitelist('name', 'relation', 'commRiskLevel', 'status', 'updatedAt', 'createdAt')
 
 export default defineEventHandler(async (event) => {
   const { schoolId, actor: user, delegatedGrantId } = await requireSchoolManagement(event, ['guardians'])
@@ -49,6 +49,13 @@ export default defineEventHandler(async (event) => {
         nameEnc: schema.guardians.nameEnc,
         phoneEnc: schema.guardians.phoneEnc,
         relation: schema.guardians.relation,
+        occupation: schema.guardians.occupation,
+        workUnit: schema.guardians.workUnit,
+        isPrimary: schema.guardians.isPrimary,
+        /** 沟通风险等级（评估回写），管理员修正优先 */
+        commRiskLevel: sql<string | null>`coalesce(${schema.guardians.overrides}->>'commRiskLevel', ${schema.guardians.commRiskLevel})`,
+        /** 管理员修正原始值（编辑表单回显用） */
+        overrides: schema.guardians.overrides,
         status: schema.guardians.status,
         createdAt: schema.guardians.createdAt,
         updatedAt: schema.guardians.updatedAt,
@@ -94,6 +101,11 @@ export default defineEventHandler(async (event) => {
         return phone ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : null
       })(),
       relation: row.relation,
+      occupation: row.occupation,
+      workUnit: row.workUnit,
+      isPrimary: row.isPrimary,
+      commRiskLevel: row.commRiskLevel,
+      overrides: row.overrides,
       status: row.status,
       linkedStudents: relations
         .filter(r => r.guardianId === row.id)

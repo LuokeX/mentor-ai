@@ -26,7 +26,14 @@ export default defineEventHandler(async (event) => {
         name: body.name,
         code: body.code || null,
         type: body.type,
-        description: body.description || null
+        description: body.description || null,
+        shortName: body.shortName || null,
+        scope: body.scope || 'other',
+        leaderTitle: body.leaderTitle || null,
+        location: body.location || null,
+        phone: body.phone || null,
+        headcountLimit: body.headcountLimit || null,
+        sortOrder: body.sortOrder ?? 0
       }).returning()
       if (!created) throw createError({ statusCode: 500, message: '部门创建失败' })
       await writeAudit(event, {

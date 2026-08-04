@@ -4,6 +4,7 @@ import { useDb, schema } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
 import { schoolAdminUserUpdateSchema } from '../../../../../shared/contracts'
 import { requireSchoolManagement } from '../../../../domain/school-management'
+import { encryptSensitive } from '../../../../utils/crypto'
 
 export default defineEventHandler(async (event) => {
   const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'])
@@ -13,6 +14,7 @@ export default defineEventHandler(async (event) => {
     ? z.string().datetime().parse(getQuery(event).expectedUpdatedAt)
     : undefined
   const db = useDb(event)
+  const secret = useRuntimeConfig(event).encryptionKey
   const [target] = await db.select().from(schema.users).where(and(
     eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), inArray(schema.users.role, ['teacher', 'psychologist'])
   )).limit(1)
@@ -49,6 +51,21 @@ export default defineEventHandler(async (event) => {
     if (body.email) setValues.email = body.email
     if (body.role) setValues.role = body.role
     if (body.status) setValues.status = body.status
+    if (body.employeeNo !== undefined) setValues.employeeNo = body.employeeNo || null
+    if (body.phone !== undefined) setValues.phoneEnc = body.phone ? encryptSensitive(body.phone, secret) : null
+    if (body.gender !== undefined) setValues.gender = body.gender || null
+    if (body.teachingGrades !== undefined) setValues.teachingGrades = body.teachingGrades
+    if (body.subject !== undefined) setValues.subject = body.subject || null
+    if (body.isClassTeacher !== undefined) setValues.isClassTeacher = body.isClassTeacher
+    if (body.hiredAt !== undefined) setValues.hiredAt = body.hiredAt ? new Date(body.hiredAt) : null
+    if (body.title !== undefined) setValues.title = body.title || null
+    if (body.certNote !== undefined) setValues.certNote = body.certNote || null
+    if (body.notes !== undefined) setValues.notesEnc = body.notes ? encryptSensitive(body.notes, secret) : null
+    if (body.overrides !== undefined) {
+      const merged = { ...(target.overrides || {}), ...body.overrides }
+      for (const [k, v] of Object.entries(merged)) if (!v) delete merged[k]
+      setValues.overrides = merged
+    }
     // 如果重新启用，清除停用标记
     if (body.status === 'active' && target.status === 'disabled') {
       setValues.disabledAt = null

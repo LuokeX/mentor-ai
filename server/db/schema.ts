@@ -46,11 +46,31 @@ export const users = pgTable('users', {
   disabledAt: timestamp('disabled_at', { withTimezone: true }),
   disabledBy: uuid('disabled_by').references((): any => users.id),
   disabledReason: text('disabled_reason'),
+  // ---- 教师业务档案（学校管理员维护）----
+  employeeNo: varchar('employee_no', { length: 80 }),
+  phoneEnc: text('phone_enc'),
+  gender: varchar('gender', { length: 20 }),
+  /** 任教年级 1-12，空数组表示不限 */
+  teachingGrades: jsonb('teaching_grades').$type<number[]>().default([]).notNull(),
+  subject: varchar('subject', { length: 80 }),
+  isClassTeacher: boolean('is_class_teacher').default(false).notNull(),
+  hiredAt: timestamp('hired_at', { withTimezone: true }),
+  title: varchar('title', { length: 40 }),
+  certNote: text('cert_note'),
+  notesEnc: text('notes_enc'),
+  // ---- 自我成长模块业务状态（评估提交时快照回写，管理员只读）----
+  /** 最近一次自我状态评估等级（需转介/需关注/关注/良好），列表直接展示 */
+  selfStatusLevel: varchar('self_status_level', { length: 40 }),
+  /** 全量快照：五问维度分、心理资本四维分、命中归因、评估时间 */
+  selfSnapshot: jsonb('self_snapshot').$type<Record<string, unknown>>().default({}).notNull(),
+  /** 管理员手动修正（如修正状态等级），评估提交时以新评估为准并清除对应项 */
+  overrides: jsonb('overrides').$type<Record<string, string>>().default({}).notNull(),
   ...timestamps
 }, table => [
   uniqueIndex('users_email_uidx').on(table.email),
   index('users_school_role_idx').on(table.schoolId, table.role),
-  index('users_school_role_status_idx').on(table.schoolId, table.role, table.status)
+  index('users_school_role_status_idx').on(table.schoolId, table.role, table.status),
+  uniqueIndex('users_school_employee_no_uidx').on(table.schoolId, table.employeeNo)
 ])
 
 export const sessions = pgTable('sessions', {
@@ -178,6 +198,15 @@ export const departments = pgTable('departments', {
   type: varchar('type', { length: 30 }).default('other').notNull(),
   description: text('description'),
   status: varchar('status', { length: 20 }).default('active').notNull(),
+  // ---- 部门业务档案 ----
+  shortName: varchar('short_name', { length: 40 }),
+  /** 分管领域：grade_group 年级组 / subject_group 学科组 / moral_edu 德育 / psych_support 心理支持中心 / admin 行政后勤 / other */
+  scope: varchar('scope', { length: 40 }).default('other').notNull(),
+  leaderTitle: varchar('leader_title', { length: 80 }),
+  location: varchar('location', { length: 200 }),
+  phone: varchar('phone', { length: 40 }),
+  headcountLimit: integer('headcount_limit'),
+  sortOrder: integer('sort_order').default(0).notNull(),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
@@ -228,6 +257,20 @@ export const classes = pgTable('classes', {
   establishedAt: timestamp('established_at', { withTimezone: true }),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('sensitive').notNull(),
+  // ---- 班级业务档案（服务 class_system 模块）----
+  section: varchar('section', { length: 20 }),
+  classType: varchar('class_type', { length: 30 }).default('admin').notNull(),
+  deputyOwnerUserId: uuid('deputy_owner_user_id').references(() => users.id, { onDelete: 'set null' }),
+  location: varchar('location', { length: 200 }),
+  schoolYear: varchar('school_year', { length: 30 }),
+  notesEnc: text('notes_enc'),
+  // ---- 班级系统建设模块业务状态（评估提交时快照回写）----
+  /** 能量场阶段：生存期/规范期/稳定期/未评估，列表直接展示 */
+  energyStage: varchar('energy_stage', { length: 40 }),
+  /** 全量快照：三能量分、五系统分、命中归因、评估时间 */
+  classSnapshot: jsonb('class_snapshot').$type<Record<string, unknown>>().default({}).notNull(),
+  /** 管理员手动修正（如修正能量场阶段），评估提交时以新评估为准并清除对应项 */
+  overrides: jsonb('overrides').$type<Record<string, string>>().default({}).notNull(),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
@@ -253,6 +296,23 @@ export const students = pgTable('students', {
   externalRefSearch: varchar('external_ref_search', { length: 64 }),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
+  // ---- 学生业务档案（服务 student_case / learning_problem / home_school 模块）----
+  birthDate: timestamp('birth_date', { withTimezone: true }),
+  studentNoEnc: text('student_no_enc'),
+  studentNoSearch: varchar('student_no_search', { length: 64 }),
+  ethnicity: varchar('ethnicity', { length: 40 }),
+  enrolledAt: timestamp('enrolled_at', { withTimezone: true }),
+  boardingType: varchar('boarding_type', { length: 20 }),
+  addressEnc: text('address_enc'),
+  // ---- 学生个体/学习问题模块业务状态（评估提交时快照回写）----
+  /** 最近一次个体支持等级：L3 专业会商/L2 年级协同/L1 教师关注 */
+  caseLevel: varchar('case_level', { length: 40 }),
+  /** 最近一次学习问题等级：LP0 危机转介/LP3 系统干预/LP2 深入诊断 */
+  learningLevel: varchar('learning_level', { length: 40 }),
+  /** 全量快照：筛查维度分、三层诊断分、命中归因、评估时间 */
+  studentSnapshot: jsonb('student_snapshot').$type<Record<string, unknown>>().default({}).notNull(),
+  /** 管理员手动修正，评估提交时以新评估为准并清除对应项 */
+  overrides: jsonb('overrides').$type<Record<string, string>>().default({}).notNull(),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
@@ -276,6 +336,19 @@ export const guardians = pgTable('guardians', {
   relation: varchar('relation', { length: 40 }),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
+  // ---- 家长业务档案（服务 home_school 模块）----
+  occupation: varchar('occupation', { length: 80 }),
+  workUnit: varchar('work_unit', { length: 200 }),
+  contactEnc: text('contact_enc'),
+  isPrimary: boolean('is_primary').default(false).notNull(),
+  notesEnc: text('notes_enc'),
+  // ---- 家校沟通模块业务状态（评估提交时快照回写）----
+  /** 最近一次沟通风险等级：E 级保护通道/D 级高冲突/C 级需谨慎/无 */
+  commRiskLevel: varchar('comm_risk_level', { length: 40 }),
+  /** 全量快照：双维速查分、家长分型维度分、命中归因、评估时间 */
+  guardianSnapshot: jsonb('guardian_snapshot').$type<Record<string, unknown>>().default({}).notNull(),
+  /** 管理员手动修正，评估提交时以新评估为准并清除对应项 */
+  overrides: jsonb('overrides').$type<Record<string, string>>().default({}).notNull(),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
@@ -289,6 +362,8 @@ export const studentGuardians = pgTable('student_guardians', {
   studentId: uuid('student_id').notNull().references(() => students.id, { onDelete: 'restrict' }),
   guardianId: uuid('guardian_id').notNull().references(() => guardians.id, { onDelete: 'restrict' }),
   schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'restrict' }),
+  /** 该家长对这个学生的关系（如：爸爸/叔叔），同一家长对不同学生可有不同关系 */
+  relation: varchar('relation', { length: 40 }),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [

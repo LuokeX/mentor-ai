@@ -1,20 +1,15 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { managedRecordStatusSchema, schoolAdminGuardianCreateSchema } from '../../../../../shared/contracts'
+import { schoolAdminGuardianUpdateSchema } from '../../../../../shared/contracts'
 import { assertActiveTeacher, requireSchoolManagement, transferPlans, writeAssignment } from '../../../../domain/school-management'
 import { writeAudit } from '../../../../utils/audit'
 import { encryptSensitive, searchableHash } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 
-const bodySchema = schoolAdminGuardianCreateSchema.partial().extend({
-  status: managedRecordStatusSchema.optional(),
-  reason: z.string().trim().max(500).optional()
-}).refine(value => Object.keys(value).length > 0)
-
 export default defineEventHandler(async (event) => {
   const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['guardians'])
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
-  const body = bodySchema.parse(await readBody(event))
+  const body = schoolAdminGuardianUpdateSchema.parse(await readBody(event))
   const expectedUpdatedAt = z.string().datetime().optional().parse(getQuery(event).expectedUpdatedAt)
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
@@ -36,6 +31,16 @@ export default defineEventHandler(async (event) => {
       if (body.externalRef !== undefined) {
         patch.externalRefEnc = body.externalRef ? encryptSensitive(body.externalRef, secret) : null
         patch.externalRefSearch = body.externalRef ? searchableHash(body.externalRef, secret) : null
+      }
+      if (body.occupation !== undefined) patch.occupation = body.occupation || null
+      if (body.workUnit !== undefined) patch.workUnit = body.workUnit || null
+      if (body.contact !== undefined) patch.contactEnc = body.contact ? encryptSensitive(body.contact, secret) : null
+      if (body.isPrimary !== undefined) patch.isPrimary = body.isPrimary
+      if (body.notes !== undefined) patch.notesEnc = body.notes ? encryptSensitive(body.notes, secret) : null
+      if (body.overrides !== undefined) {
+        const merged = { ...(guardian.overrides || {}), ...body.overrides }
+        for (const [k, v] of Object.entries(merged)) if (!v) delete merged[k]
+        patch.overrides = merged
       }
       if (body.status !== undefined) patch.status = body.status
       if (body.ownerUserId) patch.ownerUserId = body.ownerUserId

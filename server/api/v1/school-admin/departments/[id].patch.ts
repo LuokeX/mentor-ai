@@ -34,6 +34,13 @@ export default defineEventHandler(async (event) => {
     if (body.parentId !== undefined) patch.parentId = body.parentId || null
     if (body.leaderUserId !== undefined) patch.leaderUserId = body.leaderUserId || null
     if (body.description !== undefined) patch.description = body.description || null
+    if (body.shortName !== undefined) patch.shortName = body.shortName || null
+    if (body.scope !== undefined) patch.scope = body.scope
+    if (body.leaderTitle !== undefined) patch.leaderTitle = body.leaderTitle || null
+    if (body.location !== undefined) patch.location = body.location || null
+    if (body.phone !== undefined) patch.phone = body.phone || null
+    if (body.headcountLimit !== undefined) patch.headcountLimit = body.headcountLimit || null
+    if (body.sortOrder !== undefined) patch.sortOrder = body.sortOrder
     if (body.status !== undefined) patch.status = body.status
     const finalConditions = [eq(schema.departments.id, id), eq(schema.departments.schoolId, schoolId)]
     if (expectedUpdatedAt) finalConditions.push(eq(schema.departments.updatedAt, new Date(expectedUpdatedAt)))

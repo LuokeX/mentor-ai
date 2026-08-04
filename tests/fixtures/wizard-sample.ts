@@ -1,8 +1,8 @@
 /**
  * 业务填写向导的样例输入。
  *
- * 内容取自家校沟通模块的真实业务语境，用来验证：
- * 「非技术人员能填出来的东西」是否足以编译出一套能跑通的三库。
+ * 内容取自家校沟通模块的真实业务语境（对齐 v4 六维度框架与五色分级口径），
+ * 用来验证：「非技术人员能填出来的东西」是否足以编译出一套能跑通的三库。
  * 向导页面也用它当「一键填入示例」。
  */
 import type { WizardInput } from '../../shared/business-wizard'
@@ -12,7 +12,7 @@ export const WIZARD_SAMPLE: WizardInput = {
   version: '1.0.0',
   sourceRef: '家校沟通业务手册',
   defaultLevelName: '常规沟通即可',
-  defaultMessage: '本次评估未发现需要特别关注的信号，按常规节奏保持沟通即可。',
+  defaultMessage: '当前家校关系状况良好，可按常规节奏沟通。保持日常的正向接触，让角色边界持续有储备。',
   // 模块级默认：同一模块内不逐行重填的列都在这里设一次
   defaults: {
     schoolSection: 'all',
@@ -32,7 +32,7 @@ export const WIZARD_SAMPLE: WizardInput = {
   },
   // ⑤b 计算变量：用中文表达式，编译期转成引擎语法
   computedVariables: [
-    { name: '沟通压力指数', scale: '家校沟通双维速查', expression: '维度[沟通态度] + 维度[配合度]' }
+    { name: '沟通压力指数', scale: '家校沟通六维速查', expression: '维度[沟通质量] + 维度[参与效能]' }
   ],
   // ④b 自定义选项组：预置三组之外的业务自定义（题目通过 id 引用）
   optionGroups: [
@@ -47,10 +47,10 @@ export const WIZARD_SAMPLE: WizardInput = {
 
   scales: [
     {
-      name: '家校沟通双维速查',
+      name: '家校沟通六维速查',
       role: '入口筛查',
-      shortName: '双维速查',
-      description: '判断家长配合度、沟通态度和当前关系容器。分越高表示状况越需要关注。',
+      shortName: '六维速查',
+      description: '按六维度框架判断家校沟通状态：沟通质量、参与效能、教育一致性、角色边界（信任关系与危机响应由深度评估承接）。反向计分：得分越高表示状况越差。',
       minutes: 5,
       prerequisites: [],
       exclusives: [],
@@ -60,96 +60,119 @@ export const WIZARD_SAMPLE: WizardInput = {
       applicableSubjects: [],
       normReference: '家校沟通校本观察常模（N=240）',
       reliabilityNote: 'Cronbach α=0.81',
+      externalAuthorizationNote: '家校沟通校本量表，外部引用需注明出处',
       dimensionDefs: [
-        { name: '配合度', calcMethod: 'mean', weight: 1, description: '家长在行动层面的配合程度', highInterpretation: '>=3.5 分：配合度已到需要干预的程度' },
-        { name: '沟通态度', calcMethod: 'mean', weight: 1, description: '沟通时的情绪与立场强度' }
+        { name: '沟通质量', calcMethod: 'mean', weight: 1, description: '沟通质量维度', highInterpretation: '出现不尊重、混淆事实与情绪甚至威胁行为', lowInterpretation: '沟通质量可控' },
+        { name: '参与效能', calcMethod: 'mean', weight: 1, description: '参与效能维度', highInterpretation: '家长回应慢、不参与共同行动', lowInterpretation: '参与效能良好' },
+        { name: '教育一致性', calcMethod: 'mean', weight: 1, description: '教育一致性维度', highInterpretation: '家长不认同或不愿执行共同达成的教育行动', lowInterpretation: '教育方向一致' },
+        { name: '角色边界', calcMethod: 'mean', weight: 1, description: '角色边界维度', highInterpretation: '关系无法承受坦诚讨论，边界模糊', lowInterpretation: '角色边界清晰、角色边界充足' }
       ],
       questions: [
-        { text: '这位家长对老师提出的建议，配合程度如何？', dimension: '配合度', optionGroup: 'AGREE_5', reverse: true },
-        { text: '沟通时家长的情绪反应有多强烈？', dimension: '沟通态度', optionGroup: 'FREQ_5', reverse: false, help: '按最近一次沟通的实际感受作答' },
-        { text: '家长多久回应一次老师的消息？', dimension: '配合度', optionGroup: 'FREQ_5', reverse: true },
-        { text: '这一周家长表达不满或质疑的次数？', dimension: '沟通态度', optionGroup: 'FREQ_5', reverse: false },
-        { text: '目前和这位家长之间还有多少可以商量的余地？', dimension: '关系容器', optionGroup: 'AGREE_5', reverse: true },
-        { text: '沟通时有多少次感到「说不下去」？', dimension: '关系容器', optionGroup: 'cg-1', reverse: false }
+        { text: '家长能够及时回应学校的重要沟通。', dimension: '参与效能', optionGroup: 'AGREE_5', reverse: true },
+        { text: '家长愿意共同讨论并执行已经达成的行动。', dimension: '教育一致性', optionGroup: 'AGREE_5', reverse: true },
+        { text: '出现分歧后，家长仍愿意继续保持沟通。', dimension: '角色边界', optionGroup: 'AGREE_5', reverse: true },
+        { text: '家长表达不满时仍能保持基本尊重。', dimension: '沟通质量', optionGroup: 'AGREE_5', reverse: true },
+        { text: '家长能够区分事实、推测和情绪。', dimension: '沟通质量', optionGroup: 'AGREE_5', reverse: true },
+        { text: '家长没有出现威胁、公开抹黑或恶意维权行为。', dimension: '沟通质量', optionGroup: 'AGREE_5', reverse: true },
+        { text: '目前的关系可以承受一次坦诚而具体的讨论。', dimension: '角色边界', optionGroup: 'AGREE_5', reverse: true },
+        { text: '双方能够在情绪出现时暂停并回到问题解决。', dimension: '角色边界', optionGroup: 'AGREE_5', reverse: true },
+        { text: '过去的积极沟通经验仍能成为当前关系资源。', dimension: '角色边界', optionGroup: 'AGREE_5', reverse: true },
+        { text: '过去两周，家长很少主动发起沟通。', dimension: '参与效能', optionGroup: 'cg-1', reverse: false, help: '按最近两周的实际情况作答' }
       ]
     },
     {
       name: '家长分型与沟通策略评估',
       role: '深度诊断',
       shortName: '家长分型',
-      description: '在速查提示需要重点沟通后使用，判断家长互动模式并匹配沟通策略。',
+      description: '沟通质量维度偏高时才需要判断家长类型，否则不用做。',
       minutes: 6,
-      prerequisites: ['家校沟通双维速查'],
+      prerequisites: ['家校沟通六维速查'],
       exclusives: [],
-      triggerNote: '沟通态度维度偏高时才需要判断家长类型',
+      triggerNote: '沟通质量维度偏高时才需要判断家长类型',
       triggerConditions: [
-        { targetType: 'dimension', target: '沟通态度', comparator: '达到或超过', value: 3, join: '且' }
+        { targetType: 'dimension', target: '沟通质量', comparator: '达到或超过', value: 3, join: '且' },
+        { targetType: 'average', target: '', comparator: '达到或超过', value: 3.2, join: '或' }
       ],
       applicableGrades: [],
       applicableSubjects: [],
-      dimensionDefs: [],
+      dimensionDefs: [
+        { name: '焦虑水平', calcMethod: 'mean', weight: 1, description: '焦虑水平维度', highInterpretation: '家长处于高焦虑，难以接收复杂信息', lowInterpretation: '情绪相对平稳' },
+        { name: '控制倾向', calcMethod: 'mean', weight: 1, description: '控制倾向维度', highInterpretation: '家长倾向于主导教育方式并质疑学校安排', lowInterpretation: '愿意接受学校专业判断' },
+        { name: '信任关系', calcMethod: 'mean', weight: 1, description: '信任关系维度', highInterpretation: '对学校缺乏基本信任', lowInterpretation: '有较好的信任关系' }
+      ],
       questions: [
-        { text: '家长是否倾向于把问题归到学校一方？', dimension: '归因倾向', optionGroup: 'AGREE_5', reverse: false },
-        { text: '家长对孩子的期待是否明显高于孩子当前水平？', dimension: '期待落差', optionGroup: 'AGREE_5', reverse: false },
-        { text: '家长在沟通中是否更关注面子而非问题本身？', dimension: '归因倾向', optionGroup: 'AGREE_5', reverse: false },
-        { text: '家长是否愿意在家里配合执行具体动作？', dimension: '执行意愿', optionGroup: 'AGREE_5', reverse: true }
+        { text: '家长在沟通中反复确认同一件事。', dimension: '焦虑水平', optionGroup: 'AGREE_5', reverse: true },
+        { text: '家长常在非工作时间发来紧急消息。', dimension: '焦虑水平', optionGroup: 'AGREE_5', reverse: true },
+        { text: '家长会具体指定学校应该如何处理。', dimension: '控制倾向', optionGroup: 'AGREE_5', reverse: true },
+        { text: '家长对学校既有安排提出较多质疑。', dimension: '控制倾向', optionGroup: 'AGREE_5', reverse: true },
+        { text: '家长相信教师是出于孩子利益在做判断。', dimension: '信任关系', optionGroup: 'AGREE_5', reverse: true },
+        { text: '过去的沟通中，家长兑现过共同约定。', dimension: '信任关系', optionGroup: 'AGREE_5', reverse: true }
       ]
     }
   ],
 
   attributions: [
-    { name: '家长配合度低', weight: 1.2, tags: ['home_school', 'cooperation'], highSign: '消息不回、建议不执行、约不到面谈', typicalTrigger: '家长工作繁忙或家庭结构复杂，缺少固定沟通时间', action: '把大要求拆成一个当周就能做完的小动作', description: '家长在行为层面没有跟上，通常不是不愿意而是没有抓手' },
-    { name: '沟通态度对立', weight: 1.5, tags: ['home_school', 'conflict'], highSign: '情绪反应强烈、频繁质疑、拒绝继续谈', typicalTrigger: '之前沟通过程中积累过不愉快，或家长对学校有过不满', action: '先复述家长的担心，确认听懂了再谈事实', description: '情绪已经盖过内容，此时讲道理只会加剧对立' },
-    { name: '关系容器不足', weight: 1, tags: ['home_school', 'trust'], highSign: '没有商量余地、一说就僵', typicalTrigger: '长期只有问题才联系，缺少平时正向互动积累', action: '本周主动做一次与问题无关的正向接触', description: '缺少可承载分歧的基础信任，需要先补关系再谈问题' },
-    { name: '期待落差过大', weight: 1, tags: ['home_school', 'expectation'], highSign: '要求明显超出孩子当前水平', typicalTrigger: '家长对孩子学业或行为的期待参照的是其他孩子', action: '用具体数据说明当前起点，再共同定一个够得着的目标', description: '家长的目标和孩子的现状之间缺少台阶' }
+    { name: '沟通冲突升级', weight: 1.4, tags: ['home_school', 'conflict'], highSign: '出现威胁、公开抹黑或恶意维权；沟通中反复攻击个人', typicalTrigger: '长期诉求未被回应，或某次事件处理让家长感到不被尊重', action: '不在情绪高点解释责任，先记录家长诉求、事实依据和待核实点，并上报年级组长', description: '家长的表达方式已经越过基本尊重的边界，关系进入对抗状态' },
+    { name: '角色边界不足', weight: 1.2, tags: ['home_school', 'container'], highSign: '一说具体问题就情绪激化；过去无积极沟通经验可调用', typicalTrigger: '缺少日常正向接触，只在出问题时联系', action: '本周主动做一次与问题无关的正向接触，只反馈孩子的一个具体进步', description: '当前关系无法承受一次坦诚而具体的讨论，需要先修复再沟通' },
+    { name: '参与效能不足', weight: 1, tags: ['home_school', 'cooperation'], highSign: '不回消息、约定的事没有落实', typicalTrigger: '家长精力有限或不认同学校的处理方式', action: '把请求缩小到一个本周内能完成的具体动作，并明确完成后的反馈方式', description: '家长未参与共同行动，导致校内措施缺少家庭侧的配合' },
+    { name: '信任关系薄弱', weight: 1, tags: ['home_school', 'trust'], highSign: '对学校安排持续怀疑，难以建立合作', typicalTrigger: '过往沟通中积累过不愉快，或学校曾让家长失望', action: '用一次可验证的小承诺兑现重建信任，再逐步扩大合作范围', description: '家长对学校缺乏基本信任，任何具体建议都会被先打折扣' }
   ],
 
   evidences: [
-    { attribution: '家长配合度低', scale: '家校沟通双维速查', weight: 2, description: '配合度维度处于高位',
-      conditions: [{ targetType: 'dimension', target: '配合度', comparator: '达到或超过', value: 3.5, join: '且' }] },
-    { attribution: '家长配合度低', scale: '家校沟通双维速查', weight: 3, description: '消息长期不回，配合度已到需要干预的程度',
-      conditions: [{ targetType: 'question', target: '3', comparator: '达到或超过', value: 4, join: '且' }] },
-    { attribution: '沟通态度对立', scale: '家校沟通双维速查', weight: 3, description: '情绪反应与质疑同时处于高位',
+    { attribution: '沟通冲突升级', scale: '家校沟通六维速查', weight: 3, description: '出现威胁或恶意维权类行为（第 6 题）',
+      conditions: [{ targetType: 'question', target: '6', comparator: '达到或超过', value: 4, join: '且' }] },
+    { attribution: '沟通冲突升级', scale: '家校沟通六维速查', weight: 2, description: '沟通质量维度处于高位，且情绪表达越界',
       conditions: [
-        { targetType: 'question', target: '2', comparator: '达到或超过', value: 4, join: '且' },
+        { targetType: 'dimension', target: '沟通质量', comparator: '达到或超过', value: 3, join: '且' },
         { targetType: 'question', target: '4', comparator: '达到或超过', value: 3, join: '且' }
       ] },
-    { attribution: '沟通态度对立', scale: '家校沟通双维速查', weight: 1, description: '沟通态度维度已高于常规水平',
-      conditions: [{ targetType: 'dimension', target: '沟通态度', comparator: '达到或超过', value: 3, join: '且' }] },
-    { attribution: '关系容器不足', scale: '家校沟通双维速查', weight: 2, description: '关系容器维度偏弱，缺少可商量的余地',
-      conditions: [{ targetType: 'dimension', target: '关系容器', comparator: '达到或超过', value: 3.5, join: '且' }] },
-    { attribution: '期待落差过大', scale: '家长分型与沟通策略评估', weight: 2, description: '期待落差维度处于高位',
-      conditions: [{ targetType: 'dimension', target: '期待落差', comparator: '达到或超过', value: 4, join: '且' }] }
+    { attribution: '角色边界不足', scale: '家校沟通六维速查', weight: 2, description: '角色边界维度偏弱，缺少可商量的余地',
+      conditions: [{ targetType: 'dimension', target: '角色边界', comparator: '达到或超过', value: 3.5, join: '且' }] },
+    { attribution: '参与效能不足', scale: '家校沟通六维速查', weight: 2, description: '参与效能维度处于高位，共同行动难以落实',
+      conditions: [{ targetType: 'dimension', target: '参与效能', comparator: '达到或超过', value: 3.5, join: '且' }] },
+    { attribution: '参与效能不足', scale: '家校沟通六维速查', weight: 3, description: '消息长期不回，参与效能已到需要干预的程度',
+      conditions: [{ targetType: 'question', target: '1', comparator: '达到或超过', value: 4, join: '且' }] },
+    { attribution: '信任关系薄弱', scale: '家长分型与沟通策略评估', weight: 2, description: '信任关系维度处于高位',
+      conditions: [{ targetType: 'dimension', target: '信任关系', comparator: '达到或超过', value: 3.5, join: '且' }] }
   ],
 
   levels: [
     {
       name: 'E 级保护通道', redLine: true,
-      resultNote: '沟通已经无法继续，需要启动保护流程',
-      redLineAction: '暂停单独沟通，立即上报年级组并安排第三方在场',
-      notificationTemplate: '[教师姓名]老师在家校沟通评估中触发红线，请尽快登录系统查看处置要求。',
-      conditions: [
-        { targetType: 'question', target: '2', comparator: '达到或超过', value: 5, join: '且' },
-        { targetType: 'question', target: '6', comparator: '达到或超过', value: 4, join: '且' }
-      ],
-      teacherMessage: '当前沟通风险较高，请先暂停单独沟通，按学校流程上报后再安排有第三方在场的会谈。'
+      scale: '家校沟通六维速查',
+      redLineAction: '停止教师单独沟通，转入学校保护通道，全程留痕并由年级组长或校方介入',
+      resultNote: '出现威胁或恶意维权行为，已转入保护通道，请勿单独沟通。',
+      teacherMessage: '本次评估触发 E 级保护通道，核心问题是「${主要归因}」。请立即停止单独沟通，保存全部记录并当天上报年级组长，后续由学校层面承接。',
+      escalationTarget: '年级组长/校方',
+      notificationTemplate: '[班级]家校沟通触发 E 级保护通道，请勿让班主任单独沟通。',
+      conditions: [{ targetType: 'question', target: '6', comparator: '达到或超过', value: 4, join: '且' }]
+    },
+    {
+      name: 'D 级高冲突', redLine: false,
+      scale: '家长分型与沟通策略评估',
+      resultNote: '家长分型显示焦虑或控制倾向偏高、信任关系薄弱，建议由年级组长陪同沟通。',
+      teacherMessage: '本次沟通风险等级为 D 级，主要归因是「${主要归因}」，同时需关注「${次要归因}」。建议由年级组长陪同沟通并全程留痕。',
+      escalationCondition: '连续两次 D 级',
+      escalationTarget: '年级组长',
+      reAssessTrigger: '7天后复评',
+      conditions: [{ targetType: 'average', target: '', comparator: '达到或超过', value: 4, join: '且' }]
     },
     {
       name: 'C 级需谨慎', redLine: false,
-      conditions: [{ targetType: 'total', target: '', comparator: '达到或超过', value: 20, join: '且' }],
-      teacherMessage: '本次沟通需要谨慎推进，主要问题集中在「${主要归因}」。建议先处理情绪和关系，再谈具体事项。'
-    },
-    {
-      name: 'B 级需关注', redLine: false,
-      conditions: [{ targetType: 'total', target: '', comparator: '达到或超过', value: 14, join: '且' }],
-      teacherMessage: '沟通中出现了需要关注的信号，主要集中在「${主要归因}」。目前还可以自主调整，建议从推荐工具里选一项本周试用。'
+      scale: '家长分型与沟通策略评估',
+      resultNote: '家长分型提示沟通存在明显阻力，先稳住情绪和事实边界再决定节奏。',
+      teacherMessage: '本次评估提示沟通存在明显阻力，核心变量是「${主要归因}」。处理重点不是先说服家长，而是先稳住情绪和事实边界，再决定沟通节奏。',
+      escalationCondition: '连续两次 C 级',
+      escalationTarget: '年级组长',
+      reAssessTrigger: '14天后复评',
+      conditions: [{ targetType: 'average', target: '', comparator: '达到或超过', value: 3, join: '且' }]
     }
   ],
 
   tools: [
     {
-      name: '三步共情沟通法', form: 'framework', severity: 'high',
-      attributions: ['沟通态度对立'],
+      name: '先跟后带话术卡', form: 'script', severity: 'high',
+      attributions: ['沟通冲突升级'],
       whenToUse: '家长情绪明显、一开口就对立时',
       steps: [
         '先复述家长说的担心，一字不评价，确认自己听对了',
@@ -167,63 +190,74 @@ export const WIZARD_SAMPLE: WizardInput = {
       duration: '每日 1 次，连续 7 天',
       expectedEffect: '单次沟通结束后家长情绪强度下降 1 级',
       effectNote: '先安顿情绪，再谈内容，对立场景下比直接讲道理有效',
-      dimensions: ['沟通态度'],
+      outputArtifact: '一次共情沟通记录',
+      contraindicationNote: '家长已进入正式投诉流程时不适用非正式共情沟通',
+      collaborativeTools: ['沟通容器修复计划'],
+      dimensions: ['沟通质量'],
       evidenceSource: '教师访谈汇编（校内 12 位班主任）',
       reAssessmentIntervalDays: 14,
       crossModuleTags: [],
       prerequisiteTools: [],
-      alternativeTools: ['事实与诉求分栏表'],
+      alternativeTools: ['沟通容器修复计划'],
       advancedTools: [],
       contraindications: [
         { condition: '家长已提出投诉或要求书面答复', type: 'block', description: '进入正式流程后不适合再做非正式共情沟通', alternative: '转由年级组按投诉流程处理' }
       ]
     },
     {
-      name: '事实与诉求分栏表', form: 'worksheet', severity: 'medium',
-      attributions: ['家长配合度低', '期待落差过大'],
-      whenToUse: '家长诉求含糊或与事实脱节时',
+      name: '沟通容器修复计划', form: 'framework', severity: 'medium',
+      attributions: ['角色边界不足'],
+      whenToUse: '缺少平时正向互动、一说具体问题就僵时',
       steps: [
-        '分三栏记录：家长诉求 / 已核实事实 / 待核实点',
-        '把待核实点变成一个明确的时间和动作',
-        '下次沟通时先过一遍这张表，再谈新问题'
+        '本周主动做一次与问题无关的正向接触',
+        '只反馈孩子的一个具体进步，不提任何要求',
+        '连续两周保持固定节奏，再试探进入具体话题'
       ],
-      stepDetails: [],
-      prohibition: '不要把未核实的信息写进已核实栏',
-      timePerSession: '一次 10 分钟',
-      duration: '每次沟通前填写，累计 3 次',
-      expectedEffect: '诉求与事实的落差能在一次沟通内对齐',
-      dimensions: ['配合度', '期待落差'],
-      evidenceSource: '校内沟通记录模板实践',
-      reAssessmentIntervalDays: 7,
+      stepDetails: [
+        { estimatedTime: '5 分钟', keyTip: '接触必须与问题无关', successCriteria: '家长愿意接话' },
+        { estimatedTime: '2 分钟', scriptTemplate: '孩子今天有一件事做得特别好…', successCriteria: '家长回应积极' },
+        { estimatedTime: '每周 1 次', keyTip: '节奏稳定比内容多更重要', successCriteria: '两周后可以自然谈具体话题' }
+      ],
+      prohibition: '不要在修复期内提要求或翻旧账',
+      timePerSession: '每周 5-10 分钟',
+      duration: '连续 2 周',
+      expectedEffect: '两周后可以自然进入具体话题讨论',
+      effectNote: '关系容器需要正向积累，急不来',
+      outputArtifact: '正向接触记录',
+      collaborativeTools: ['最小请求约定法'],
+      dimensions: ['角色边界'],
+      evidenceSource: '家校沟通校本实践总结',
       crossModuleTags: [],
       prerequisiteTools: [],
-      alternativeTools: [],
+      alternativeTools: ['最小请求约定法'],
       advancedTools: [],
       contraindications: []
     },
     {
-      name: '正向接触计划', form: 'exercise', severity: 'low',
-      attributions: ['关系容器不足'],
-      whenToUse: '一谈问题就僵、需要先补关系时',
+      name: '最小请求约定法', form: 'worksheet', severity: 'low',
+      attributions: ['参与效能不足'],
+      whenToUse: '家长答应配合但总是落空时',
       steps: [
-        '本周主动做一次与问题无关的正向接触',
-        '内容具体到某件小事，不要泛泛表扬',
-        '记录家长的反应，两周后回看变化'
+        '把请求缩小到一个本周能完成的具体动作',
+        '和家长共同确认完成时间与反馈方式',
+        '完成后及时正向反馈，形成下一次合作的信任'
       ],
       stepDetails: [
-        { estimatedTime: '5 分钟', keyTip: '接触的时机选在家长情绪平稳时', successCriteria: '完成一次与问题无关的接触' },
-        {},
-        { estimatedTime: '10 分钟', successCriteria: '两周后回看记录，关系容器维度有变化' }
+        { estimatedTime: '3 分钟', keyTip: '动作要小到家长不会拒绝', successCriteria: '家长当场确认可行' },
+        { estimatedTime: '2 分钟', keyTip: '反馈方式要明确（微信还是当面）', successCriteria: '约定清晰可执行' },
+        { estimatedTime: '2 分钟', keyTip: '完成后一定要反馈，闭环才有下一次', successCriteria: '家长收到正向反馈' }
       ],
-      prohibition: '不要在正向接触时顺带提问题',
-      timePerSession: '每周一次',
-      duration: '连续 4 周',
-      expectedEffect: '两周内家长愿意接起电话的比例提升',
-      dimensions: ['关系容器'],
-      evidenceSource: '校本实践总结',
-      reAssessmentIntervalDays: 14,
+      prohibition: '不要在约定未完成时追加新要求',
+      timePerSession: '一次 5 分钟',
+      duration: '每周 1 个约定',
+      expectedEffect: '连续三次兑现后，家长参与度明显提升',
+      effectNote: '从最小可完成动作重建参与惯性',
+      outputArtifact: '约定记录表',
+      collaborativeTools: [],
+      dimensions: ['参与效能'],
+      evidenceSource: '行为改变校本实践',
       crossModuleTags: [],
-      prerequisiteTools: [],
+      prerequisiteTools: ['沟通容器修复计划'],
       alternativeTools: [],
       advancedTools: [],
       contraindications: []
@@ -231,7 +265,16 @@ export const WIZARD_SAMPLE: WizardInput = {
   ],
 
   keywords: [
-    { core: ['家长不配合', '联系不上家长'], expanded: ['消息不回', '约不到人'], exclude: ['孩子生病请假'], category: '配合度问题', scale: '家校沟通双维速查', matchMode: 'fuzzy', risk: 'yellow', contextConstraint: '教师自述沟通困难时', description: '家长配合度信号' },
-    { core: ['家长投诉', '闹到学校'], expanded: ['要说法', '找领导'], exclude: [], category: '沟通对立', scale: '家校沟通双维速查', tool: '三步共情沟通法', matchMode: 'exact', risk: 'orange', contextConstraint: '', description: '沟通对立信号' }
+    {
+      core: ['家长投诉', '被投诉', '家长闹'],
+      expanded: ['家长发火', '家长威胁', '恶意维权'],
+      exclude: [],
+      category: '家校冲突',
+      scale: '家校沟通六维速查',
+      risk: 'orange',
+      matchMode: 'fuzzy',
+      contextConstraint: '教师自述与家长发生冲突时',
+      description: '家校冲突场景直接引导六维速查'
+    }
   ]
 }

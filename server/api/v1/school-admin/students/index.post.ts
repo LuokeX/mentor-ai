@@ -22,7 +22,14 @@ export default defineEventHandler(async (event) => {
         profileEnc: body.profile ? encryptSensitive(body.profile, secret) : null,
         notesEnc: body.notes ? encryptSensitive(body.notes, secret) : null,
         externalRefEnc: body.externalRef ? encryptSensitive(body.externalRef, secret) : null,
-        externalRefSearch: body.externalRef ? searchableHash(body.externalRef, secret) : null
+        externalRefSearch: body.externalRef ? searchableHash(body.externalRef, secret) : null,
+        birthDate: body.birthDate ? new Date(body.birthDate) : null,
+        studentNoEnc: body.studentNo ? encryptSensitive(body.studentNo, secret) : null,
+        studentNoSearch: body.studentNo ? searchableHash(body.studentNo, secret) : null,
+        ethnicity: body.ethnicity || null,
+        enrolledAt: body.enrolledAt ? new Date(body.enrolledAt) : null,
+        boardingType: body.boardingType || null,
+        addressEnc: body.address ? encryptSensitive(body.address, secret) : null
       }).returning({ id: schema.students.id })
       if (!created) throw createError({ statusCode: 500, message: '学生创建失败' })
       await writeAudit(event, {

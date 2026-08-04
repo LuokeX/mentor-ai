@@ -5,7 +5,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (!user.value) return navigateTo('/login')
 
   const allowedPrefixes: Record<string, string[]> = {
-    teacher: ['/', '/module', '/information', '/notifications'],
+    teacher: ['/', '/module', '/information', '/notifications', '/growth'],
     psychologist: ['/specialist', '/notifications'],
     school_admin: ['/school-admin', '/notifications'],
     platform_admin: ['/platform-admin', '/notifications']

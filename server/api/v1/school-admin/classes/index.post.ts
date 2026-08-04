@@ -1,6 +1,7 @@
 import { schoolAdminClassCreateSchema } from '../../../../../shared/contracts'
 import { assertActiveDepartment, assertActiveTeacher, requireSchoolManagement } from '../../../../domain/school-management'
 import { writeAudit } from '../../../../utils/audit'
+import { encryptSensitive } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
@@ -9,6 +10,7 @@ export default defineEventHandler(async (event) => {
   await assertActiveTeacher(event, schoolId, body.ownerUserId)
   await assertActiveDepartment(event, schoolId, body.departmentId)
   const db = useDb(event)
+  const secret = useRuntimeConfig(event).encryptionKey
   try {
     return await db.transaction(async (tx) => {
       const [created] = await tx.insert(schema.classes).values({
@@ -19,7 +21,13 @@ export default defineEventHandler(async (event) => {
         grade: body.grade,
         externalCode: body.externalCode || null,
         studentCount: body.studentCount,
-        establishedAt: body.establishedAt ? new Date(body.establishedAt) : null
+        establishedAt: body.establishedAt ? new Date(body.establishedAt) : null,
+        section: body.section || null,
+        classType: body.classType || 'admin',
+        deputyOwnerUserId: body.deputyOwnerUserId || null,
+        location: body.location || null,
+        schoolYear: body.schoolYear || null,
+        notesEnc: body.notes ? encryptSensitive(body.notes, secret) : null
       }).returning()
       if (!created) throw createError({ statusCode: 500, message: '班级创建失败' })
       await writeAudit(event, {

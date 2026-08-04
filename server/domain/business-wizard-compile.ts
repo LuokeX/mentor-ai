@@ -10,7 +10,7 @@
  *
  * 与 v4 模板完全对齐的约定：
  *   - 模块级重复列（适用学部/施测对象/证据等级/熔断参数等）取 input.defaults，按模板 ② 枚举取值；
- *   - ⑤e/⑩ 的「命中等级」用模板风险等级四档（red/orange/yellow/none），业务等级最多 4 个；
+ *   - ⑤e/⑩ 的「命中等级」用模板五色分级五档（red/orange/yellow/blue/green），业务等级最多 5 个；
  *   - ⑤b 计算变量表达式按「依赖量表」的编码表把中文转成引擎语法；
  *   - 模板导入链不消费的死列（④ 题型/权重/是否必答/显示条件/数据用途/默认分值、③ 做完导向什么）
  *     不产生业务语义，保持模板能通过的最小占位。
@@ -114,8 +114,9 @@ function dimensionCodeByName(codes: CodeMap, name: string): string | undefined {
   return undefined
 }
 
-/** 严重度按等级从重到轻分配。业务只需要把等级排好序。 */
-const SEVERITY_LADDER = ['crisis', 'high', 'medium', 'low'] as const
+/** 严重度按五色等级映射：红=危机、橙=高、黄=中、蓝/绿=低。业务只需要把等级排好序。 */
+const severityForLevel = (level: string): string =>
+  level === 'red' ? 'crisis' : level === 'orange' ? 'high' : level === 'yellow' ? 'medium' : 'low'
 
 export interface CompiledLibrary {
   libraryType: LibraryType
@@ -148,16 +149,12 @@ export function compileWizardInput(input: WizardInput): CompileResult {
   const add = (severity: 'error' | 'warning', message: string) => issues.push({ severity, message })
   const ref = input.sourceRef || '业务填写向导'
 
-  // ---------- 等级编码：模板风险等级四档，按从重到轻顺序分配 ----------
+  // ---------- 等级编码：模板五色分级五档，按从重到轻顺序分配 ----------
   if (input.levels.length > WIZARD_LEVEL_ENUM.length) {
-    add('warning', `等级填了 ${input.levels.length} 个，超过了模板风险等级的四档（红/橙/黄/兜底）。`
-      + `第 4 档之后的等级会和前面的共用等级编码，系统文案会互相覆盖，建议合并等级。`)
+    add('warning', `等级填了 ${input.levels.length} 个，超过了模板五色分级的五档（红/橙/黄/蓝/绿）。`
+      + `第 5 档之后的等级会和前面的共用等级编码，系统文案会互相覆盖，建议合并等级。`)
   }
   const levelEnum = input.levels.map((_, i) => WIZARD_LEVEL_ENUM[Math.min(i, WIZARD_LEVEL_ENUM.length - 1)]!)
-  if (levelEnum.includes('none')) {
-    add('warning', `第 ${levelEnum.indexOf('none') + 1} 档等级与「都不满足」的兜底共用 none 编码，`
-      + `命中这一档时输出的是兜底文案，建议把等级合并到三档以内。`)
-  }
 
   // ---------- ③ 量表-清单 ----------
   const entry = input.scales.filter(s => s.role === '入口筛查')
@@ -167,7 +164,7 @@ export function compileWizardInput(input: WizardInput): CompileResult {
   const s3: string[][] = []
   for (const scale of input.scales) {
     const code = codes.scales.get(scale.name)!
-    const prereq = scale.prerequisites.map(n => codes.scales.get(n) || n)
+    const prereq = (scale.prerequisites || []).map(n => codes.scales.get(n) || n)
     const source = scale.prerequisites[0] || entry[0]?.name
     const rawTrigger = scale.role === '入口筛查' || !scale.triggerConditions.length || !source
       ? ''
@@ -179,15 +176,23 @@ export function compileWizardInput(input: WizardInput): CompileResult {
     const trigger = rawTrigger || ''
     s3.push([
       code, scale.name, scale.shortName || scale.name.slice(0, 8), input.module,
-      d.schoolSection, scale.applicableGrades.join(','), scale.applicableSubjects.join(','),
-      d.targetAudience, d.formType, d.triggerMethod, d.frequency,
+      scale.schoolSection || d.schoolSection,
+      (scale.applicableGrades || []).join(','), (scale.applicableSubjects || []).join(','),
+      scale.targetAudience || d.targetAudience,
+      scale.formType || d.formType,
+      scale.triggerMethod || d.triggerMethod,
+      scale.frequency || d.frequency,
       scale.role === '入口筛查' ? '是' : '否',
       String(scale.minutes || Math.max(1, Math.ceil(scale.questions.length / 2))),
       String(scale.timeLimitMinutes || ''), String(scale.minQuestions || ''),
       scale.usageTiming || '', String(scale.reAssessmentIntervalDays || ''),
-      prereq.join(','), scale.exclusives.map(n => codes.scales.get(n) || n).join(','),
+      prereq.join(','), (scale.exclusives || []).map(n => codes.scales.get(n) || n).join(','),
       trigger, scale.triggerNote || '',
-      d.resultVisibility, d.responsibleRole, d.dataSensitivity, d.sourceType, '',
+      scale.resultVisibility || d.resultVisibility,
+      scale.responsibleRole || d.responsibleRole,
+      scale.dataSensitivity || d.dataSensitivity,
+      scale.sourceType || d.sourceType,
+      scale.externalAuthorizationNote || '',
       ref, input.version,
       scale.description || `${scale.name}（${scale.questions.length}题）`,
       scale.normReference || '', scale.reliabilityNote || '', scale.validityNote || '',
@@ -238,14 +243,14 @@ export function compileWizardInput(input: WizardInput): CompileResult {
     })
     // ④c 的「所属题号列表」从题目反推，业务不用手工维护两处
     for (const [dim, qids] of byDim) {
-      const def = scale.dimensionDefs.find(x => x.name === dim)
+      const def = (scale.dimensionDefs || []).find(x => x.name === dim)
       s4c.push([code, codes.dimensions.get(`${scale.name}||${dim}`) || dim, dim,
         qids.join(','), def?.calcMethod || 'mean', String(def?.weight ?? 1),
         def?.description || '', def?.highInterpretation || '', def?.lowInterpretation || '',
         def?.normMean != null ? String(def.normMean) : '', def?.normStd != null ? String(def.normStd) : ''])
     }
     // 业务在 ④c 里声明了维度但题目里没有对应题目，属于笔误，明说
-    for (const def of scale.dimensionDefs) {
+    for (const def of scale.dimensionDefs || []) {
       if (!byDim.has(def.name)) {
         add('warning', `量表《${scale.name}》给维度「${def.name}」填了属性，但没有题目属于这个维度，属性不会生效。`)
       }
@@ -266,7 +271,7 @@ export function compileWizardInput(input: WizardInput): CompileResult {
 
   // ---------- ⑤b 归因-计算变量 ----------
   const s5b: string[][] = []
-  for (const v of input.computedVariables) {
+  for (const v of input.computedVariables || []) {
     const scaleCode = codes.scales.get(v.scale)
     if (!scaleCode) {
       add('error', `计算变量「${v.name}」写的量表《${v.scale}》不存在，请检查名称是否一致。`)
@@ -308,12 +313,12 @@ export function compileWizardInput(input: WizardInput): CompileResult {
   const defaultScale = entry[0]?.name || input.scales[0]!.name
   const hasRedLine = input.levels.some(l => l.redLine)
   const templateCode = (level: string, seqNo: number) =>
-    `TPL_${P}_${level === 'none' ? 'DEFAULT' : level.toUpperCase()}_${seqNo}`
+    `TPL_${P}_${level === 'green' ? 'DEFAULT' : level.toUpperCase()}_${seqNo}`
   input.levels.forEach((lv, i) => {
     const levelCode = `L${i + 1}`
     const level = levelEnum[i]!
     const scaleName = lv.scale || defaultScale
-    const severity = lv.redLine ? 'crisis' : SEVERITY_LADDER[Math.min(hasRedLine ? i : i + 1, 3)]!
+    const severity = lv.redLine ? 'crisis' : severityForLevel(level)
     const cond = toExpression(lv.conditions, scaleName, codes)
     s5e.push([`${P}_GR_${seq(i + 1)}`, input.module, codes.scales.get(scaleName) || '',
       String((i + 1) * 10), cond, level, lv.name, severity,
@@ -335,12 +340,17 @@ export function compileWizardInput(input: WizardInput): CompileResult {
   // 业务通常只为入口量表定了等级，深度量表就只剩模块兜底——
   // 做完它无论怎么答都是同一个等级，归因说「对立严重」而等级永远是「常规」。
   // 这里为缺规则的量表补一套均分阶梯，并明确告诉业务这是系统补的、需要复核。
-  const scopedScales = new Set(input.levels.map(lv => codes.scales.get(lv.scale || defaultScale)))
+  // 注意：只有红线规则、没有非红线规则的量表同样要补（否则做完只有红线/兜底两档，
+  // 中等风险全被兜底吃掉）。按「非红线规则」统计覆盖。
+  const nonRedScoped = new Set<string>()
+  for (const lv of input.levels) {
+    if (!lv.redLine) nonRedScoped.add(codes.scales.get(lv.scale || defaultScale) || '')
+  }
   const AUTO_THRESHOLDS = [4, 3.5, 3]
   let autoSeq = 0
   for (const scale of input.scales) {
     const code = codes.scales.get(scale.name)!
-    if (scopedScales.has(code)) continue
+    if (nonRedScoped.has(code)) continue
     const ladder = input.levels.filter(lv => !lv.redLine)
     ladder.forEach((lv, i) => {
       const threshold = AUTO_THRESHOLDS[Math.min(i, AUTO_THRESHOLDS.length - 1)]!
@@ -348,7 +358,7 @@ export function compileWizardInput(input: WizardInput): CompileResult {
       const idx = input.levels.indexOf(lv)
       s5e.push([`${P}_GR_AUTO_${seq(autoSeq)}`, input.module, code,
         String(500 + autoSeq), `均分 >= ${threshold}`, levelEnum[idx]!, lv.name,
-        SEVERITY_LADDER[Math.min(hasRedLine ? idx : idx + 1, 3)]!,
+        severityForLevel(levelEnum[idx]!),
         '否', lv.resultNote || lv.name, '', '', '', ref])
     })
     if (ladder.length) {
@@ -358,9 +368,9 @@ export function compileWizardInput(input: WizardInput): CompileResult {
   }
 
   // 兜底：优先级必须是最大值，否则会吃掉全部作答让前面的规则永远执行不到
-  s5e.push([`${P}_GR_DEFAULT`, input.module, '', '999', '', 'none',
+  s5e.push([`${P}_GR_DEFAULT`, input.module, '', '999', '', 'green',
     input.defaultLevelName, 'low', '否', '本次评估未发现需要重点干预的信号', '', '', '', ref])
-  s10.push([`TPL_${P}_DEFAULT`, input.module, 'none', 'summary',
+  s10.push([`TPL_${P}_DEFAULT`, input.module, 'green', 'summary',
     input.defaultMessage || '本次评估未发现需要重点干预的信号，当前状态相对平稳，建议保持现有节奏。',
     '兜底模板：命中未覆盖等级时使用', '99'])
 
@@ -397,24 +407,31 @@ export function compileWizardInput(input: WizardInput): CompileResult {
       if (!c) add('error', `工具《${t.name}》引用的工具「${names[0]}」不在工具清单里。`)
       return c || ''
     }
-    s7.push([code, t.name, t.name.slice(0, 8), input.module, t.form, d.schoolSection, d.targetAudience,
+    // 协同工具：名称 → 编码，可以多个
+    const collabCodes = (t.collaborativeTools || []).map((n: string) => {
+      const c = codes.tools.get(n)
+      if (!c) add('error', `工具《${t.name}》的协同工具「${n}」不在工具清单里。`)
+      return c || n
+    })
+    s7.push([code, t.name, t.name.slice(0, 8), input.module, t.form,
+      t.schoolSection || d.schoolSection, t.targetUsers || d.targetAudience,
       t.whenToUse, t.severity, attrCodes.join(';'), t.attributions.join(';'), tags.join(','),
       dimCodes.join(';'), t.effectNote || '', t.steps.join('；'), t.script || '',
       t.expectedEffect || '一次执行记录',
       t.timePerSession || '', t.duration || '',
       t.reAssessmentIntervalDays != null ? String(t.reAssessmentIntervalDays) : '',
-      t.prohibition || '不用于替代危机处置', '', toolCodeOf(t.prerequisiteTools),
+      t.prohibition || '不用于替代危机处置', t.contraindicationNote || '', toolCodeOf(t.prerequisiteTools),
       toolCodeOf(t.alternativeTools), toolCodeOf(t.advancedTools),
-      d.evidenceLevel, t.evidenceSource || '', t.outcomeIndicator || '', t.failureCriteria || '',
-      t.preparation || '', t.materials || '', '执行记录', '', ref, input.version,
-      t.crossModuleTags.join(';')])
+      t.evidenceLevel || d.evidenceLevel, t.evidenceSource || '', t.outcomeIndicator || '', t.failureCriteria || '',
+      t.preparation || '', t.materials || '', t.outputArtifact || '', collabCodes.join(';'),
+      ref, input.version, t.crossModuleTags.join(';')])
     t.steps.forEach((s, si) => {
-      const detail = t.stepDetails[si]
+      const detail = t.stepDetails?.[si]
       s7b.push([code, String(si + 1), s.slice(0, 24), s,
         detail?.estimatedTime || '', detail?.materials || '', detail?.keyTip || '',
         detail?.scriptTemplate || '', detail?.successCriteria || '', detail?.commonIssues || ''])
     })
-    for (const c of t.contraindications) {
+    for (const c of t.contraindications || []) {
       s8.push([code, c.condition, c.type, c.description || c.condition, c.alternative || '',
         d.responsibleRole, ref])
     }
@@ -511,7 +528,7 @@ function buildReadback(input: WizardInput): string[] {
     out.push(`② 做完《${pre}》之后，如果 ${chain(scale.triggerConditions)}，`)
     out.push(`   系统才建议再做《${scale.name}》。不满足就标「当前不需要做」，老师仍可手动选。`)
   }
-  if (input.computedVariables.length) {
+  if ((input.computedVariables || []).length) {
     out.push('')
     out.push('另外，系统还会额外算这几个指标（计算变量）：')
     for (const v of input.computedVariables) {

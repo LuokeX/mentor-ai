@@ -11,6 +11,13 @@ interface DepartmentRow {
   leaderUserId: string | null
   leaderName: string | null
   description: string | null
+  shortName: string | null
+  scope: string
+  leaderTitle: string | null
+  location: string | null
+  phone: string | null
+  headcountLimit: number | null
+  sortOrder: number
   memberCount: number
   classCount: number
   status: string
@@ -22,7 +29,7 @@ const list = useManagedList<DepartmentRow>('/api/v1/school-admin/departments')
 const columns = [
   { key: 'name', label: '部门名称', sortable: true },
   { key: 'code', label: '编码', sortable: true, mobileHidden: true },
-  { key: 'type', label: '类型', sortable: true },
+  { key: 'scope', label: '分管领域' },
   { key: 'leaderName', label: '负责人' },
   { key: 'memberCount', label: '成员数', sortable: true },
   { key: 'classCount', label: '班级数', sortable: true },
@@ -41,6 +48,15 @@ const typeOptions = [
   { label: '其他', value: 'other' },
 ]
 const typeLabels = Object.fromEntries(typeOptions.map(item => [item.value, item.label]))
+const scopeOptions = [
+  { label: '年级组', value: 'grade_group' },
+  { label: '学科组', value: 'subject_group' },
+  { label: '德育', value: 'moral_edu' },
+  { label: '心理支持中心', value: 'psych_support' },
+  { label: '行政后勤', value: 'admin' },
+  { label: '其他', value: 'other' },
+]
+const scopeLabels = Object.fromEntries(scopeOptions.map(item => [item.value, item.label]))
 const { data: teacherData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/teachers', {
   query: { page: 1, pageSize: 100, status: 'active' },
 })
@@ -67,11 +83,21 @@ const form = reactive({
   parentId: '__none__',
   leaderUserId: '__none__',
   description: '',
+  shortName: '',
+  scope: 'other',
+  leaderTitle: '',
+  location: '',
+  phone: '',
+  headcountLimit: undefined as number | undefined,
+  sortOrder: 0,
 })
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', code: '', type: 'other', parentId: '__none__', leaderUserId: '__none__', description: '' })
+  Object.assign(form, {
+    name: '', code: '', type: 'other', parentId: '__none__', leaderUserId: '__none__', description: '',
+    shortName: '', scope: 'other', leaderTitle: '', location: '', phone: '', headcountLimit: undefined, sortOrder: 0,
+  })
   formError.value = ''
   drawerOpen.value = true
 }
@@ -87,6 +113,13 @@ function openEdit(rowOrId: DepartmentRow | string) {
     parentId: row.parentId || '__none__',
     leaderUserId: row.leaderUserId || '__none__',
     description: row.description || '',
+    shortName: row.shortName || '',
+    scope: row.scope || 'other',
+    leaderTitle: row.leaderTitle || '',
+    location: row.location || '',
+    phone: row.phone || '',
+    headcountLimit: row.headcountLimit ?? undefined,
+    sortOrder: row.sortOrder || 0,
   })
   formError.value = ''
   drawerOpen.value = true
@@ -110,6 +143,13 @@ async function saveDepartment() {
     parentId: form.parentId === '__none__' ? null : form.parentId,
     leaderUserId: form.leaderUserId === '__none__' ? null : form.leaderUserId,
     description: form.description || null,
+    shortName: form.shortName || undefined,
+    scope: form.scope,
+    leaderTitle: form.leaderTitle || undefined,
+    location: form.location || undefined,
+    phone: form.phone || undefined,
+    headcountLimit: form.headcountLimit ?? undefined,
+    sortOrder: form.sortOrder,
   }
   try {
     if (editing.value) {
@@ -158,6 +198,7 @@ async function runLifecycle(reason: string) {
     <TableToolbar :search-value="list.q.value" :status-filter="list.statusFilter.value" :status-options="statusOptions" search-placeholder="搜索部门名称或编码..." :loading="list.loading.value" @search="list.onSearch" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #type-data="{ value }">{{ typeLabels[String(value)] || value }}</template>
+      <template #scope-data="{ value }">{{ scopeLabels[String(value)] || value }}</template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '有效' : '已归档' }}</UBadge></template>
       <template #actions-data="{ row }">
         <RowActions
@@ -181,6 +222,13 @@ async function runLifecycle(reason: string) {
           <UFormField label="部门类型"><USelect v-model="form.type" :items="typeOptions" class="w-full" /></UFormField>
           <UFormField label="上级部门"><USelect v-model="form.parentId" :items="parentOptions" class="w-full" /></UFormField>
           <UFormField label="负责人"><USelect v-model="form.leaderUserId" :items="teacherOptions" class="w-full" /></UFormField>
+          <UFormField label="简称"><UInput v-model="form.shortName" class="w-full" /></UFormField>
+          <UFormField label="分管领域"><USelect v-model="form.scope" :items="scopeOptions" class="w-full" /></UFormField>
+          <UFormField label="负责人职务"><UInput v-model="form.leaderTitle" placeholder="如：年级组长" class="w-full" /></UFormField>
+          <UFormField label="联系电话"><UInput v-model="form.phone" class="w-full" /></UFormField>
+          <UFormField label="办公地点"><UInput v-model="form.location" class="w-full" /></UFormField>
+          <UFormField label="人数上限"><UInput v-model.number="form.headcountLimit" type="number" min="0" class="w-full" /></UFormField>
+          <UFormField label="排序"><UInput v-model.number="form.sortOrder" type="number" class="w-full" /></UFormField>
         </div>
         <UFormField label="说明"><UTextarea v-model="form.description" :rows="4" class="w-full" /></UFormField>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>

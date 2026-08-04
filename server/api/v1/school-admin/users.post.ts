@@ -5,6 +5,7 @@ import { schoolAdminUserInviteSchema } from '../../../../shared/contracts'
 import { issueInvitation } from '../../../domain/invitations'
 import { requireSchoolManagement } from '../../../domain/school-management'
 import { writeAudit } from '../../../utils/audit'
+import { encryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
 
 export default defineEventHandler(async (event) => {
@@ -22,11 +23,25 @@ export default defineEventHandler(async (event) => {
 
   const result = await db.transaction(async (tx) => {
     let invitedUser: typeof schema.users.$inferSelect | undefined
+    const secret = useRuntimeConfig(event).encryptionKey
+    const profileFields = {
+      employeeNo: body.employeeNo || null,
+      phoneEnc: body.phone ? encryptSensitive(body.phone, secret) : null,
+      gender: body.gender || null,
+      teachingGrades: body.teachingGrades || [],
+      subject: body.subject || null,
+      isClassTeacher: body.isClassTeacher ?? false,
+      hiredAt: body.hiredAt ? new Date(body.hiredAt) : null,
+      title: body.title || null,
+      certNote: body.certNote || null,
+      notesEnc: body.notes ? encryptSensitive(body.notes, secret) : null
+    }
     if (existing) {
       [invitedUser] = await tx.update(schema.users).set({
         name: body.name,
         role: body.role,
         status: 'invited',
+        ...profileFields,
         updatedAt: new Date(),
       }).where(and(
         eq(schema.users.id, existing.id),
@@ -41,6 +56,7 @@ export default defineEventHandler(async (event) => {
         role: body.role,
         status: 'invited',
         passwordHash: await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id }),
+        ...profileFields,
       }).returning()
     }
     if (!invitedUser) throw createError({ statusCode: 409, message: '邀请账号状态已变化，请刷新后重试' })

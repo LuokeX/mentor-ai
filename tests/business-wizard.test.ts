@@ -70,8 +70,8 @@ describe('样例输入能编译出一整套可用的三库', () => {
       module: input.module, libraryType: 'attribution',
       filename: 'x.xlsx', contentBase64: compiled.libraries.find(l => l.libraryType === 'attribution')!.buffer.toString('base64')
     })
-    // 业务选的是「维度：配合度 达到或超过 3.5」，编译成 维度[HS_S1D1] >= 3.5
-    expect(attribution.evidences[0].condition).toMatch(/^维度\[HS_S1D\d\] >= 3\.5$/)
+    // 业务选的是「维度：参与效能 达到或超过 3.5」，编译成 维度[HS_S1D1] >= 3.5
+    expect(attribution.evidences.some((e: any) => /^维度\[HS_S1D\d\] >= 3\.5$/.test(e.condition))).toBe(true)
     // 多条件用「且」连接
     expect(attribution.evidences.some((e: any) => e.condition.includes(' 且 '))).toBe(true)
   })
@@ -82,7 +82,9 @@ describe('样例输入能编译出一整套可用的三库', () => {
       filename: 'x.xlsx', contentBase64: compiled.libraries.find(l => l.libraryType === 'assessment')!.buffer.toString('base64')
     })
     const deep = assessment.instruments.find((i: any) => i.instrumentRole === 'deep_dive')
-    expect(deep.triggerCondition).toMatch(/^量表\[HS_S1\]\.维度\[HS_S1D\d\] >= 3$/)
+    // 六维框架触发条件：沟通质量维度 ≥ 3 或 均分 ≥ 3.2（跨量表语法指向入口量表）
+    expect(deep.triggerCondition).toContain('量表[HS_S1].维度[HS_S1D')
+    expect(deep.triggerCondition).toContain('或')
     expect(deep.prerequisiteCodes).toEqual(['HS_S1'])
   })
 
@@ -95,13 +97,14 @@ describe('样例输入能编译出一整套可用的三库', () => {
     const cfg = load('attribution')
     const tools = load('tool').tools
 
-    // 对立严重的画像：应判出红线并算出多个归因
-    const result = executeRules(cfg, { q1: 1, q2: 5, q3: 2, q4: 4, q5: 2, q6: 4 }, inst, {})
+    // 对立严重的画像：第 6 题（威胁行为，反向计分）答"非常不符合"→ 计分 5 → 触发 E 级红线并算出多个归因
+    const result = executeRules(cfg, { q1: 1, q2: 3, q3: 1, q4: 4, q5: 4, q6: 1, q7: 1, q8: 1, q9: 1, q10: 1 }, inst, {})
     expect(result.blocked).toBe(true)
+    expect(result.levelName).toBe('E 级保护通道')
     expect(result.attributions.length).toBeGreaterThan(1)
 
     // 中等画像：不熔断，能匹配到工具
-    const mid = executeRules(cfg, { q1: 3, q2: 3, q3: 3, q4: 3, q5: 3, q6: 3 }, inst, {})
+    const mid = executeRules(cfg, { q1: 3, q2: 3, q3: 3, q4: 3, q5: 3, q6: 3, q7: 3, q8: 3, q9: 3, q10: 3 }, inst, {})
     expect(mid.blocked).toBe(false)
     expect(mid.levelName).toBeTruthy()
     const matched = scoreTools(tools, {
@@ -115,7 +118,7 @@ describe('样例输入能编译出一整套可用的三库', () => {
   it('回读稿是纯中文，不含任何编码', () => {
     const text = compiled.readback.join('\n')
     expect(text).not.toMatch(/HS_S\d|HS_AT_|HS_RX_|维度\[|题\[|>=/)
-    expect(text).toContain('家校沟通双维速查')
+    expect(text).toContain('家校沟通六维速查')
   })
 
   it('自定义选项组写进 ④b 并被题目引用', () => {
@@ -123,9 +126,9 @@ describe('样例输入能编译出一整套可用的三库', () => {
       module: input.module, libraryType: 'assessment',
       filename: 'x.xlsx', contentBase64: compiled.libraries.find(l => l.libraryType === 'assessment')!.buffer.toString('base64')
     })
-    const q6 = assessment.instruments[0].questions.find((q: any) => q.id === 'q6')
+    const q10 = assessment.instruments[0].questions.find((q: any) => q.id === 'q10')
     // 自定义组「沟通频率四点」：选项文本与分值逐项落地
-    expect(q6.options.map((o: any) => o.label)).toEqual(['没有', '偶尔', '较多', '频繁'])
-    expect(q6.options.map((o: any) => o.value)).toEqual([1, 2, 3, 4])
+    expect(q10.options.map((o: any) => o.label)).toEqual(['没有', '偶尔', '较多', '频繁'])
+    expect(q10.options.map((o: any) => o.value)).toEqual([1, 2, 3, 4])
   })
 })

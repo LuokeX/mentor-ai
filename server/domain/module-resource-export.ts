@@ -284,7 +284,7 @@ function exportTool(payload: any): { sheetName: string; headers: string[]; rows:
     t.targetUsers || '',
     t.symptoms || '',
     t.severity || '',
-    t.attributionCode || '',
+    (t.attributionCodes?.length ? t.attributionCodes.join(';') : t.attributionCode) || '',
     t.attributionLabel || '',
     listStr(t.toolTags || t.tags),
     listStr(t.dimensions),

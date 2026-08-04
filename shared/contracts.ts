@@ -377,7 +377,17 @@ export const schoolAdminUserCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().transform(value => value.toLowerCase()),
   role: z.enum(['teacher', 'psychologist']),
-  password: z.string().min(8).max(200)
+  password: z.string().min(8).max(200),
+  employeeNo: z.string().trim().max(80).optional(),
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).optional(),
+  gender: z.string().trim().max(20).optional(),
+  teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
+  subject: z.string().trim().max(80).optional(),
+  isClassTeacher: z.boolean().optional(),
+  hiredAt: z.string().datetime().optional(),
+  title: z.string().trim().max(40).optional(),
+  certNote: z.string().trim().max(1000).optional(),
+  notes: z.string().trim().max(4000).optional()
 })
 
 export const schoolAdminUserInviteSchema = schoolAdminUserCreateSchema.omit({ password: true })
@@ -386,8 +396,20 @@ export const schoolAdminUserUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   email: z.string().trim().email().transform(value => value.toLowerCase()).optional(),
   role: z.enum(['teacher', 'psychologist']).optional(),
-  status: z.enum(['active', 'disabled']).optional()
-}).refine(value => value.name || value.email || value.role || value.status)
+  status: z.enum(['active', 'disabled']).optional(),
+  employeeNo: z.string().trim().max(80).nullable().optional(),
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).nullable().optional(),
+  gender: z.string().trim().max(20).nullable().optional(),
+  teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
+  subject: z.string().trim().max(80).nullable().optional(),
+  isClassTeacher: z.boolean().optional(),
+  hiredAt: z.string().datetime().nullable().optional(),
+  title: z.string().trim().max(40).nullable().optional(),
+  certNote: z.string().trim().max(1000).nullable().optional(),
+  notes: z.string().trim().max(4000).nullable().optional(),
+  /** 手动修正业务状态（如 selfStatusLevel），留痕；评估提交时以新评估为准 */
+  overrides: z.record(z.string(), z.string()).optional()
+}).refine(value => Object.keys(value).length > 0)
 
 export const schoolAdminDepartmentCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -395,7 +417,14 @@ export const schoolAdminDepartmentCreateSchema = z.object({
   type: departmentTypeSchema.default('other'),
   parentId: z.string().uuid().nullable().optional(),
   leaderUserId: z.string().uuid().nullable().optional(),
-  description: z.string().trim().max(1000).nullable().optional()
+  description: z.string().trim().max(1000).nullable().optional(),
+  shortName: z.string().trim().max(40).optional(),
+  scope: z.enum(['grade_group', 'subject_group', 'moral_edu', 'psych_support', 'admin', 'other']).optional(),
+  leaderTitle: z.string().trim().max(80).optional(),
+  location: z.string().trim().max(200).optional(),
+  phone: z.string().trim().max(40).optional(),
+  headcountLimit: z.coerce.number().int().min(0).max(10000).optional(),
+  sortOrder: z.coerce.number().int().min(-10000).max(10000).optional()
 })
 
 export const schoolAdminDepartmentUpdateSchema = schoolAdminDepartmentCreateSchema.partial().extend({
@@ -414,7 +443,13 @@ export const schoolAdminClassCreateSchema = z.object({
   departmentId: z.string().uuid().nullable().optional(),
   externalCode: z.string().trim().max(80).optional(),
   studentCount: z.coerce.number().int().min(0).max(1000).default(0),
-  establishedAt: z.string().datetime().optional()
+  establishedAt: z.string().datetime().optional(),
+  section: z.enum(['primary', 'junior', 'senior', 'repeat']).optional(),
+  classType: z.enum(['admin', 'rotating', 'other']).optional(),
+  deputyOwnerUserId: z.string().uuid().nullable().optional(),
+  location: z.string().trim().max(200).optional(),
+  schoolYear: z.string().trim().max(30).optional(),
+  notes: z.string().trim().max(4000).optional()
 })
 
 export const schoolAdminClassUpdateSchema = z.object({
@@ -426,6 +461,14 @@ export const schoolAdminClassUpdateSchema = z.object({
   studentCount: z.coerce.number().int().min(0).max(1000).optional(),
   establishedAt: z.string().datetime().nullable().optional(),
   status: managedRecordStatusSchema.optional(),
+  section: z.enum(['primary', 'junior', 'senior', 'repeat']).nullable().optional(),
+  classType: z.enum(['admin', 'rotating', 'other']).optional(),
+  deputyOwnerUserId: z.string().uuid().nullable().optional(),
+  location: z.string().trim().max(200).nullable().optional(),
+  schoolYear: z.string().trim().max(30).nullable().optional(),
+  notes: z.string().trim().max(4000).nullable().optional(),
+  /** 手动修正业务状态（如 energyStage），留痕；评估提交时以新评估为准 */
+  overrides: z.record(z.string(), z.string()).optional(),
   reason: z.string().trim().max(500).optional()
 }).refine(value => Object.keys(value).length > 0)
 
@@ -436,11 +479,19 @@ export const schoolAdminStudentCreateSchema = z.object({
   gender: z.string().trim().max(20).nullable().optional(),
   profile: z.string().trim().max(4000).nullable().optional(),
   notes: z.string().trim().max(4000).nullable().optional(),
-  externalRef: z.string().trim().max(120).nullable().optional()
+  externalRef: z.string().trim().max(120).nullable().optional(),
+  birthDate: z.string().datetime().nullable().optional(),
+  studentNo: z.string().trim().max(120).nullable().optional(),
+  ethnicity: z.string().trim().max(40).nullable().optional(),
+  enrolledAt: z.string().datetime().nullable().optional(),
+  boardingType: z.enum(['day', 'boarding']).nullable().optional(),
+  address: z.string().trim().max(1000).nullable().optional()
 })
 
 export const schoolAdminStudentUpdateSchema = schoolAdminStudentCreateSchema.partial().extend({
   status: managedRecordStatusSchema.optional(),
+  /** 手动修正业务状态（如 caseLevel/learningLevel），留痕；评估提交时以新评估为准 */
+  overrides: z.record(z.string(), z.string()).optional(),
   reason: z.string().trim().max(500).optional()
 }).refine(value => Object.keys(value).length > 0)
 
@@ -449,8 +500,20 @@ export const schoolAdminGuardianCreateSchema = z.object({
   phone: z.string().trim().regex(/^1[3-9]\d{9}$/).nullable().optional(),
   relation: z.string().trim().max(40).nullable().optional(),
   externalRef: z.string().trim().max(120).nullable().optional(),
-  ownerUserId: z.string().uuid().optional()
+  ownerUserId: z.string().uuid().optional(),
+  occupation: z.string().trim().max(80).nullable().optional(),
+  workUnit: z.string().trim().max(200).nullable().optional(),
+  contact: z.string().trim().max(200).nullable().optional(),
+  isPrimary: z.boolean().optional(),
+  notes: z.string().trim().max(4000).nullable().optional()
 })
+
+export const schoolAdminGuardianUpdateSchema = schoolAdminGuardianCreateSchema.partial().extend({
+  status: managedRecordStatusSchema.optional(),
+  /** 手动修正业务状态（如 commRiskLevel），留痕；评估提交时以新评估为准 */
+  overrides: z.record(z.string(), z.string()).optional(),
+  reason: z.string().trim().max(500).optional()
+}).refine(value => Object.keys(value).length > 0)
 
 export const schoolAdminStudentGuardianSchema = z.object({
   guardianId: z.string().uuid().optional(),

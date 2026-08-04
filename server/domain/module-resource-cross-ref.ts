@@ -391,7 +391,7 @@ export function checkCrossReferences(
       // 链 5b: attribution → output_template 反向覆盖。分级规则可能判出的每个等级
       // 都要有模板承接（专属或兜底），否则该等级的方案文案落回内置默认文案。
       // 与渲染器 selectOutputTemplate 的兜底口径一致：default/stable/none 视为兜底等级。
-      const FALLBACK_LEVELS = new Set(['default', 'stable', 'none'])
+      const FALLBACK_LEVELS = new Set(['default', 'stable', 'none', 'green'])
       const templateLevels = new Set(templateRefs.map(r => r.attributionLevel))
       const hasFallbackTemplate = [...FALLBACK_LEVELS].some(l => templateLevels.has(l))
       if (!hasFallbackTemplate && templateRefs.length) {

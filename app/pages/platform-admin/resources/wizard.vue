@@ -208,7 +208,8 @@ const addLevel = () => form.levels.push({
 const addTool = () => form.tools.push({
   name: '', attributions: [], whenToUse: '', steps: [''], stepDetails: [], form: 'framework',
   severity: 'medium', script: '', prohibition: '', timePerSession: '', duration: '',
-  expectedEffect: '', effectNote: '', dimensions: [], reAssessmentIntervalDays: undefined,
+  expectedEffect: '', effectNote: '', outputArtifact: '', contraindicationNote: '',
+  collaborativeTools: [], dimensions: [], reAssessmentIntervalDays: undefined,
   evidenceSource: '', crossModuleTags: [], prerequisiteTools: [], alternativeTools: [],
   advancedTools: [], preparation: '', materials: '', outcomeIndicator: '', failureCriteria: '',
   contraindications: []
@@ -329,26 +330,230 @@ function download(lib: any) {
   URL.revokeObjectURL(url)
 }
 
+// ---------- 第 2 步：编排自检（v4 模板 ③d 自检表的交互版） ----------
+const orchestrationChecks = computed(() => {
+  const named = (form.scales as any[]).filter((s: any) => s.name)
+  const entry = named.filter((s: any) => s.role === '入口筛查')
+  const checks: Array<{ ok: boolean, warn?: boolean, text: string }> = []
+  checks.push({
+    ok: entry.length === 1,
+    text: entry.length === 1
+      ? `有且只有一张「入口筛查」（${entry[0].name}）`
+      : entry.length === 0
+        ? '还没有「入口筛查」——老师进来不知道该先做哪张'
+        : `「入口筛查」有 ${entry.length} 张，只能保留一张`
+  })
+  if (named.length > 1) {
+    const noPrereq = named.filter((s: any) => s.role !== '入口筛查' && !(s.prerequisites || []).length)
+    checks.push({
+      ok: noPrereq.length === 0, warn: noPrereq.length > 0,
+      text: noPrereq.length === 0
+        ? '所有深度量表都说明了前置量表'
+        : `${noPrereq.map((s: any) => `《${s.name}》`).join('、')}没设前置，老师可能没做入口就直接做它`
+    })
+    const noTrigger = named.filter((s: any) => s.role !== '入口筛查' && !(s.triggerConditions || []).length)
+    checks.push({
+      ok: noTrigger.length === 0, warn: noTrigger.length > 0,
+      text: noTrigger.length === 0
+        ? '深度量表都有触发条件，不会对所有人都「随时可做」'
+        : `${noTrigger.map((s: any) => `《${s.name}》`).join('、')}没设触发条件，会显示「随时可做」，深度量表失去意义`
+    })
+    const noDeep = !named.some((s: any) => s.role === '深度诊断')
+    checks.push({
+      ok: !noDeep, warn: noDeep,
+      text: noDeep ? '没有「深度诊断」——入口做完后没有后续步骤' : '有深度诊断承接入口筛查的结果'
+    })
+  }
+  const emptyScales = named.filter((s: any) => !(s.questions || []).length)
+  checks.push({
+    ok: emptyScales.length === 0, warn: emptyScales.length > 0,
+    text: emptyScales.length === 0 ? '每张量表都安排了题目' : `${emptyScales.map((s: any) => `《${s.name}》`).join('、')}还没有题目，下一步记得补`
+  })
+  return checks
+})
+
+// ---------- 第 2 步：路径图（v4 模板 ③c 路径示意的交互版） ----------
+interface FlowNode { name: string, role: string, col: number, row: number, x: number, y: number }
+const FLOW_COL_W = 200
+const FLOW_GAP = 130
+const FLOW_ROW_H = 84
+/** 把量表按「前置链」分层：入口筛查在第 0 列，前置在第 k 列的进第 k+1 列 */
+const flowLayout = computed(() => {
+  const named = (form.scales as any[]).filter((s: any) => s.name)
+  const colOf = new Map<string, number>()
+  const entry = named.find((s: any) => s.role === '入口筛查')
+  if (entry) colOf.set(entry.name, 0)
+  // 迭代分配：所有前置都已分层时，本表进「最大前置列 + 1」
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const s of named) {
+      if (colOf.has(s.name)) continue
+      const pres = (s.prerequisites || []).filter((p: string) => colOf.has(p))
+      if (pres.length) {
+        colOf.set(s.name, Math.max(...pres.map((p: string) => colOf.get(p)!)) + 1)
+        changed = true
+      }
+    }
+  }
+  // 剩下的（无前置的非入口表）依次排到最后一列之后
+  const maxCol = Math.max(0, ...colOf.values())
+  let leftover = 0
+  for (const s of named) {
+    if (!colOf.has(s.name)) { colOf.set(s.name, maxCol + 1 + leftover); leftover++ }
+  }
+  // 每列内垂直排布
+  const rowsInCol = new Map<number, number>()
+  const nodes: FlowNode[] = []
+  for (const s of named) {
+    const col = colOf.get(s.name)!
+    const row = rowsInCol.get(col) ?? 0
+    rowsInCol.set(col, row + 1)
+    nodes.push({ name: s.name, role: s.role, col, row, x: col * (FLOW_COL_W + FLOW_GAP), y: row * FLOW_ROW_H })
+  }
+  return { nodes, width: (Math.max(0, ...nodes.map(n => n.col)) + 1) * (FLOW_COL_W + FLOW_GAP) - FLOW_GAP + 24, height: Math.max(1, ...rowsInCol.values()) * FLOW_ROW_H + 12 }
+})
+/** 相邻列之间的前置关系连线（实线箭头） */
+const flowPrereqEdges = computed(() => {
+  const layout = flowLayout.value
+  const edges: Array<{ x1: number, y1: number, x2: number, y2: number }> = []
+  for (const n of layout.nodes) {
+    const scale = (form.scales as any[]).find((s: any) => s.name === n.name)
+    for (const pre of (scale?.prerequisites || [])) {
+      const src = layout.nodes.find((m: any) => m.name === pre)
+      if (src && src.col + 1 === n.col) {
+        edges.push({
+          x1: src.x + FLOW_COL_W, y1: src.y + 22,
+          x2: n.x, y2: n.y + 22
+        })
+      }
+    }
+  }
+  return edges
+})
+/** 跨列关系：互斥（红色虚线）与触发条件（蓝色点线，源 = 前置[0] 或入口量表，与编译端一致） */
+const flowCrossEdges = computed(() => {
+  const layout = flowLayout.value
+  const edges: Array<{ x1: number, y1: number, x2: number, y2: number, kind: 'exclusive' | 'trigger', label?: string }> = []
+  for (const n of layout.nodes) {
+    const scale = (form.scales as any[]).find((s: any) => s.name === n.name)
+    for (const ex of (scale?.exclusives || [])) {
+      const tgt = layout.nodes.find((m: any) => m.name === ex)
+      if (tgt) edges.push({
+        x1: n.x + FLOW_COL_W, y1: n.y + 22, x2: tgt.x, y2: tgt.y + 22, kind: 'exclusive'
+      })
+    }
+    if (scale?.role !== '入口筛查' && (scale?.triggerConditions || []).length) {
+      const srcName = scale.prerequisites?.[0] || layout.nodes.find((m: any) => m.role === '入口筛查')?.name
+      const src = layout.nodes.find((m: any) => m.name === srcName)
+      if (src && src !== n) edges.push({
+        x1: src.x + FLOW_COL_W, y1: src.y + 38, x2: n.x, y2: n.y + 38,
+        kind: 'trigger', label: scale.triggerNote || '触发条件'
+      })
+    }
+  }
+  return edges
+})
+
+// ---------- 第 9 步：代入试算（v4 模板 ⑪ 推演算例的交互版） ----------
+/** 量表名 → 维度名 → 1..5 强度。维度来自已填的题目，第 9 步时必然已定义。 */
+const simAnswers = reactive<Record<string, Record<string, number>>>({})
+const simRunning = ref(false)
+const simResult = ref<Record<string, any>>({})
+/** 维度名列表（某张量表） */
+function simDimensionsOf(scaleName: string): string[] {
+  const scale = form.scales.find((s: any) => s.name === scaleName)
+  return [...new Set((scale?.questions || []).map((q: any) => q.dimension).filter(Boolean))] as string[]
+}
+/** 滑块变化时先保证每个维度都有值，再防抖重算 */
+function simAnswersOf(scaleName: string): Record<string, number> {
+  if (!simAnswers[scaleName]) simAnswers[scaleName] = {}
+  return simAnswers[scaleName]!
+}
+function simEnsure(scaleName: string) {
+  const a = simAnswersOf(scaleName)
+  for (const dim of simDimensionsOf(scaleName)) {
+    if (a[dim] === undefined) a[dim] = 3
+  }
+}
+function setSimValue(scaleName: string, dim: string, v: number) {
+  simEnsure(scaleName)
+  simAnswersOf(scaleName)[dim] = v
+  runSimulate()
+}
+function setSimPreset(v: number) {
+  for (const s of (form.scales as any[]).filter((s: any) => s.name)) {
+    simEnsure(s.name)
+    for (const dim of simDimensionsOf(s.name)) simAnswersOf(s.name)[dim] = v
+  }
+  runSimulate()
+}
+async function runSimulate() {
+  const payload = cleanPayload()
+  if (!payload.scales.length) return
+  simRunning.value = true
+  try {
+    const res = await $fetch<any>('/api/v1/platform-admin/module-resources/wizard-simulate', {
+      method: 'POST', body: { input: payload, answers: simAnswers }
+    })
+    simResult.value = Object.fromEntries((res.scales || []).map((s: any) => [s.name, s]))
+  } catch (error: any) {
+    toast.add({ title: '试算失败', description: error?.data?.message || '请先通过「检查并生成」', color: 'error' })
+  } finally {
+    simRunning.value = false
+  }
+}
+watch(() => form.scales.map((s: any) => s.name).join('|'), () => { simResult.value = {} }, { deep: true })
+
+
 /**
  * 载入系统里已发布的内容继续改。
+ *
+ * 载入会覆盖当前表单（含未保存的草稿），所以必须经过弹窗确认：
+ *   1. 打开弹窗时拉取该模块已发布的版本列表
+ *   2. 业务选版本（默认最新）
+ *   3. 确认后才真正载入，载入前明确提示会清空当前填写内容
  *
  * unsupported 必须硬性展示：库里的内容可能是手工填 Excel 来的，
  * 含有向导表达不了的部分，在这里保存会把它们丢掉。
  */
 const loading = ref(false)
 const loadedInfo = ref<any>(null)
-async function loadPublished() {
+const loadModalOpen = ref(false)
+const loadVersions = ref<Array<{ version: string, publishedAt: string | null }>>([])
+const loadVersion = ref<string | undefined>(undefined)
+
+async function openLoadModal() {
+  loadModalOpen.value = true
+  loadVersions.value = []
+  loadVersion.value = undefined
+  try {
+    // 打开时先拿版本列表；载入本身等确认后再按所选版本执行
+    const res = await $fetch<any>('/api/v1/platform-admin/module-resources/wizard-load', {
+      query: { module: form.module }
+    })
+    loadVersions.value = res.availableVersions || []
+    loadVersion.value = res.selectedVersion || undefined
+  } catch (error: any) {
+    loadModalOpen.value = false
+    toast.add({ title: '载入失败', description: error?.data?.message || '这个模块还没有已发布的内容', color: 'error' })
+  }
+}
+
+async function confirmLoad() {
+  if (!loadVersion.value) return
   loading.value = true
   try {
     const res = await $fetch<any>('/api/v1/platform-admin/module-resources/wizard-load', {
-      query: { module: form.module }
+      query: { module: form.module, version: loadVersion.value }
     })
     Object.assign(form, res.input)
     loadedInfo.value = res
     preview.value = null
     stepIndex.value = 1
+    loadModalOpen.value = false
     toast.add({
-      title: `已载入${moduleOptions.find(m => m.value === form.module)?.label}的现行内容`,
+      title: `已载入${moduleOptions.find(m => m.value === form.module)?.label}的 ${res.selectedVersion} 版本内容`,
       description: res.unsupported.length
         ? `注意：有 ${res.unsupported.length} 处向导表达不了，保存会丢失，请看页面上的提示`
         : `版本号已自动进位到 ${res.input.version}`,
@@ -391,12 +596,38 @@ const canNext = computed(() => {
       </div>
       <div class="flex gap-2">
         <UButton size="xs" color="primary" variant="soft" icon="i-lucide-folder-open" :loading="loading"
-          @click="() => { void loadPublished() }">载入现有内容</UButton>
+          @click="openLoadModal">载入现有内容</UButton>
         <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-sparkles" @click="() => { void loadSample() }">填入示例</UButton>
         <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-trash-2"
           @click="resetAll">清空重来</UButton>
       </div>
     </div>
+
+    <!-- 载入现有内容：选版本 + 清空警告（紧凑弹层，Teleport 到 body 居中显示） -->
+    <Teleport to="body">
+      <div v-if="loadModalOpen" class="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 px-4 pt-24"
+        @click.self="() => { loadModalOpen = false }">
+        <div class="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-base font-semibold text-slate-800">载入现有内容</h3>
+            <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-x" @click="() => { loadModalOpen = false }" />
+          </div>
+          <p class="mt-1 text-xs leading-5 text-slate-500">
+            选择 {{ moduleOptions.find(m => m.value === form.module)?.label }} 的已发布版本载入。
+            <span class="text-amber-700">载入会清空当前填写的内容（含未保存草稿）</span>，修改后存成新版本。
+          </p>
+          <UFormField class="mt-3" label="版本">
+            <USelect v-model="loadVersion" :items="(loadVersions || []).map(v => ({ label: v.version, value: v.version }))"
+              class="w-full" />
+          </UFormField>
+          <p v-if="loadVersions.length === 0" class="mt-1 text-xs text-slate-400">正在读取已发布的版本…</p>
+          <div class="mt-4 flex justify-end gap-2">
+            <UButton size="sm" color="neutral" variant="soft" @click="() => { loadModalOpen = false }">取消</UButton>
+            <UButton size="sm" color="primary" :disabled="!loadVersion" :loading="loading" @click="confirmLoad">确认载入</UButton>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 步骤条 -->
     <div class="mt-6 flex flex-wrap gap-1.5">
@@ -479,6 +710,62 @@ const canNext = computed(() => {
       <div v-else-if="step.key === 'scales'" class="mt-5 space-y-4">
         <UAlert color="info" variant="soft" title="先想清楚顺序"
           description="每个模块只能有一张「入口筛查」——老师进来先做的那张。其余量表要说明「做完哪张之后、满足什么条件」才建议做，否则老师会看到一堆并列的量表不知道从哪开始。" />
+
+        <template v-if="(form.scales as any[]).some((s: any) => s.name)">
+          <!-- ③c 路径示意：量表怎么串起来 -->
+          <div class="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+            <p class="text-xs font-medium text-slate-600">老师会走的路径（实时更新）</p>
+            <div class="mt-3 overflow-x-auto">
+              <div class="relative" :style="{ width: flowLayout.width + 'px', height: flowLayout.height + 'px' }">
+                <!-- 相邻列前置连线（实线箭头） -->
+                <svg class="absolute inset-0" :width="flowLayout.width" :height="flowLayout.height">
+                  <defs>
+                    <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+                    </marker>
+                  </defs>
+                  <line v-for="(e, i) in flowPrereqEdges" :key="'p' + i"
+                    :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2"
+                    stroke="#94a3b8" stroke-width="1.5" marker-end="url(#flow-arrow)" />
+                  <line v-for="(e, i) in flowCrossEdges" :key="'c' + i"
+                    :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2"
+                    :stroke="e.kind === 'exclusive' ? '#f87171' : '#60a5fa'" stroke-width="1.5"
+                    :stroke-dasharray="e.kind === 'exclusive' ? '5 3' : '2 4'" />
+                  <text v-for="(e, i) in flowCrossEdges.filter((e: any) => e.kind === 'trigger')" :key="'t' + i"
+                    :x="(e.x1 + e.x2) / 2" :y="((e.y1 + e.y2) / 2) - 6" text-anchor="middle"
+                    class="text-[10px] fill-sky-600">{{ e.label }}</text>
+                </svg>
+                <!-- 量表节点 -->
+                <div v-for="n in flowLayout.nodes" :key="n.name"
+                  class="absolute w-[190px] rounded-lg border bg-white px-3 py-2 shadow-sm"
+                  :class="n.role === '入口筛查' ? 'border-emerald-300' : n.role === '红线检查' ? 'border-red-300' : 'border-slate-300'"
+                  :style="{ left: n.x + 'px', top: n.y + 'px' }">
+                  <p class="truncate text-sm font-medium text-slate-700">{{ n.name }}</p>
+                  <p class="mt-0.5 text-[11px] text-slate-400">{{ n.role }}</p>
+                </div>
+              </div>
+            </div>
+            <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+              <span class="inline-flex items-center gap-1"><span class="inline-block h-px w-4 bg-slate-400" />先做完哪张才能做</span>
+              <span class="inline-flex items-center gap-1"><span class="inline-block h-px w-4 border-t-2 border-dashed border-red-400" />互斥（做了就不建议做对方）</span>
+              <span class="inline-flex items-center gap-1"><span class="inline-block h-px w-4 border-t-2 border-dotted border-sky-400" />触发条件（满足才建议做）</span>
+            </div>
+          </div>
+
+          <!-- ③d 编排自检：实时清单 -->
+          <div class="rounded-lg border border-slate-200 p-4">
+            <p class="text-xs font-medium text-slate-600">编排自检（③d）</p>
+            <ul class="mt-2 space-y-1.5">
+              <li v-for="(c, i) in orchestrationChecks" :key="i" class="flex items-start gap-2 text-xs leading-5">
+                <UIcon v-if="c.ok" name="i-lucide-circle-check" class="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
+                <UIcon v-else-if="c.warn" name="i-lucide-triangle-alert" class="mt-0.5 size-3.5 shrink-0 text-amber-500" />
+                <UIcon v-else name="i-lucide-circle-x" class="mt-0.5 size-3.5 shrink-0 text-red-500" />
+                <span :class="c.ok ? 'text-slate-500' : c.warn ? 'text-amber-700' : 'text-red-700'">{{ c.text }}</span>
+              </li>
+            </ul>
+          </div>
+        </template>
+
         <div v-for="(scale, si) in (form.scales as any[])" :key="si" class="rounded-lg border border-slate-200 p-4">
           <div class="flex items-start justify-between gap-3">
             <span class="text-xs font-medium text-slate-400">第 {{ si + 1 }} 张</span>
@@ -527,12 +814,27 @@ const canNext = computed(() => {
               <UFormField label="适用学科" hint="回车分隔，留空表示不限"><UInputTags v-model="scale.applicableSubjects" class="w-full" /></UFormField>
               <UFormField label="与哪几张量表互斥" hint="做了这张就不建议做那些"><USelectMenu v-model="scale.exclusives" multiple :items="scaleNames.filter(n => n !== scale.name)" class="w-full" /></UFormField>
               <UFormField label="常模参照" class="sm:col-span-2"><UInput v-model="scale.normReference" placeholder="如：全国中小学班主任常模 N=3200" class="w-full" /></UFormField>
+              <UFormField label="外部授权说明" hint="引用外部量表/工具时的授权备注"><UInput v-model="scale.externalAuthorizationNote" class="w-full" /></UFormField>
               <UFormField label="信度说明"><UInput v-model="scale.reliabilityNote" placeholder="如：Cronbach α=0.87" class="w-full" /></UFormField>
               <UFormField label="效度说明"><UInput v-model="scale.validityNote" class="w-full" /></UFormField>
               <UFormField label="隐私声明" class="sm:col-span-2"><UInput v-model="scale.privacyNotice" class="w-full" /></UFormField>
               <UFormField label="适用前提" class="sm:col-span-2"><UInput v-model="scale.applicabilityPreconditions" placeholder="如：适用于在职班主任" class="w-full" /></UFormField>
               <UFormField label="不适合情况" class="sm:col-span-2"><UInput v-model="scale.contraindications" class="w-full" /></UFormField>
               <UFormField label="后续建议动作" class="sm:col-span-2"><UInput v-model="scale.postAssessmentActions" class="w-full" /></UFormField>
+              <div class="sm:col-span-2 mt-1 rounded-lg bg-white/70 p-3">
+                <p class="text-xs font-medium text-slate-600">覆盖模块通用设置（可选）—— 留空即用模块默认</p>
+                <div class="mt-2 grid gap-3 sm:grid-cols-3">
+                  <UFormField label="适用学部"><USelect v-model="scale.schoolSection" :items="schoolSectionOptions" class="w-full" /></UFormField>
+                  <UFormField label="施测对象"><USelect v-model="scale.targetAudience" :items="targetAudienceOptions" class="w-full" /></UFormField>
+                  <UFormField label="施测形式"><USelect v-model="scale.formType" :items="formTypeOptions" class="w-full" /></UFormField>
+                  <UFormField label="触发方式"><USelect v-model="scale.triggerMethod" :items="triggerMethodOptions" class="w-full" /></UFormField>
+                  <UFormField label="作答频次"><USelect v-model="scale.frequency" :items="frequencyOptions" class="w-full" /></UFormField>
+                  <UFormField label="结果可见性"><USelect v-model="scale.resultVisibility" :items="resultVisibilityOptions" class="w-full" /></UFormField>
+                  <UFormField label="责任角色"><UInput v-model="scale.responsibleRole" class="w-full" /></UFormField>
+                  <UFormField label="数据敏感级"><USelect v-model="scale.dataSensitivity" :items="dataSensitivityOptions" class="w-full" /></UFormField>
+                  <UFormField label="来源属性"><USelect v-model="scale.sourceType" :items="sourceTypeOptions" class="w-full" /></UFormField>
+                </div>
+              </div>
             </div>
           </details>
         </div>
@@ -689,7 +991,7 @@ const canNext = computed(() => {
       <!-- 6 分级 -->
       <div v-else-if="step.key === 'levels'" class="mt-5 space-y-3">
         <UAlert color="info" variant="soft" title="从最严重的往下排"
-          description="系统从上往下匹配，第一条命中就停。严重程度和优先级由顺序自动决定，最后会自动补一条「都不满足」的兜底，你不用管。" />
+          description="系统从上往下匹配，第一条命中就停。严重程度和优先级由顺序自动决定，等级颜色按五色分级（红=危机、橙=警告、黄=预警、蓝=关注、绿=正常），最后会自动补一条「都不满足」的兜底，你不用管。" />
         <div v-for="(lv, li) in (form.levels as any[])" :key="li" class="rounded-lg border p-4"
           :class="lv.redLine ? 'border-red-200 bg-red-50/40' : 'border-slate-200'">
           <div class="grid gap-3 sm:grid-cols-2">
@@ -787,6 +1089,12 @@ const canNext = computed(() => {
             <UFormField label="证据来源" hint="如：某研究 / 校内实践总结"><UInput v-model="t.evidenceSource" class="w-full" /></UFormField>
             <UFormField label="重评间隔天数"><UInput v-model.number="t.reAssessmentIntervalDays" type="number" class="w-full" /></UFormField>
             <UFormField label="跨模块标签" hint="其他模块也能引用这个工具时用"><UInputTags v-model="t.crossModuleTags" class="w-full" /></UFormField>
+            <UFormField label="输出物" hint="做完这个工具会得到什么，如「一次执行记录」"><UInput v-model="t.outputArtifact" class="w-full" /></UFormField>
+            <UFormField label="禁忌说明" hint="整个工具层面的禁用说明（区别于下方逐条禁忌）"><UInput v-model="t.contraindicationNote" class="w-full" /></UFormField>
+            <UFormField label="协同工具" hint="这个工具常与其他工具配合使用"><USelectMenu v-model="t.collaborativeTools" multiple :items="toolNames.filter(n => n !== t.name)" class="w-full" /></UFormField>
+            <UFormField label="适用学部" hint="留空用模块通用设置"><USelect v-model="t.schoolSection" :items="schoolSectionOptions" class="w-full" /></UFormField>
+            <UFormField label="适用对象" hint="留空用模块通用设置的施测对象"><USelect v-model="t.targetUsers" :items="targetAudienceOptions" class="w-full" /></UFormField>
+            <UFormField label="证据等级" hint="留空用模块通用设置"><USelect v-model="t.evidenceLevel" :items="evidenceLevelOptions" class="w-full" /></UFormField>
             <UFormField label="前置工具" hint="用之前最好先做哪个">
               <USelect :model-value="t.prerequisiteTools?.[0] || undefined" :items="toolNames.filter(n => n !== t.name)"
                 @update:model-value="(v: string) => setToolRef(t, 'prerequisiteTools', v)" class="w-full" />
@@ -854,6 +1162,67 @@ const canNext = computed(() => {
             <h3 class="font-semibold text-emerald-800">系统将会这样判断 —— 请确认理解没跑偏</h3>
             <p class="mt-1 text-xs text-emerald-700">这是把你刚才填的内容翻译成人话。看着不对就回到对应步骤改。</p>
             <pre class="mt-3 whitespace-pre-wrap font-sans text-sm leading-6 text-slate-700">{{ preview.readback.join('\n') }}</pre>
+          </div>
+
+          <!-- ⑪ 全链路推演：代入试算 -->
+          <div v-if="(form.scales as any[]).some((s: any) => s.name)" class="rounded-lg border border-slate-200 p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 class="text-sm font-semibold text-slate-700">代入试算 —— 把维度拉到某个强度，看系统会怎么判</h3>
+                <p class="mt-0.5 text-xs text-slate-400">模拟一位老师作答后的判定结果，走的是和线上完全相同的规则引擎。</p>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-slate-400">一键预设：</span>
+                <UButton size="xs" variant="soft" @click="setSimPreset(1)">全部低分 1</UButton>
+                <UButton size="xs" variant="soft" @click="setSimPreset(3)">全部正常 3</UButton>
+                <UButton size="xs" variant="soft" @click="setSimPreset(5)">全部高分 5</UButton>
+              </div>
+            </div>
+            <div class="mt-3 space-y-3">
+              <div v-for="(s, si) in (form.scales as any[]).filter((s: any) => s.name)" :key="si"
+                class="rounded-lg border border-slate-100 bg-slate-50/50 p-3">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <p class="text-sm font-medium text-slate-700">{{ s.name }}</p>
+                  <p v-if="simResult[s.name]" class="flex flex-wrap items-center gap-2 text-xs">
+                    <span class="rounded bg-slate-200 px-1.5 py-0.5 font-medium text-slate-700"
+                      :class="simResult[s.name].redLine ? '!bg-red-100 !text-red-700' : ''">
+                      {{ simResult[s.name].redLine ? '红线熔断 · ' : '判为：' }}{{ simResult[s.name].levelName }}
+                    </span>
+                    <span v-if="simResult[s.name].primaryAttribution" class="text-slate-500">
+                      主要归因：{{ simResult[s.name].primaryAttribution }}
+                    </span>
+                    <span v-if="simResult[s.name].toolTags?.length" class="text-slate-400">
+                      推荐工具标签：{{ simResult[s.name].toolTags.join('、') }}
+                    </span>
+                  </p>
+                  <span v-if="simRunning" class="text-xs text-slate-400">计算中…</span>
+                </div>
+                <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <div v-for="dim in simDimensionsOf(s.name)" :key="dim" class="flex items-center gap-2">
+                    <span class="text-xs text-slate-500">{{ dim }}</span>
+                    <div class="flex overflow-hidden rounded-md border border-slate-200">
+                      <button v-for="v in [1, 2, 3, 4, 5]" :key="v" type="button"
+                        class="h-6 w-6 text-[11px] transition"
+                        :class="simAnswers[s.name]?.[dim] === v ? 'bg-sky-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-100'"
+                        @click="setSimValue(s.name, dim, v)">{{ v }}</button>
+                    </div>
+                  </div>
+                  <div v-if="!simDimensionsOf(s.name).length" class="text-xs text-slate-400">这张量表还没有题目，无法试算</div>
+                </div>
+                <div v-if="simResult[s.name]?.redLine" class="mt-2 rounded bg-red-50 px-2 py-1.5 text-xs text-red-700">
+                  红线触发：{{ simResult[s.name].redLineAction || '按模块设置执行熔断动作' }}
+                </div>
+                <div v-if="simResult[s.name]?.unavailableVariables?.length" class="mt-2 text-xs text-amber-600">
+                  计算变量算不出（引用了其他量表的数据）：{{ simResult[s.name].unavailableVariables.join('、') }}
+                </div>
+                <div v-if="simResult[s.name]?.error" class="mt-2 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-700">
+                  试算失败：{{ simResult[s.name].error }}
+                </div>
+                <div v-if="simResult[s.name]?.attributions?.length" class="mt-2 text-xs text-slate-400">
+                  命中明细：{{ simResult[s.name].attributions.map((a: any) => `${a.name}（${Math.round(a.share * 100)}%）`).join('、') }}
+                </div>
+              </div>
+            </div>
           </div>
 
           <div v-if="preview.issues.length" class="rounded-lg border p-4"

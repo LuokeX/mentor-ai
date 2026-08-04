@@ -7,6 +7,11 @@ interface GuardianRow {
   name: string
   phoneMasked: string | null
   relation: string | null
+  occupation: string | null
+  workUnit: string | null
+  isPrimary: boolean
+  commRiskLevel: string | null
+  overrides: Record<string, string>
   ownerUserId: string
   ownerName: string
   linkedStudents: Array<{ id: string; name: string }>
@@ -20,6 +25,7 @@ const columns = [
   { key: 'name', label: '家长姓名', sortable: true },
   { key: 'relation', label: '关系', sortable: true },
   { key: 'phoneMasked', label: '联系电话', mobileHidden: true },
+  { key: 'commRiskLevel', label: '沟通风险', sortable: true },
   { key: 'linkedStudents', label: '关联学生' },
   { key: 'ownerName', label: '负责教师', mobileHidden: true },
   { key: 'status', label: '状态', sortable: true },
@@ -29,6 +35,13 @@ const statusOptions = [
   { label: '全部', value: 'all' },
   { label: '有效', value: 'active' },
   { label: '已归档', value: 'archived' },
+]
+/** 沟通风险等级修正：未操作不发送；显式“改回按评估结果”清除；选择具体等级写入 */
+const commRiskOptions = [
+  { label: '（当前按评估结果）', value: '__auto__' },
+  { label: '改回按评估结果', value: '__clear__' },
+  { label: 'E 级保护通道', value: 'E 级保护通道' }, { label: 'D 级高冲突', value: 'D 级高冲突' },
+  { label: 'C 级需谨慎', value: 'C 级需谨慎' }, { label: '无风险', value: '无' },
 ]
 const { data: teacherData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/teachers', {
   query: { page: 1, pageSize: 100, status: 'active' },
@@ -40,11 +53,11 @@ const editing = ref<GuardianRow | null>(null)
 const lifecycle = ref<{ action: 'archive' | 'restore'; row: GuardianRow } | null>(null)
 const saving = ref(false)
 const formError = ref('')
-const form = reactive({ name: '', phone: '', relation: '', ownerUserId: '' })
+const form = reactive({ name: '', phone: '', relation: '', ownerUserId: '', occupation: '', workUnit: '', contact: '', isPrimary: false, commRiskLevel: '__auto__' })
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', phone: '', relation: '', ownerUserId: '' })
+  Object.assign(form, { name: '', phone: '', relation: '', ownerUserId: '', occupation: '', workUnit: '', contact: '', isPrimary: false, commRiskLevel: '__auto__' })
   formError.value = ''
   drawerOpen.value = true
 }
@@ -58,6 +71,11 @@ function openEdit(rowOrId: GuardianRow | string) {
     phone: '',
     relation: row.relation || '',
     ownerUserId: row.ownerUserId,
+    occupation: row.occupation || '',
+    workUnit: row.workUnit || '',
+    contact: '',
+    isPrimary: row.isPrimary,
+    commRiskLevel: row.overrides?.commRiskLevel || '__auto__',
   })
   formError.value = ''
   drawerOpen.value = true
@@ -79,8 +97,18 @@ async function saveGuardian() {
     name: form.name,
     relation: form.relation || null,
     ownerUserId: form.ownerUserId,
+    occupation: form.occupation || null,
+    workUnit: form.workUnit || null,
+    isPrimary: form.isPrimary,
   }
+  // 电话/备用联系方式是加密字段，编辑时留空表示不修改
   if (form.phone) body.phone = form.phone
+  if (form.contact) body.contact = form.contact
+  // 沟通风险三态：未操作不发送；显式“改回按评估结果”清除；选择具体等级写入
+  if (editing.value) {
+    if (form.commRiskLevel === '__clear__') body.overrides = { commRiskLevel: '' }
+    else if (form.commRiskLevel !== '__auto__') body.overrides = { commRiskLevel: form.commRiskLevel }
+  }
   if (editing.value && ownerChanged) body.reason = '学校管理员在家长管理表中调整负责教师'
   try {
     if (editing.value) {
@@ -129,6 +157,10 @@ async function runLifecycle(reason: string) {
     <TableToolbar :search-value="list.q.value" :status-filter="list.statusFilter.value" :status-options="statusOptions" search-placeholder="输入完整姓名或外部编号..." :loading="list.loading.value" @search="list.onSearch" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #linkedStudents-data="{ row }"><span class="text-sm">{{ row.linkedStudents.map((student: { name: string }) => student.name).join('、') || '—' }}</span></template>
+      <template #commRiskLevel-data="{ row }">
+        <UBadge v-if="row.commRiskLevel" :color="row.commRiskLevel.startsWith('E') ? 'error' : row.commRiskLevel.startsWith('D') ? 'warning' : row.commRiskLevel.startsWith('C') ? 'info' : 'success'" variant="subtle">{{ row.commRiskLevel }}</UBadge>
+        <span v-else class="text-xs text-slate-400">未评估</span>
+      </template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '有效' : '已归档' }}</UBadge></template>
       <template #actions-data="{ row }">
         <RowActions
@@ -151,7 +183,16 @@ async function runLifecycle(reason: string) {
         <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="与学生关系"><UInput v-model="form.relation" class="w-full" /></UFormField>
           <UFormField :label="editing ? '更新电话（留空表示不修改）' : '联系电话'"><UInput v-model="form.phone" class="w-full" /></UFormField>
+          <UFormField label="职业"><UInput v-model="form.occupation" class="w-full" /></UFormField>
+          <UFormField label="工作单位"><UInput v-model="form.workUnit" class="w-full" /></UFormField>
+          <UFormField :label="editing ? '更新备用联系方式（留空表示不修改）' : '备用联系方式'"><UInput v-model="form.contact" class="w-full" /></UFormField>
+          <UFormField label="是否主要监护人"><UCheckbox v-model="form.isPrimary" label="紧急联系优先联系这位家长" /></UFormField>
           <UFormField label="负责教师" required><USelect v-model="form.ownerUserId" :items="teacherOptions" class="w-full" /></UFormField>
+        </div>
+        <div v-if="editing" class="rounded-lg bg-amber-50/60 p-3">
+          <UFormField label="沟通风险等级（手动修正）" hint="按最近一次家校沟通评估展示；手动指定后将在下次评估前覆盖显示">
+            <USelect v-model="form.commRiskLevel" :items="commRiskOptions" class="w-full" />
+          </UFormField>
         </div>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         <div class="flex justify-end gap-2"><UButton color="neutral" variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">保存</UButton></div>

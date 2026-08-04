@@ -24,6 +24,11 @@ export default defineEventHandler(async (event) => {
         relation: body.relation || null,
         externalRefEnc: body.externalRef ? encryptSensitive(body.externalRef, secret) : null,
         externalRefSearch: body.externalRef ? searchableHash(body.externalRef, secret) : null,
+        occupation: body.occupation || null,
+        workUnit: body.workUnit || null,
+        contactEnc: body.contact ? encryptSensitive(body.contact, secret) : null,
+        isPrimary: body.isPrimary ?? false,
+        notesEnc: body.notes ? encryptSensitive(body.notes, secret) : null,
       }).returning({ id: schema.guardians.id })
       if (!created) throw createError({ statusCode: 500, message: '家长创建失败' })
       await writeAudit(event, {

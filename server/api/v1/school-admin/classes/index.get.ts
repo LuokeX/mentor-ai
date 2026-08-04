@@ -6,7 +6,7 @@ import { resolveCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
 
-const SORT_WHITELIST = createSortWhitelist('name', 'grade', 'studentCount', 'status', 'updatedAt', 'createdAt')
+const SORT_WHITELIST = createSortWhitelist('name', 'grade', 'studentCount', 'energyStage', 'status', 'updatedAt', 'createdAt')
 
 export default defineEventHandler(async (event) => {
   const { schoolId, actor: user, delegatedGrantId } = await requireSchoolManagement(event, ['classes'])
@@ -44,6 +44,14 @@ export default defineEventHandler(async (event) => {
       departmentName: schema.departments.name,
       ownerUserId: schema.classes.ownerUserId,
       ownerName: schema.users.name,
+      section: schema.classes.section,
+      classType: schema.classes.classType,
+      location: schema.classes.location,
+      schoolYear: schema.classes.schoolYear,
+      /** 能量场阶段（评估回写），管理员修正优先 */
+      energyStage: sql<string | null>`coalesce(${schema.classes.overrides}->>'energyStage', ${schema.classes.energyStage})`,
+      /** 管理员修正原始值（编辑表单回显用） */
+      overrides: schema.classes.overrides,
       actualStudentCount: sql<number>`count(${schema.students.id})::int`,
       createdAt: schema.classes.createdAt,
       updatedAt: schema.classes.updatedAt,

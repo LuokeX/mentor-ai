@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, or } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
@@ -8,7 +8,7 @@ import { resolveCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
 
-const SORT_WHITELIST = createSortWhitelist('name', 'email', 'role', 'status', 'activatedAt', 'lastLoginAt', 'updatedAt', 'createdAt')
+const SORT_WHITELIST = createSortWhitelist('name', 'email', 'role', 'status', 'selfStatusLevel', 'activatedAt', 'lastLoginAt', 'updatedAt', 'createdAt')
 
 export default defineEventHandler(async (event) => {
   const { schoolId, actor: user, delegatedGrantId } = await requireSchoolManagement(event, ['users'])
@@ -50,6 +50,17 @@ export default defineEventHandler(async (event) => {
       status: schema.users.status,
       activatedAt: schema.users.activatedAt,
       lastLoginAt: schema.users.lastLoginAt,
+      employeeNo: schema.users.employeeNo,
+      gender: schema.users.gender,
+      teachingGrades: schema.users.teachingGrades,
+      subject: schema.users.subject,
+      isClassTeacher: schema.users.isClassTeacher,
+      title: schema.users.title,
+      hiredAt: schema.users.hiredAt,
+      /** 自我状态等级（评估回写），管理员修正优先 */
+      selfStatusLevel: sql<string | null>`coalesce(${schema.users.overrides}->>'selfStatusLevel', ${schema.users.selfStatusLevel})`,
+      /** 管理员修正原始值（编辑表单回显用） */
+      overrides: schema.users.overrides,
       createdAt: schema.users.createdAt,
       updatedAt: schema.users.updatedAt,
     }).from(schema.users).where(and(...conditions)).orderBy(orderFn(sortCol))

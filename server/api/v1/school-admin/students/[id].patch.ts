@@ -44,6 +44,20 @@ export default defineEventHandler(async (event) => {
         patch.externalRefEnc = body.externalRef ? encryptSensitive(body.externalRef, secret) : null
         patch.externalRefSearch = body.externalRef ? searchableHash(body.externalRef, secret) : null
       }
+      if (body.birthDate !== undefined) patch.birthDate = body.birthDate ? new Date(body.birthDate) : null
+      if (body.studentNo !== undefined) {
+        patch.studentNoEnc = body.studentNo ? encryptSensitive(body.studentNo, secret) : null
+        patch.studentNoSearch = body.studentNo ? searchableHash(body.studentNo, secret) : null
+      }
+      if (body.ethnicity !== undefined) patch.ethnicity = body.ethnicity || null
+      if (body.enrolledAt !== undefined) patch.enrolledAt = body.enrolledAt ? new Date(body.enrolledAt) : null
+      if (body.boardingType !== undefined) patch.boardingType = body.boardingType || null
+      if (body.address !== undefined) patch.addressEnc = body.address ? encryptSensitive(body.address, secret) : null
+      if (body.overrides !== undefined) {
+        const merged = { ...(student.overrides || {}), ...body.overrides }
+        for (const [k, v] of Object.entries(merged)) if (!v) delete merged[k]
+        patch.overrides = merged
+      }
       if (body.status !== undefined) patch.status = body.status
       if (body.classId !== undefined) patch.classId = nextClassId
       if (nextOwnerUserId !== student.ownerUserId) patch.ownerUserId = nextOwnerUserId

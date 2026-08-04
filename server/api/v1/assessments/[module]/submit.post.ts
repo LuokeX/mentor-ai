@@ -9,6 +9,7 @@ import { encryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
 import { createPlanActions, defaultReviewAt, resolveToolsForPlan } from '../../../../domain/plan-actions'
 import { extractSourceResourceVersionIds, recordPlanOperationEvent } from '../../../../domain/plan-operations'
+import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
 import { generateAssessmentReport } from '../../../../integrations/deepseek'
@@ -245,5 +246,17 @@ export default defineEventHandler(async (event) => {
       targetType: 'plan', targetId: planId, metadata: { module }
     })
   }
+  // 业务状态快照回写：能量场阶段/个体支持等级/沟通风险等级/自我状态等级。
+  // 评估是事实来源，这里把结果投影到档案标量与明细，管理后台列表直接可见。
+  await writeEntitySnapshot(event, {
+    module,
+    schoolId: user.schoolId,
+    ownerUserId: user.id,
+    studentId: body.studentId,
+    classId: linkedClassId,
+    guardianId: body.guardianId,
+    result,
+    submittedAt: attempt.submittedAt ?? new Date()
+  })
   return { attemptId: attempt.id, planId, result: presentedResult, report, fuse }
 })

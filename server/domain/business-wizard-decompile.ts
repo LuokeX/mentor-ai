@@ -207,6 +207,31 @@ export function decompileToWizardInput(
     return g.id
   }
 
+  // ---------- 量表级默认（众数）：V4 模板这些列是量表级的，取出现最多的值作为模块默认，
+  // 与默认不同的量表把实际值还原成「覆盖字段」，往返不再抹平行级差异。
+  const majority = (sources: any[], key: string): string | undefined => {
+    const counts = new Map<string, number>()
+    for (const s of sources) {
+      const v = s?.[key]
+      if (v === undefined || v === null || v === '') continue
+      const k = String(v)
+      counts.set(k, (counts.get(k) || 0) + 1)
+    }
+    if (!counts.size) return undefined
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0]
+  }
+  const scaleDefaults = {
+    schoolSection: majority(instruments, 'applicableSchoolSection') || 'all',
+    targetAudience: majority(instruments, 'targetAudience') || 'teacher',
+    formType: majority(instruments, 'formType') || 'self_report',
+    triggerMethod: majority(instruments, 'triggerMethod') || 'manual',
+    frequency: majority(instruments, 'frequency') || 'per_case',
+    resultVisibility: majority(instruments, 'resultVisibility') || 'teacher_only',
+    responsibleRole: majority(instruments, 'responsibleRole') || '班主任',
+    dataSensitivity: majority(instruments, 'dataSensitivity') || 'highly_sensitive',
+    sourceType: majority(instruments, 'sourceType') || 'proprietary'
+  }
+
   // ---------- 量表 ----------
   const scales = instruments.map((inst: any) => {
     const trigger = inst.triggerCondition
@@ -214,6 +239,10 @@ export function decompileToWizardInput(
       : null
     if (inst.triggerCondition && !trigger) {
       drop(`量表《${inst.title}》的触发条件`, inst.triggerCondition)
+    }
+    const ov = (k: keyof typeof scaleDefaults) => {
+      const v = inst[k === 'schoolSection' ? 'applicableSchoolSection' : k]
+      return v && v !== scaleDefaults[k] ? v : undefined
     }
     const questions = (inst.questions || []).map((q: any) => {
       const group = groupIdOf(q)
@@ -230,6 +259,16 @@ export function decompileToWizardInput(
       shortName: inst.shortName || undefined,
       description: inst.description || undefined,
       minutes: inst.estimatedMinutes || undefined,
+      // 模块通用设置的量表级覆盖（与默认不同才填，往返稳定）
+      schoolSection: ov('schoolSection'),
+      targetAudience: ov('targetAudience'),
+      formType: ov('formType'),
+      triggerMethod: ov('triggerMethod'),
+      frequency: ov('frequency'),
+      resultVisibility: ov('resultVisibility'),
+      responsibleRole: ov('responsibleRole'),
+      dataSensitivity: ov('dataSensitivity'),
+      sourceType: ov('sourceType'),
       prerequisites: (inst.prerequisiteCodes || []).map((c: string) => ctx.nameByCode.get(c) || c),
       exclusives: (inst.exclusiveCodes || []).map((c: string) => ctx.nameByCode.get(c) || c),
       triggerConditions: trigger?.conditions || [],
@@ -240,6 +279,7 @@ export function decompileToWizardInput(
       reAssessmentIntervalDays: inst.reAssessmentIntervalDays || undefined,
       applicableGrades: inst.applicableGrades || [],
       applicableSubjects: inst.applicableSubjects || [],
+      externalAuthorizationNote: inst.externalAuthorizationNote || undefined,
       normReference: inst.normReference || undefined,
       reliabilityNote: inst.reliabilityNote || undefined,
       validityNote: inst.validityNote || undefined,
@@ -391,9 +431,15 @@ export function decompileToWizardInput(
     // 下面这些是编译器填的默认值或向导已表达的业务字段，往返时不该报成「会丢失」
     'level', 'evidenceLevel', 'evidenceSource', 'reAssessmentIntervalDays',
     'preparationNeeded', 'materialsRequired', 'outcomeIndicators', 'failureCriteria',
-    'prerequisiteToolCode', 'alternativeToolCode', 'advancedToolCode', 'crossModuleTags'
+    'prerequisiteToolCode', 'alternativeToolCode', 'advancedToolCode', 'crossModuleTags',
+    'contraindicationNote', 'collaborativeToolCodes'
   ])
   const toolNameOf = (code: string | undefined) => (code && toolCodeToName.get(code)) || undefined
+  const toolDefaults = {
+    schoolSection: majority(payloads.tool?.tools || [], 'applicableSchoolSection') || scaleDefaults.schoolSection,
+    targetUsers: majority(payloads.tool?.tools || [], 'targetUsers') || scaleDefaults.targetAudience,
+    evidenceLevel: majority(payloads.tool?.tools || [], 'evidenceLevel') || 'B'
+  }
   const tools = (payloads.tool?.tools || []).map((t: any) => {
     const extra = Object.keys(t).filter(k => !WIZARD_TOOL_FIELDS.has(k) && t[k] !== undefined && t[k] !== '')
     if (extra.length) {
@@ -425,12 +471,22 @@ export function decompileToWizardInput(
       stepDetails: steps.length ? stepDetails : [],
       form: ['exercise', 'script', 'checklist', 'framework', 'worksheet'].includes(t.form) ? t.form : 'framework',
       severity: ['low', 'medium', 'high', 'crisis'].includes(t.severity) ? t.severity : 'medium',
+      // 模块通用设置的工具级覆盖（与默认不同才填）
+      schoolSection: t.applicableSchoolSection && t.applicableSchoolSection !== toolDefaults.schoolSection
+        ? t.applicableSchoolSection : undefined,
+      targetUsers: t.targetUsers && t.targetUsers !== toolDefaults.targetUsers
+        ? t.targetUsers : undefined,
+      evidenceLevel: t.evidenceLevel && t.evidenceLevel !== toolDefaults.evidenceLevel
+        ? t.evidenceLevel : undefined,
       script: t.scripts || undefined,
       prohibition: t.prohibitions || undefined,
       timePerSession: t.timePerSession || undefined,
       duration: t.duration || undefined,
       expectedEffect: t.expectedEffect || undefined,
       effectNote: t.effectNote || undefined,
+      outputArtifact: t.outputArtifact || undefined,
+      contraindicationNote: t.contraindicationNote || undefined,
+      collaborativeTools: (t.collaborativeToolCodes || []).map((c: string) => toolCodeToName.get(c) || c),
       dimensions: (t.dimensions || []).map((c: string) => ctx.dimCodeToName.get(c) || c),
       reAssessmentIntervalDays: t.reAssessmentIntervalDays || undefined,
       evidenceSource: t.evidenceSource || undefined,
@@ -458,27 +514,16 @@ export function decompileToWizardInput(
     scale: r.linkedAssessmentCode ? (ctx.nameByCode.get(r.linkedAssessmentCode) || undefined) : undefined,
     tool: r.linkedToolCode ? (toolCodeToName.get(r.linkedToolCode) || undefined) : undefined,
     matchMode: ['exact', 'fuzzy'].includes(r.matchMode) ? r.matchMode : 'fuzzy',
-    risk: ['red', 'orange', 'yellow', 'none'].includes(r.riskLevel) ? r.riskLevel : 'yellow',
+    risk: ['red', 'orange', 'yellow', 'blue', 'green'].includes(r.riskLevel) ? r.riskLevel : (r.riskLevel === 'none' ? 'green' : 'yellow'),
     contextConstraint: r.contextConstraint || undefined,
     description: r.description || undefined
   }))
 
-  // ---------- 模块级默认（从库里第一份值推断，编译时应用到所有行） ----------
-  const tool0: any = (payloads.tool?.tools || [])[0] || {}
+  // ---------- 模块级默认：量表/工具取众数（已提前计算），红线参数取首条 ----------
   const red0: any = redLines[0] || {}
-  const pick = (sources: any[], key: string): any =>
-    sources.map(s => s?.[key]).find(v => v !== undefined && v !== null && v !== '')
   const defaults = {
-    schoolSection: pick(instruments, 'applicableSchoolSection') || 'all',
-    targetAudience: pick(instruments, 'targetAudience') || 'teacher',
-    formType: pick(instruments, 'formType') || 'self_report',
-    triggerMethod: pick(instruments, 'triggerMethod') || 'manual',
-    frequency: pick(instruments, 'frequency') || 'per_case',
-    resultVisibility: pick(instruments, 'resultVisibility') || 'teacher_only',
-    responsibleRole: pick(instruments, 'responsibleRole') || '班主任',
-    dataSensitivity: pick(instruments, 'dataSensitivity') || 'highly_sensitive',
-    sourceType: pick(instruments, 'sourceType') || 'proprietary',
-    evidenceLevel: (['A', 'B', 'C', 'D'].includes(tool0.evidenceLevel) ? tool0.evidenceLevel : 'B') as 'B',
+    ...scaleDefaults,
+    evidenceLevel: toolDefaults.evidenceLevel,
     redLineScope: ['instrument', 'module', 'system'].includes(red0.scope) ? red0.scope : 'module',
     redLineActions: Array.isArray(red0.actions) && red0.actions.length ? red0.actions.join('；') : '暂停常规方案，转安全转介流程',
     redLineRecovery: red0.recoveryCondition || '专业评估确认风险解除后',
@@ -495,7 +540,7 @@ export function decompileToWizardInput(
       optionGroups: [...customGroups.values()],
       scales, attributions, evidences, levels, tools, keywords,
       defaultLevelName: fallback?.levelName || fallback?.level || '暂无明显信号',
-      defaultMessage: messageByLevel.get(fallback?.level || 'none') || undefined
+      defaultMessage: messageByLevel.get(fallback?.level || 'green') || undefined
     } as WizardInput,
     unsupported,
     notes

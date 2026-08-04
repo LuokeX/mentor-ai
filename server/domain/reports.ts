@@ -281,7 +281,7 @@ function selectOutputTemplate(
   return [...templates]
     .filter(template =>
       template.type === type
-      && ['default', 'stable', 'none', level].includes(template.attributionLevel)
+      && ['default', 'stable', 'none', 'green', level].includes(template.attributionLevel)
     )
     .sort((a, b) => {
       const rank = (template: OutputTemplateEntry) => template.attributionLevel === level ? 0 : 1
