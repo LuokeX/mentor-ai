@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
-  const [classes, students, guardians, studentGuardianRelations, communications, plans, assessments, cases, conversations] = await Promise.all([
+  const [classes, students, guardians, studentGuardianRelations, communications, plans, assessments, conversations] = await Promise.all([
     db.select().from(schema.classes).where(eq(schema.classes.ownerUserId, user.id)).orderBy(desc(schema.classes.updatedAt)),
     db.select().from(schema.students).where(eq(schema.students.ownerUserId, user.id)).orderBy(desc(schema.students.updatedAt)),
     db.select().from(schema.guardians).where(eq(schema.guardians.ownerUserId, user.id)).orderBy(desc(schema.guardians.updatedAt)),
@@ -19,7 +19,6 @@ export default defineEventHandler(async (event) => {
     db.select().from(schema.communications).where(eq(schema.communications.ownerUserId, user.id)).orderBy(desc(schema.communications.occurredAt)),
     db.select().from(schema.plans).where(eq(schema.plans.ownerUserId, user.id)).orderBy(desc(schema.plans.updatedAt)),
     db.select().from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.ownerUserId, user.id)).orderBy(desc(schema.assessmentAttempts.updatedAt)),
-    db.select().from(schema.moduleCases).where(eq(schema.moduleCases.ownerUserId, user.id)).orderBy(desc(schema.moduleCases.updatedAt)),
     db.select().from(schema.chatSessions).where(eq(schema.chatSessions.ownerUserId, user.id)).orderBy(desc(schema.chatSessions.updatedAt))
   ])
   const planIds = plans.map(plan => plan.id)
@@ -41,7 +40,6 @@ export default defineEventHandler(async (event) => {
     plans: plans.map(item => ({ ...item, summary: decryptSensitive(item.summaryEnc, secret), summaryEnc: undefined })),
     planReviews,
     assessments,
-    cases: cases.map(item => ({ ...item, description: decryptSensitive(item.descriptionEnc, secret), descriptionEnc: undefined })),
     conversations: conversations.map(session => ({ ...session, messages: messages.filter(message => message.sessionId === session.id) }))
   }
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.export', targetType: 'teacher_profile', targetId: user.id })

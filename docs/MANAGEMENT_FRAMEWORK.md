@@ -144,7 +144,7 @@ archived → restore
 
 ### 禁止物理删除的表
 
-- 所有业务档案（classes, students, guardians, communications, plans, assessments, moduleCases, studentEvents）
+- 所有业务档案（classes, students, guardians, communications, plans, assessments, studentEvents）
 - 审计日志 (auditLogs)
 - 安全事件 (safetyEvents)
 - 管理员访问事件 (adminAccessEvents)

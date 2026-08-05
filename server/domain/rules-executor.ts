@@ -260,6 +260,11 @@ interface EvalContext {
   /** 维度均值。班级短板、家校 P×A、学生五类、学习三层的归因规则都建立在维度上。 */
   dimensions: Record<string, number>
   /**
+   * 当前作答的量表编码。跨量表取值（PRIOR_*）在目标量表与当前作答一致时
+   * 直接读本次作答，否则读历史（priors）。红线条件因此可以安全引用其他量表的题号。
+   */
+  instrumentCode?: string
+  /**
    * 该教师最近一次各量表的结果，按量表编码索引。
    * 只用于 ③ 的「触发条件」——判断第 3 张量表要不要做，得看前两张测出了什么。
    * 归因和分级规则不读它，那两处只看当前这次作答。
@@ -361,10 +366,15 @@ function evalBuiltin(name: string, args: ASTNode[], env: EvalContext): number | 
     }
     case 'PRIOR_SUM': {
       const [code] = priorArgs(args, 'PRIOR_SUM', 1)
+      // 目标量表就是当前作答量表时直接算本次作答，否则读历史（红线条件依赖此语义）
+      if (env.instrumentCode === code) return env.items.reduce((s, i) => s + i.score, 0)
       return priorOf(env, code!, 'PRIOR_SUM').sum
     }
     case 'PRIOR_AVG': {
       const [code] = priorArgs(args, 'PRIOR_AVG', 1)
+      if (env.instrumentCode === code) {
+        return env.items.length ? Number((env.items.reduce((s, i) => s + i.score, 0) / env.items.length).toFixed(4)) : 0
+      }
       return priorOf(env, code!, 'PRIOR_AVG').avg
     }
     case 'PRIOR_LEVEL': {
@@ -377,6 +387,11 @@ function evalBuiltin(name: string, args: ASTNode[], env: EvalContext): number | 
     }
     case 'PRIOR_DIM': {
       const [code, dimension] = priorArgs(args, 'PRIOR_DIM', 2)
+      if (env.instrumentCode === code) {
+        const value = env.dimensions[dimension!]
+        if (value === undefined) throw new Error(`PRIOR_DIM: 量表 '${code}' 没有维度 '${dimension}'`)
+        return value
+      }
       const prior = priorOf(env, code!, 'PRIOR_DIM')
       const value = prior.dimensions[dimension!]
       if (value === undefined) throw new Error(`PRIOR_DIM: 量表 '${code}' 没有维度 '${dimension}'`)
@@ -384,6 +399,11 @@ function evalBuiltin(name: string, args: ASTNode[], env: EvalContext): number | 
     }
     case 'PRIOR_SCORE': {
       const [code, questionId] = priorArgs(args, 'PRIOR_SCORE', 2)
+      if (env.instrumentCode === code) {
+        const item = env.items.find(i => i.id === questionId)
+        if (!item) throw new Error(`PRIOR_SCORE: 量表 '${code}' 没有题号 '${questionId}'`)
+        return item.score
+      }
       const prior = priorOf(env, code!, 'PRIOR_SCORE')
       const value = prior.scores[questionId!]
       if (value === undefined) throw new Error(`PRIOR_SCORE: 量表 '${code}' 没有题号 '${questionId}'`)
@@ -562,7 +582,7 @@ export function executeRules(
   // 将 ctx 上下文变量也暴露到 vars 中（用 ctx_ 前缀，避免 tokenizer 点号问题）
   const ctxVars: Record<string, number> = {}
   for (const [k, v] of Object.entries(ctx)) { ctxVars[`ctx_${k}`] = v }
-  const env: EvalContext = { vars: { ...ctxVars }, items, ctx, dimensions }
+  const env: EvalContext = { vars: { ...ctxVars }, items, ctx, dimensions, instrumentCode: definition.instrumentCode || definition.code }
   // 计算变量是模块级的，但表达式可能引用只属于某一张量表的题号或维度。
   // 用另一张量表作答时这类变量算不出来，此时跳过而不是中断整场评估——
   // 真正引用了它的分级规则应当用「依据量表编码」限定到对应量表。

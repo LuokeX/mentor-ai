@@ -28,7 +28,6 @@ export default defineEventHandler(async (event) => {
     { table: 'communications', fn: async database => (await database.select({ c: sql<number>`count(*)::int` }).from(schema.communications).where(eq(schema.communications.ownerUserId, id)))[0]!.c },
     { table: 'plans', fn: async database => (await database.select({ c: sql<number>`count(*)::int` }).from(schema.plans).where(eq(schema.plans.ownerUserId, id)))[0]!.c },
     { table: 'assessments', fn: async database => (await database.select({ c: sql<number>`count(*)::int` }).from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.ownerUserId, id)))[0]!.c },
-    { table: 'moduleCases', fn: async database => (await database.select({ c: sql<number>`count(*)::int` }).from(schema.moduleCases).where(eq(schema.moduleCases.ownerUserId, id)))[0]!.c },
     { table: 'studentEvents', fn: async database => (await database.select({ c: sql<number>`count(*)::int` }).from(schema.studentEvents).where(eq(schema.studentEvents.ownerUserId, id)))[0]!.c },
     { table: 'safetyEvents', fn: async database => (await database.select({ c: sql<number>`count(*)::int` }).from(schema.safetyEvents).where(eq(schema.safetyEvents.ownerUserId, id)))[0]!.c },
     { table: 'auditLogs', fn: async database => (await database.select({ c: sql<number>`count(*)::int` }).from(schema.auditLogs).where(eq(schema.auditLogs.actorId, id)))[0]!.c },

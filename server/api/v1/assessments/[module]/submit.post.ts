@@ -5,7 +5,8 @@ import { requireUser } from '../../../../utils/auth'
 import { useDb, schema } from '../../../../utils/db'
 import { executeRules, evaluateWithFallback } from '../../../../domain/rules-executor'
 import { resolveAssessmentDefinition, resolveAttributionConfig } from '../../../../domain/module-resources'
-import { encryptSensitive } from '../../../../utils/crypto'
+import { moduleMeta } from '../../../../../shared/assessments'
+import { encryptSensitive, decryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
 import { createPlanActions, defaultReviewAt, resolveToolsForPlan } from '../../../../domain/plan-actions'
 import { extractSourceResourceVersionIds, recordPlanOperationEvent } from '../../../../domain/plan-operations'
@@ -49,14 +50,17 @@ export default defineEventHandler(async (event) => {
 
   // 上下文验证（学生/班级/家长/对话）
   let linkedClassId = body.classId
+  let studentName: string | undefined
+  let guardianName: string | undefined
   if (body.studentId) {
-    const [student] = await db.select({ id: schema.students.id, classId: schema.students.classId }).from(schema.students).where(and(
+    const [student] = await db.select({ id: schema.students.id, classId: schema.students.classId, nameEnc: schema.students.nameEnc }).from(schema.students).where(and(
       eq(schema.students.id, body.studentId),
       eq(schema.students.ownerUserId, user.id),
       eq(schema.students.schoolId, user.schoolId)
     )).limit(1)
     if (!student) throw createError({ statusCode: 404, message: '关联学生不存在或不属于当前负责范围' })
     linkedClassId ||= student.classId || undefined
+    studentName = decryptSensitive(student.nameEnc, useRuntimeConfig(event).encryptionKey)
   }
   if (linkedClassId) {
     const [klass] = await db.select({ id: schema.classes.id }).from(schema.classes).where(and(
@@ -67,12 +71,13 @@ export default defineEventHandler(async (event) => {
     if (!klass) throw createError({ statusCode: 404, message: '关联班级不存在或不属于当前负责范围' })
   }
   if (body.guardianId) {
-    const [guardian] = await db.select({ id: schema.guardians.id }).from(schema.guardians).where(and(
+    const [guardian] = await db.select({ id: schema.guardians.id, nameEnc: schema.guardians.nameEnc }).from(schema.guardians).where(and(
       eq(schema.guardians.id, body.guardianId),
       eq(schema.guardians.ownerUserId, user.id),
       eq(schema.guardians.schoolId, user.schoolId)
     )).limit(1)
     if (!guardian) throw createError({ statusCode: 404, message: '关联家长不存在或不属于当前负责范围' })
+    guardianName = decryptSensitive(guardian.nameEnc, useRuntimeConfig(event).encryptionKey)
   }
   if (body.sourceChatSessionId) {
     const [session] = await db.select({ id: schema.chatSessions.id }).from(schema.chatSessions).where(and(
@@ -174,6 +179,12 @@ export default defineEventHandler(async (event) => {
     const matchedToolCodes = planTools
       .map(tool => (tool as { code?: string }).code)
       .filter((item): item is string => Boolean(item))
+    // 方案标题可读化：对象（家长优先于学生）+ 模块 + 等级短名 + 主归因；匿名评估省略对象段
+    const levelShort = (result.levelName || '').split('（')[0]
+    const title = [
+      guardianName || studentName,
+      `${moduleMeta[module].title} ${levelShort}${result.primaryAttribution ? `（${result.primaryAttribution}）` : ''}方案`
+    ].filter(Boolean).join(' · ')
     const [plan] = await db.insert(schema.plans).values({
       schoolId: user.schoolId, ownerUserId: user.id, module,
       studentId: body.studentId,
@@ -181,7 +192,7 @@ export default defineEventHandler(async (event) => {
       guardianId: body.guardianId,
       sourceChatSessionId: body.sourceChatSessionId,
       sourceAssessmentAttemptId: attempt.id,
-      title: `${definition.title}行动方案`,
+      title,
       summaryEnc: encryptSensitive(narrative || result.reasons.join('；'), useRuntimeConfig(event).encryptionKey),
       actions: result.actions,
       tools: planTools,

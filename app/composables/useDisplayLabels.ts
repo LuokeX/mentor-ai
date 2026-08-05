@@ -114,7 +114,6 @@ const labels = {
     module_resource_library: '三库资源',
     module_resource_version: '三库版本',
     module_resource_document: '资源文档',
-    support_case: '支持案例',
     student_event: '学生事件'
   },
   reasonCategory: {
@@ -222,7 +221,6 @@ const labels = {
     'student_event.create': '创建学生事件',
     'student_event.update': '更新学生事件',
     'student_event.delete': '删除学生事件',
-    'support_case.delete': '删除支持案例',
     'chat.route.confirm': '确认分诊方向',
     'ai.full_context.consent': '确认 AI 数据授权',
     'safety.fuse.triggered': '触发安全熔断',

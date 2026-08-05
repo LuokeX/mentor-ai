@@ -17,7 +17,6 @@ const informationNav = [
   { label: '关联家长', to: '/information/guardians', icon: 'i-lucide-user-round' },
   { label: '家校沟通', to: '/information/communications', icon: 'i-lucide-messages-square' },
   { label: '事件记录', to: '/information/events', icon: 'i-lucide-clipboard-list' },
-  { label: '支持案例', to: '/information/cases', icon: 'i-lucide-folder-open' },
 ]
 const schoolAdminNav = [
   { label: '总览', to: '/school-admin', icon: 'i-lucide-layout-dashboard' },

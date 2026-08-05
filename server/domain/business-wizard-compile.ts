@@ -340,7 +340,10 @@ export function compileWizardInput(input: WizardInput): CompileResult {
       add('warning', `等级「${lv.name}」没填「系统跟老师怎么说」，判到这一级时只能用系统内置的通用文案。`)
     }
     if (lv.redLine) {
-      s6.push([input.module, cond, lv.resultNote || `命中「${lv.name}」，需立即启动安全流程`, d.redLineScope,
+      // 红线条件必须限定到红线所属量表（跨量表语法），否则其他量表作答时
+      // 会拿本量表的同名题号求值红线条件，造成「健康作答被误熔断」（如 HS_S2 红线被 HS_S1 作答误触发）。
+      const redCond = toCrossScaleExpression(lv.conditions, lv.scale || defaultScale, codes)
+      s6.push([input.module, redCond || cond, lv.resultNote || `命中「${lv.name}」，需立即启动安全流程`, d.redLineScope,
         lv.redLineAction || '立即联系校内心理专员并同步年级组',
         d.redLineActions, d.redLineRecovery, d.redLineOwner, lv.notificationTemplate || '', ref])
     }

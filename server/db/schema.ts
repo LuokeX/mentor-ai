@@ -428,21 +428,6 @@ export const assessmentAttempts = pgTable('assessment_attempts', {
   ...timestamps
 }, table => [index('assessment_owner_module_idx').on(table.ownerUserId, table.module)])
 
-export const moduleCases = pgTable('module_cases', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  schoolId: uuid('school_id').notNull().references(() => schools.id),
-  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
-  module: varchar('module', { length: 40 }).notNull(),
-  subjectType: varchar('subject_type', { length: 30 }),
-  subjectId: uuid('subject_id'),
-  title: varchar('title', { length: 200 }).notNull(),
-  descriptionEnc: text('description_enc'),
-  classification: jsonb('classification').$type<Record<string, unknown>>().default({}).notNull(),
-  status: varchar('status', { length: 30 }).default('active').notNull(),
-  dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
-  ...timestamps
-}, table => [index('module_cases_owner_idx').on(table.ownerUserId, table.module)])
-
 export const studentEvents = pgTable('student_events', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
@@ -470,7 +455,6 @@ export const plans = pgTable('plans', {
   schoolId: uuid('school_id').notNull().references(() => schools.id),
   // 语义：当前负责教师。方案报告归属学校业务档案，可移交给后续负责教师。
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
-  caseId: uuid('case_id').references(() => moduleCases.id, { onDelete: 'set null' }),
   studentId: uuid('student_id').references(() => students.id, { onDelete: 'set null' }),
   classId: uuid('class_id').references(() => classes.id, { onDelete: 'set null' }),
   guardianId: uuid('guardian_id').references(() => guardians.id, { onDelete: 'set null' }),

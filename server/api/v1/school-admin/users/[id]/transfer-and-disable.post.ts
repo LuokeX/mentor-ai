@@ -110,11 +110,7 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    // 9. 移交案例
-    await tx.update(schema.moduleCases).set({ ownerUserId: body.toUserId, updatedAt: new Date() })
-      .where(and(eq(schema.moduleCases.schoolId, schoolId), eq(schema.moduleCases.ownerUserId, id)))
-
-    // 10. 移交测评、学生事件和方案完整责任链
+    // 9. 移交测评、学生事件和方案完整责任链
     await tx.update(schema.assessmentAttempts).set({ ownerUserId: body.toUserId, updatedAt: new Date() })
       .where(and(eq(schema.assessmentAttempts.schoolId, schoolId), eq(schema.assessmentAttempts.ownerUserId, id)))
     await tx.update(schema.studentEvents).set({ ownerUserId: body.toUserId, updatedAt: new Date() })

@@ -9,7 +9,6 @@ export async function resolveTargetSchool(event: H3Event, targetType: string, ta
   if (targetType === 'teacher_profile') return (await db.select({ schoolId: schema.users.schoolId }).from(schema.users).where(and(eq(schema.users.id, targetId), eq(schema.users.role, 'teacher'))).limit(1))[0]?.schoolId
   if (targetType === 'assessment') return (await db.select({ schoolId: schema.assessmentAttempts.schoolId }).from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.id, targetId)).limit(1))[0]?.schoolId
   if (targetType === 'conversation') return (await db.select({ schoolId: schema.chatSessions.schoolId }).from(schema.chatSessions).where(eq(schema.chatSessions.id, targetId)).limit(1))[0]?.schoolId
-  if (targetType === 'student_case') return (await db.select({ schoolId: schema.moduleCases.schoolId }).from(schema.moduleCases).where(eq(schema.moduleCases.id, targetId)).limit(1))[0]?.schoolId
   if (targetType === 'guardian_communication') return (await db.select({ schoolId: schema.communications.schoolId }).from(schema.communications).where(eq(schema.communications.id, targetId)).limit(1))[0]?.schoolId
   if (targetType === 'plan') return (await db.select({ schoolId: schema.plans.schoolId }).from(schema.plans).where(eq(schema.plans.id, targetId)).limit(1))[0]?.schoolId
   return null
