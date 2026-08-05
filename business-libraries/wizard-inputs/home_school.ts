@@ -1,10 +1,12 @@
 import type { WizardInput } from '../../shared/business-wizard'
 
-// home_school 模块向导输入（v4.0.0 打样数据，业务填写向导 → 编译生成 test-data 与库内三库）
+// home_school 模块向导输入（v4.2.0：评估量表V2.0 30 题六维 + 红线检查 R1-R8 + 六维归因 + 五级干预体系）
+// 业务素材：docs/家校沟通与合作test0730-AI入口/（评估量表V2.0 / 归因库 / 干预方案库 / 关联关系表）
+// 计分方向：V2.0 量表为正向计分（评分越高=家校关系越健康），与旧版 v4.0.0 反向语义相反，reverse 全部不设。
 export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
   "module": "home_school",
-  "version": "4.0.0",
-  "sourceRef": "家校沟通合作手册v1",
+  "version": "4.2.0",
+  "sourceRef": "家校沟通与合作test0730-AI入口（评估量表V2.0/归因库/干预方案库/关联关系表）",
   "defaults": {
     "schoolSection": "all",
     "targetAudience": "teacher",
@@ -18,29 +20,24 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
     "evidenceLevel": "B",
     "redLineScope": "module",
     "redLineActions": "停止单独沟通；启用保护通道；全程留痕；通知年级组长；必要时上报校方",
-    "redLineRecovery": "经年级组长评估确认沟通可恢复常规",
-    "redLineOwner": "年级组长"
+    "redLineRecovery": "经学校危机响应组评估确认风险解除后",
+    "redLineOwner": "德育主任"
   },
   "computedVariables": [
     {
-      "name": "容器强度",
-      "scale": "家校沟通六维速查",
-      "expression": "维度[角色边界]"
-    },
-    {
-      "name": "风险总分",
-      "scale": "家校沟通六维速查",
-      "expression": "总分"
+      "name": "沟通健康均分",
+      "scale": "家校沟通六维评估",
+      "expression": "均分"
     }
   ],
   "optionGroups": [],
   "scales": [
     {
-      "name": "家校沟通六维速查",
+      "name": "家校沟通六维评估",
       "role": "入口筛查",
-      "shortName": "六维速查",
-      "description": "按六维度框架判断家校沟通状态：沟通质量、参与效能、教育一致性、角色边界（信任关系与危机响应由深度评估承接）。反向计分：得分越高表示状况越差。",
-      "minutes": 5,
+      "shortName": "六维评估",
+      "description": "面向班主任/年级组的六维诊断评估（评估量表V2.0）：沟通质量、角色边界、教育一致性、信任关系、参与效能、危机响应，每维 5 题共 30 题。正向计分：评分越高=家校关系越健康；常模参考均分 4.0，低于常模需关注。",
+      "minutes": 10,
       "prerequisites": [],
       "exclusives": [],
       "triggerConditions": [],
@@ -51,218 +48,341 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
           "name": "沟通质量",
           "calcMethod": "mean",
           "weight": 1,
-          "description": "沟通质量维度",
-          "highInterpretation": "出现不尊重、混淆事实与情绪甚至威胁行为",
-          "lowInterpretation": "沟通质量可控"
-        },
-        {
-          "name": "参与效能",
-          "calcMethod": "mean",
-          "weight": 1,
-          "description": "参与效能维度",
-          "highInterpretation": "家长回应慢、不参与共同行动",
-          "lowInterpretation": "参与效能良好"
-        },
-        {
-          "name": "教育一致性",
-          "calcMethod": "mean",
-          "weight": 1,
-          "description": "教育一致性维度",
-          "highInterpretation": "家长不认同或不愿执行共同达成的教育行动",
-          "lowInterpretation": "教育方向一致"
+          "description": "双向性/及时性：信息能否顺畅及时触达并得到确认",
+          "highInterpretation": "建立稳定固定的沟通渠道与联系节奏，重要信息送达有确认流程",
+          "lowInterpretation": "信息传递滞后或失真，家长被动等待通知，沟通氛围紧张、问题被掩盖",
+          "normMean": 4
         },
         {
           "name": "角色边界",
           "calcMethod": "mean",
           "weight": 1,
-          "description": "角色边界维度",
-          "highInterpretation": "关系无法承受坦诚讨论，边界模糊",
-          "lowInterpretation": "角色边界清晰、角色边界充足"
-        }
-      ],
-      "questions": [
-        {
-          "text": "家长能够及时回应学校的重要沟通。",
-          "dimension": "参与效能",
-          "optionGroup": "AGREE_5",
-          "reverse": true
+          "description": "职责清晰度：家长是否越界打扰、过度介入、不守公共渠道规则",
+          "highInterpretation": "沟通时段与响应预期明确，家校职责分工清晰，家长尊重教师专业空间",
+          "lowInterpretation": "非工作时间频繁打扰，过度介入班级事务或替教师做决策，公开渠道发布越界言论",
+          "normMean": 4
         },
         {
-          "text": "家长愿意共同讨论并执行已经达成的行动。",
-          "dimension": "教育一致性",
-          "optionGroup": "AGREE_5",
-          "reverse": true
-        },
-        {
-          "text": "出现分歧后，家长仍愿意继续保持沟通。",
-          "dimension": "角色边界",
-          "optionGroup": "AGREE_5",
-          "reverse": true
-        },
-        {
-          "text": "家长表达不满时仍能保持基本尊重。",
-          "dimension": "沟通质量",
-          "optionGroup": "AGREE_5",
-          "reverse": true
-        },
-        {
-          "text": "家长能够区分事实、推测和情绪。",
-          "dimension": "沟通质量",
-          "optionGroup": "AGREE_5",
-          "reverse": true
-        },
-        {
-          "text": "家长没有出现威胁、公开抹黑或恶意维权行为。",
-          "dimension": "沟通质量",
-          "optionGroup": "AGREE_5",
-          "reverse": true
-        },
-        {
-          "text": "目前的关系可以承受一次坦诚而具体的讨论。",
-          "dimension": "角色边界",
-          "optionGroup": "AGREE_5",
-          "reverse": true
-        },
-        {
-          "text": "双方能够在情绪出现时暂停并回到问题解决。",
-          "dimension": "角色边界",
-          "optionGroup": "AGREE_5",
-          "reverse": true
-        },
-        {
-          "text": "过去的积极沟通经验仍能成为当前关系资源。",
-          "dimension": "角色边界",
-          "optionGroup": "AGREE_5",
-          "reverse": true
-        }
-      ]
-    },
-    {
-      "name": "家长分型与沟通策略评估",
-      "role": "深度诊断",
-      "shortName": "家长分型",
-      "description": "沟通质量维度偏高时才需要判断家长类型，否则不用做",
-      "minutes": 6,
-      "prerequisites": [
-        "家校沟通六维速查"
-      ],
-      "exclusives": [],
-      "triggerConditions": [
-        {
-          "targetType": "dimension",
-          "target": "沟通质量",
-          "comparator": "达到或超过",
-          "value": 3,
-          "join": "且"
-        },
-        {
-          "targetType": "average",
-          "target": "",
-          "comparator": "达到或超过",
-          "value": 3.2,
-          "join": "或"
-        }
-      ],
-      "triggerNote": "沟通质量维度偏高时才需要判断家长类型，否则不用做",
-      "applicableGrades": [],
-      "applicableSubjects": [],
-      "dimensionDefs": [
-        {
-          "name": "焦虑水平",
+          "name": "教育一致性",
           "calcMethod": "mean",
           "weight": 1,
-          "description": "焦虑水平维度",
-          "highInterpretation": "家长处于高焦虑，难以接收复杂信息",
-          "lowInterpretation": "情绪相对平稳"
-        },
-        {
-          "name": "控制倾向",
-          "calcMethod": "mean",
-          "weight": 1,
-          "description": "控制倾向维度",
-          "highInterpretation": "家长倾向于主导教育方式并质疑学校安排",
-          "lowInterpretation": "愿意接受学校专业判断"
+          "description": "价值观/规则协调：家校理念与规则是否一致、能否形成合力",
+          "highInterpretation": "教育理念与规则充分对齐，分歧先私下达成共识，家庭配合有可操作指引",
+          "lowInterpretation": "家校要求互相矛盾，家长在孩子面前否定教师，理念冲突导致学校安排无法落地",
+          "normMean": 4
         },
         {
           "name": "信任关系",
           "calcMethod": "mean",
           "weight": 1,
-          "description": "信任关系维度",
-          "highInterpretation": "对学校缺乏基本信任",
-          "lowInterpretation": "有较好的信任关系"
+          "description": "尊重/心理安全感：家长是否相信教师出于孩子利益做判断并履约",
+          "highInterpretation": "以小事守信积累信任，重大事项透明告知，冲突时先确认善意动机",
+          "lowInterpretation": "互相猜疑、任何举措都被解读为不怀好意，约定形同虚设，危机时对立激化",
+          "normMean": 4
+        },
+        {
+          "name": "参与效能",
+          "calcMethod": "mean",
+          "weight": 1,
+          "description": "实际效果与感知：家长配合能否转化为实际教育行动并见到效果",
+          "highInterpretation": "建议具体可执行有期限并约定反馈节点，对微小进步及时肯定，形成跟踪闭环",
+          "lowInterpretation": "口头答应但无行动，问题反复出现，配合缺乏持续性与闭环，教师单方面费力",
+          "normMean": 4
+        },
+        {
+          "name": "危机响应",
+          "calcMethod": "mean",
+          "weight": 1,
+          "description": "突发事件协同：危机时刻能否冷静理性配合处置、事后共同复盘",
+          "highInterpretation": "提前约定危机联络人与应急流程，危机中先共情给确定性再谈事实，事后共同复盘",
+          "lowInterpretation": "危机时情绪失控指责教师，拒绝配合处置或撒手不管，危机后无复盘、问题周期性重演",
+          "normMean": 4
         }
       ],
       "questions": [
         {
-          "text": "家长在沟通中反复确认同一件事。",
-          "dimension": "焦虑水平",
-          "optionGroup": "AGREE_5",
-          "reverse": true
+          "text": "我与这位家长能够顺畅、及时地交流孩子的在校情况",
+          "dimension": "沟通质量",
+          "optionGroup": "AGREE_5"
         },
         {
-          "text": "家长常在非工作时间发来紧急消息。",
-          "dimension": "焦虑水平",
-          "optionGroup": "AGREE_5",
-          "reverse": true
+          "text": "这位家长会主动向我反馈孩子在家中的表现与变化",
+          "dimension": "沟通质量",
+          "optionGroup": "AGREE_5"
         },
         {
-          "text": "家长会具体指定学校应该如何处理。",
-          "dimension": "控制倾向",
-          "optionGroup": "AGREE_5",
-          "reverse": true
+          "text": "我与这位家长沟通时氛围轻松，双方都能坦诚表达",
+          "dimension": "沟通质量",
+          "optionGroup": "AGREE_5"
         },
         {
-          "text": "家长对学校既有安排提出较多质疑。",
-          "dimension": "控制倾向",
-          "optionGroup": "AGREE_5",
-          "reverse": true
+          "text": "这位家长能够清晰表达自己对教育的期望与诉求",
+          "dimension": "沟通质量",
+          "optionGroup": "AGREE_5"
         },
         {
-          "text": "家长相信教师是出于孩子利益在做判断。",
+          "text": "当我有重要信息需要传达时，能够确保有效送达并得到确认",
+          "dimension": "沟通质量",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长能在合适的时间联系我，不打扰我的休息与非工作时间",
+          "dimension": "角色边界",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长尊重我在教学与班级事务上的专业主导权",
+          "dimension": "角色边界",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长能把握参与的尺度，不过度介入班级内部事务",
+          "dimension": "角色边界",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长与我的交往保持恰当的职业距离，不越界",
+          "dimension": "角色边界",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长理解并配合学校在家长群、家委会等渠道上的规则",
+          "dimension": "角色边界",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长认同并接纳学校的教育理念与要求",
+          "dimension": "教育一致性",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长尊重我的专业判断与教学决策",
+          "dimension": "教育一致性",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "即使存在分歧，这位家长也能配合执行学校的统一安排",
+          "dimension": "教育一致性",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长在孩子面前维护学校与教师的权威，不唱反调",
+          "dimension": "教育一致性",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长在家庭教育中能与学校要求保持一致、形成合力",
+          "dimension": "教育一致性",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "我信任这位家长在孩子教育上的判断力",
           "dimension": "信任关系",
-          "optionGroup": "AGREE_5",
-          "reverse": true
+          "optionGroup": "AGREE_5"
         },
         {
-          "text": "过去的沟通中，家长兑现过共同约定。",
+          "text": "我相信这位家长会履行与学校达成的约定",
           "dimension": "信任关系",
-          "optionGroup": "AGREE_5",
-          "reverse": true
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "我认为这位家长诚实可靠、言出必行",
+          "dimension": "信任关系",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "即使有分歧，我仍相信这位家长的出发点是为孩子好",
+          "dimension": "信任关系",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "我相信这位家长会优先把孩子利益放在首位",
+          "dimension": "信任关系",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "当我提出建议时，这位家长会积极回应而非敷衍",
+          "dimension": "参与效能",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长能将我的反馈转化为实际的教育行动",
+          "dimension": "参与效能",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "孩子出现问题时，这位家长能及时配合解决",
+          "dimension": "参与效能",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长重视并采纳我给出的教育建议",
+          "dimension": "参与效能",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长在家庭教育中的配合能见到实际改善效果",
+          "dimension": "参与效能",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "当孩子出现突发状况时，这位家长能保持冷静、理性沟通",
+          "dimension": "危机响应",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长在危机时刻愿意配合学校的处置安排",
+          "dimension": "危机响应",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长不会在危机中情绪化地指责或推诿责任",
+          "dimension": "危机响应",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长能在危机后与我共同复盘、落实预防措施",
+          "dimension": "危机响应",
+          "optionGroup": "AGREE_5"
+        },
+        {
+          "text": "这位家长信任学校在危机处理中的专业性，不激化矛盾",
+          "dimension": "危机响应",
+          "optionGroup": "AGREE_5"
+        }
+      ]
+    },
+    {
+      "name": "家校沟通红线检查",
+      "role": "红线检查",
+      "shortName": "红线检查",
+      "description": "按干预方案库 R1-R8 红线清单逐项勾选（否=0/是=1），任一命中即触发五级危机干预熔断：停止常规方案，转危机响应流程。",
+      "minutes": 2,
+      "prerequisites": [
+        "家校沟通六维评估"
+      ],
+      "exclusives": [],
+      "triggerConditions": [
+        {
+          "targetType": "average",
+          "target": "",
+          "comparator": "低于或等于",
+          "value": 4,
+          "join": "且"
+        }
+      ],
+      "triggerNote": "六维评估均分低于 4.0（出现风险迹象）时建议做红线检查，逐项核对 R 类红线；健康家庭可不做",
+      "applicableGrades": [],
+      "applicableSubjects": [],
+      "dimensionDefs": [
+        {
+          "name": "红线风险",
+          "calcMethod": "sum",
+          "weight": 1,
+          "description": "R1-R8 红线命中项数，任一命中即触发五级危机干预",
+          "highInterpretation": "命中红线项数越多，危机程度越高",
+          "lowInterpretation": "未命中任何红线"
+        }
+      ],
+      "questions": [
+        {
+          "text": "近期出现法律途径对抗（起诉、向主管部门举报等）",
+          "dimension": "红线风险",
+          "optionGroup": "YES_NO"
+        },
+        {
+          "text": "学生出现自伤倾向或相关风险信号",
+          "dimension": "红线风险",
+          "optionGroup": "YES_NO"
+        },
+        {
+          "text": "家长在公开媒体（网络平台、媒体等）发布攻击性内容",
+          "dimension": "红线风险",
+          "optionGroup": "YES_NO"
+        },
+        {
+          "text": "家校夹击导致学生出现严重适应障碍",
+          "dimension": "红线风险",
+          "optionGroup": "YES_NO"
+        },
+        {
+          "text": "家长对教师或学校人员发出人身安全威胁",
+          "dimension": "红线风险",
+          "optionGroup": "YES_NO"
+        },
+        {
+          "text": "家校沟通已完全断绝（沟通渠道全部失效）",
+          "dimension": "红线风险",
+          "optionGroup": "YES_NO"
+        },
+        {
+          "text": "家长提出强制转学或退学要求",
+          "dimension": "红线风险",
+          "optionGroup": "YES_NO"
+        },
+        {
+          "text": "多名家长联合对学校施压",
+          "dimension": "红线风险",
+          "optionGroup": "YES_NO"
         }
       ]
     }
   ],
   "attributions": [
     {
-      "name": "沟通冲突升级",
-      "description": "家长的表达方式已经越过基本尊重的边界，关系进入对抗状态。",
-      "highSign": "出现威胁、公开抹黑或恶意维权；沟通中反复攻击个人",
-      "typicalTrigger": "长期诉求未被回应，或某次事件处理让家长感到不被尊重",
-      "action": "不在情绪高点解释责任，先记录家长诉求、事实依据和待核实点，并上报年级组长",
-      "weight": 1.4,
+      "name": "沟通质量薄弱",
+      "description": "家校信息通道不畅：传递滞后或失真，重要事项无法及时触达家长，沟通氛围紧张、问题被掩盖。",
+      "highSign": "重要信息送达无确认；家长被动等待通知，缺乏主动反馈；双方回避或防御性表达",
+      "typicalTrigger": "缺少稳定固定的沟通渠道与联系节奏；教师很少主动发起正向沟通，只在出问题时联系",
+      "action": "建立每周固定反馈节奏，重要信息送达需家长确认；先做一次与问题无关的正向接触，再谈需要讨论的问题",
+      "weight": 1.1,
       "tags": [
         "home_school",
-        "conflict"
+        "communication"
       ]
     },
     {
-      "name": "角色边界不足",
-      "description": "当前关系无法承受一次坦诚而具体的讨论，需要先修复再沟通。",
-      "highSign": "一说具体问题就情绪激化；过去无积极沟通经验可调用",
-      "typicalTrigger": "缺少日常正向接触，只在出问题时联系",
-      "action": "本周主动做一次与问题无关的正向接触，只反馈孩子的一个具体进步",
-      "weight": 1.2,
+      "name": "角色边界问题",
+      "description": "家长越界或分工不明：非工作时间频繁打扰、过度介入班级事务、公开渠道发布越界言论，教师边界被持续侵蚀。",
+      "highSign": "非工作时间频繁联系；替教师做决策或过度参与教学；在家长群等公开空间发布越界言论",
+      "typicalTrigger": "开学初未约定沟通时段、渠道与响应预期；家校职责分工不清，家长焦虑驱动越界代劳",
+      "action": "与家长明确沟通时段、渠道与响应预期，厘清家校职责分工；越界时温和表达专业主导权，不越界也不让家长越界",
+      "weight": 1.1,
       "tags": [
         "home_school",
-        "container"
+        "boundary"
+      ]
+    },
+    {
+      "name": "教育一致性冲突",
+      "description": "家校理念与规则冲突：要求互相矛盾，孩子在两端被拉扯；家长在孩子面前否定教师，学校安排难以落地。",
+      "highSign": "家长在孩子面前唱反调；对学校既有安排公开质疑；理念分歧导致家庭配合缺位",
+      "typicalTrigger": "开学初未就教育理念、规则与期望对齐；分歧处理不当升级为公开否定",
+      "action": "出现分歧先私下沟通达成共识，再统一对孩子口径；为家长提供可操作的家庭配合指引，降低执行门槛",
+      "weight": 1,
+      "tags": [
+        "home_school",
+        "consistency"
+      ]
+    },
+    {
+      "name": "信任关系薄弱",
+      "description": "家长不相信教师出于孩子利益做判断：互相猜疑、任何举措都被解读为不怀好意，约定形同虚设，危机时对立激化。",
+      "highSign": "经常私下求证、预设恶意解读动机；家长不履约，约定形同虚设；任何建议都被质疑",
+      "typicalTrigger": "过往承诺未兑现或信息不透明；冲突中双方归因偏差，把对方行为往最坏方向解读",
+      "action": "选一件小事明确承诺并按时兑现，用可验证的行为重建信任；重大事项主动告知并说明缘由；冲突时先确认善意动机再处理问题",
+      "weight": 1.3,
+      "tags": [
+        "home_school",
+        "trust"
       ]
     },
     {
       "name": "参与效能不足",
-      "description": "家长未参与共同行动，导致校内措施缺少家庭侧的配合。",
-      "highSign": "不回消息、约定的事没有落实",
-      "typicalTrigger": "家长精力有限或不认同学校的处理方式",
-      "action": "把请求缩小到一个本周内能完成的具体动作，并明确完成后的反馈方式",
+      "description": "家长参与停留在口头：建议停留在纸面，问题反复出现，配合缺乏持续性与闭环，教师单方面费力难见效。",
+      "highSign": "口头答应但无行动；孩子问题反复出现；家长参与度低，约定难以落实",
+      "typicalTrigger": "建议大而泛、无期限无反馈节点；家长精力有限或对处理方式不认同",
+      "action": "把建议拆到一周内能完成的最小动作，明确做什么、什么时候、怎么反馈；对微小进步及时肯定，建立家校配合跟踪闭环",
       "weight": 1,
       "tags": [
         "home_school",
@@ -270,276 +390,561 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
       ]
     },
     {
-      "name": "家长焦虑过载",
-      "description": "家长处于高焦虑状态，难以接收和处理复杂信息。",
-      "highSign": "反复确认同一件事；非工作时间频繁发来紧急消息",
-      "typicalTrigger": "对孩子状况缺乏可控感，信息来源零散",
-      "action": "固定一个每周反馈时间点，让家长知道什么时候能拿到什么信息，减少不确定感",
-      "weight": 1.1,
+      "name": "危机响应风险",
+      "description": "危机协同能力不足：危机时情绪失控、指责推诿，拒绝配合处置或撒手不管，危机后无复盘、问题周期性重演，存在升级为 R 类红线（5级）的风险。",
+      "highSign": "危机时情绪化指责或推诿；拒绝配合处置；危机后不参与复盘、预防措施不落地",
+      "typicalTrigger": "未提前约定危机联络人与应急响应流程；家长对学校处置缺乏信任，危机中先对抗再沟通",
+      "action": "提前与家长约定危机联络人与应急响应流程；危机中先共情、给确定性再谈事实与方案；事后共同复盘并沉淀预防措施",
+      "weight": 1.3,
       "tags": [
         "home_school",
-        "anxiety"
-      ]
-    },
-    {
-      "name": "信任关系薄弱",
-      "description": "家长不相信教师是出于孩子利益在做判断，任何建议都会被质疑。",
-      "highSign": "对学校既有安排提出较多质疑；不认为教师站在孩子一边",
-      "typicalTrigger": "过往承诺未兑现或信息不透明",
-      "action": "选一件小事，明确承诺并按时兑现，用可验证的行为重建信任",
-      "weight": 1.2,
-      "tags": [
-        "home_school",
-        "trust"
+        "crisis"
       ]
     }
   ],
   "evidences": [
     {
-      "attribution": "沟通冲突升级",
-      "scale": "家校沟通六维速查",
+      "attribution": "沟通质量薄弱",
+      "scale": "家校沟通六维评估",
       "conditions": [
         {
           "targetType": "dimension",
           "target": "沟通质量",
-          "comparator": "达到或超过",
-          "value": 4,
+          "comparator": "低于或等于",
+          "value": 3,
           "join": "且"
         }
       ],
-      "weight": 3,
-      "description": "沟通质量维度处于高位，已出现越界表达"
+      "weight": 1,
+      "description": "沟通质量维度进入风险区间，信息通道不畅"
     },
     {
-      "attribution": "沟通冲突升级",
-      "scale": "家校沟通六维速查",
-      "conditions": [
-        {
-          "targetType": "question",
-          "target": "6",
-          "comparator": "达到或超过",
-          "value": 4,
-          "join": "且"
-        }
-      ],
-      "weight": 3,
-      "description": "出现威胁、公开抹黑或恶意维权行为"
-    },
-    {
-      "attribution": "沟通冲突升级",
-      "scale": "家校沟通六维速查",
+      "attribution": "沟通质量薄弱",
+      "scale": "家校沟通六维评估",
       "conditions": [
         {
           "targetType": "dimension",
           "target": "沟通质量",
-          "comparator": "达到或超过",
-          "value": 3,
-          "join": "且"
-        }
-      ],
-      "weight": 1,
-      "description": "沟通质量出现值得关注的变化"
-    },
-    {
-      "attribution": "角色边界不足",
-      "scale": "家校沟通六维速查",
-      "conditions": [
-        {
-          "targetType": "dimension",
-          "target": "角色边界",
-          "comparator": "达到或超过",
-          "value": 4,
-          "join": "且"
-        }
-      ],
-      "weight": 2.5,
-      "description": "角色边界无法承受坦诚讨论"
-    },
-    {
-      "attribution": "角色边界不足",
-      "scale": "家校沟通六维速查",
-      "conditions": [
-        {
-          "targetType": "dimension",
-          "target": "角色边界",
-          "comparator": "达到或超过",
-          "value": 3,
-          "join": "且"
-        }
-      ],
-      "weight": 1,
-      "description": "角色边界承载力下降"
-    },
-    {
-      "attribution": "参与效能不足",
-      "scale": "家校沟通六维速查",
-      "conditions": [
-        {
-          "targetType": "dimension",
-          "target": "参与效能",
-          "comparator": "达到或超过",
-          "value": 4,
-          "join": "且"
-        }
-      ],
-      "weight": 2.5,
-      "description": "参与效能维度处于高位，共同行动难以落实"
-    },
-    {
-      "attribution": "参与效能不足",
-      "scale": "家校沟通六维速查",
-      "conditions": [
-        {
-          "targetType": "dimension",
-          "target": "参与效能",
-          "comparator": "达到或超过",
-          "value": 3,
-          "join": "且"
-        }
-      ],
-      "weight": 1,
-      "description": "参与效能出现下降"
-    },
-    {
-      "attribution": "家长焦虑过载",
-      "scale": "家长分型与沟通策略评估",
-      "conditions": [
-        {
-          "targetType": "dimension",
-          "target": "焦虑水平",
-          "comparator": "达到或超过",
-          "value": 3.5,
-          "join": "且"
-        }
-      ],
-      "weight": 2.5,
-      "description": "家长焦虑水平偏高，难以处理复杂信息"
-    },
-    {
-      "attribution": "家长焦虑过载",
-      "scale": "家长分型与沟通策略评估",
-      "conditions": [
-        {
-          "targetType": "dimension",
-          "target": "焦虑水平",
-          "comparator": "达到或超过",
-          "value": 3,
-          "join": "且"
-        }
-      ],
-      "weight": 1,
-      "description": "家长出现焦虑信号"
-    },
-    {
-      "attribution": "信任关系薄弱",
-      "scale": "家长分型与沟通策略评估",
-      "conditions": [
-        {
-          "targetType": "dimension",
-          "target": "信任关系",
-          "comparator": "达到或超过",
-          "value": 3.5,
-          "join": "且"
-        }
-      ],
-      "weight": 2.5,
-      "description": "信任关系薄弱，建议先做信任修复"
-    },
-    {
-      "attribution": "沟通冲突升级",
-      "scale": "家长分型与沟通策略评估",
-      "conditions": [
-        {
-          "targetType": "dimension",
-          "target": "控制倾向",
-          "comparator": "达到或超过",
-          "value": 4,
+          "comparator": "低于或等于",
+          "value": 2,
           "join": "且"
         }
       ],
       "weight": 2,
-      "description": "控制倾向强且质疑较多，存在冲突升级风险"
+      "description": "沟通质量维度明显偏低，信息通道严重不畅"
     },
     {
-      "attribution": "信任关系薄弱",
-      "scale": "家长分型与沟通策略评估",
+      "attribution": "角色边界问题",
+      "scale": "家校沟通六维评估",
       "conditions": [
         {
           "targetType": "dimension",
-          "target": "信任关系",
-          "comparator": "达到或超过",
+          "target": "角色边界",
+          "comparator": "低于或等于",
           "value": 3,
           "join": "且"
         }
       ],
       "weight": 1,
-      "description": "信任关系需要巩固"
-    }
-  ],
-  "levels": [
+      "description": "角色边界维度进入风险区间，越界或分工不明"
+    },
     {
-      "name": "E 级保护通道",
-      "scale": "家校沟通六维速查",
+      "attribution": "角色边界问题",
+      "scale": "家校沟通六维评估",
       "conditions": [
         {
-          "targetType": "question",
-          "target": "6",
-          "comparator": "达到或超过",
-          "value": 4,
+          "targetType": "dimension",
+          "target": "角色边界",
+          "comparator": "低于或等于",
+          "value": 2,
           "join": "且"
         }
       ],
-      "redLine": true,
-      "redLineAction": "停止教师单独沟通，转入学校保护通道，全程留痕并由年级组长或校方介入",
-      "teacherMessage": "本次评估触发 E 级保护通道，核心问题是「${主要归因}」。请立即停止单独沟通，保存全部记录并当天上报年级组长，后续由学校层面承接。",
-      "resultNote": "出现威胁或恶意维权行为，已转入保护通道，请勿单独沟通。",
-      "escalationTarget": "年级组长/校方",
-      "notificationTemplate": "[班级]家校沟通触发 E 级保护通道，请勿让班主任单独沟通。"
+      "weight": 2,
+      "description": "角色边界维度明显偏低，越界持续或角色错乱"
     },
     {
-      "name": "D 级高冲突",
-      "scale": "家长分型与沟通策略评估",
+      "attribution": "教育一致性冲突",
+      "scale": "家校沟通六维评估",
       "conditions": [
         {
-          "targetType": "average",
-          "target": "",
-          "comparator": "达到或超过",
-          "value": 4,
-          "join": "且"
-        }
-      ],
-      "redLine": false,
-      "teacherMessage": "本次沟通风险等级为 D 级，主要归因是「${主要归因}」，同时需关注「${次要归因}」。建议由年级组长陪同沟通并全程留痕。",
-      "resultNote": "家长分型显示焦虑或控制倾向偏高、信任关系薄弱，建议由年级组长陪同沟通。",
-      "escalationCondition": "连续两次 D 级",
-      "escalationTarget": "年级组长",
-      "reAssessTrigger": "7天后复评"
-    },
-    {
-      "name": "C 级需谨慎",
-      "scale": "家长分型与沟通策略评估",
-      "conditions": [
-        {
-          "targetType": "average",
-          "target": "",
-          "comparator": "达到或超过",
+          "targetType": "dimension",
+          "target": "教育一致性",
+          "comparator": "低于或等于",
           "value": 3,
           "join": "且"
         }
       ],
+      "weight": 1,
+      "description": "教育一致性维度进入风险区间，理念或规则出现冲突"
+    },
+    {
+      "attribution": "教育一致性冲突",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "教育一致性",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "且"
+        }
+      ],
+      "weight": 2,
+      "description": "教育一致性维度明显偏低，理念深层冲突或公开否定"
+    },
+    {
+      "attribution": "信任关系薄弱",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "信任关系",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "且"
+        }
+      ],
+      "weight": 1,
+      "description": "信任关系维度进入风险区间，信任开始动摇"
+    },
+    {
+      "attribution": "信任关系薄弱",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "信任关系",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "且"
+        }
+      ],
+      "weight": 2,
+      "description": "信任关系维度明显偏低，信任崩塌、预设恶意"
+    },
+    {
+      "attribution": "参与效能不足",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "参与效能",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "且"
+        }
+      ],
+      "weight": 1,
+      "description": "参与效能维度进入风险区间，共同行动难以落实"
+    },
+    {
+      "attribution": "参与效能不足",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "参与效能",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "且"
+        }
+      ],
+      "weight": 2,
+      "description": "参与效能维度明显偏低，参与产生负效应"
+    },
+    {
+      "attribution": "危机响应风险",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "危机响应",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "且"
+        }
+      ],
+      "weight": 1,
+      "description": "危机响应维度进入风险区间，危机协同能力不足"
+    },
+    {
+      "attribution": "危机响应风险",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "危机响应",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "且"
+        }
+      ],
+      "weight": 2,
+      "description": "危机响应维度明显偏低，危机中对抗或推诿、存在升级红线风险"
+    }
+  ],
+  "levels": [
+    {
+      "name": "5级·极重（危机干预）",
+      "scale": "家校沟通红线检查",
+      "conditions": [
+        {
+          "targetType": "question",
+          "target": "1",
+          "comparator": "达到或超过",
+          "value": 1,
+          "join": "或"
+        },
+        {
+          "targetType": "question",
+          "target": "2",
+          "comparator": "达到或超过",
+          "value": 1,
+          "join": "或"
+        },
+        {
+          "targetType": "question",
+          "target": "3",
+          "comparator": "达到或超过",
+          "value": 1,
+          "join": "或"
+        },
+        {
+          "targetType": "question",
+          "target": "4",
+          "comparator": "达到或超过",
+          "value": 1,
+          "join": "或"
+        },
+        {
+          "targetType": "question",
+          "target": "5",
+          "comparator": "达到或超过",
+          "value": 1,
+          "join": "或"
+        },
+        {
+          "targetType": "question",
+          "target": "6",
+          "comparator": "达到或超过",
+          "value": 1,
+          "join": "或"
+        },
+        {
+          "targetType": "question",
+          "target": "7",
+          "comparator": "达到或超过",
+          "value": 1,
+          "join": "或"
+        },
+        {
+          "targetType": "question",
+          "target": "8",
+          "comparator": "达到或超过",
+          "value": 1,
+          "join": "或"
+        }
+      ],
+      "redLine": true,
+      "redLineAction": "班主任不再单独面对家长，只做信息汇总；保护学生与教师安全，控制信息传播；必要时联系法律顾问或警方",
+      "teacherMessage": "本次评估触发 5 级·极重（危机干预）：R 类红线已命中，核心风险是「${主要归因}」。请立即启动危机响应组——校长/分管校长指挥，德育主任现场协调，心理团队全员介入；班主任不再单独面对家长，只做信息汇总；遵守不独处、全留痕、不升级三原则，保护安全优先、控制损害，必要时联系法律顾问或警方。",
+      "resultNote": "R 类红线命中，已熔断转五级危机干预：保护安全优先，控制损害，班主任不单独应对。",
+      "escalationTarget": "校长/分管校长（全系统应急响应）",
+      "notificationTemplate": "[班级]家校沟通触发 5 级危机干预（R 类红线命中），班主任停止单独沟通，启动全系统应急响应。",
+      "interventionTools": [
+        "E 级保护通道操作卡"
+      ],
+      "interventionActions": [
+        "停止教师单独沟通，班主任只做信息汇总",
+        "保护学生与教师安全，控制信息传播",
+        "全程留痕，必要时联系法律顾问或警方"
+      ]
+    },
+    {
+      "name": "4级·重度（强化干预）",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "沟通质量",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "角色边界",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "教育一致性",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "信任关系",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "参与效能",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "危机响应",
+          "comparator": "低于或等于",
+          "value": 2,
+          "join": "或"
+        },
+        {
+          "targetType": "average",
+          "target": "",
+          "comparator": "低于或等于",
+          "value": 2.5,
+          "join": "或"
+        }
+      ],
       "redLine": false,
-      "teacherMessage": "本次评估提示沟通存在明显阻力，核心变量是「${主要归因}」。处理重点不是先说服家长，而是先稳住情绪和事实边界，再决定沟通节奏。",
-      "resultNote": "家长分型提示沟通存在明显阻力，先稳住情绪和事实边界再决定节奏。",
-      "escalationCondition": "连续两次 C 级",
+      "teacherMessage": "本次评估判为 4 级·重度（强化干预），主要归因是「${主要归因}」。请组建强化干预组：心理团队+德育主任+管理层多方协作，班主任作为信息枢纽但不再单独面对家长；每周一次多方协作会，BPS 深度归因并形成家校关系诊断报告，班主任容器状态纳入评估；全程留痕。",
+      "resultNote": "多维度进入重度风险（4级），强化干预组接管：班主任不再单独应对，多方协作全程留痕。",
+      "escalationCondition": "出现 R 类红线或连续两次 4 级",
+      "escalationTarget": "德育主任/管理层",
+      "reAssessTrigger": "2周后六维复评",
+      "interventionTools": [
+        "沟通容器修复计划",
+        "事实边界记录表"
+      ],
+      "interventionActions": [
+        "组建强化干预组（心理团队+德育主任+管理层），班主任不再单独面对家长",
+        "每周一次多方协作会，产出家校关系诊断报告",
+        "全程留痕，班主任容器状态每周评估"
+      ]
+    },
+    {
+      "name": "3级·中度（定向干预）",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "沟通质量",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "角色边界",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "教育一致性",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "信任关系",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "参与效能",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "危机响应",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "或"
+        },
+        {
+          "targetType": "average",
+          "target": "",
+          "comparator": "低于或等于",
+          "value": 3,
+          "join": "或"
+        }
+      ],
+      "redLine": false,
+      "teacherMessage": "本次评估判为 3 级·中度（定向干预），主要归因是「${主要归因}」。由心理教师主导专业介入，班主任负责日常执行，年级组长协调资源：先做 BPS 归因和容器评估，再走信任修复；处理重点不是先说服家长，而是先稳住情绪和事实边界。",
+      "resultNote": "多维度进入中度风险（3级），心理教师+班主任+年级组长三方协同定向干预。",
+      "escalationCondition": "连续两次 3 级或出现 O 类叠加",
+      "escalationTarget": "心理教师/年级组长",
+      "reAssessTrigger": "2周后六维复评",
+      "interventionTools": [
+        "先跟后带话术卡",
+        "定期反馈节奏表"
+      ],
+      "interventionActions": [
+        "心理教师主导 BPS 归因并评估容器状态，班主任提供日常观察数据",
+        "由年级组长陪同完成一次家校沟通并记录沟通纪要",
+        "每周固定反馈节奏，稳定信息通道"
+      ]
+    },
+    {
+      "name": "2级·轻度（普及干预）",
+      "scale": "家校沟通六维评估",
+      "conditions": [
+        {
+          "targetType": "dimension",
+          "target": "沟通质量",
+          "comparator": "低于或等于",
+          "value": 4,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "角色边界",
+          "comparator": "低于或等于",
+          "value": 4,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "教育一致性",
+          "comparator": "低于或等于",
+          "value": 4,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "信任关系",
+          "comparator": "低于或等于",
+          "value": 4,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "参与效能",
+          "comparator": "低于或等于",
+          "value": 4,
+          "join": "或"
+        },
+        {
+          "targetType": "dimension",
+          "target": "危机响应",
+          "comparator": "低于或等于",
+          "value": 4,
+          "join": "或"
+        },
+        {
+          "targetType": "average",
+          "target": "",
+          "comparator": "低于或等于",
+          "value": 3.6,
+          "join": "或"
+        }
+      ],
+      "redLine": false,
+      "teacherMessage": "本次评估判为 2 级·轻度（普及干预），主要归因是「${主要归因}」。由班主任主导、年级组长支持：明确家校分工，用针对性沟通调整策略，修补信任小缺口；建立每周反馈节奏，跟进约定履行情况。",
+      "resultNote": "家校关系出现轻度磨损（2级），班主任主导+年级组长支持，针对性沟通调整策略。",
+      "escalationCondition": "连续两次 2 级或出现 O 类触发",
       "escalationTarget": "年级组长",
-      "reAssessTrigger": "14天后复评"
+      "reAssessTrigger": "4周后六维复评",
+      "interventionTools": [
+        "最小请求约定法",
+        "承诺兑现清单"
+      ],
+      "interventionActions": [
+        "明确家校分工并签署三方协议，年级组长见证",
+        "两周内完成一次针对性沟通，修补信任小缺口",
+        "建立每周反馈节奏，跟进约定履行情况"
+      ]
+    },
+    {
+      "name": "红线检查通过",
+      "scale": "家校沟通红线检查",
+      "conditions": [
+        {
+          "targetType": "question",
+          "target": "1",
+          "comparator": "低于或等于",
+          "value": 0,
+          "join": "且"
+        },
+        {
+          "targetType": "question",
+          "target": "2",
+          "comparator": "低于或等于",
+          "value": 0,
+          "join": "且"
+        },
+        {
+          "targetType": "question",
+          "target": "3",
+          "comparator": "低于或等于",
+          "value": 0,
+          "join": "且"
+        },
+        {
+          "targetType": "question",
+          "target": "4",
+          "comparator": "低于或等于",
+          "value": 0,
+          "join": "且"
+        },
+        {
+          "targetType": "question",
+          "target": "5",
+          "comparator": "低于或等于",
+          "value": 0,
+          "join": "且"
+        },
+        {
+          "targetType": "question",
+          "target": "6",
+          "comparator": "低于或等于",
+          "value": 0,
+          "join": "且"
+        },
+        {
+          "targetType": "question",
+          "target": "7",
+          "comparator": "低于或等于",
+          "value": 0,
+          "join": "且"
+        },
+        {
+          "targetType": "question",
+          "target": "8",
+          "comparator": "低于或等于",
+          "value": 0,
+          "join": "且"
+        }
+      ],
+      "redLine": false,
+      "teacherMessage": "红线检查未命中任何 R 类红线，当前未发现需要危机干预的信号，可按常规节奏继续家校沟通；保持留痕与定期评估，出现红线信号时立即复评。",
+      "resultNote": "R1-R8 红线全部未命中，未触发危机熔断。",
+      "escalationCondition": "任一 R 类红线命中",
+      "escalationTarget": "危机响应组（全系统应急）",
+      "reAssessTrigger": "出现红线信号时立即复评"
     }
   ],
   "tools": [
     {
       "name": "先跟后带话术卡",
       "attributions": [
-        "角色边界不足"
+        "角色边界问题"
       ],
       "whenToUse": "家长有情绪但尚未升级，需要先稳住关系",
       "steps": [
@@ -592,7 +997,7 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
     {
       "name": "事实边界记录表",
       "attributions": [
-        "沟通冲突升级"
+        "沟通质量薄弱"
       ],
       "whenToUse": "沟通开始出现指责和归因争议时",
       "steps": [
@@ -646,7 +1051,7 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
     {
       "name": "沟通容器修复计划",
       "attributions": [
-        "角色边界不足"
+        "角色边界问题"
       ],
       "whenToUse": "关系只在出问题时才联系，缺少正向经验",
       "steps": [
@@ -746,13 +1151,13 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
       "preparation": "准备记录表",
       "materials": "记录表",
       "outcomeIndicator": "连续两周完成约定",
-      "failureCriteria": "连续两次未完成（改用 HS_RX_003）",
+      "failureCriteria": "连续两次未完成（改用承诺兑现清单）",
       "contraindications": []
     },
     {
       "name": "定期反馈节奏表",
       "attributions": [
-        "家长焦虑过载"
+        "信任关系薄弱"
       ],
       "whenToUse": "家长反复确认同一件事、非工作时间频繁联系",
       "steps": [
@@ -788,7 +1193,7 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
       "outputArtifact": "一次执行记录",
       "collaborativeTools": [],
       "dimensions": [
-        "焦虑水平"
+        "沟通质量"
       ],
       "reAssessmentIntervalDays": 30,
       "evidenceSource": "家校沟通实务手册 第7章",
@@ -858,7 +1263,7 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
     {
       "name": "E 级保护通道操作卡",
       "attributions": [
-        "沟通冲突升级"
+        "危机响应风险"
       ],
       "whenToUse": "家长出现威胁、公开抹黑或恶意维权",
       "steps": [
@@ -931,7 +1336,7 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
       ],
       "exclude": [],
       "category": "冲突升级",
-      "scale": "家校沟通六维速查",
+      "scale": "家校沟通红线检查",
       "tool": "E 级保护通道操作卡",
       "matchMode": "exact",
       "risk": "red",
@@ -949,7 +1354,7 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
       ],
       "exclude": [],
       "category": "配合不足",
-      "scale": "家校沟通六维速查",
+      "scale": "家校沟通六维评估",
       "tool": "最小请求约定法",
       "matchMode": "fuzzy",
       "risk": "yellow",
@@ -966,7 +1371,7 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
       ],
       "exclude": [],
       "category": "焦虑过载",
-      "scale": "家长分型与沟通策略评估",
+      "scale": "家校沟通六维评估",
       "tool": "定期反馈节奏表",
       "matchMode": "fuzzy",
       "risk": "yellow",
@@ -984,13 +1389,13 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
       ],
       "exclude": [],
       "category": "信任薄弱",
-      "scale": "家长分型与沟通策略评估",
+      "scale": "家校沟通六维评估",
       "tool": "承诺兑现清单",
       "matchMode": "fuzzy",
       "risk": "orange",
       "description": "家校信任关系薄弱"
     }
   ],
-  "defaultLevelName": "A 级常规沟通",
-  "defaultMessage": "当前家校关系状况良好，可按常规节奏沟通。保持日常的正向接触，让角色边界持续有储备。"
+  "defaultLevelName": "1级·关注（基础预防）",
+  "defaultMessage": "当前家校关系处于 1 级·关注水平：六维度均分健康，未触发分级干预，未命中 R 类红线。保持基础预防——每周固定反馈、主动分享正面信息、及时回应；每月做一次沟通质量自检，出现红线信号时立即复评。"
 }

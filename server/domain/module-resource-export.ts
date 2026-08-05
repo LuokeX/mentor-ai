@@ -231,7 +231,8 @@ function exportAttribution(payload: any): { sheetName: string; headers: string[]
     rule.escalationTarget || '',
     rule.reEvaluationTrigger || '',
     listStr(rule.interventionTools),
-    listStr(rule.interventionActions),
+    // 干预动作与导入端 splitActions 对齐：只按分号/换行分割（动作文案里常见中文逗号）
+    Array.isArray(rule.interventionActions) ? rule.interventionActions.map(String).join('；') : '',
     rule.sourceRef || '',
   ])
   sheets.push({ sheetName: '⑤e 分级规则', headers: gradingHeaders, rows: gradingRows })

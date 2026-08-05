@@ -17,6 +17,7 @@ import { parseStandardToolFile } from '../scripts/import-business-data/transform
 import { parseKeywordRouteFile } from '../scripts/import-business-data/transformers/keyword-route'
 import { parseOutputTemplateFile } from '../scripts/import-business-data/transformers/output-template'
 import { checkCrossReferences } from '../server/domain/module-resource-cross-ref'
+import { allowedAnswerValues, type AnswerableQuestion } from '../server/domain/assessment-answers'
 import { executeRules } from '../server/domain/rules-executor'
 import { scoreTools } from '../server/domain/plan-actions'
 import { createTemplateAssessmentReport } from '../server/domain/reports'
@@ -38,13 +39,18 @@ function load(module: ModuleId) {
   }
 }
 
-/** 穷举作答样本：全低、全中、全高，加上固定种子的伪随机样本 */
-function sampleAnswers(questions: Array<{ id: string }>, seed: number) {
+/**
+ * 穷举作答样本：全低、全中、全高，加上固定种子的伪随机样本。
+ * 采样按每题的合法值域进行（allowedAnswerValues），兼容 0/1 二值红线量表，
+ * 否则 1..5 硬编码会让「红线检查」这类量表整张越界。
+ */
+function sampleAnswers(questions: AnswerableQuestion[], seed: number) {
   const out: Record<string, number> = {}
   let state = seed
   for (const q of questions) {
     state = (state * 1103515245 + 12345) % 2147483648
-    out[q.id] = 1 + (state % 5)
+    const values = allowedAnswerValues(q)
+    out[q.id] = values[state % values.length]!
   }
   return out
 }
@@ -156,8 +162,15 @@ describe.each(MODULES)('三库链路 — %s', (module) => {
   it('每张量表都能跑完引擎并渲染出报告', () => {
     const data = load(module)
     for (const definition of data.assessments) {
-      for (const value of [1, 3, 5]) {
-        const answers = Object.fromEntries(definition.questions.map(q => [q.id, value]))
+      // 按每题的合法值域取低/中/高三档（0/1 二值量表自动落到 0/1）
+      for (const pick of ['min', 'mid', 'max'] as const) {
+        const answers = Object.fromEntries(definition.questions.map(q => {
+          const values = allowedAnswerValues(q)
+          const value = pick === 'min' ? values[0]!
+            : pick === 'max' ? values[values.length - 1]!
+              : values[Math.floor((values.length - 1) / 2)]!
+          return [q.id, value]
+        }))
         const result = executeRules(data.attribution, answers, definition)
         expect(() => createTemplateAssessmentReport({ module, result })).not.toThrow()
       }
