@@ -26,11 +26,11 @@ const sizeOptions = ALLOWED_PAGE_SIZES.map((s) => ({ label: `${s} 条/页`, valu
         @update:model-value="(v: 20 | 50 | 100) => emit('update:pageSize', v)"
       />
       <UPagination
-        :model-value="page"
+        :page="page"
         :total="total"
-        :page-size="pageSize"
+        :items-per-page="pageSize"
         size="sm"
-        @update:model-value="(v: number) => emit('update:page', v)"
+        @update:page="(v: number) => emit('update:page', v)"
       />
     </div>
   </div>

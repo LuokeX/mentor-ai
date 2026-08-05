@@ -103,7 +103,7 @@ const router = useRouter()
       </template>
       <template #module-data="{ row }">{{ moduleTitle(row.module) }}</template>
       <template #status-data="{ row }">
-        <UBadge :color="STATUS_COLOR[row.status] || 'neutral'" variant="subtle" size="xs">
+        <UBadge :color="STATUS_COLOR[row.status] || 'neutral'" variant="soft" size="md">
           {{ STATUS_TEXT[row.status] || row.status }}
         </UBadge>
       </template>

@@ -45,6 +45,7 @@ export default defineEventHandler(async (event) => {
       return {
         assessedAt: a.submittedAt?.toISOString() ?? null,
         levelName: r.levelName || r.level || null,
+        primaryAttribution: r.primaryAttribution || null,
         dimensions: (r.dimensions ?? {}) as Record<string, number>
       }
     })

@@ -179,12 +179,19 @@ export default defineEventHandler(async (event) => {
     const matchedToolCodes = planTools
       .map(tool => (tool as { code?: string }).code)
       .filter((item): item is string => Boolean(item))
-    // 方案标题可读化：对象（家长优先于学生）+ 模块 + 等级短名 + 主归因；匿名评估省略对象段
-    const levelShort = (result.levelName || '').split('（')[0]
+    // 方案标题：对象 ｜ 模块 ｜ 等级（含干预类型）｜ 归因（主+次）｜ 工具数 ｜ 方案
+    // 等级为空时用严重度兜底（低/中/高/危机），无归因省略归因段，无工具省略工具数段
+    const severityLabel = ({ low: '低', medium: '中', high: '高', crisis: '危机' } as Record<string, string>)[result.severity || ''] || ''
+    const levelText = result.levelName || (severityLabel ? `${severityLabel}风险` : '')
+    const attributionText = [result.primaryAttribution, ...result.secondaryAttributions].filter(Boolean).join('、')
     const title = [
       guardianName || studentName,
-      `${moduleMeta[module].title} ${levelShort}${result.primaryAttribution ? `（${result.primaryAttribution}）` : ''}方案`
-    ].filter(Boolean).join(' · ')
+      moduleMeta[module].title,
+      levelText,
+      attributionText || undefined,
+      planTools.length ? `${planTools.length} 个工具` : undefined,
+      '方案'
+    ].filter(Boolean).join(' ｜ ')
     const [plan] = await db.insert(schema.plans).values({
       schoolId: user.schoolId, ownerUserId: user.id, module,
       studentId: body.studentId,

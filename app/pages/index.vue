@@ -801,9 +801,12 @@ onUnmounted(() => {
             <NuxtLink to="/notifications?tab=action" class="text-xs font-medium text-emerald-600 transition hover:text-emerald-800">查看全部</NuxtLink>
           </div>
           <div class="mt-4 flex-1 space-y-2">
-            <NuxtLink v-for="action in today.actions.slice(0, 4)" :key="action.id" :to="`/information/plans/${action.planId}`" class="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-emerald-200 hover:bg-emerald-50/50">
-              <span class="min-w-0 truncate"><strong>{{ action.title }}</strong><small class="ml-1.5 text-slate-400">{{ action.planTitle }}</small></span>
-              <UBadge :color="action.overdue ? 'error' : 'neutral'" variant="soft" class="shrink-0">{{ action.overdue ? '已逾期' : '今日' }}</UBadge>
+            <NuxtLink v-for="action in today.actions.slice(0, 4)" :key="action.id" :to="`/information/plans/${action.planId}`" class="flex flex-col gap-1.5 rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-emerald-200 hover:bg-emerald-50/50">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-medium text-slate-500">{{ (moduleMeta as Record<string, { title: string }>)[action.planModule]?.title || '' }}</span>
+                <UBadge :color="action.overdue ? 'error' : 'neutral'" variant="soft" size="xs">{{ action.overdue ? '已逾期' : '今日' }}</UBadge>
+              </div>
+              <p class="line-clamp-2 text-sm leading-5 text-slate-700">{{ action.detail }}</p>
             </NuxtLink>
             <p v-if="!today.actions.length" class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-sm text-slate-400">暂无到期动作</p>
           </div>

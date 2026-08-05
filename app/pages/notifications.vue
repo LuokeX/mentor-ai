@@ -104,8 +104,9 @@ const actionEvents = computed<CenterEvent[]>(() => (workbench.value?.actions || 
   kind: 'action',
   priority: item.overdue ? 'P1' : 'P2',
   stage: item.status === 'in_progress' ? 'doing' : 'todo',
-  title: item.title,
-  body: `${item.planTitle} · ${item.detail}`,
+  // 用 action detail 做主标题（真正要做什么），而非抽象的 "针对「xxx」"
+  title: item.detail,
+  body: (moduleMeta as Record<string, { title: string }>)[item.planModule]?.title || item.planTitle || '',
   nextStep: item.overdue ? '该动作已逾期，建议先完成或进入方案调整后续安排。' : '按方案完成该动作，完成后在这里标记闭环。',
   time: item.dueAt,
   urgent: item.overdue,
@@ -369,9 +370,8 @@ async function handlePrimary(eventItem: CenterEvent) {
           </div>
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
-              <UBadge :color="priorityMeta[item.priority].color" variant="soft">{{ priorityMeta[item.priority].label }}</UBadge>
+              <UBadge v-if="item.urgent" color="error" variant="soft">逾期</UBadge>
               <UBadge :color="kindMeta[item.kind].color" variant="soft">{{ kindMeta[item.kind].label }}</UBadge>
-              <UBadge :color="stageMeta[item.stage].color" variant="soft">{{ stageMeta[item.stage].label }}</UBadge>
               <span class="text-xs text-slate-400">{{ formatTime(item.time) }}</span>
             </div>
             <h2 class="mt-2 font-semibold text-slate-900">{{ item.title }}</h2>

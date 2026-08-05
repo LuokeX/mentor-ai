@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
     db.select({ id: schema.assessmentAttempts.id, module: schema.assessmentAttempts.module, answers: schema.assessmentAttempts.answers, updatedAt: schema.assessmentAttempts.updatedAt })
       .from(schema.assessmentAttempts).where(and(eq(schema.assessmentAttempts.ownerUserId, user.id), eq(schema.assessmentAttempts.status, 'draft')))
       .orderBy(desc(schema.assessmentAttempts.updatedAt)).limit(50),
-    db.select({ action: schema.planActions, planTitle: schema.plans.title }).from(schema.planActions)
+    db.select({ action: schema.planActions, planTitle: schema.plans.title, planModule: schema.plans.module }).from(schema.planActions)
       .innerJoin(schema.plans, eq(schema.planActions.planId, schema.plans.id)).where(and(
         eq(schema.planActions.ownerUserId, user.id),
         inArray(schema.planActions.status, ['pending', 'in_progress']),

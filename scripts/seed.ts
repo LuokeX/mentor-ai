@@ -87,8 +87,8 @@ if (teacherLi && teacherZhang) {
     return row
   }
 
-  async function ensureStudentGuardian(studentId: string, guardianId: string) {
-    await db.insert(studentGuardians).values({ studentId, guardianId }).onConflictDoNothing()
+  async function ensureStudentGuardian(studentId: string, guardianId: string, schoolId: string) {
+    await db.insert(studentGuardians).values({ studentId, guardianId, schoolId }).onConflictDoNothing()
   }
 
   async function ensureCommunication(input: {
@@ -131,7 +131,7 @@ if (teacherLi && teacherZhang) {
   for (const item of demoStudents) {
     const student = await ensureStudent(item)
     const guardian = await ensureGuardian({ ...item.guardian, ownerUserId: item.ownerUserId })
-    await ensureStudentGuardian(student.id, guardian.id)
+    await ensureStudentGuardian(student.id, guardian.id, school.id)
     await ensureCommunication({
       ownerUserId: item.ownerUserId,
       studentId: student.id,
