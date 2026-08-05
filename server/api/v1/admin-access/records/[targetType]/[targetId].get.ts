@@ -19,23 +19,21 @@ export default defineEventHandler(async (event) => {
   if (targetType === 'teacher_profile') {
     const [profile] = await db.select({ id: schema.users.id, schoolId: schema.users.schoolId, name: schema.users.name, email: schema.users.email, role: schema.users.role, status: schema.users.status, lastLoginAt: schema.users.lastLoginAt, createdAt: schema.users.createdAt }).from(schema.users).where(and(eq(schema.users.id, targetId), eq(schema.users.role, 'teacher'), eq(schema.users.schoolId, grant.schoolId))).limit(1)
     if (!profile) throw createError({ statusCode: 404, message: '教师不存在' })
-    const [assessments, conversations, cases, communicationRows, planRows, planReviewRows] = await Promise.all([
+    const [assessments, conversations, communicationRows, planRows, planReviewRows] = await Promise.all([
       db.select().from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.ownerUserId, targetId)).orderBy(desc(schema.assessmentAttempts.createdAt)).limit(50),
       db.select({ id: schema.chatSessions.id, title: schema.chatSessions.title, status: schema.chatSessions.status, createdAt: schema.chatSessions.createdAt }).from(schema.chatSessions).where(eq(schema.chatSessions.ownerUserId, targetId)).orderBy(desc(schema.chatSessions.createdAt)).limit(50),
-      db.select().from(schema.moduleCases).where(eq(schema.moduleCases.ownerUserId, targetId)).orderBy(desc(schema.moduleCases.createdAt)).limit(50),
       db.select().from(schema.communications).where(eq(schema.communications.ownerUserId, targetId)).orderBy(desc(schema.communications.createdAt)).limit(50),
       db.select().from(schema.plans).where(eq(schema.plans.ownerUserId, targetId)).orderBy(desc(schema.plans.createdAt)).limit(50),
       db.select().from(schema.planReviews).where(eq(schema.planReviews.ownerUserId, targetId)).orderBy(desc(schema.planReviews.reviewAt)).limit(200)
     ])
     record = {
       profile, assessments, conversations,
-      cases: cases.map(row => ({ ...row, description: decryptSensitive(row.descriptionEnc, secret), descriptionEnc: undefined })),
       communications: communicationRows.map(row => ({ ...row, summary: decryptSensitive(row.summaryEnc, secret), summaryEnc: undefined })),
       plans: planRows.map(row => ({ ...row, summary: decryptSensitive(row.summaryEnc, secret), summaryEnc: undefined })),
       planReviews: planReviewRows,
       page: { limitPerCollection: 50, truncated: true }
     }
-    fields = ['profile', 'assessments', 'conversations', 'cases', 'communications', 'plans', 'planReviews']
+    fields = ['profile', 'assessments', 'conversations', 'communications', 'plans', 'planReviews']
   } else if (targetType === 'assessment') {
     record = (await db.select().from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.id, targetId)).limit(1))[0]
     fields = ['answers', 'result', 'module', 'submittedAt']
@@ -45,9 +43,8 @@ export default defineEventHandler(async (event) => {
     record = { session, messages: messages.map(row => ({ role: row.role, content: decryptSensitive(row.contentEnc, secret), metadata: row.metadata, createdAt: row.createdAt })) }
     fields = ['session', 'messages']
   } else if (targetType === 'student_case') {
-    const row = (await db.select().from(schema.moduleCases).where(eq(schema.moduleCases.id, targetId)).limit(1))[0]
-    record = row ? { ...row, description: decryptSensitive(row.descriptionEnc, secret), descriptionEnc: undefined } : null
-    fields = ['classification', 'description', 'status']
+    // module_cases 已删除：存量授权记录无对应数据，统一按不存在处理
+    record = null
   } else if (targetType === 'guardian_communication') {
     const row = (await db.select().from(schema.communications).where(eq(schema.communications.id, targetId)).limit(1))[0]
     record = row ? { ...row, summary: decryptSensitive(row.summaryEnc, secret), summaryEnc: undefined } : null
