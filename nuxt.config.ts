@@ -1,9 +1,12 @@
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-01',
   devtools: { enabled: true },
-  devServer: { host: '0.0.0.0', port: 3300 },
+  devServer: { host: '0.0.0.0', port: 3301 },
   modules: [['@nuxt/ui', { fonts: false }]],
   ui: { fonts: false },
+  // 强制浅色：项目未实现夜间主题样式，跟随系统会在暗色系统下出现组件暗、页面浅的混搭。
+  // storageKey 换新键：旧键残留的 'system' 会覆盖 preference，导致存量浏览器仍然跟随系统。
+  colorMode: { preference: 'light', fallback: 'light', storageKey: 'mentor-ai-color-mode' },
   // 目录名不参与组件名：management/TableToolbar.vue 直接以 <TableToolbar> 使用。
   components: [{ path: '~/components', pathPrefix: false }],
   css: ['~/assets/css/main.css'],
