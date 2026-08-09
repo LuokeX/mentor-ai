@@ -11,7 +11,7 @@ export const severitySchema = z.enum(['low', 'medium', 'high', 'crisis'])
 export type Severity = z.infer<typeof severitySchema>
 export const libraryTypeSchema = z.enum(['assessment', 'attribution', 'tool', 'output_template', 'keyword_route'])
 export const moduleResourceScopeSchema = z.enum(['global', 'school'])
-export const resourceStatusSchema = z.enum(['draft', 'published', 'retired'])
+export const resourceStatusSchema = z.enum(['draft', 'published', 'retired', 'pending_review'])
 export const managedRecordStatusSchema = z.enum(['active', 'archived', 'transferred', 'graduated'])
 export const departmentTypeSchema = z.enum(['administration', 'grade_group', 'subject_group', 'student_support', 'other'])
 export const delegatedManagementScopeSchema = z.enum(['users', 'teachers', 'departments', 'classes', 'students', 'guardians'])
@@ -97,18 +97,30 @@ export const moduleResourceDocumentImportSchema = moduleResourceDocumentImportSc
   versionId: z.string().uuid().optional()
 })
 
-export const moduleResourceFileImportSchema = z.object({
-  libraryId: z.string().uuid().optional(),
-  module: moduleIdSchema,
+/**
+ * 整套导入（批量）：一次上传全部 5 个库文件（量表/归因/工具/输出模板/关键词路由），
+ * 同一版本号（必须 x.y.z 格式且不与系统已有版本重复），上传的库之间互相校验，
+ * 全部通过后一起写入。单库导入已移除。
+ *
+ * 版本号是真实发布版本而非标签：格式严格、全模块范围内唯一，
+ * 保证「同版本号 = 同一套资源」。
+ */
+export const moduleResourceBatchImportFileSchema = z.object({
   libraryType: libraryTypeSchema,
+  filename: z.string().trim().min(1).max(260),
+  contentBase64: z.string().min(4).max(16_000_000)
+})
+
+export const moduleResourceBatchImportSchema = z.object({
+  module: moduleIdSchema,
   scope: moduleResourceScopeSchema.default('global'),
   schoolId: z.string().uuid().optional(),
-  libraryName: z.string().trim().min(2).max(160).optional(),
-  libraryDescription: z.string().trim().max(1000).optional(),
-  version: z.string().trim().min(1).max(40),
+  version: z.string().trim()
+    .regex(/^\d+\.\d+\.\d+$/, '版本号必须符合 x.y.z 格式，例如 1.0.0')
+    .max(40),
   notes: z.string().trim().max(1000).optional(),
-  filename: z.string().trim().min(1).max(260),
-  contentBase64: z.string().min(4).max(16_000_000),
+  files: z.array(moduleResourceBatchImportFileSchema)
+    .length(5, '必须上传全部 5 个库文件（量表/归因/工具/输出模板/关键词路由）'),
   confirmNoPersonalData: z.literal(true),
   publish: z.boolean().default(false)
 }).superRefine((value, context) => {
@@ -118,11 +130,12 @@ export const moduleResourceFileImportSchema = z.object({
   if (value.scope === 'global' && value.schoolId) {
     context.addIssue({ code: 'custom', path: ['schoolId'], message: '平台资源库不能绑定学校' })
   }
-  if (!value.libraryId && !value.libraryName) {
-    context.addIssue({ code: 'custom', path: ['libraryName'], message: '新建资源库时必须填写名称' })
+  const types = value.files.map(file => file.libraryType)
+  if (new Set(types).size !== types.length) {
+    context.addIssue({ code: 'custom', path: ['files'], message: '同一库类型只能上传一个文件' })
   }
 })
-export type ModuleResourceFileImport = z.infer<typeof moduleResourceFileImportSchema>
+export type ModuleResourceBatchImport = z.infer<typeof moduleResourceBatchImportSchema>
 
 // ---- 工具库·处方型 (tool-rx) ----
 // V2 字段映射: ⑦ 工具-处方总表 + ⑦b 工具-步骤明细 + ⑧ 工具-禁忌规则
@@ -819,3 +832,26 @@ export interface RuleExecResult {
   // V2 新增: 命中的红线信息
   matchedRedLines?: RedLineConfig[]
 }
+
+// ---- AI 管理中心（platform-admin/ai-center）----
+
+export const aiPromptPlaceholderSchema = z.object({
+  key: z.string().trim().min(1).max(40),
+  label: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(500).optional()
+})
+
+export const aiPromptTemplateSaveSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(1000).optional(),
+  template: z.string().min(1).max(20000)
+})
+
+/** 运行时 AI 配置更新：字段为 null = 回落环境变量默认值。 */
+export const aiRuntimeSettingsPatchSchema = z.object({
+  routerModel: z.string().trim().max(80).nullable().optional(),
+  generatorModel: z.string().trim().max(80).nullable().optional(),
+  timeoutMs: z.coerce.number().int().min(500).max(120000).nullable().optional(),
+  embeddingModel: z.string().trim().max(80).nullable().optional(),
+  embeddingEnabled: z.boolean().nullable().optional()
+})

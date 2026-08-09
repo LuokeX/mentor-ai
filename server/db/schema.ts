@@ -935,3 +935,34 @@ export const auditLogs = pgTable('audit_logs', {
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [index('audit_school_created_idx').on(table.schoolId, table.createdAt)])
+
+/**
+ * AI 提示词模板库（AI 管理中心）。
+ * 每个 code 一行：template 为草稿/编辑中内容，published 为已发布生效内容。
+ * published 为 null 时运行时使用代码内置提示词（PROMPT_BUILTINS），行为与未启用管理前一致。
+ */
+export const aiPromptTemplates = pgTable('ai_prompt_templates', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  code: varchar('code', { length: 80 }).notNull(),
+  name: varchar('name', { length: 120 }).notNull(),
+  description: text('description'),
+  template: text('template').notNull(),
+  published: text('published'),
+  placeholders: jsonb('placeholders').$type<Array<{ key: string, label: string, description?: string }>>().default([]).notNull(),
+  updatedBy: uuid('updated_by').references(() => users.id),
+  publishedBy: uuid('published_by').references(() => users.id),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+  ...timestamps
+}, table => [uniqueIndex('ai_prompt_templates_code_uidx').on(table.code)])
+
+/** AI 运行时配置（AI 管理中心）。单行记录，字段为 NULL 时回落环境变量默认值。 */
+export const aiRuntimeSettings = pgTable('ai_runtime_settings', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  routerModel: varchar('router_model', { length: 80 }),
+  generatorModel: varchar('generator_model', { length: 80 }),
+  timeoutMs: integer('timeout_ms'),
+  embeddingModel: varchar('embedding_model', { length: 80 }),
+  embeddingEnabled: boolean('embedding_enabled'),
+  updatedBy: uuid('updated_by').references(() => users.id),
+  ...timestamps
+})

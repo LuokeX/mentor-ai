@@ -16,6 +16,7 @@ import { INSTRUMENT_ROLE_LABELS } from '../../shared/contracts'
 import { moduleMeta } from '../../shared/assessments'
 import { schema, useDb } from '../utils/db'
 import { redactPii } from '../integrations/deepseek'
+import { getAiRuntimeConfig, renderPrompt } from './ai-config'
 import {
   fallbackInstrument,
   filterTeacherVisibleInstruments,
@@ -124,28 +125,19 @@ export async function recommendInstrument(
   }
 
   const startedAt = Date.now()
-  const prompt = `你是教师赋能平台的量表分诊器。教师描述了自己的困扰，你要从给定的量表清单里挑最合适的一张。
-只返回 json，不要解释。格式：{"code":"量表编码","rationale":"一句话说明为什么先做这张，40字以内"}
-
-硬约束：
-1. code 必须是清单里已有的量表编码，不得编造。
-2. rationale 面向班主任，说清「为什么先做这张」，不要复述量表名称。
-3. 不做任何诊断性判断，不要提及疾病、障碍等表述。
-4. businessAdvice 是业务方按该教师的历史作答算出的确定性判断，优先级高于你的推测：
-   · 有量表标着「现在该做这张」时，除非教师描述明确指向别的方向，否则就选它；
-   · 标着「当前还不需要做」的量表，只有在教师描述强烈指向它时才选，并在 rationale 里说明理由；
-   · 标着「已经做过」的量表，一般不重复推荐，除非教师明确说要重测。
-
-可选量表清单：${JSON.stringify(describeForPrompt(selectable))}
-
-教师描述：${redactPii(text)}`
+  const rt = await getAiRuntimeConfig(event)
+  const generatorModel = rt.generatorModel || config.deepseekGeneratorModel
+  const prompt = await renderPrompt(event, 'instrument_recommendation', {
+    instrumentOptions: JSON.stringify(describeForPrompt(selectable)),
+    userText: redactPii(text)
+  })
 
   const audit = (status: 'success' | 'fallback') => useDb(event).insert(schema.aiModelCalls).values({
     schoolId: input.user.schoolId || null,
     ownerUserId: input.user.id,
     sessionId: input.sessionId || null,
     provider: 'deepseek',
-    model: config.deepseekGeneratorModel,
+    model: generatorModel,
     purpose: 'instrument_recommendation',
     status,
     latencyMs: Date.now() - startedAt
@@ -156,12 +148,12 @@ export async function recommendInstrument(
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
       body: JSON.stringify({
-        model: config.deepseekGeneratorModel,
-        messages: [{ role: 'user', content: prompt }],
+        model: generatorModel,
+        messages: [{ role: 'user', content: prompt.user || '' }],
         response_format: { type: 'json_object' },
         temperature: 0.2
       }),
-      signal: AbortSignal.timeout(Number(config.deepseekTimeoutMs) || 8000)
+      signal: AbortSignal.timeout(rt.timeoutMs || Number(config.deepseekTimeoutMs) || 8000)
     })
     if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
     const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
