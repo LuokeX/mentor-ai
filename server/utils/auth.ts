@@ -6,13 +6,28 @@ import { hashToken } from './crypto'
 import type { AppRole, AuthUser } from '../../app/composables/useAuth'
 
 const COOKIE_NAME = 'mentor_session'
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000
+/**
+ * 滑动续期阈值：会话剩余时间低于该值时，当前请求会把会话延长到完整的 TTL。
+ * 否则长填写场景（如三库业务向导，86 个必填列、跨天用草稿续填）会在最后一步掉登录。
+ * 效果：连续空闲满 TTL 才过期；只要窗口内有任何请求就保持会话。
+ */
+const SESSION_SLIDING_THRESHOLD_MS = 2 * 60 * 60 * 1000
 const ROLE_LABELS: Record<AppRole, string> = {
   teacher: '班主任', psychologist: '心理专员', school_admin: '学校管理员', platform_admin: '平台管理员'
 }
 
+const sessionCookieOptions = (expiresAt: Date) => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production' && process.env.SESSION_COOKIE_SECURE !== 'false',
+  sameSite: 'lax' as const,
+  path: '/',
+  expires: expiresAt
+})
+
 export async function createSession(event: H3Event, userId: string) {
   const token = randomBytes(32).toString('base64url')
-  const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000)
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS)
   await useDb(event).insert(schema.sessions).values({
     userId,
     tokenHash: hashToken(token),
@@ -20,13 +35,7 @@ export async function createSession(event: H3Event, userId: string) {
     ipAddress: getRequestIP(event, { xForwardedFor: true }) || null,
     expiresAt
   })
-  setCookie(event, COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production' && process.env.SESSION_COOKIE_SECURE !== 'false',
-    sameSite: 'lax',
-    path: '/',
-    expires: expiresAt
-  })
+  setCookie(event, COOKIE_NAME, token, sessionCookieOptions(expiresAt))
 }
 
 export async function destroySession(event: H3Event) {
@@ -53,6 +62,15 @@ export async function currentUser(event: H3Event): Promise<AuthUser | null> {
     const [school] = await useDb(event).select({ status: schema.schools.status }).from(schema.schools)
       .where(eq(schema.schools.id, row.user.schoolId)).limit(1)
     if (!school || school.status !== 'active') return null
+  }
+  // 滑动续期：剩余时间低于阈值时把会话延长到完整 TTL（数据库与 cookie 同步更新）
+  const remaining = row.session.expiresAt.getTime() - Date.now()
+  if (remaining < SESSION_SLIDING_THRESHOLD_MS) {
+    const now = new Date()
+    await useDb(event).update(schema.sessions)
+      .set({ expiresAt: new Date(now.getTime() + SESSION_TTL_MS), lastSeenAt: now })
+      .where(eq(schema.sessions.id, row.session.id))
+    setCookie(event, COOKIE_NAME, token, sessionCookieOptions(new Date(now.getTime() + SESSION_TTL_MS)))
   }
   const role = row.user.role as AppRole
   return {
