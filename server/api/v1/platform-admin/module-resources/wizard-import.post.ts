@@ -26,6 +26,8 @@ import { schema, useDb } from '../../../../utils/db'
 const bodySchema = z.object({
   input: wizardInputSchema,
   publish: z.boolean().default(false),
+  /** 检查未通过时把原始填写内容存成「待验证」版本：不生成库文件、不校验，只供向导载入继续改 */
+  saveAsPending: z.boolean().default(false),
   confirmNoPersonalData: z.literal(true)
 })
 
@@ -33,6 +35,7 @@ const LIBRARY_LABEL: Record<string, string> = {
   assessment: '量表库', attribution: '归因库', tool: '工具库',
   keyword_route: '关键词路由库', output_template: '输出模板库'
 }
+const LIBRARY_TYPES = ['assessment', 'attribution', 'tool', 'keyword_route', 'output_template'] as const
 const MODULE_LABEL: Record<string, string> = {
   self_growth: '自我成长赋能', class_system: '班级系统建设', home_school: '家校沟通合作',
   student_case: '学生个体问题', learning_problem: '学生学习问题'
@@ -44,7 +47,56 @@ export default defineEventHandler(async (event) => {
   if (!parsed.success) {
     throw createError({ statusCode: 400, message: parsed.error.issues[0]?.message || '参数不正确' })
   }
-  const { input, publish } = parsed.data
+  const { input, publish, saveAsPending } = parsed.data
+
+  // 「保存为待验证」：检查没通过也把原始填写内容留档。
+  // 不编译、不生成库文件、不校验——这份内容本来就没通过检查，
+  // 存的就是向导输入本身，载入时原样还原继续改，不走 decompile。
+  if (saveAsPending) {
+    const now = new Date()
+    const db = useDb(event)
+    const written = await db.transaction(async (tx) => {
+      const result: Array<{ libraryType: string, libraryId: string, versionId: string }> = []
+      for (const libType of LIBRARY_TYPES) {
+        const [existing] = await tx.select().from(schema.moduleResourceLibraries).where(and(
+          eq(schema.moduleResourceLibraries.module, input.module),
+          eq(schema.moduleResourceLibraries.libraryType, libType),
+          eq(schema.moduleResourceLibraries.scope, 'global'),
+          isNull(schema.moduleResourceLibraries.schoolId)
+        )).limit(1)
+        const library = existing || (await tx.insert(schema.moduleResourceLibraries).values({
+          module: input.module, libraryType: libType, scope: 'global', schoolId: null,
+          name: `${MODULE_LABEL[input.module] || input.module}${LIBRARY_LABEL[libType]}`,
+          description: '业务填写向导生成', createdBy: admin.id
+        }).returning())[0]
+        if (!library) throw createError({ statusCode: 500, message: `${LIBRARY_LABEL[libType]}资源库创建失败` })
+        const [version] = await tx.insert(schema.moduleResourceVersions).values({
+          libraryId: library.id, version: input.version,
+          payload: { __wizardDraft: true, input },
+          notes: '业务填写向导生成（待验证：检查未通过）',
+          status: 'pending_review',
+          createdBy: admin.id,
+          publishedBy: null,
+          publishedAt: null,
+          updatedAt: now
+        }).returning()
+        if (!version) throw createError({ statusCode: 500, message: `${LIBRARY_LABEL[libType]}版本创建失败` })
+        result.push({ libraryType: libType, libraryId: library.id, versionId: version.id })
+      }
+      return result
+    })
+
+    await writeAudit(event, {
+      actorId: admin.id,
+      schoolId: null,
+      action: 'platform_admin.module_resource.wizard_import_pending',
+      targetType: 'module_resource_library',
+      targetId: written.find(w => w.libraryType === 'assessment')?.libraryId,
+      metadata: { module: input.module, version: input.version, libraries: written.map(w => ({ libraryType: w.libraryType, versionId: w.versionId })) }
+    })
+    return { ok: true, savedAsPending: true, written }
+  }
+
   const compiled = compileWizardInput(input)
   const blocking = compiled.issues.filter(i => i.severity === 'error')
   if (blocking.length) {

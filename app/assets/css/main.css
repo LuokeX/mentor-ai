@@ -42,6 +42,13 @@ body {
   font-weight: 700;
 }
 
+/* reka 浮层（如 USelect 下拉）默认没有 z-index，会被手写 fixed 弹层（z-50）盖住。
+   PopperContent 会把这个类上的 z-index 同步到浮层 wrapper；不能依赖 Tailwind 任意值类
+   （如 z-[60]），production 构建时 :ui 里的任意值类可能不被扫描生成，普通 CSS 类不受影响。 */
+.select-content-over-modal {
+  z-index: 60;
+}
+
 @media print {
   .sensitive-content { display: none !important; }
   body::before {

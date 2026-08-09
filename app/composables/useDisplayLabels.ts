@@ -25,6 +25,7 @@ const labels = {
     draft: '草稿',
     published: '已发布',
     retired: '已停用',
+    pending_review: '待验证',
     ready: '已就绪'
   },
   planStatus: {
@@ -231,7 +232,7 @@ const labels = {
 } as const
 
 const colors: Record<string, Partial<Record<string, BadgeColor>>> = {
-  resourceStatus: { published: 'success', draft: 'warning', retired: 'neutral', ready: 'success' },
+  resourceStatus: { published: 'success', draft: 'warning', retired: 'neutral', pending_review: 'info', ready: 'success' },
   planStatus: {
     pending_acceptance: 'warning',
     accepted: 'info',

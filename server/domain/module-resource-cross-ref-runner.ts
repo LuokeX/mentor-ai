@@ -9,7 +9,7 @@
  * 这里把组装逻辑抽出来，让导入预检、导入、发布三条路径共用同一份校验。
  */
 import type { H3Event } from 'h3'
-import { and, desc, eq, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import type { LibraryType, ModuleId, ModuleResourceScope } from '../../shared/contracts'
 import { schema, useDb } from '../utils/db'
 import { checkCrossReferences } from './module-resource-cross-ref'
@@ -18,6 +18,7 @@ import { checkCrossReferences } from './module-resource-cross-ref'
  * 用什么覆盖现行已发布的 payload：
  * - byVersion   已入库的版本（可以是 draft），供编辑器和发布路径使用
  * - byPayload   还没入库的解析结果，供导入预检使用
+ * 批量导入时传数组：多个库一起顶替（整套替换语义），未覆盖的库回退现行已发布版本。
  */
 export type CrossRefOverride =
   | { kind: 'byVersion', versionId: string }
@@ -78,31 +79,45 @@ export function selectEffectiveCrossRefPayloads(
 export async function runCrossRefCheck(
   event: H3Event,
   module: ModuleId,
-  override?: CrossRefOverride,
+  override?: CrossRefOverride | CrossRefOverride[],
   options: { schoolId?: string | null } = {}
 ) {
   const db = useDb(event)
+  const overrides = Array.isArray(override) ? override : (override ? [override] : [])
   let effectiveSchoolId = options.schoolId ?? null
-  if (!effectiveSchoolId && override?.kind === 'byPayload' && override.scope === 'school') {
-    effectiveSchoolId = override.schoolId ?? null
+  for (const item of overrides) {
+    if (item.kind === 'byPayload' && item.scope === 'school') {
+      effectiveSchoolId = item.schoolId ?? null
+    }
   }
 
-  const overrideVersion = override?.kind === 'byVersion'
+  const versionIds = overrides.filter(item => item.kind === 'byVersion').map(item => item.versionId)
+  const overrideVersions = versionIds.length
     ? await db.select({
+        id: schema.moduleResourceVersions.id,
         libraryId: schema.moduleResourceVersions.libraryId,
         payload: schema.moduleResourceVersions.payload,
+        status: schema.moduleResourceVersions.status,
         libraryType: schema.moduleResourceLibraries.libraryType,
         scope: schema.moduleResourceLibraries.scope,
         schoolId: schema.moduleResourceLibraries.schoolId
       }).from(schema.moduleResourceVersions)
         .innerJoin(schema.moduleResourceLibraries,
           eq(schema.moduleResourceVersions.libraryId, schema.moduleResourceLibraries.id))
-        .where(eq(schema.moduleResourceVersions.id, override.versionId))
-        .limit(1)
+        .where(inArray(schema.moduleResourceVersions.id, versionIds))
     : []
-  const targetVersion = overrideVersion[0]
-  if (!effectiveSchoolId && targetVersion?.scope === 'school') {
-    effectiveSchoolId = targetVersion.schoolId
+  const versionById = new Map(overrideVersions.map(v => [v.id, v]))
+  for (const targetVersion of overrideVersions) {
+    if (!effectiveSchoolId && targetVersion.scope === 'school') {
+      effectiveSchoolId = targetVersion.schoolId
+    }
+    // 待验证版本没有库格式 payload（存的是向导原始输入），无法参与跨库校验
+    if (targetVersion.status === 'pending_review') {
+      throw createError({
+        statusCode: 422,
+        message: '待验证版本还没有生成可校验的库文件：保存时检查未通过，请通过「业务填写向导」载入修改后重新检查。'
+      })
+    }
   }
 
   const scopeCondition = effectiveSchoolId
@@ -156,43 +171,46 @@ export async function runCrossRefCheck(
     })
   }
 
-  if (override?.kind === 'byPayload') {
-    const overrideScope = override.scope ?? (override.schoolId ? 'school' : 'global')
-    const overrideSchoolId = overrideScope === 'school'
-      ? override.schoolId ?? effectiveSchoolId
-      : null
-    if (!effectiveSchoolId && overrideScope === 'school') effectiveSchoolId = overrideSchoolId ?? null
-    // 必须顶掉同一格已发布的那份，否则校验的是库里的旧数据而不是这次要导入的文件
-    upsertCandidate(candidates, {
-      libraryType: override.libraryType,
-      scope: overrideScope,
-      schoolId: overrideSchoolId ?? null,
-      payload: override.payload
-    })
-    // 待导入的库可能还不存在，补进去才能让「缺失依赖库」那条链判断正确
-    if (!libraries.some(item => item.libraryType === override.libraryType)) {
-      libraries.push({
-        id: `pending:${override.libraryType}`,
-        libraryType: override.libraryType,
+  for (const item of overrides) {
+    if (item.kind === 'byVersion') {
+      const targetVersion = versionById.get(item.versionId)
+      if (!targetVersion) continue
+      // 同理：发布闸门要校验待发布的这一版，不是它那个已发布的兄弟版本
+      upsertCandidate(candidates, {
+        libraryType: targetVersion.libraryType as LibraryType,
+        scope: targetVersion.scope as ModuleResourceScope,
+        schoolId: targetVersion.schoolId,
+        payload: targetVersion.payload as Record<string, unknown>
+      })
+      if (!libraries.some(lib => lib.id === targetVersion.libraryId)) {
+        libraries.push({
+          id: targetVersion.libraryId,
+          libraryType: targetVersion.libraryType,
+          scope: targetVersion.scope,
+          schoolId: targetVersion.schoolId
+        })
+      }
+    } else {
+      const overrideScope = item.scope ?? (item.schoolId ? 'school' : 'global')
+      const overrideSchoolId = overrideScope === 'school'
+        ? item.schoolId ?? effectiveSchoolId
+        : null
+      // 必须顶掉同一格已发布的那份，否则校验的是库里的旧数据而不是这次要导入的文件
+      upsertCandidate(candidates, {
+        libraryType: item.libraryType,
         scope: overrideScope,
-        schoolId: overrideSchoolId ?? null
+        schoolId: overrideSchoolId ?? null,
+        payload: item.payload
       })
-    }
-  } else if (targetVersion) {
-    // 同理：发布闸门要校验待发布的这一版，不是它那个已发布的兄弟版本
-    upsertCandidate(candidates, {
-      libraryType: targetVersion.libraryType as LibraryType,
-      scope: targetVersion.scope as ModuleResourceScope,
-      schoolId: targetVersion.schoolId,
-      payload: targetVersion.payload as Record<string, unknown>
-    })
-    if (!libraries.some(item => item.id === targetVersion.libraryId)) {
-      libraries.push({
-        id: targetVersion.libraryId,
-        libraryType: targetVersion.libraryType,
-        scope: targetVersion.scope,
-        schoolId: targetVersion.schoolId
-      })
+      // 待导入的库可能还不存在，补进去才能让「缺失依赖库」那条链判断正确
+      if (!libraries.some(lib => lib.libraryType === item.libraryType)) {
+        libraries.push({
+          id: `pending:${item.libraryType}`,
+          libraryType: item.libraryType,
+          scope: overrideScope,
+          schoolId: overrideSchoolId ?? null
+        })
+      }
     }
   }
 

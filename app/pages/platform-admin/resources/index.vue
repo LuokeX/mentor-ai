@@ -30,42 +30,34 @@ const issueColor: Record<string, 'success' | 'warning' | 'error' | 'neutral'> = 
   warn: 'warning',
   fail: 'error'
 }
-const AUTO_LIBRARY_ID = '__auto__'
 
 const form = reactive({
   module: 'home_school',
-  libraryType: 'assessment',
   scope: 'global',
   schoolId: '',
-  libraryId: AUTO_LIBRARY_ID,
-  libraryName: '',
-  libraryDescription: '',
   version: '1.0.0',
   notes: '',
   publish: false,
   confirmNoPersonalData: false
 })
-const selectedFile = ref<File | null>(null)
-const fileBase64 = ref('')
 const pending = ref(false)
-const previewResult = ref<any>(null)
 const projectionOpen = ref(false)
 const projectionResult = ref<any>(null)
 const versionPreviewOpen = ref(false)
 const versionPreviewResult = ref<any>(null)
 const expandedLibrary = ref<string | null>(null)
 const importOpen = ref(false)
+/** 整套导入（批量）：一次上传多个库文件、同一版本号，上传的库之间互相校验，未上传的库回退现行已发布版本 */
+const batchFiles = reactive<Record<string, { file: File | null, base64: string }>>({
+  assessment: { file: null, base64: '' },
+  attribution: { file: null, base64: '' },
+  tool: { file: null, base64: '' },
+  output_template: { file: null, base64: '' },
+  keyword_route: { file: null, base64: '' }
+})
+const batchPreviewResult = ref<any>(null)
 
-const matchingLibraries = computed(() => (resourceData.value?.libraries || []).filter((item: any) =>
-  item.module === form.module
-  && item.libraryType === form.libraryType
-  && item.scope === form.scope
-  && (form.scope === 'global' || item.schoolId === form.schoolId)
-))
 const allVersions = computed(() => resourceData.value?.versions || [])
-const selectedLibraryVersions = computed(() => allVersions.value.filter((version: any) =>
-  form.libraryId !== AUTO_LIBRARY_ID && version.libraryId === form.libraryId
-))
 const publishedCount = computed(() => allVersions.value.filter((version: any) => version.status === 'published').length)
 const expectedResourceKeys = computed(() => moduleOptions.flatMap(module => libraryTypeOptions.map(type => `${module.value}:${type.value}`)))
 const publishedKeys = computed(() => new Set((resourceData.value?.libraries || []).flatMap((library: any) =>
@@ -77,47 +69,9 @@ const coverageRate = computed(() => expectedResourceKeys.value.length
   ? Math.round((publishedKeys.value.size / expectedResourceKeys.value.length) * 100)
   : 0)
 
-watch(matchingLibraries, (libraries) => {
-  if (form.libraryId === AUTO_LIBRARY_ID || libraries.some((item: any) => item.id === form.libraryId)) return
-  form.libraryId = AUTO_LIBRARY_ID
-}, { immediate: true })
-
-watch(() => [form.module, form.libraryType, form.scope, form.schoolId], () => {
-  previewResult.value = null
+watch(() => [form.module, form.scope, form.schoolId], () => {
+  batchPreviewResult.value = null
 })
-
-function libraryLabel(item: any) {
-  const scope = item.scope === 'global' ? '平台默认' : '校本覆盖'
-  return `${item.name} · ${scope}`
-}
-
-async function onFileChange(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0] || null
-  selectedFile.value = file
-  previewResult.value = null
-  fileBase64.value = file ? await fileToBase64(file) : ''
-}
-
-function buildBody(extra: Record<string, unknown> = {}) {
-  if (!selectedFile.value) throw new Error('请选择资源文件')
-  const selectedLibraryId = form.libraryId === AUTO_LIBRARY_ID ? '' : form.libraryId
-  return {
-    libraryId: selectedLibraryId || undefined,
-    module: form.module,
-    libraryType: form.libraryType,
-    scope: form.scope,
-    schoolId: form.scope === 'school' ? form.schoolId : undefined,
-    libraryName: selectedLibraryId ? undefined : form.libraryName,
-    libraryDescription: form.libraryDescription || undefined,
-    version: form.version,
-    notes: form.notes || undefined,
-    filename: selectedFile.value.name,
-    contentBase64: fileBase64.value,
-    confirmNoPersonalData: form.confirmNoPersonalData,
-    publish: form.publish,
-    ...extra
-  }
-}
 
 // ===== 量表编排诊断 =====
 // triggerError 一直声明「供运营台排查」却没有任何入口。这里补上：
@@ -131,23 +85,59 @@ const INSTRUMENT_ROLE_TEXT: Record<string, string> = {
   screening: '入口筛查', deep_dive: '深度诊断', situational: '专项/情境', red_line: '红线检查'
 }
 
-const crossRefErrors = computed(() =>
-  (previewResult.value?.crossRef?.issues || []).filter((issue: any) => issue.severity === 'error'))
-const crossRefWarnings = computed(() =>
-  (previewResult.value?.crossRef?.issues || []).filter((issue: any) => issue.severity === 'warning'))
+const batchCrossRefErrors = computed(() =>
+  (batchPreviewResult.value?.crossRef?.issues || []).filter((issue: any) => issue.severity === 'error'))
+const batchCrossRefWarnings = computed(() =>
+  (batchPreviewResult.value?.crossRef?.issues || []).filter((issue: any) => issue.severity === 'warning'))
 
-async function previewImport() {
+/** 发布被校验拦下时的结构化明细。只弹 toast 的话管理员不知道该改哪一行。 */
+const blockedIssues = ref<Array<{ severity: string, message: string, source?: string }>>([])
+const blockedTitle = ref('')
+
+// ===== 整套导入（批量） =====
+/** 必须 5 个文件全传才允许预检 */
+const batchHasFile = computed(() => Object.values(batchFiles).every(slot => slot.file))
+/** 版本号必须是真实版本号（x.y.z），不是随意标签 */
+const versionValid = computed(() => /^\d+\.\d+\.\d+$/.test(form.version))
+
+async function onBatchFileChange(event: Event, libraryType: string) {
+  const file = (event.target as HTMLInputElement).files?.[0] || null
+  batchFiles[libraryType]!.file = file
+  batchFiles[libraryType]!.base64 = file ? await fileToBase64(file) : ''
+  batchPreviewResult.value = null
+}
+
+function buildBatchBody() {
+  const files: Array<{ libraryType: string, filename: string, contentBase64: string }> = []
+  for (const option of libraryTypeOptions) {
+    const slot = batchFiles[option.value]
+    if (!slot?.file) continue
+    files.push({ libraryType: option.value, filename: slot.file.name, contentBase64: slot.base64 })
+  }
+  if (files.length !== 5) throw new Error('必须上传全部 5 个库文件')
+  return {
+    module: form.module,
+    scope: form.scope,
+    schoolId: form.scope === 'school' ? form.schoolId : undefined,
+    version: form.version,
+    notes: form.notes || undefined,
+    files,
+    confirmNoPersonalData: form.confirmNoPersonalData,
+    publish: form.publish
+  }
+}
+
+async function previewBatchImport() {
   pending.value = true
   try {
-    previewResult.value = await $fetch('/api/v1/platform-admin/module-resources/import-preview', {
+    batchPreviewResult.value = await $fetch('/api/v1/platform-admin/module-resources/import-batch-preview', {
       method: 'POST',
-      body: buildBody()
+      body: buildBatchBody()
     })
-    // canImport = 库内校验通过 且 跨库引用无 error
     toast.add({
-      title: previewResult.value.canImport ? '预检完成' : '预检发现错误',
-      description: previewResult.value.canImport ? undefined : '库内校验或跨库引用存在错误，请先修正',
-      color: previewResult.value.canImport ? 'success' : 'error'
+      title: batchPreviewResult.value.canImport ? '整套预检通过' : '整套预检发现错误',
+      description: batchPreviewResult.value.canImport ? '本次上传的库之间校验通过' : '库内校验或跨库引用存在错误，请先修正',
+      color: batchPreviewResult.value.canImport ? 'success' : 'error'
     })
   } catch (error: any) {
     toast.add({ title: '预检失败', description: error?.data?.message || '请检查文件和字段', color: 'error' })
@@ -156,31 +146,29 @@ async function previewImport() {
   }
 }
 
-async function commitImport() {
+async function commitBatchImport() {
   pending.value = true
   try {
-    await $fetch('/api/v1/platform-admin/module-resources/import', {
+    await $fetch('/api/v1/platform-admin/module-resources/import-batch', {
       method: 'POST',
-      body: buildBody()
+      body: buildBatchBody()
     })
     await refreshResources()
     await refreshResourceQuality()
-    previewResult.value = null
-    selectedFile.value = null
-    fileBase64.value = ''
+    batchPreviewResult.value = null
+    for (const key of Object.keys(batchFiles)) {
+      batchFiles[key]!.file = null
+      batchFiles[key]!.base64 = ''
+    }
     form.confirmNoPersonalData = false
     importOpen.value = false
-    toast.add({ title: form.publish ? '资源已导入并发布' : '资源草稿已导入', color: 'success' })
+    toast.add({ title: form.publish ? '资源已整套导入并发布' : '资源草稿已整套导入', color: 'success' })
   } catch (error: any) {
     toast.add({ title: '导入失败', description: error?.data?.message || '请根据预检结果修正', color: 'error' })
   } finally {
     pending.value = false
   }
 }
-
-/** 发布被校验拦下时的结构化明细。只弹 toast 的话管理员不知道该改哪一行。 */
-const blockedIssues = ref<Array<{ severity: string, message: string, source?: string }>>([])
-const blockedTitle = ref('')
 
 async function versionAction(id: string, action: 'publish' | 'retire' | 'rollback') {
   pending.value = true
@@ -398,103 +386,118 @@ function fileToBase64(file: File) {
     <!-- ===== 导入 Slideover ===== -->
     <USlideover v-model:open="importOpen" title="导入资源" description="上传 Excel 或 JSON 模板，先预检，再确认写入。">
       <template #body>
-        <div class="mb-5 flex items-center gap-3 rounded-lg border border-primary-100 bg-primary-50/60 p-3">
-          <UIcon name="i-lucide-file-down" class="size-5 shrink-0 text-primary-500" />
-          <div class="min-w-0 flex-1">
-            <p class="text-sm font-medium text-primary-800">{{ libraryTypeLabel(form.libraryType) }}填写模板</p>
-            <p class="text-xs text-primary-500">下载 {{ libraryTypeLabel(form.libraryType) }} 专用模板，填写后上传。</p>
-          </div>
-          <UButton
-            as="a"
-            :href="`/templates/${form.libraryType}.xlsx`"
-            :download="`${libraryTypeLabel(form.libraryType)}_填写模板.xlsx`"
-            color="primary"
-            variant="soft"
-            size="xs"
-            icon="i-lucide-download"
-          >下载</UButton>
+        <!-- 整套导入：必须上传全部 5 个库文件、同一版本号（真实版本号 x.y.z），5 个文件之间互相校验 -->
+        <div class="mb-4 rounded-lg border border-primary-100 bg-primary-50/60 p-3">
+          <p class="text-sm font-medium text-primary-800">整套导入：一次上传全部 5 个库文件、同一版本号</p>
+          <p class="mt-1 text-xs leading-5 text-primary-500">
+            必须上传全部 5 个库文件（量表/归因/工具/输出模板/关键词路由），本次上传的 5 个库之间互相校验，不与其他已发布版本校验。全部通过后一起写入。
+          </p>
         </div>
+        <form class="space-y-5" @submit.prevent="previewBatchImport">
+            <div class="grid gap-4 sm:grid-cols-2">
+              <UFormField label="模块"><USelect v-model="form.module" :items="moduleOptions" class="w-full" /></UFormField>
+              <UFormField label="范围"><USelect v-model="form.scope" :items="scopeOptions" class="w-full" /></UFormField>
+              <UFormField v-if="form.scope === 'school'" label="学校"><USelect v-model="form.schoolId" :items="dashboard?.schools?.map((school:any)=>({label:school.name,value:school.id})) || []" class="w-full" /></UFormField>
+            </div>
+            <div class="grid gap-4 sm:grid-cols-2">
+              <UFormField label="版本号" help="真实发布版本号，x.y.z 格式（如 1.0.0）；不能与系统中已有版本重复">
+                <UInput v-model="form.version" class="w-full" placeholder="1.0.0" :color="form.version && !versionValid ? 'error' : undefined" />
+              </UFormField>
+              <UFormField label="版本说明"><UInput v-model="form.notes" class="w-full" /></UFormField>
+            </div>
+            <div class="space-y-3">
+              <p class="text-xs font-semibold text-slate-600">资源文件（5 个库必须全部上传）</p>
+              <div v-for="option in libraryTypeOptions" :key="option.value" class="rounded-lg border border-slate-200 p-3">
+                <div class="flex items-center gap-3">
+                  <span class="w-20 shrink-0 text-sm font-medium text-slate-700">{{ option.label }}</span>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.json,application/json"
+                    class="block min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-2 text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-slate-700 hover:file:bg-slate-200"
+                    @change="onBatchFileChange($event, option.value)"
+                  />
+                  <UIcon v-if="batchFiles[option.value]?.file" name="i-lucide-file-check" class="size-4 shrink-0 text-emerald-500" />
+                </div>
+                <p v-if="batchFiles[option.value]?.file" class="mt-1.5 text-xs text-slate-500">
+                  {{ batchFiles[option.value]!.file!.name }}
+                  <a class="ml-2 text-primary-500 hover:underline" :href="`/templates/${option.value}.xlsx`" :download="`${option.label}_填写模板.xlsx`">下载模板</a>
+                </p>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-4">
+              <UCheckbox v-model="form.confirmNoPersonalData" label="确认不含真实个人业务数据" />
+              <UCheckbox v-model="form.publish" label="预检通过后直接发布" />
+            </div>
+            <div class="flex gap-3">
+              <UButton type="submit" icon="i-lucide-shield-check" :disabled="!batchHasFile || !versionValid || !form.confirmNoPersonalData" :loading="pending">预检</UButton>
+              <UButton color="primary" variant="soft" icon="i-lucide-upload-cloud" :disabled="!batchPreviewResult?.canImport" :loading="pending" @click="commitBatchImport">确认导入</UButton>
+            </div>
+          </form>
 
-        <form class="space-y-5" @submit.prevent="previewImport">
-          <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField label="模块"><USelect v-model="form.module" :items="moduleOptions" class="w-full" /></UFormField>
-            <UFormField label="库类型"><USelect v-model="form.libraryType" :items="libraryTypeOptions" class="w-full" /></UFormField>
-            <UFormField label="范围"><USelect v-model="form.scope" :items="scopeOptions" class="w-full" /></UFormField>
-            <UFormField v-if="form.scope === 'school'" label="学校"><USelect v-model="form.schoolId" :items="dashboard?.schools?.map((school:any)=>({label:school.name,value:school.id})) || []" class="w-full" /></UFormField>
+          <!-- 批量预检结果 -->
+          <div v-if="batchPreviewResult" class="mt-6 space-y-4 border-t border-slate-100 pt-6">
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold text-slate-700">整套预检结果</h3>
+              <UBadge
+                :color="batchPreviewResult.canImport ? (batchCrossRefWarnings.length || batchPreviewResult.entries.some((entry:any) => entry.validation.warnings?.length) ? 'warning' : 'success') : 'error'"
+                variant="soft"
+                size="xs"
+              >{{ batchPreviewResult.canImport ? '通过' : '失败' }}</UBadge>
+            </div>
+            <!-- 版本号冲突：版本号是真实版本号，已被占用的不能再次使用 -->
+            <div v-if="batchPreviewResult.versionConflicts?.length" class="rounded-lg border border-red-200 bg-red-50 p-3">
+              <p class="text-xs font-semibold text-red-700">版本号 {{ form.version }} 已被使用，无法导入</p>
+              <p v-for="(conflict, index) in batchPreviewResult.versionConflicts" :key="`vc-${index}`" class="mt-1.5 text-xs text-red-700">
+                {{ conflict.libraryName }}（{{ conflict.status === 'published' ? '已发布' : conflict.status === 'retired' ? '已停用' : '草稿' }}）
+              </p>
+            </div>
+            <div v-for="entry in batchPreviewResult.entries" :key="entry.libraryType" class="rounded-lg border border-slate-200 p-3">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium text-slate-700">{{ libraryTypeLabel(entry.libraryType) }}</span>
+                <span class="min-w-0 flex-1 truncate text-xs text-slate-400">{{ entry.filename }}</span>
+                <UBadge :color="entry.validation.ok ? (entry.validation.warnings?.length ? 'warning' : 'success') : 'error'" variant="soft" size="xs">
+                  {{ entry.validation.ok ? (entry.validation.warnings?.length ? '有警告' : '通过') : '失败' }}
+                </UBadge>
+              </div>
+              <div class="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
+                <span v-if="entry.projection.assessmentCount">量表 {{ entry.projection.assessmentCount }}</span>
+                <span v-if="entry.projection.attributionRuleCount">规则 {{ entry.projection.attributionRuleCount }}</span>
+                <span v-if="entry.projection.attributionItemCount">归因条目 {{ entry.projection.attributionItemCount }}</span>
+                <span v-if="entry.projection.toolCount">工具 {{ entry.projection.toolCount }}</span>
+                <span v-if="entry.projection.templateCount">输出模板 {{ entry.projection.templateCount }}</span>
+                <span v-if="entry.projection.routeCount">关键词路由 {{ entry.projection.routeCount }}</span>
+              </div>
+              <div v-if="entry.validation.errors?.length" class="mt-2 rounded-lg border border-red-200 bg-red-50 p-2">
+                <p v-for="issue in entry.validation.errors" :key="`be-${entry.libraryType}-${issue.path}-${issue.message}`" class="text-xs text-red-700">
+                  {{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}
+                </p>
+              </div>
+              <div v-if="entry.validation.warnings?.length" class="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2">
+                <p v-for="issue in entry.validation.warnings.slice(0, 6)" :key="`bw-${entry.libraryType}-${issue.path}-${issue.message}`" class="text-xs text-amber-700">
+                  {{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}
+                </p>
+              </div>
+              <div v-if="entry.parseWarnings?.length" class="mt-2 rounded-lg border border-orange-200 bg-orange-50 p-2">
+                <p v-for="(text, index) in entry.parseWarnings" :key="`bpw-${entry.libraryType}-${index}`" class="text-xs leading-5 text-orange-700">{{ text }}</p>
+              </div>
+            </div>
+            <div v-if="batchCrossRefErrors.length" class="rounded-lg border border-red-200 bg-red-50 p-3">
+              <p class="text-xs font-semibold text-red-700">跨库引用错误（无法导入）</p>
+              <p v-for="(issue, index) in batchCrossRefErrors.slice(0, 12)" :key="`bcre-${index}`" class="mt-1.5 text-xs text-red-700">
+                <span class="font-medium">{{ issue.sourceLibraryType }} · {{ issue.sourceCode }}</span>
+                <span v-if="issue.sourceField"> · {{ issue.sourceField }}</span> — {{ issue.message }}
+              </p>
+            </div>
+            <div v-if="batchCrossRefWarnings.length" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p class="text-xs font-semibold text-amber-700">跨库引用警告</p>
+              <p v-for="(issue, index) in batchCrossRefWarnings.slice(0, 8)" :key="`bcrw-${index}`" class="mt-1.5 text-xs text-amber-700">
+                <span class="font-medium">{{ issue.sourceLibraryType }} · {{ issue.sourceCode }}</span> — {{ issue.message }}
+              </p>
+            </div>
+            <div v-if="batchPreviewResult.crossRef && !batchCrossRefErrors.length" class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+              跨库引用校验通过（本次上传的库之间，未上传的库按现行已发布版本参与）
+            </div>
           </div>
-          <UFormField label="已有资源库">
-            <USelect v-model="form.libraryId" :items="[{label:'自动创建或复用匹配资源库',value:AUTO_LIBRARY_ID}, ...matchingLibraries.map((item:any)=>({label:libraryLabel(item),value:item.id}))]" class="w-full" />
-          </UFormField>
-          <div v-if="form.libraryId === AUTO_LIBRARY_ID" class="grid gap-4 sm:grid-cols-2">
-            <UFormField label="资源库名称"><UInput v-model="form.libraryName" class="w-full" /></UFormField>
-            <UFormField label="版本号"><UInput v-model="form.version" class="w-full" /></UFormField>
-            <UFormField class="sm:col-span-2" label="资源库说明"><UTextarea v-model="form.libraryDescription" :rows="2" class="w-full" /></UFormField>
-          </div>
-          <UFormField v-else label="版本号"><UInput v-model="form.version" class="w-full" /></UFormField>
-          <UFormField label="版本说明"><UInput v-model="form.notes" class="w-full" /></UFormField>
-          <UFormField label="资源文件" help="接受 .xlsx、.xls、.json；不得包含真实个人业务数据。">
-            <input type="file" accept=".xlsx,.xls,.json,application/json" class="block w-full rounded-lg border border-slate-200 bg-white p-3 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200" @change="onFileChange" />
-          </UFormField>
-          <div class="flex flex-wrap gap-4">
-            <UCheckbox v-model="form.confirmNoPersonalData" label="确认不含真实个人业务数据" />
-            <UCheckbox v-model="form.publish" label="预检通过后直接发布" />
-          </div>
-          <div class="flex gap-3">
-            <UButton type="submit" icon="i-lucide-shield-check" :disabled="!selectedFile || !form.confirmNoPersonalData || (form.libraryId === AUTO_LIBRARY_ID && matchingLibraries.length === 0 && form.libraryName.trim().length < 2)" :loading="pending">预检</UButton>
-            <UButton color="primary" variant="soft" icon="i-lucide-upload-cloud" :disabled="!previewResult?.canImport" :loading="pending" @click="commitImport">确认导入</UButton>
-          </div>
-        </form>
-
-        <!-- 预检结果 -->
-        <div v-if="previewResult" class="mt-6 space-y-4 border-t border-slate-100 pt-6">
-          <div class="flex items-center gap-2">
-            <h3 class="text-sm font-semibold text-slate-700">预检结果</h3>
-            <UBadge :color="previewResult.validation.ok ? (previewResult.validation.warnings?.length ? 'warning' : 'success') : 'error'" variant="soft" size="xs">
-              {{ previewResult.validation.ok ? (previewResult.validation.warnings?.length ? '有警告' : '通过') : '失败' }}
-            </UBadge>
-          </div>
-          <div class="flex divide-x divide-slate-100 rounded-lg bg-slate-50/70">
-            <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">量表 <strong class="block text-base text-slate-700">{{ previewResult.projection.assessmentCount }}</strong></div>
-            <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">规则 <strong class="block text-base text-slate-700">{{ previewResult.projection.attributionRuleCount }}</strong></div>
-            <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">工具 <strong class="block text-base text-slate-700">{{ previewResult.projection.toolCount }}</strong></div>
-          </div>
-          <div v-if="previewResult.projection.templateCount || previewResult.projection.routeCount" class="flex divide-x divide-slate-100 rounded-lg bg-slate-50/70">
-            <div v-if="previewResult.projection.templateCount" class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">输出模板 <strong class="block text-base text-indigo-600">{{ previewResult.projection.templateCount }}</strong></div>
-            <div v-if="previewResult.projection.routeCount" class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">关键词路由 <strong class="block text-base text-sky-600">{{ previewResult.projection.routeCount }}</strong></div>
-          </div>
-          <div v-if="previewResult.validation.errors?.length" class="rounded-lg border border-red-200 bg-red-50 p-3">
-            <p class="text-xs font-semibold text-red-700">错误</p>
-            <p v-for="issue in previewResult.validation.errors" :key="`${issue.path}:${issue.message}`" class="mt-1.5 text-xs text-red-700">{{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}</p>
-          </div>
-          <div v-if="previewResult.validation.warnings?.length" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <p class="text-xs font-semibold text-amber-700">警告</p>
-            <p v-for="issue in previewResult.validation.warnings.slice(0, 12)" :key="`${issue.path}:${issue.message}`" class="mt-1.5 text-xs text-amber-700">{{ issue.path ? `${issue.path} · ` : '' }}{{ issue.message }}</p>
-          </div>
-
-          <!-- 跨库引用校验。以前只有编辑器手动点才跑，勾了「直接发布」就整段跳过。 -->
-          <div v-if="crossRefErrors.length" class="rounded-lg border border-red-200 bg-red-50 p-3">
-            <p class="text-xs font-semibold text-red-700">跨库引用错误（无法导入）</p>
-            <p v-for="(issue, index) in crossRefErrors.slice(0, 12)" :key="`cre-${index}`" class="mt-1.5 text-xs text-red-700">
-              <span class="font-medium">{{ issue.sourceLibraryType }} · {{ issue.sourceCode }}</span>
-              <span v-if="issue.sourceField"> · {{ issue.sourceField }}</span> — {{ issue.message }}
-            </p>
-          </div>
-          <div v-if="crossRefWarnings.length" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <p class="text-xs font-semibold text-amber-700">跨库引用警告</p>
-            <p v-for="(issue, index) in crossRefWarnings.slice(0, 8)" :key="`crw-${index}`" class="mt-1.5 text-xs text-amber-700">
-              <span class="font-medium">{{ issue.sourceLibraryType }} · {{ issue.sourceCode }}</span> — {{ issue.message }}
-            </p>
-          </div>
-          <div v-else-if="previewResult.crossRef && !crossRefErrors.length" class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
-            跨库引用校验通过
-          </div>
-
-          <!-- 解析走了兜底分支：不报错，但结果大概率不是业务想要的 -->
-          <div v-if="previewResult.parseWarnings?.length" class="rounded-lg border border-orange-200 bg-orange-50 p-3">
-            <p class="text-xs font-semibold text-orange-700">文件结构提示</p>
-            <p v-for="(text, index) in previewResult.parseWarnings" :key="`pw-${index}`" class="mt-1.5 text-xs leading-5 text-orange-700">{{ text }}</p>
-          </div>
-        </div>
       </template>
     </USlideover>
 
@@ -532,8 +535,7 @@ function fileToBase64(file: File) {
               <!-- 库行 -->
               <tr
                 class="cursor-pointer border-b border-slate-50 transition hover:bg-slate-50/60"
-                :class="form.libraryId === library.id ? 'bg-indigo-50/70' : ''"
-                @click="Object.assign(form, { module: library.module, libraryType: library.libraryType, scope: library.scope, schoolId: library.schoolId || '', libraryId: library.id }); expandedLibrary = expandedLibrary === library.id ? null : library.id"
+                @click="Object.assign(form, { module: library.module, scope: library.scope, schoolId: library.schoolId || '' }); expandedLibrary = expandedLibrary === library.id ? null : library.id"
               >
                 <td class="py-3 text-center text-slate-400">
                   <UIcon
@@ -565,14 +567,15 @@ function fileToBase64(file: File) {
                         <span class="text-slate-400">{{ new Date(version.updatedAt).toLocaleString('zh-CN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) }}</span>
                       </div>
                       <div class="flex shrink-0 gap-1">
-                        <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-pencil" @click.stop="() => { navigateTo(`/platform-admin/resources/edit/${version.id}`) }">编辑</UButton>
-                        <UButton v-if="version.status !== 'published'" size="xs" variant="soft" @click.stop="versionAction(version.id, 'publish')">发布</UButton>
+                        <!-- 待验证版本只有向导输入，没有库文件，编辑器/预览/投影/发布都用不了 -->
+                        <UButton v-if="version.status !== 'pending_review'" size="xs" color="neutral" variant="ghost" icon="i-lucide-pencil" @click.stop="() => { navigateTo(`/platform-admin/resources/edit/${version.id}`) }">编辑</UButton>
+                        <UButton v-if="version.status === 'draft' || version.status === 'retired'" size="xs" variant="soft" @click.stop="versionAction(version.id, 'publish')">发布</UButton>
                         <UButton v-if="version.status === 'published'" size="xs" color="neutral" variant="soft" @click.stop="versionAction(version.id, 'retire')">停用</UButton>
                         <UButton v-if="version.status === 'retired'" size="xs" color="neutral" variant="soft" @click.stop="versionAction(version.id, 'rollback')">回滚</UButton>
                         <!-- inspectPreview / inspectProjection 与它们的 modal 之前没有任何调用点，
                              两个接口因此一直是孤儿。这里把入口补上。 -->
-                        <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-eye" :loading="pending" @click.stop="inspectPreview(version.id)">预览</UButton>
-                        <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-layers" :loading="pending" @click.stop="inspectProjection(version.id)">投影</UButton>
+                        <UButton v-if="version.status !== 'pending_review'" size="xs" color="neutral" variant="ghost" icon="i-lucide-eye" :loading="pending" @click.stop="inspectPreview(version.id)">预览</UButton>
+                        <UButton v-if="version.status !== 'pending_review'" size="xs" color="neutral" variant="ghost" icon="i-lucide-layers" :loading="pending" @click.stop="inspectProjection(version.id)">投影</UButton>
                       </div>
                     </div>
                   </td>

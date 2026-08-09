@@ -134,6 +134,7 @@ const form = reactive<any>({
   sourceRef: '',
   defaults: { ...DEFAULT_WIZARD_DEFAULTS },
   computedVariables: [],
+  optionGroups: [],
   defaultLevelName: '暂无明显信号',
   defaultMessage: '',
   scales: [] as any[],
@@ -153,6 +154,13 @@ onMounted(() => {
 })
 // 填写量很大，中途关掉页面不能白填
 watch(form, () => localStorage.setItem(STORAGE_KEY, JSON.stringify(form)), { deep: true })
+
+// 题目维度名变化（输入/改名/删题）时把维度属性行对齐，避免输入过程中的中间态残留成多行
+watch(
+  () => (form.scales as any[]).map(s => (s.questions || []).map((q: any) => q.dimension || '').join('|')).join('~'),
+  () => { for (const s of form.scales as any[]) syncDimensionDefs(s) },
+  { immediate: true }
+)
 
 const scaleNames = computed<string[]>(() => form.scales.map((s: any) => s.name).filter(Boolean))
 const attributionNames = computed<string[]>(() => form.attributions.map((a: any) => a.name).filter(Boolean))
@@ -182,16 +190,19 @@ function addQuestion(scale: any) {
   scale.questions.push({ text: '', dimension: '', optionGroup: 'FREQ_5', reverse: false, help: '' })
 }
 
-/** 给量表里出现的每个维度补一条属性行（缺省即默认值），供「测哪个方面」下方编辑 */
-function ensureDimensionDefs(scale: any): any[] {
+/** 维度属性行的默认值 */
+function defaultDimensionDef(name: string) {
+  return { name, calcMethod: 'mean', weight: 1, description: '', highInterpretation: '', lowInterpretation: '', normMean: undefined, normStd: undefined }
+}
+/** 渲染视图：只显示题目里当前出现的维度，属性复用已填条目（纯函数，渲染期调用不能有副作用） */
+function dimensionDefsView(scale: any): any[] {
   const names = [...new Set((scale.questions || []).map((q: any) => q.dimension).filter(Boolean))] as string[]
-  if (!scale.dimensionDefs) scale.dimensionDefs = []
-  for (const name of names) {
-    if (!scale.dimensionDefs.some((d: any) => d.name === name)) {
-      scale.dimensionDefs.push({ name, calcMethod: 'mean', weight: 1, description: '', highInterpretation: '', lowInterpretation: '', normMean: undefined, normStd: undefined })
-    }
-  }
-  return scale.dimensionDefs
+  const defs = Array.isArray(scale.dimensionDefs) ? scale.dimensionDefs : []
+  return names.map(name => defs.find((d: any) => d.name === name) ?? defaultDimensionDef(name))
+}
+/** 把维度属性行与题目对齐：补缺，并清掉输入过程中留下的残留维度名（如 n → ni 时残留的 n） */
+function syncDimensionDefs(scale: any): void {
+  scale.dimensionDefs = dimensionDefsView(scale)
 }
 
 const addComputedVariable = () => form.computedVariables.push({ name: '', scale: form.scales[0]?.name || '', expression: '' })
@@ -273,7 +284,12 @@ function cleanPayload(): WizardInput {
     optionGroups: form.optionGroups.filter((g: any) => g.name && g.options.some((o: any) => o.label))
       .map((g: any) => ({ ...g, options: g.options.filter((o: any) => o.label) })),
     scales: form.scales.filter((s: any) => s.name && s.questions.some((q: any) => q.text))
-      .map((s: any) => ({ ...s, questions: s.questions.filter((q: any) => q.text && q.dimension) })),
+      .map((s: any) => {
+        const kept: any = { ...s, questions: s.questions.filter((q: any) => q.text && q.dimension) }
+        // 提交前按保留的题目对齐维度属性行，残留的中间态维度不能带进库
+        syncDimensionDefs(kept)
+        return kept
+      }),
     attributions: form.attributions.filter((a: any) => a.name),
     evidences: form.evidences.filter((e: any) => e.attribution && e.scale && e.conditions.length),
     levels: form.levels.filter((l: any) => l.name && l.conditions.length),
@@ -318,6 +334,34 @@ async function importAll(publish: boolean) {
     })
   } finally {
     importing.value = false
+  }
+}
+
+/** 版本号自动进一位，避免连续保存撞上版本唯一约束 */
+const bumpVersion = (v: string) => {
+  const m = String(v).match(/^(\d+)\.(\d+)\.(\d+)$/)
+  return m ? `${m[1]}.${m[2]}.${Number(m[3]) + 1}` : '1.0.1'
+}
+
+/** 检查未通过时把当前填写内容留档成「待验证」版本：不生成库文件、不能发布，可载入继续改 */
+const savingPending = ref(false)
+async function saveAsPendingReview() {
+  savingPending.value = true
+  try {
+    const res = await $fetch<any>('/api/v1/platform-admin/module-resources/wizard-import', {
+      method: 'POST',
+      body: { input: cleanPayload(), saveAsPending: true, confirmNoPersonalData: true }
+    })
+    form.version = bumpVersion(form.version)
+    toast.add({
+      title: `已保存为待验证版本（${res.written?.length || 0} 个库留档）`,
+      description: '这份内容保存时检查未通过，不能直接发布；可随时通过「载入现有内容」重新载入继续修改。草稿已保留，可继续填写。',
+      color: 'info'
+    })
+  } catch (error: any) {
+    toast.add({ title: '保存失败', description: error?.data?.message || '请稍后重试', color: 'error' })
+  } finally {
+    savingPending.value = false
   }
 }
 
@@ -521,8 +565,12 @@ watch(() => form.scales.map((s: any) => s.name).join('|'), () => { simResult.val
 const loading = ref(false)
 const loadedInfo = ref<any>(null)
 const loadModalOpen = ref(false)
-const loadVersions = ref<Array<{ version: string, publishedAt: string | null }>>([])
+const loadVersions = ref<Array<{ version: string, statuses: string[], publishedAt: string | null }>>([])
 const loadVersion = ref<string | undefined>(undefined)
+
+const VERSION_STATUS_LABEL: Record<string, string> = {
+  published: '已发布', draft: '草稿', pending_review: '待验证', retired: '已停用'
+}
 
 async function openLoadModal() {
   loadModalOpen.value = true
@@ -537,7 +585,7 @@ async function openLoadModal() {
     loadVersion.value = res.selectedVersion || undefined
   } catch (error: any) {
     loadModalOpen.value = false
-    toast.add({ title: '载入失败', description: error?.data?.message || '这个模块还没有已发布的内容', color: 'error' })
+    toast.add({ title: '载入失败', description: error?.data?.message || '这个模块还没有可载入的内容', color: 'error' })
   }
 }
 
@@ -553,12 +601,15 @@ async function confirmLoad() {
     preview.value = null
     stepIndex.value = 1
     loadModalOpen.value = false
+    const notes = res.notes?.length ? res.notes.join(' ') : ''
     toast.add({
       title: `已载入${moduleOptions.find(m => m.value === form.module)?.label}的 ${res.selectedVersion} 版本内容`,
-      description: res.unsupported.length
-        ? `注意：有 ${res.unsupported.length} 处向导表达不了，保存会丢失，请看页面上的提示`
-        : `版本号已自动进位到 ${res.input.version}`,
-      color: res.unsupported.length ? 'warning' : 'success'
+      description: [
+        res.unsupported.length ? `有 ${res.unsupported.length} 处向导表达不了，保存会丢失，请看页面上的提示` : '',
+        notes,
+        res.unsupported.length ? '' : `版本号已自动进位到 ${res.input.version}`
+      ].filter(Boolean).join('　'),
+      color: res.unsupported.length ? 'warning' : notes ? 'info' : 'success'
     })
   } catch (error: any) {
     toast.add({ title: '载入失败', description: error?.data?.message || '请稍后重试', color: 'error' })
@@ -614,14 +665,19 @@ const canNext = computed(() => {
             <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-x" @click="() => { loadModalOpen = false }" />
           </div>
           <p class="mt-1 text-xs leading-5 text-slate-500">
-            选择 {{ moduleOptions.find(m => m.value === form.module)?.label }} 的已发布版本载入。
+            选择 {{ moduleOptions.find(m => m.value === form.module)?.label }} 的版本载入，已发布、草稿、待验证、已停用都可以。
             <span class="text-amber-700">载入会清空当前填写的内容（含未保存草稿）</span>，修改后存成新版本。
           </p>
           <UFormField class="mt-3" label="版本">
-            <USelect v-model="loadVersion" :items="(loadVersions || []).map(v => ({ label: v.version, value: v.version }))"
+            <!-- 弹层是手写 fixed z-50；reka 浮层 wrapper 的 z-index 取自 content 的计算样式。
+                 必须用 main.css 里的固定类（select-content-over-modal）而不是 Tailwind 任意值类：
+                 production 构建会漏掉 :ui 里传入的 z-[60] 之类，导致下拉被弹层遮住。 -->
+            <USelect v-model="loadVersion"
+              :items="(loadVersions || []).map(v => ({ label: `${v.version} · ${(v.statuses || []).map(s => VERSION_STATUS_LABEL[s] || s).join(' / ')}`, value: v.version }))"
+              :ui="{ content: 'select-content-over-modal' }"
               class="w-full" />
           </UFormField>
-          <p v-if="loadVersions.length === 0" class="mt-1 text-xs text-slate-400">正在读取已发布的版本…</p>
+          <p v-if="loadVersions.length === 0" class="mt-1 text-xs text-slate-400">正在读取版本列表…</p>
           <div class="mt-4 flex justify-end gap-2">
             <UButton size="sm" color="neutral" variant="soft" @click="() => { loadModalOpen = false }">取消</UButton>
             <UButton size="sm" color="primary" :disabled="!loadVersion" :loading="loading" @click="confirmLoad">确认载入</UButton>
@@ -873,9 +929,9 @@ const canNext = computed(() => {
             </UFormField>
           </div>
           <UButton class="mt-3" size="xs" variant="soft" icon="i-lucide-plus" @click="addQuestion(scale)">加一道题</UButton>
-          <div v-if="ensureDimensionDefs(scale).length" class="mt-4 rounded-lg border border-slate-200 bg-white p-3">
+          <div v-if="dimensionDefsView(scale).length" class="mt-4 rounded-lg border border-slate-200 bg-white p-3">
             <p class="text-xs font-medium text-slate-500">每个方面怎么算分、高分低分怎么看（可折叠可不填）</p>
-            <div v-for="(def, di) in ensureDimensionDefs(scale)" :key="di" class="mt-2 rounded bg-slate-50 p-3">
+            <div v-for="def in dimensionDefsView(scale)" :key="def.name" class="mt-2 rounded bg-slate-50 p-3">
               <div class="grid gap-2 sm:grid-cols-[1fr_1.2fr_1fr]">
                 <span class="self-center text-sm font-medium text-slate-700">{{ def.name }}</span>
                 <UFormField label="计算方式"><USelect v-model="def.calcMethod" :items="calcMethodOptions" class="w-full" /></UFormField>
@@ -1272,7 +1328,12 @@ const canNext = computed(() => {
               @click="importAll(false)">导入为草稿</UButton>
             <UButton :disabled="!preview.canImport" :loading="importing" color="primary" variant="soft"
               icon="i-lucide-rocket" @click="importAll(true)">导入并发布</UButton>
+            <UButton v-if="!preview.canImport" :loading="savingPending" color="warning" variant="soft"
+              icon="i-lucide-save" @click="saveAsPendingReview">保存为待验证版本</UButton>
           </div>
+          <p v-if="preview && !preview.canImport" class="text-xs leading-5 text-slate-500">
+            检查没通过也可以先把内容「保存为待验证版本」留档：它不能发布，但随时可以通过右上角「载入现有内容」重新载入继续填写修改。
+          </p>
         </template>
       </div>
 

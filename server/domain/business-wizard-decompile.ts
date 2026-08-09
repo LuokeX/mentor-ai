@@ -551,7 +551,7 @@ export function decompileToWizardInput(
 }
 
 /** 载入后自动进一位，避免撞上版本唯一约束 */
-function bumpVersion(v: string): string {
+export function bumpVersion(v: string): string {
   const m = String(v).match(/^(\d+)\.(\d+)\.(\d+)$/)
   if (!m) return '1.0.1'
   return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`

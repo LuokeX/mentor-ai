@@ -288,3 +288,31 @@ export async function resolveModuleResourceCounterpart(
   }
   return {}
 }
+
+/**
+ * 查该模块+范围下已被占用的版本号。
+ * (library_id, version) 全局唯一且草稿也占位，所以必须查全部状态——
+ * 否则导入同一版本号会在写入时撞唯一索引 500。
+ * 返回占用该版本号的库清单，用于给管理员指出是谁占用了。
+ */
+export async function findExistingVersionLibraries(
+  event: H3Event,
+  input: { module: ModuleId, scope: 'global' | 'school', schoolId: string | null, version: string }
+): Promise<Array<{ libraryType: string, libraryName: string, status: string }>> {
+  const db = useDb(event)
+  return db.select({
+    libraryType: schema.moduleResourceLibraries.libraryType,
+    libraryName: schema.moduleResourceLibraries.name,
+    status: schema.moduleResourceVersions.status
+  }).from(schema.moduleResourceVersions)
+    .innerJoin(schema.moduleResourceLibraries,
+      eq(schema.moduleResourceVersions.libraryId, schema.moduleResourceLibraries.id))
+    .where(and(
+      eq(schema.moduleResourceLibraries.module, input.module),
+      eq(schema.moduleResourceLibraries.scope, input.scope),
+      input.schoolId
+        ? eq(schema.moduleResourceLibraries.schoolId, input.schoolId)
+        : isNull(schema.moduleResourceLibraries.schoolId),
+      eq(schema.moduleResourceVersions.version, input.version)
+    ))
+}

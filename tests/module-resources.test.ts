@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   moduleResourceLibraryCreateSchema,
-  moduleResourceFileImportSchema,
+  moduleResourceBatchImportSchema,
   moduleResourceVersionActionSchema,
   moduleToolPayloadSchema
 } from '../shared/contracts'
@@ -11,6 +11,7 @@ import { filterVisiblePublishedLibraries } from '../server/domain/module-resourc
 import { selectEffectiveCrossRefPayloads } from '../server/domain/module-resource-cross-ref-runner'
 import { projectModuleResourcePayload } from '../server/domain/module-resource-projection'
 import { previewModuleResourcePayload, validateModuleResourcePayload } from '../server/domain/module-resource-validation'
+import { assessmentInstrumentsFromPayload, buildBatchCounterpart } from '../server/domain/module-resource-batch'
 
 describe('module resource contracts', () => {
   it('requires a school id for school-scoped libraries', () => {
@@ -48,27 +49,96 @@ describe('module resource contracts', () => {
     expect(moduleResourceVersionActionSchema.safeParse({ action: 'delete' }).success).toBe(false)
   })
 
-  it('requires an explicit no-personal-data confirmation for file imports', () => {
-    expect(moduleResourceFileImportSchema.safeParse({
+  it('batch import requires all 5 files and a real semver version', () => {
+    const base = (files: unknown[], over: Record<string, unknown> = {}) => ({
       module: 'home_school',
-      libraryType: 'tool',
       scope: 'global',
-      libraryName: '家校工具库',
       version: '1.0.0',
-      filename: 'tool.xlsx',
-      contentBase64: Buffer.from('empty').toString('base64'),
-      confirmNoPersonalData: false
-    }).success).toBe(false)
-    expect(moduleResourceFileImportSchema.safeParse({
-      module: 'home_school',
-      libraryType: 'tool',
-      scope: 'global',
-      libraryName: '家校工具库',
-      version: '1.0.0',
-      filename: 'tool.xlsx',
-      contentBase64: Buffer.from('empty').toString('base64'),
-      confirmNoPersonalData: true
-    }).success).toBe(true)
+      files,
+      confirmNoPersonalData: true,
+      publish: false,
+      ...over
+    })
+    const file = (libraryType: string) => ({
+      libraryType,
+      filename: `${libraryType}.xlsx`,
+      contentBase64: Buffer.from('empty').toString('base64')
+    })
+    const allFiles = ['assessment', 'attribution', 'tool', 'output_template', 'keyword_route'].map(file)
+    // 5 个库全传：同一版本号，通过
+    expect(moduleResourceBatchImportSchema.safeParse(base(allFiles)).success).toBe(true)
+    // 必须 5 个全传：部分上传不允许（不存在「未传库回退现行」）
+    expect(moduleResourceBatchImportSchema.safeParse(base(
+      ['assessment', 'attribution'].map(file)
+    )).success).toBe(false)
+    expect(moduleResourceBatchImportSchema.safeParse(base([])).success).toBe(false)
+    // 同一库类型不能传两个文件
+    expect(moduleResourceBatchImportSchema.safeParse(base(
+      [...allFiles.slice(1), 'assessment'].map(file)
+    )).success).toBe(false)
+    // 版本号必须是 x.y.z 真实版本号，不是随意标签
+    expect(moduleResourceBatchImportSchema.safeParse(base(allFiles, { version: 'abc' })).success).toBe(false)
+    expect(moduleResourceBatchImportSchema.safeParse(base(allFiles, { version: '1.0' })).success).toBe(false)
+    expect(moduleResourceBatchImportSchema.safeParse(base(allFiles, { version: '2.0.0' })).success).toBe(true)
+    // 校本范围必须带学校
+    expect(moduleResourceBatchImportSchema.safeParse(base(allFiles, { scope: 'school' })).success).toBe(false)
+    expect(moduleResourceBatchImportSchema.safeParse(base(
+      allFiles,
+      { scope: 'school', schoolId: 'd9c4988e-e585-4a69-8e83-a87b79b88827' }
+    )).success).toBe(true)
+    // 平台范围不能带学校
+    expect(moduleResourceBatchImportSchema.safeParse(base(
+      allFiles,
+      { schoolId: 'd9c4988e-e585-4a69-8e83-a87b79b88827' }
+    )).success).toBe(false)
+  })
+})
+
+describe('module resource batch counterpart · 整套导入对侧组装', () => {
+  const assessment = (code: string) => ({
+    code,
+    title: code,
+    module: 'home_school',
+    version: '1.0.0',
+    questions: [{ id: 'q1', text: '题1', dimension: 'D', options: [{ label: '少', value: 1 }, { label: '多', value: 5 }] }]
+  })
+  const attribution = { computed: {}, evidences: [], gradingRules: [], crisis: null, redLines: [] }
+
+  it('uses the uploaded assessment as counterpart when attribution is also uploaded', () => {
+    const uploaded = new Map([
+      ['assessment' as const, { instruments: [assessment('NEW')] }],
+      ['attribution' as const, attribution]
+    ])
+    const counterpart = buildBatchCounterpart(uploaded, { assessmentDefinition: assessment('OLD'), assessmentInstruments: [assessment('OLD')] }, 'attribution')
+    // 整套替换：对侧是新量表，不是库里现行的旧量表
+    expect((counterpart.assessmentInstruments ?? [])[0]?.code).toBe('NEW')
+  })
+
+  it('falls back to the current published assessment when not uploaded', () => {
+    const uploaded = new Map([['attribution' as const, attribution]])
+    const counterpart = buildBatchCounterpart(uploaded, { assessmentDefinition: assessment('OLD'), assessmentInstruments: [assessment('OLD')] }, 'attribution')
+    expect((counterpart.assessmentInstruments ?? [])[0]?.code).toBe('OLD')
+  })
+
+  it('uses the uploaded attribution as counterpart when assessment is also uploaded', () => {
+    const uploaded = new Map([
+      ['assessment' as const, { instruments: [assessment('NEW')] }],
+      ['attribution' as const, attribution]
+    ])
+    const counterpart = buildBatchCounterpart(uploaded, { attributionConfig: { computed: {}, evidences: [], gradingRules: [], crisis: null, redLines: [] } }, 'assessment')
+    expect(counterpart.attributionConfig).toBe(attribution)
+  })
+
+  it('falls back to the current attribution when not uploaded', () => {
+    const uploaded = new Map([['assessment' as const, { instruments: [assessment('NEW')] }]])
+    const current = { attributionConfig: { computed: {}, evidences: [], gradingRules: [], crisis: null, redLines: [] } }
+    const counterpart = buildBatchCounterpart(uploaded, current, 'assessment')
+    expect(counterpart.attributionConfig).toBe(current.attributionConfig)
+  })
+
+  it('extracts instruments from single-scale or instruments-array payloads', () => {
+    expect(assessmentInstrumentsFromPayload(assessment('A')).map(i => i.code)).toEqual(['A'])
+    expect(assessmentInstrumentsFromPayload({ instruments: [assessment('A'), assessment('B')] }).map(i => i.code)).toEqual(['A', 'B'])
   })
 })
 

@@ -32,6 +32,12 @@ export default defineEventHandler(async (event) => {
 
   const shouldPublish = body.action === 'publish' || body.action === 'rollback'
   if (shouldPublish) {
+    if (version.status === 'pending_review') {
+      throw createError({
+        statusCode: 422,
+        message: '待验证版本不能直接发布：保存时检查未通过，请通过「业务填写向导」载入修改，检查通过后再保存发布。'
+      })
+    }
     const validation = validateModuleResourcePayload({
       module: version.module as any,
       libraryType: version.libraryType as any,
