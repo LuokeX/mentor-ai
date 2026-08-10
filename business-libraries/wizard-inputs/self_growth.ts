@@ -8,7 +8,7 @@ import type { WizardInput } from '../../shared/business-wizard'
 // 版本：4.2.0；sourceRef：个人成长 2.0 三库文档（2026-07-27 版）
 export const SELF_GROWTH_WIZARD_INPUT: WizardInput = {
   "module": "self_growth",
-  "version": "4.2.0",
+  "version": "4.5.0",
   "sourceRef": "个人成长 2.0 三库文档（2026-07-27 版）",
   "defaults": {
     "schoolSection": "all",

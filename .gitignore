@@ -16,3 +16,4 @@ backups/*.sql*
 infra/certs/*.pem
 infra/certs/*.key
 infra/certs/*.crt
+临时文件/

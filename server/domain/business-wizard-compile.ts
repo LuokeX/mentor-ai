@@ -56,7 +56,7 @@ function buildCodeMap(input: WizardInput): CodeMap {
     })
     seen.forEach((dim, di) => map.dimensions.set(`${scale.name}||${dim}`, `${P}_S${i + 1}D${di + 1}`))
   })
-  input.attributions.forEach((a, i) => map.attributions.set(a.name, `${P}_AT_${seq(i + 1)}`))
+  input.attributions.forEach((a, i) => map.attributions.set(a.name, a.code || `${P}_AT_${seq(i + 1)}`))
   input.tools.forEach((t, i) => map.tools.set(t.name, `${P}_RX_${seq(i + 1)}`))
   return map
 }

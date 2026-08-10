@@ -26,7 +26,7 @@ import type { WizardInput } from '../../shared/business-wizard'
 // ============================================================================
 export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
   "module": "student_case",
-  "version": "4.2.0",
+  "version": "4.5.0",
   "sourceRef": "学生个体问题 2.0 文档集（5D6D 一表双轨/处方库 V1.0/术语库 V2.0/手册 V6.0/业务指导手册 V3.0）",
   "defaults": {
     "schoolSection": "all",
@@ -238,6 +238,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
   ],
   "attributions": [
     {
+      "code": "A1",
       "name": "注意力分散型",
       "description": "课堂走神、玩文具、完不成课堂任务。核心机制是注意力维持困难而非不愿学",
       "highSign": "课堂持续走神，需反复提醒；作业拖拉，完不成课堂任务",
@@ -247,6 +248,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["学习"]
     },
     {
+      "code": "A2",
       "name": "动机缺失型",
       "description": "对学业失去兴趣，不做不交作业。核心机制是内在动机系统被长期挫败感破坏",
       "highSign": "长期不交作业，对任何学科无兴趣",
@@ -256,6 +258,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["学习"]
     },
     {
+      "code": "A3",
       "name": "技能不足型",
       "description": "由于识字量、计算能力或学习方法落后导致的学业困难",
       "highSign": "特定科目持续不及格，识字量/计算能力落后",
@@ -265,6 +268,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["学习"]
     },
     {
+      "code": "B1",
       "name": "课堂纪律型",
       "description": "课堂讲话、随意走动、不遵守课堂基本规则",
       "highSign": "每天被点名提醒2次及以上",
@@ -274,6 +278,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["行为"]
     },
     {
+      "code": "B2",
       "name": "规则习惯型",
       "description": "不按时完成任务、撒谎、物品整理混乱",
       "highSign": "作业长期不交或敷衍，物品经常丢失",
@@ -283,6 +288,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["行为"]
     },
     {
+      "code": "B3",
       "name": "攻击冲动型",
       "description": "攻击性语言、肢体冲突、破坏物品",
       "highSign": "一周内发生1次以上肢体冲突",
@@ -292,6 +298,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["行为"]
     },
     {
+      "code": "C1",
       "name": "焦虑退缩型",
       "description": "过度紧张、回避挑战、恐惧社交。常伴有躯体症状",
       "highSign": "从不主动举手发言，回避社交场合",
@@ -301,6 +308,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["情绪"]
     },
     {
+      "code": "C2",
       "name": "情绪调节型",
       "description": "情绪波动剧烈，与情境不成比例的愤怒/哭泣反应。可能与养育中的情绪忽视有关",
       "highSign": "情绪反应与情境不成比例；突然暴躁或崩溃",
@@ -310,6 +318,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["情绪"]
     },
     {
+      "code": "C3",
       "name": "低自尊型",
       "description": "认为自己不配被爱、不值得成功、做什么都不行",
       "highSign": "常说「我不行」「我太笨了」",
@@ -319,6 +328,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["情绪"]
     },
     {
+      "code": "D1",
       "name": "同伴冲突型",
       "description": "经常与同伴争吵、抢夺、被排斥或参与排挤他人",
       "highSign": "经常与同学冲突或起争执",
@@ -328,6 +338,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["社交"]
     },
     {
+      "code": "D2",
       "name": "社交退缩型",
       "description": "自由活动时间独自一人，不主动接近同伴，但不排斥他人",
       "highSign": "自由活动时间通常独自一人",
@@ -337,6 +348,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["社交"]
     },
     {
+      "code": "D3",
       "name": "技能缺失型",
       "description": "不会用恰当方式加入游戏或对话。愿意交朋友但不知道方法",
       "highSign": "不会用恰当方式加入同伴游戏",
@@ -346,6 +358,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["社交"]
     },
     {
+      "code": "E1",
       "name": "亲子紧张型",
       "description": "亲子沟通障碍、频繁冲突，家长教育方式不一致",
       "highSign": "亲子沟通存在明显障碍",
@@ -355,6 +368,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["家庭"]
     },
     {
+      "code": "E2",
       "name": "教养不当型",
       "description": "体罚、言语羞辱、忽视或过度控制。最高安全风险编码",
       "highSign": "存在体罚、暴力或忽视迹象；安全维度≥4",
@@ -364,6 +378,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "tags": ["家庭", "安全"]
     },
     {
+      "code": "E3",
       "name": "支持缺位型",
       "description": "家庭对学生的学业、情感支持明显缺失。如留守儿童/单亲家长无力兼顾",
       "highSign": "家庭支持明显缺位",
@@ -600,7 +615,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
   ],
   "levels": [
     {
-      "name": "红色-危机",
+      "name": "红色-紧急响应",
       "scale": "信号筛查",
       "conditions": [
         { "targetType": "question", "target": "1", "comparator": "达到或超过", "value": 4, "join": "或" },
@@ -613,7 +628,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       "escalationCondition": "安全风险未在 24 小时内解除，或出现自杀/自伤/严重攻击信号",
       "escalationTarget": "心理健康中心/危机小组（心理总监）",
       "reAssessTrigger": "安全计划确认后按危机小组要求复查",
-      "notificationTemplate": "[学生个体问题·红色危机] 学生触发安全红线：题1/题2（体罚暴力/被欺凌排斥）≥4 分。已暂停常规评估并启动学校安全流程，请年级组长与德育处 24 小时内介入，通知家长并完成安全评估。",
+      "notificationTemplate": "[学生个体问题·红色紧急响应] 学生触发安全红线：题1/题2（体罚暴力/被欺凌排斥）≥4 分。已暂停常规评估并启动学校安全流程，请年级组长与德育处 24 小时内介入，通知家长并完成安全评估。",
       "interventionActions": [
         "立即启动学校安全流程，通知年级组长+德育处",
         "暂停常规评估与学业干预，优先安全",
@@ -621,7 +636,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       ]
     },
     {
-      "name": "橙色-警告",
+      "name": "橙色-高响应",
       "scale": "信号筛查",
       "conditions": [
         { "targetType": "total", "target": "", "comparator": "达到或超过", "value": 45, "join": "且" }
@@ -638,7 +653,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       ]
     },
     {
-      "name": "黄色-预警",
+      "name": "黄色-中响应",
       "scale": "信号筛查",
       "conditions": [
         { "targetType": "total", "target": "", "comparator": "达到或超过", "value": 30, "join": "且" },
@@ -657,7 +672,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
       ]
     },
     {
-      "name": "蓝色-关注",
+      "name": "蓝色-低风险",
       "scale": "信号筛查",
       "conditions": [
         { "targetType": "total", "target": "", "comparator": "达到或超过", "value": 18, "join": "且" },

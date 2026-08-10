@@ -220,6 +220,8 @@ export const wizardScaleSchema = z.object({
 })
 
 export const wizardAttributionSchema = z.object({
+  /** 五类十五型等业务编码（如 A1 注意力分散、E2 教养不当）。不填时编译期自动生成。 */
+  code: z.string().trim().min(1).max(20).optional(),
   name: z.string().trim().min(2).max(80),
   description: z.string().trim().max(300).optional(),
   highSign: z.string().trim().max(300).optional(),

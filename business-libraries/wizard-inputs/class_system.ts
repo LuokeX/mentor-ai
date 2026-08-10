@@ -11,7 +11,7 @@ import type { WizardInput } from '../../shared/business-wizard'
 // 预警口径：A05 心理风险 A-E 五级，A/B 级 24-48h 上报学校，不得由班主任独自处理。
 export const CLASS_SYSTEM_WIZARD_INPUT: WizardInput = {
   "module": "class_system",
-  "version": "4.2.0",
+  "version": "4.5.0",
   "sourceRef": "班级系统建设 2.0 三库文档（2026-07-27 版）",
   "defaults": {
     "schoolSection": "primary",
@@ -2150,7 +2150,7 @@ export const CLASS_SYSTEM_WIZARD_INPUT: WizardInput = {
       ]
     },
     {
-      "name": "班级系统性问题·立即介入",
+      "name": "秩序奠基期",
       "scale": "五系统自评表",
       "conditions": [
         {
@@ -2182,7 +2182,7 @@ export const CLASS_SYSTEM_WIZARD_INPUT: WizardInput = {
       ]
     },
     {
-      "name": "重点建设期",
+      "name": "关系激活期",
       "scale": "五系统自评表",
       "conditions": [
         {
@@ -2212,7 +2212,7 @@ export const CLASS_SYSTEM_WIZARD_INPUT: WizardInput = {
       ]
     },
     {
-      "name": "能量偏低·专项观察",
+      "name": "制度自转期",
       "scale": "班级能量场问卷·教师版",
       "conditions": [
         {
@@ -3992,6 +3992,6 @@ export const CLASS_SYSTEM_WIZARD_INPUT: WizardInput = {
       "description": "情绪失控：先给安全空间再接住情绪"
     }
   ],
-  "defaultLevelName": "文化引领",
-  "defaultMessage": "五系统自评总分60-75分：班级健康，各系统自主运转，保持现有节奏、关注文化建设即可。"
+  "defaultLevelName": "文化生成期",
+  "defaultMessage": "五系统自评总分60-75分：班级健康，各系统自主运转，已进入文化生成期，保持现有节奏、持续沉淀班级文化即可。"
 }
