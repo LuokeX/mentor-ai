@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
 import type { ManagedListResult } from '~~/shared/management'
+const { caseLevelLabel, caseLevelColor, caseSolutionStatusLabel, caseSolutionStatusColor } = useDisplayLabels()
 
 interface StudentRow {
   id: string
@@ -9,6 +10,8 @@ interface StudentRow {
   className: string | null
   gender: string | null
   status: string
+  caseLevel: string | null
+  caseSolutionStatus: string | null
   updatedAt: string
 }
 
@@ -23,6 +26,8 @@ const columns = [
   { key: 'name', label: '学生姓名', sortable: true },
   { key: 'className', label: '班级' },
   { key: 'gender', label: '性别', mobileHidden: true },
+  { key: 'caseLevel', label: '预警级别' },
+  { key: 'caseSolutionStatus', label: '解决状态' },
   { key: 'status', label: '状态', sortable: true },
   { key: 'updatedAt', label: '最近更新', sortable: true, mobileHidden: true },
   { key: 'actions', label: '操作' },
@@ -119,6 +124,23 @@ function closeDrawer() {
         <UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle" size="xs">
           {{ row.status === 'active' ? '在读' : '已归档' }}
         </UBadge>
+      </template>
+      <template #caseLevel-data="{ row }">
+        <UBadge v-if="row.caseLevel" :color="caseLevelColor(row.caseLevel)" variant="subtle" size="xs">
+          {{ caseLevelLabel(row.caseLevel) }}
+        </UBadge>
+        <span v-else class="text-sm text-slate-300">未评估</span>
+      </template>
+      <template #caseSolutionStatus-data="{ row }">
+        <span class="inline-flex items-center gap-1.5 text-sm" :class="{ 'text-slate-500': !row.caseSolutionStatus }">
+          <span class="inline-block size-2 rounded-full" :class="{
+            'bg-red-500': row.caseSolutionStatus === 'unresolved',
+            'bg-yellow-400': row.caseSolutionStatus === 'in_progress',
+            'bg-green-500': row.caseSolutionStatus === 'resolved',
+            'bg-slate-200': !row.caseSolutionStatus,
+          }" />
+          {{ caseSolutionStatusLabel(row.caseSolutionStatus) || '未标记' }}
+        </span>
       </template>
       <template #updatedAt-data="{ value }">{{ new Date(String(value)).toLocaleDateString('zh-CN') }}</template>
       <template #actions-data="{ row }">

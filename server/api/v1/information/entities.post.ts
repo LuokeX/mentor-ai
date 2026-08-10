@@ -12,6 +12,7 @@ const entitySchema = z.discriminatedUnion('type', [
     classId: z.string().uuid(),
     gender: z.string().trim().max(20).optional(),
     notes: z.string().trim().max(1000).optional(),
+    enrolledAt: z.string().datetime().nullable().optional(),
   }),
   z.object({ type: z.literal('guardian'), name: z.string().trim().min(1).max(80), phone: z.string().max(40).optional(), relation: z.string().max(40).optional(), studentIds: z.array(z.string().uuid()).max(6).optional() }),
   z.object({
@@ -68,6 +69,7 @@ export default defineEventHandler(async (event) => {
       nameSearch: searchableHash(body.name, config.encryptionKey),
       gender: body.gender || null,
       notesEnc: body.notes ? encryptSensitive(body.notes, config.encryptionKey) : null,
+      enrolledAt: body.enrolledAt ? new Date(body.enrolledAt) : null,
     }).returning({ id: schema.students.id })
   } else if (body.type === 'guardian') {
     [record] = await db.insert(schema.guardians).values({

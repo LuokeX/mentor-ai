@@ -54,6 +54,8 @@ export const users = pgTable('users', {
   teachingGrades: jsonb('teaching_grades').$type<number[]>().default([]).notNull(),
   subject: varchar('subject', { length: 80 }),
   isClassTeacher: boolean('is_class_teacher').default(false).notNull(),
+  /** 班主任年限（年），教师身份画像必填项，学校管理员维护 */
+  classTeacherYears: integer('class_teacher_years'),
   hiredAt: timestamp('hired_at', { withTimezone: true }),
   title: varchar('title', { length: 40 }),
   certNote: text('cert_note'),
@@ -309,6 +311,8 @@ export const students = pgTable('students', {
   caseLevel: varchar('case_level', { length: 40 }),
   /** 最近一次学习问题等级：LP0 危机转介/LP3 系统干预/LP2 深入诊断 */
   learningLevel: varchar('learning_level', { length: 40 }),
+  /** 个体问题解决方案状态：unresolved 未解决（红点）/ in_progress 进行中（黄点）/ resolved 已解决（绿点） */
+  caseSolutionStatus: varchar('case_solution_status', { length: 20 }).default('unresolved').notNull(),
   /** 全量快照：筛查维度分、三层诊断分、命中归因、评估时间 */
   studentSnapshot: jsonb('student_snapshot').$type<Record<string, unknown>>().default({}).notNull(),
   /** 管理员手动修正，评估提交时以新评估为准并清除对应项 */
@@ -966,3 +970,29 @@ export const aiRuntimeSettings = pgTable('ai_runtime_settings', {
   updatedBy: uuid('updated_by').references(() => users.id),
   ...timestamps
 })
+
+/**
+ * 班级事件（服务 class_system 模块）：德育或班级重点事件。
+ * 与 student_events 并列：学生事件挂在学生上，班级事件挂在班级上。
+ */
+export const classEvents = pgTable('class_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  classId: uuid('class_id').notNull().references(() => classes.id),
+  eventType: varchar('event_type', { length: 30 }).notNull(), // 德育活动/班级冲突/集体异常/班级建设/其他
+  severity: varchar('severity', { length: 20 }).notNull(), // 低/中/高/严重
+  title: varchar('title', { length: 200 }).notNull(),
+  description: text('description'),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }),
+  resolution: text('resolution'),
+  status: varchar('status', { length: 20 }).default('open').notNull(), // open/resolved/closed
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
+  dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
+  ...timestamps
+}, table => [
+  index('class_events_class_idx').on(table.classId),
+  index('class_events_owner_idx').on(table.ownerUserId),
+  index('class_events_school_idx').on(table.schoolId, table.occurredAt)
+])

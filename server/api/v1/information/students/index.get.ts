@@ -54,6 +54,9 @@ export default defineEventHandler(async (event) => {
       id: schema.students.id, classId: schema.students.classId, className: schema.classes.name,
       nameEnc: schema.students.nameEnc,
       gender: schema.students.gender, status: schema.students.status,
+      /** 最近一次个体支持等级 / 预警级别（评估快照回写） */
+      caseLevel: schema.students.caseLevel,
+      caseSolutionStatus: schema.students.caseSolutionStatus,
       ownerUserId: schema.students.ownerUserId, schoolId: schema.students.schoolId,
       createdAt: schema.students.createdAt, updatedAt: schema.students.updatedAt,
     }).from(schema.students)

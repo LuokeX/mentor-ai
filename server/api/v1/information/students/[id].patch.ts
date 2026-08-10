@@ -30,6 +30,10 @@ const bodySchema = z.object({
   gender: z.string().max(20).optional(),
   notes: z.string().max(1000).optional(),
   classId: z.string().uuid().nullable().optional(),
+  /** 入学日期（学籍字段） */
+  enrolledAt: z.string().datetime().nullable().optional(),
+  /** 个体问题解决方案状态：unresolved/in_progress/resolved（红/黄/绿点） */
+  caseSolutionStatus: z.enum(['unresolved', 'in_progress', 'resolved']).optional(),
   profile: studentProfileSchema.optional()
 })
 
@@ -77,6 +81,8 @@ export default defineEventHandler(async (event) => {
   }
   if (body.notes !== undefined) patch.notesEnc = body.notes ? encryptSensitive(body.notes, secret) : null
   if (body.classId !== undefined) patch.classId = body.classId
+  if (body.enrolledAt !== undefined) patch.enrolledAt = body.enrolledAt ? new Date(body.enrolledAt) : null
+  if (body.caseSolutionStatus !== undefined) patch.caseSolutionStatus = body.caseSolutionStatus
   const finalConditions = [
     eq(schema.students.id, id),
     eq(schema.students.ownerUserId, user.id),

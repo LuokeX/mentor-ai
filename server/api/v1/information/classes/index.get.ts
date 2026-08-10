@@ -4,7 +4,7 @@
  * 返回分页列表、每条记录的能力标记、页面级能力。
  * 教师只能看到自己负责的班级。
  */
-import { and, asc, desc, eq, ilike, or } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, or } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
@@ -56,6 +56,8 @@ export default defineEventHandler(async (event) => {
       studentCount: schema.classes.studentCount, status: schema.classes.status,
       externalCode: schema.classes.externalCode, departmentId: schema.classes.departmentId,
       ownerUserId: schema.classes.ownerUserId, schoolId: schema.classes.schoolId,
+      /** 四阶当前阶段（评估快照回写）：秩序奠基期/关系激活期/制度自转期/文化生成期 */
+      energyStage: schema.classes.energyStage,
       createdAt: schema.classes.createdAt, updatedAt: schema.classes.updatedAt,
     }).from(schema.classes).where(and(...conditions)).orderBy(orderFn(sortCol))
       .limit(query.pageSize).offset(offsetFrom(query.page, query.pageSize)),
@@ -65,6 +67,46 @@ export default defineEventHandler(async (event) => {
   })
 
   // 为每行注入能力
+  const classIds = result.rows.map(row => row.id)
+  // 最薄弱系统：取每班最近一次评估快照的 primaryAttribution（全量快照只在详情页下发，列表只投影薄弱系统）
+  const snapshotRows = classIds.length
+    ? await db.select({
+        classId: schema.classes.id,
+        snapshot: schema.classes.classSnapshot,
+      }).from(schema.classes).where(and(
+        eq(schema.classes.schoolId, user.schoolId),
+        inArray(schema.classes.id, classIds),
+      ))
+    : []
+  const weakestByClass = new Map<string, string | null>()
+  for (const row of snapshotRows) {
+    const snapshot = row.snapshot as { primaryAttribution?: { name?: string } } | null
+    weakestByClass.set(row.classId, snapshot?.primaryAttribution?.name || null)
+  }
+  // 男女比例：按班级统计学生性别，未分配到任何班级的学生不计入
+  const genderStats = classIds.length
+    ? await db.select({
+        classId: schema.students.classId,
+        gender: schema.students.gender,
+        count: countSql,
+      }).from(schema.students)
+        .where(and(
+          eq(schema.students.schoolId, user.schoolId),
+          eq(schema.students.status, 'active'),
+          inArray(schema.students.classId, classIds),
+        ))
+        .groupBy(schema.students.classId, schema.students.gender)
+    : []
+  const genderByClass = new Map<string, { male: number, female: number, unknown: number }>()
+  for (const row of genderStats) {
+    if (!row.classId) continue
+    const entry = genderByClass.get(row.classId) || { male: 0, female: 0, unknown: 0 }
+    if (row.gender === '男') entry.male += Number(row.count)
+    else if (row.gender === '女') entry.female += Number(row.count)
+    else entry.unknown += Number(row.count)
+    genderByClass.set(row.classId, entry)
+  }
+
   const rows = result.rows.map((row) => {
     const capabilities: Capability[] = resolveCapabilities({
       user,
@@ -74,7 +116,15 @@ export default defineEventHandler(async (event) => {
       targetType: 'class',
       targetId: row.id,
     })
-    return { ...row, _capabilities: capabilities }
+    const gender = genderByClass.get(row.id) || { male: 0, female: 0, unknown: 0 }
+    return {
+      ...row,
+      /** 男女比例（按在册学生实时统计） */
+      genderRatio: { male: gender.male, female: gender.female, unknown: gender.unknown },
+      /** 最薄弱系统维度（评估快照 primaryAttribution） */
+      weakestSystem: weakestByClass.get(row.id) || null,
+      _capabilities: capabilities,
+    }
   })
 
   const pageCapabilities: Capability[] = ['view']

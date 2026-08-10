@@ -3,7 +3,7 @@ const route = useRoute()
 const id = String(route.params.id)
 const { data, error, refresh } = await useFetch<any>(`/api/v1/information/students/${id}`)
 const pending = ref(false)
-const { moduleLabel, planStatusLabel, planStatusColor, riskLevelLabel } = useDisplayLabels()
+const { moduleLabel, planStatusLabel, planStatusColor, riskLevelLabel, caseLevelLabel, caseLevelColor, caseSolutionStatusLabel, caseSolutionStatusColor } = useDisplayLabels()
 const emptyProfile = () => ({
   studentNo: '',
   birthDate: '',
@@ -23,7 +23,7 @@ const emptyProfile = () => ({
   supportNeeds: '',
   riskAttentionLevel: ''
 })
-const form = reactive({ name: '', gender: '', notes: '', classId: '', profile: emptyProfile() })
+const form = reactive({ name: '', gender: '', notes: '', classId: '', enrolledAt: '', caseSolutionStatus: 'unresolved', profile: emptyProfile() })
 const linkGuardianId = ref('')
 const communication = reactive({ guardianId: '', summary: '', parentType: '', attitudeType: '', riskLevel: '低风险' })
 const NONE_VALUE = '__none__'
@@ -35,6 +35,10 @@ const classSelect = computed({
   get: () => form.classId || NONE_VALUE,
   set: value => { form.classId = value === NONE_VALUE ? '' : value }
 })
+const solutionStatusSelect = computed({
+  get: () => form.caseSolutionStatus || NONE_VALUE,
+  set: value => { form.caseSolutionStatus = value === NONE_VALUE ? 'unresolved' : value }
+})
 const communicationGuardianSelect = computed({
   get: () => communication.guardianId || NONE_VALUE,
   set: value => { communication.guardianId = value === NONE_VALUE ? '' : value }
@@ -43,6 +47,11 @@ const genderOptions = [
   { label: '未填写', value: NONE_VALUE },
   { label: '男', value: '男' },
   { label: '女', value: '女' }
+]
+const solutionStatusOptions = [
+  { label: '未解决', value: 'unresolved' },
+  { label: '进行中', value: 'in_progress' },
+  { label: '已解决', value: 'resolved' }
 ]
 const boardingOptions = ['走读', '住宿', '午托', '暂未确认'].map(value => ({ label: value, value }))
 const attentionOptions = ['常规关注', '需要跟进', '重点关注', '危机/转介中'].map(value => ({ label: value, value }))
@@ -63,13 +72,15 @@ watchEffect(() => {
   form.gender = data.value.student.gender || ''
   form.notes = data.value.student.notes || ''
   form.classId = data.value.student.classId || ''
+  form.enrolledAt = data.value.student.enrolledAt ? String(data.value.student.enrolledAt).slice(0, 10) : ''
+  form.caseSolutionStatus = data.value.student.caseSolutionStatus || 'unresolved'
   Object.assign(form.profile, emptyProfile(), data.value.student.profile || {})
 })
 
 async function saveStudent() {
   pending.value = true
   try {
-    await $fetch(`/api/v1/information/students/${id}`, { method: 'PATCH', body: { ...form, classId: form.classId || null, profile: { ...form.profile } } })
+    await $fetch(`/api/v1/information/students/${id}`, { method: 'PATCH', body: { ...form, classId: form.classId || null, enrolledAt: form.enrolledAt ? new Date(form.enrolledAt).toISOString() : null, profile: { ...form.profile } } })
     await refresh()
   } finally { pending.value = false }
 }
@@ -116,10 +127,26 @@ async function createCommunication() {
   <div class="mx-auto max-w-6xl px-5 py-10">
     <template v-if="error"><div class="panel mx-auto max-w-2xl p-8 text-center"><UIcon name="i-lucide-lock-keyhole" class="mx-auto size-10 text-amber-500" /><h1 class="mt-4 text-2xl font-semibold">学生档案无法打开</h1><p class="mt-3 text-sm leading-6 text-slate-500">该学生可能不存在，或当前登录账号不是这名学生的当前负责教师。请切换到负责教师账号，或让学校管理员在“班级学生管理”里调整负责教师。</p><p class="mt-3 font-mono text-xs text-slate-400">{{ error.statusCode || error.status }} · {{ error.statusMessage || error.message }}</p><div class="mt-6 flex justify-center gap-3"><UButton to="/information/students">返回信息中心</UButton><UButton to="/login" color="neutral" variant="soft">重新登录</UButton></div></div></template>
     <template v-else>
-    <div class="flex flex-wrap items-start justify-between gap-4"><div><UButton to="/information/students" icon="i-lucide-arrow-left" color="neutral" variant="ghost">返回信息中心</UButton><p class="mt-5 text-sm font-semibold text-emerald-700">学生档案</p><h1 class="mt-2 text-3xl font-semibold">{{ data?.student?.name || '学生详情' }}</h1><p class="mt-2 text-sm text-slate-500">{{ data?.student?.className || '未分配班级' }} · 当前负责档案</p></div><div class="flex flex-wrap justify-end gap-2"><UButton :to="{ path: '/', query: { contextType: 'student', contextId: id } }" icon="i-lucide-sparkles">向 AI 咨询该学生</UButton><UBadge color="primary" variant="soft">档案完整度 {{ profileCompletion }}%</UBadge><UBadge color="neutral" variant="soft">沟通 {{ data?.communications?.length || 0 }}</UBadge></div></div>
+    <div class="flex flex-wrap items-start justify-between gap-4"><div><UButton to="/information/students" icon="i-lucide-arrow-left" color="neutral" variant="ghost">返回信息中心</UButton><p class="mt-5 text-sm font-semibold text-emerald-700">学生档案</p><h1 class="mt-2 text-3xl font-semibold">{{ data?.student?.name || '学生详情' }}</h1><p class="mt-2 text-sm text-slate-500">{{ data?.student?.className || '未分配班级' }}<template v-if="data?.student?.classTeacherName"> · 班主任 {{ data.student.classTeacherName }}</template> · 当前负责档案</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <UBadge v-if="data?.student?.caseLevelName" :color="caseLevelColor(data.student.caseLevelName)" variant="soft">
+            <UIcon name="i-lucide-triangle-alert" class="size-3.5" /> {{ caseLevelLabel(data.student.caseLevelName) }}
+          </UBadge>
+          <UBadge v-for="code in (data?.student?.caseCodes || [])" :key="code.code" color="primary" variant="subtle" size="sm">
+            {{ code.code }} {{ code.name }}
+          </UBadge>
+          <UBadge :color="caseSolutionStatusColor(data?.student?.caseSolutionStatus)" variant="soft">
+            <span class="mr-1 inline-block size-2 rounded-full" :class="{
+              'bg-red-500': data?.student?.caseSolutionStatus === 'unresolved',
+              'bg-yellow-400': data?.student?.caseSolutionStatus === 'in_progress',
+              'bg-green-500': data?.student?.caseSolutionStatus === 'resolved',
+            }" />{{ caseSolutionStatusLabel(data?.student?.caseSolutionStatus) }}
+          </UBadge>
+        </div>
+      </div><div class="flex flex-wrap justify-end gap-2"><UButton :to="{ path: '/', query: { contextType: 'student', contextId: id } }" icon="i-lucide-sparkles">向 AI 咨询该学生</UButton><UBadge color="primary" variant="soft">档案完整度 {{ profileCompletion }}%</UBadge><UBadge color="neutral" variant="soft">沟通 {{ data?.communications?.length || 0 }}</UBadge></div></div>
     <div class="mt-8 grid gap-6 lg:grid-cols-[1fr_1fr]">
       <section class="panel p-6 lg:col-span-2"><div class="flex flex-wrap items-start justify-between gap-3"><div><h2 class="text-xl font-semibold">基础信息</h2><p class="mt-2 text-sm text-slate-500">用于班主任日常跟进、转班移交和家校沟通前的信息对齐；不作为医学或心理诊断。</p></div><UButton :loading="pending" @click="saveStudent">保存学生信息</UButton></div><div class="mt-6 grid gap-6 xl:grid-cols-3">
-        <div class="rounded-3xl border border-slate-100 p-5"><h3 class="font-semibold">学籍与班级</h3><div class="mt-4 space-y-4"><UFormField label="姓名"><UInput v-model="form.name" class="w-full" /></UFormField><div class="grid gap-3 md:grid-cols-2"><UFormField label="性别"><USelect v-model="genderSelect" :items="genderOptions" class="w-full" /></UFormField><UFormField label="学号/编号"><UInput v-model="form.profile.studentNo" class="w-full" placeholder="如 2026070301" /></UFormField></div><div class="grid gap-3 md:grid-cols-2"><UFormField label="出生日期"><UInput v-model="form.profile.birthDate" type="date" class="w-full" /></UFormField><UFormField label="民族"><UInput v-model="form.profile.ethnicity" class="w-full" placeholder="选填" /></UFormField></div><UFormField label="所属班级"><USelect v-model="classSelect" :items="[{label:'暂不分配',value:NONE_VALUE}, ...(data?.classOptions || []).map((item:any)=>({label:item.name,value:item.id}))]" class="w-full" /></UFormField><div class="grid gap-3 md:grid-cols-2"><UFormField label="居住/户籍情况"><UInput v-model="form.profile.residenceType" class="w-full" placeholder="本地/随迁/寄宿等" /></UFormField><UFormField label="走读/住宿"><USelect v-model="form.profile.boardingStatus" :items="boardingOptions" class="w-full" /></UFormField></div></div></div>
+        <div class="rounded-3xl border border-slate-100 p-5"><h3 class="font-semibold">学籍与班级</h3><div class="mt-4 space-y-4"><UFormField label="姓名"><UInput v-model="form.name" class="w-full" /></UFormField><div class="grid gap-3 md:grid-cols-2"><UFormField label="性别"><USelect v-model="genderSelect" :items="genderOptions" class="w-full" /></UFormField><UFormField label="学号/编号"><UInput v-model="form.profile.studentNo" class="w-full" placeholder="如 2026070301" /></UFormField></div><div class="grid gap-3 md:grid-cols-2"><UFormField label="出生日期"><UInput v-model="form.profile.birthDate" type="date" class="w-full" /></UFormField><UFormField label="入学日期"><UInput v-model="form.enrolledAt" type="date" class="w-full" /></UFormField></div><div class="grid gap-3 md:grid-cols-2"><UFormField label="民族"><UInput v-model="form.profile.ethnicity" class="w-full" placeholder="选填" /></UFormField><UFormField label="解决方案状态"><USelect v-model="solutionStatusSelect" :items="solutionStatusOptions" class="w-full" /></UFormField></div><UFormField label="所属班级"><USelect v-model="classSelect" :items="[{label:'暂不分配',value:NONE_VALUE}, ...(data?.classOptions || []).map((item:any)=>({label:item.name,value:item.id}))]" class="w-full" /></UFormField><div class="grid gap-3 md:grid-cols-2"><UFormField label="居住/户籍情况"><UInput v-model="form.profile.residenceType" class="w-full" placeholder="本地/随迁/寄宿等" /></UFormField><UFormField label="走读/住宿"><USelect v-model="form.profile.boardingStatus" :items="boardingOptions" class="w-full" /></UFormField></div></div></div>
         <div class="rounded-3xl border border-slate-100 p-5"><h3 class="font-semibold">在校观察</h3><div class="mt-4 space-y-4"><UFormField label="班级角色"><UInput v-model="form.profile.classRole" class="w-full" placeholder="班干部/小组长/普通成员等" /></UFormField><UFormField label="出勤状态"><UInput v-model="form.profile.attendanceStatus" class="w-full" placeholder="稳定/迟到较多/请假较多等" /></UFormField><UFormField label="学业状态"><USelect v-model="form.profile.academicLevel" :items="academicOptions" class="w-full" /></UFormField><UFormField label="课堂表现"><UInput v-model="form.profile.classroomBehavior" class="w-full" placeholder="专注、参与、作业完成等" /></UFormField><UFormField label="情绪状态"><UInput v-model="form.profile.emotionStatus" class="w-full" placeholder="近期观察到的情绪表现" /></UFormField><UFormField label="同伴关系"><UInput v-model="form.profile.peerRelation" class="w-full" placeholder="融入度、冲突、支持同伴等" /></UFormField></div></div>
         <div class="rounded-3xl border border-slate-100 p-5"><h3 class="font-semibold">家庭与支持画像</h3><div class="mt-4 space-y-4"><UFormField label="家庭结构"><UInput v-model="form.profile.familyStructure" class="w-full" placeholder="如双亲、单亲、隔代照护等" /></UFormField><UFormField label="主要照护人"><UInput v-model="form.profile.primaryCaregiver" class="w-full" placeholder="日常主要沟通对象" /></UFormField><UFormField label="关注等级"><USelect v-model="form.profile.riskAttentionLevel" :items="attentionOptions" class="w-full" /></UFormField><UFormField label="优势资源"><UTextarea v-model="form.profile.strengths" :rows="3" class="w-full" placeholder="兴趣、能力、支持关系、积极经验" /></UFormField><UFormField label="主要困难"><UTextarea v-model="form.profile.mainDifficulties" :rows="3" class="w-full" placeholder="当前最需要老师关注的问题" /></UFormField><UFormField label="支持需求"><UTextarea v-model="form.profile.supportNeeds" :rows="3" class="w-full" placeholder="后续需要的班级、家校或专业支持" /></UFormField></div></div>
         <div class="rounded-3xl border border-slate-100 p-5 xl:col-span-3"><UFormField label="综合备注"><UTextarea v-model="form.notes" :rows="4" class="w-full" placeholder="记录不适合拆字段的背景信息、移交说明或阶段性观察" /></UFormField></div>

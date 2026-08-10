@@ -28,6 +28,28 @@ const labels = {
     pending_review: '待验证',
     ready: '已就绪'
   },
+  /** 学生个体问题·预警级别（student_case 评估等级，文档口径） */
+  caseLevel: {
+    '红色-紧急响应': '红色·紧急响应',
+    '橙色-高响应': '橙色·高响应',
+    '黄色-中响应': '黄色·中响应',
+    '蓝色-低风险': '蓝色·低风险',
+    '紫色-待观察': '紫色·待观察'
+  },
+  /** 个体问题解决方案状态（绿/黄/红点） */
+  caseSolutionStatus: {
+    unresolved: '未解决',
+    in_progress: '进行中',
+    resolved: '已解决'
+  },
+  /** 班级系统·四阶当前阶段（class_system 评估等级） */
+  classStage: {
+    '安全危机·立即上报': '安全危机·立即上报',
+    '秩序奠基期': '秩序奠基期',
+    '关系激活期': '关系激活期',
+    '制度自转期': '制度自转期',
+    '文化生成期': '文化生成期'
+  },
   planStatus: {
     pending_acceptance: '待确认',
     accepted: '已接受',
@@ -262,7 +284,22 @@ const colors: Record<string, Partial<Record<string, BadgeColor>>> = {
   accountStatus: { active: 'success', disabled: 'neutral', invited: 'warning' },
   schoolStatus: { active: 'success', disabled: 'neutral' },
   recordStatus: { active: 'success', archived: 'neutral', closed: 'neutral', disabled: 'neutral', invited: 'warning', graduated: 'neutral', transferred: 'warning', open: 'warning', resolved: 'success', completed: 'success' },
-  riskLevel: { crisis: 'error', high: 'error', medium: 'warning', low: 'neutral' }
+  riskLevel: { crisis: 'error', high: 'error', medium: 'warning', low: 'neutral' },
+  caseLevel: {
+    '红色-紧急响应': 'error',
+    '橙色-高响应': 'warning',
+    '黄色-中响应': 'warning',
+    '蓝色-低风险': 'info',
+    '紫色-待观察': 'neutral'
+  },
+  caseSolutionStatus: { unresolved: 'error', in_progress: 'warning', resolved: 'success' },
+  classStage: {
+    '安全危机·立即上报': 'error',
+    '秩序奠基期': 'warning',
+    '关系激活期': 'warning',
+    '制度自转期': 'info',
+    '文化生成期': 'success'
+  }
 }
 
 function labelFrom(group: keyof typeof labels, value?: string | null) {
@@ -294,6 +331,12 @@ export function useDisplayLabels() {
     severityColor: (value?: string | null) => colorFrom('severity', value),
     accessStatusLabel: (value?: string | null) => labelFrom('accessStatus', value),
     accessStatusColor: (value?: string | null) => colorFrom('accessStatus', value),
+    caseLevelLabel: (value?: string | null) => labelFrom('caseLevel', value),
+    caseLevelColor: (value?: string | null) => colorFrom('caseLevel', value),
+    caseSolutionStatusLabel: (value?: string | null) => labelFrom('caseSolutionStatus', value),
+    caseSolutionStatusColor: (value?: string | null) => colorFrom('caseSolutionStatus', value),
+    classStageLabel: (value?: string | null) => labelFrom('classStage', value),
+    classStageColor: (value?: string | null) => colorFrom('classStage', value),
     accountStatusLabel: (value?: string | null) => labelFrom('accountStatus', value),
     accountStatusColor: (value?: string | null) => colorFrom('accountStatus', value),
     schoolStatusLabel: (value?: string | null) => labelFrom('schoolStatus', value),

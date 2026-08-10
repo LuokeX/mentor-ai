@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "class_teacher_years" integer;

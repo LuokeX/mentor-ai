@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
 import type { ManagedListResult } from '~~/shared/management'
+const { classStageLabel, classStageColor } = useDisplayLabels()
 
 interface ClassRow {
   id: string
@@ -29,7 +30,7 @@ const columns = [
   { key: 'grade', label: '年级', sortable: true },
   { key: 'ownerName', label: '负责教师' },
   { key: 'departmentName', label: '部门', mobileHidden: true },
-  { key: 'energyStage', label: '能量场阶段', sortable: true },
+  { key: 'energyStage', label: '四阶阶段', sortable: true },
   { key: 'studentCount', label: '学生数', sortable: true },
   { key: 'status', label: '状态', sortable: true },
   { key: 'actions', label: '操作' },
@@ -48,8 +49,8 @@ const classTypeOptions = [
 const energyStageOptions = [
   { label: '（当前按评估结果）', value: '__auto__' },
   { label: '改回按评估结果', value: '__clear__' },
-  { label: '秩序奠基', value: '秩序奠基' }, { label: '关系激活', value: '关系激活' },
-  { label: '制度自转', value: '制度自转' }, { label: '文化引领', value: '文化引领' },
+  { label: '秩序奠基期', value: '秩序奠基期' }, { label: '关系激活期', value: '关系激活期' },
+  { label: '制度自转期', value: '制度自转期' }, { label: '文化生成期', value: '文化生成期' },
 ]
 const { data: teacherData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/teachers', { query: { page: 1, pageSize: 100, status: 'active' } })
 const { data: departmentData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/departments', { query: { page: 1, pageSize: 100, status: 'active' } })
@@ -164,7 +165,7 @@ function closeDrawer() {
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : row.status === 'graduated' ? 'info' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '在读' : row.status === 'graduated' ? '已毕业' : '已归档' }}</UBadge></template>
       <template #energyStage-data="{ row }">
-        <UBadge v-if="row.energyStage" :color="row.energyStage === '生存期' ? 'warning' : row.energyStage === '规范期' ? 'info' : 'success'" variant="subtle">{{ row.energyStage }}</UBadge>
+        <UBadge v-if="row.energyStage" :color="classStageColor(row.energyStage)" variant="subtle">{{ classStageLabel(row.energyStage) }}</UBadge>
         <span v-else class="text-xs text-slate-400">未评估</span>
       </template>
       <template #actions-data="{ row }">

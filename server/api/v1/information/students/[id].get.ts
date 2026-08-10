@@ -30,6 +30,15 @@ export default defineEventHandler(async (event) => {
     db.select().from(schema.guardians).where(and(eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId!))).orderBy(desc(schema.guardians.updatedAt)),
     db.select().from(schema.plans).where(and(eq(schema.plans.studentId, id), eq(schema.plans.ownerUserId, user.id), eq(schema.plans.schoolId, user.schoolId!))).orderBy(desc(schema.plans.updatedAt)).limit(20)
   ])
+  // 班主任姓名：学生负责教师就是班主任（学生档案归属学校，负责教师可能不是班主任，取班级 owner）
+  let classTeacherName: string | null = null
+  if (klass[0]?.ownerUserId) {
+    const [teacher] = await db.select({ name: schema.users.name }).from(schema.users).where(and(
+      eq(schema.users.id, klass[0].ownerUserId),
+      eq(schema.users.schoolId, user.schoolId!),
+    )).limit(1)
+    if (teacher) classTeacherName = teacher.name
+  }
   const guardianIds = relations.map(relation => relation.guardianId)
   const linkedGuardians = guardianIds.length
     ? await db.select().from(schema.guardians).where(and(
@@ -48,6 +57,13 @@ export default defineEventHandler(async (event) => {
       profile,
       notes: decryptSensitive(student.notesEnc, secret),
       className: klass[0]?.name || null,
+      classTeacherName,
+      /** 个体问题预警级别（红色-紧急响应…紫色-待观察），来自 student_case 评估快照 */
+      caseLevelName: (student.studentSnapshot as any)?.levelName || student.caseLevel || null,
+      /** 命中的五类十五型编码（按优先级排序），如 [{ code: 'A1', name: '注意力分散型' }] */
+      caseCodes: ((student.studentSnapshot as any)?.attributions || [])
+        .filter((a: any) => a.rank === 0 || a.rank === 1 || a.rank === 2)
+        .map((a: any) => ({ code: a.code, name: a.name })),
       aiContext: { type: 'student', id: student.id, label: decryptSensitive(student.nameEnc, secret) },
       nameEnc: undefined,
       profileEnc: undefined,

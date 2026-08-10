@@ -15,6 +15,7 @@ export type ManagedTargetType =
   | 'communication'
   | 'guardian_communication'
   | 'student_event'
+  | 'class_event'
   | 'student_case'
   | 'department'
   | 'user'
@@ -62,7 +63,7 @@ export function resolveCapabilities(ctx: CapabilityContext): Capability[] {
     } else if (targetType === 'communication' || targetType === 'guardian_communication') {
       caps.push('edit', 'inline_edit')
       if (recordStatus === 'active') caps.push('archive')
-    } else if (targetType === 'student_event') {
+    } else if (targetType === 'student_event' || targetType === 'class_event') {
       caps.push('edit')
     }
     return caps
@@ -112,7 +113,7 @@ export function resolvePageCapabilities(
   delegatedGrantId?: string | null,
 ): Capability[] {
   if (user.role === 'teacher') {
-    return ['student', 'guardian', 'communication', 'student_event'].includes(targetType)
+    return ['student', 'guardian', 'communication', 'student_event', 'class_event'].includes(targetType)
       ? ['view', 'create']
       : ['view']
   }
