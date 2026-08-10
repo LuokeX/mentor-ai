@@ -1,6 +1,7 @@
 import type { H3Event } from 'h3'
 import { z } from 'zod'
 import { routeDecisionSchema, type ClarificationRound, type ClarificationSummary, type RouteDecision } from '../../shared/contracts'
+import { isValidSummaryOutput, normalizeModuleProportions, sanitizeHistoryForSummary, topModuleFromScores, type SummaryJsonMeta } from '../domain/chat-clarification'
 import type { KeywordRouteEntry, ModuleId, OutputTemplateEntry, RuleExecResult } from '../../shared/contracts'
 import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
 import { assessmentDefinitions, moduleMeta, type AssessmentDefinition } from '../../shared/assessments'
@@ -196,7 +197,10 @@ async function buildSummaryMessages(event: H3Event, input: {
   const messages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
-  messages.push(...input.history.slice(-10).map(item => ({ role: item.role as 'user' | 'assistant', content: item.content.slice(0, 1200) })))
+  // 清洗历史：去掉追问轮 assistant 消息里的"选项："列表，
+  // 防止模型把"问题 + 选项"格式当成输出范例继续追问
+  const sanitized = sanitizeHistoryForSummary(input.history)
+  messages.push(...sanitized.slice(-10).map(item => ({ role: item.role as 'user' | 'assistant', content: item.content.slice(0, 1200) })))
   return messages
 }
 
@@ -401,15 +405,19 @@ export async function streamClarificationSummary(event: H3Event, input: {
   onDelta: (text: string) => void
 }): Promise<{ data: ClarificationSummary; fallback: boolean }> {
   const config = useRuntimeConfig(event)
-  const fallback: ClarificationSummary = {
+  // 模块推荐优先沿用追问轮的有效评分，避免总结失败时丢失信息、退回固定默认值
+  const topModule = (topModuleFromScores(input.lastModuleScores) || 'self_growth') as ModuleId
+  const lastScoresProportions = normalizeModuleProportions(input.lastModuleScores)
+  const buildFallback = (): ClarificationSummary => ({
     type: 'summary',
-    answer: '从您描述的情况来看，作为教师您所承担的责任和压力是真实的，这些感受值得被认真对待。您目前遇到的困扰涉及多个层面，我们可以先梳理清楚这些困扰之间的关系，找到最需要优先应对的那个点。平台上有一套系统的评估和分析工具，可以帮助您更清晰地看见问题全貌，从而找到具体的应对方向。',
-    rationale: '教师面临多方面困扰，需要先梳理优先级再深入评估。',
-    primaryModule: 'self_growth',
-    moduleProportions: { self_growth: 0.25, class_system: 0.2, home_school: 0.15, student_case: 0.25, learning_problem: 0.15 },
-    suggestedActions: [{ label: '梳理当前困扰的优先级', type: 'open_module', module: 'self_growth' }]
-  }
+    answer: `从您描述的情况来看，作为教师您所承担的责任和压力是真实的，这些感受值得被认真对待。根据刚才几轮补充的信息，问题方向已经比较清晰：建议先从「${moduleMeta[topModule].title}」模块入手，用平台上的量表做一次系统评估，再结合归因结果匹配具体的应对工具，这样比凭感觉判断更稳妥。`,
+    rationale: '基于对话中补充的具体情况，优先从相关度最高的模块开始系统评估。',
+    primaryModule: topModule,
+    moduleProportions: lastScoresProportions || { self_growth: 0.25, class_system: 0.2, home_school: 0.15, student_case: 0.25, learning_problem: 0.15 },
+    suggestedActions: [{ label: `进入「${moduleMeta[topModule].title}」模块完成评估`, type: 'open_module', module: topModule }]
+  })
 
+  const fallback = buildFallback()
   if (!config.deepseekApiKey) {
     for (const chunk of fallback.answer.match(/[\s\S]{1,18}/g) || [fallback.answer]) input.onDelta(chunk)
     return { data: fallback, fallback: true }
@@ -418,13 +426,15 @@ export async function streamClarificationSummary(event: H3Event, input: {
   const startedAt = Date.now()
   const rt = await getAiRuntimeConfig(event)
   const generatorModel = rt.generatorModel || config.deepseekGeneratorModel
-  const messages = await buildSummaryMessages(event, {
-    history: input.history,
-    citations: input.citations,
-    lastModuleScores: input.lastModuleScores
-  })
 
-  try {
+  // 单次调用：stream=true 时边读边推送 answer_delta；统一返回完整响应文本
+  const callOnce = async (options: { stream: boolean; extraSystem?: string }): Promise<string> => {
+    const messages = await buildSummaryMessages(event, {
+      history: input.history,
+      citations: input.citations,
+      lastModuleScores: input.lastModuleScores
+    })
+    if (options.extraSystem) messages.unshift({ role: 'system', content: options.extraSystem })
     const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
@@ -432,13 +442,18 @@ export async function streamClarificationSummary(event: H3Event, input: {
         model: generatorModel,
         messages,
         max_tokens: 4096,
-        stream: true,
+        stream: options.stream,
         thinking: { type: 'disabled' },
         temperature: 0.35
       }),
       signal: AbortSignal.timeout(rt.timeoutMs || Number(config.deepseekTimeoutMs) || 45000)
     })
-    if (!response.ok || !response.body) throw new Error(`DeepSeek ${response.status}`)
+    if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
+    if (!options.stream) {
+      const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+      return payload.choices?.[0]?.message?.content || ''
+    }
+    if (!response.body) throw new Error('DeepSeek 流式响应无 body')
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -464,12 +479,6 @@ export async function streamClarificationSummary(event: H3Event, input: {
           if (sepIdx === -1) {
             input.onDelta(token)
           } else {
-            // 分隔符已出现：只推送分隔符之前尚未发送的部分
-            const beforeSep = fullText.slice(0, sepIdx)
-            const alreadySent = fullText.length - token.length <= sepIdx
-              ? beforeSep.length - (fullText.length - token.length)
-              : 0
-            // 简化处理：计算本次 token 中属于分隔符之前的部分
             const tokenStartInFull = fullText.length - token.length
             if (tokenStartInFull < sepIdx) {
               const visiblePart = token.slice(0, Math.max(0, sepIdx - tokenStartInFull))
@@ -479,8 +488,11 @@ export async function streamClarificationSummary(event: H3Event, input: {
         } catch { /* 跳过非 JSON 行 */ }
       }
     }
+    return fullText
+  }
 
-    // 解析完整文本，提取 answer 和 JSON
+  // 从完整响应文本中提取 answer 与 JSON 元数据（容忍模型在 JSON 后附带多余文本）
+  const parseFullText = (fullText: string): { answer: string; jsonMeta: SummaryJsonMeta } => {
     const sepIndex = fullText.indexOf('<!--JSON-->')
     let answer: string
     let jsonPart: string
@@ -497,18 +509,7 @@ export async function streamClarificationSummary(event: H3Event, input: {
         jsonPart = fullText.slice(lastBrace).trim()
       }
     }
-
-    if (!answer || answer.length < 20) {
-      // 模型可能未输出分隔符或把 JSON 放在了前面，回退使用完整响应文本
-      if (fullText.length >= 20) {
-        answer = fullText.trim()
-        console.warn('[clarification_summary] 解析出的 answer 过短 (length=%d)，退回到使用 fullText (length=%d)', answer.length, fullText.length)
-      } else {
-        throw new Error('模型总结回答为空或过短')
-      }
-    }
-
-    let jsonMeta: { rationale?: string; primaryModule?: string; moduleProportions?: Record<string, number>; suggestedActions?: Array<{ label: string; type: string; module?: string }> } = {}
+    let jsonMeta: SummaryJsonMeta = {}
     if (jsonPart) {
       const firstBrace = jsonPart.indexOf('{')
       if (firstBrace !== -1) {
@@ -531,14 +532,53 @@ export async function streamClarificationSummary(event: H3Event, input: {
         console.error('[clarification_summary] jsonPart 中未找到 JSON 对象, jsonPart 前200字符:', jsonPart.slice(0, 200))
       }
     }
+    return { answer, jsonMeta }
+  }
+
+  const playText = (text: string) => {
+    for (const chunk of text.match(/[\s\S]{1,18}/g) || [text]) input.onDelta(chunk)
+  }
+
+  try {
+    let fullText = await callOnce({ stream: true })
+    let { answer, jsonMeta } = parseFullText(fullText)
+
+    if (!isValidSummaryOutput(answer, jsonMeta)) {
+      console.warn('[clarification_summary] 首次输出不符合总结要求（疑似追问/JSON 缺失），重试一次。answer 前80字符:', answer.slice(0, 80))
+      fullText = await callOnce({
+        stream: false,
+        extraSystem: '你上一次的输出不符合要求：你需要输出的是澄清结束后的完整分析总结，而不是继续追问教师；且必须包含 <!--JSON--> 分隔符与合法 JSON 元数据。请重新输出总结。'
+      })
+      ;({ answer, jsonMeta } = parseFullText(fullText))
+      if (!isValidSummaryOutput(answer, jsonMeta)) {
+        console.warn('[clarification_summary] 重试后仍不符合总结要求，使用基于追问评分的结构化兜底。answer 前80字符:', answer.slice(0, 80))
+        playText(fallback.answer)
+        await useDb(event).insert(schema.aiModelCalls).values({
+          schoolId: input.schoolId,
+          ownerUserId: input.ownerUserId,
+          sessionId: input.sessionId,
+          provider: 'deepseek',
+          model: generatorModel,
+          purpose: 'clarification_summary',
+          status: 'failed',
+          latencyMs: Date.now() - startedAt,
+          errorCode: 'summary_quality_rejected'
+        }).catch(() => undefined)
+        return { data: fallback, fallback: true }
+      }
+      // 重试成功：覆盖播放修正后的总结（后续 answer 事件会用最终文本整体替换气泡）
+      playText(answer)
+    }
 
     const parsed: ClarificationSummary = {
       type: 'summary',
       answer: answer.slice(0, 2000),
-      rationale: jsonMeta.rationale || answer.slice(0, 50),
-      primaryModule: (jsonMeta.primaryModule || 'self_growth') as ClarificationSummary['primaryModule'],
-      moduleProportions: jsonMeta.moduleProportions || { self_growth: 0.25, class_system: 0.2, home_school: 0.15, student_case: 0.25, learning_problem: 0.15 },
-      suggestedActions: (jsonMeta.suggestedActions || [{ label: '进入自我成长模块评估', type: 'open_module', module: 'self_growth' }]).slice(0, 4) as ClarificationSummary['suggestedActions']
+      rationale: jsonMeta.rationale || fallback.rationale,
+      primaryModule: (jsonMeta.primaryModule as ClarificationSummary['primaryModule']) || fallback.primaryModule,
+      moduleProportions: jsonMeta.moduleProportions || fallback.moduleProportions,
+      suggestedActions: (jsonMeta.suggestedActions && jsonMeta.suggestedActions.length
+        ? jsonMeta.suggestedActions
+        : fallback.suggestedActions).slice(0, 4) as ClarificationSummary['suggestedActions']
     }
 
     await useDb(event).insert(schema.aiModelCalls).values({
@@ -555,7 +595,7 @@ export async function streamClarificationSummary(event: H3Event, input: {
   } catch (error) {
     console.error('[clarification_summary] DeepSeek 调用失败:', error instanceof Error ? error.message : error)
     // 失败时也用流式推送 fallback
-    for (const chunk of fallback.answer.match(/[\s\S]{1,18}/g) || [fallback.answer]) input.onDelta(chunk)
+    playText(fallback.answer)
     await useDb(event).insert(schema.aiModelCalls).values({
       schoolId: input.schoolId,
       ownerUserId: input.ownerUserId,

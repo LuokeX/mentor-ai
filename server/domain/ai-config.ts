@@ -146,7 +146,7 @@ export const PROMPT_BUILTINS: PromptTemplate[] = [
       { key: 'scoresContext', label: '上一轮模块评分', description: '用于汇总最终占比；首轮无评分为空。' },
       { key: 'knowledgeContext', label: '已审核知识片段', description: '检索到的已发布知识片段（仅参考方法论）。' }
     ],
-    template: `${SYSTEM_MARKER}你是"教师赋能智能平台"的总结助手。现在是**问题澄清结束后的总结阶段**。教师已通过多轮追问明确了问题方向，现在你需要基于所有对话历史，生成一个完整的分析回复。
+    template: `${SYSTEM_MARKER}你是"教师赋能智能平台"的总结助手。现在是**问题澄清结束后的总结阶段**。教师已通过多轮追问明确了问题方向，**这是最后一步，教师不会再回答任何新问题**。你需要基于所有对话历史，生成一个完整的分析回复。
 
 你需要输出两部分内容，**必须严格按照以下格式**：
 
@@ -160,11 +160,13 @@ export const PROMPT_BUILTINS: PromptTemplate[] = [
 
 硬约束：
 1. answer 部分必须是一段完整的、可直接发给教师看的回复，语气温和、有共情、有实质内容
-2. 不做精神、医学、法律诊断；不计算量表分数
-3. 不照搬知识库原文，用自己的话组织
-4. 不要在answer里反复说"建议进入XX模块"——这是系统内部的路由信息，已经放在JSON里了。answer要聚焦于分析教师的具体处境和给出可操作的建议。如果确实需要提及平台工具，用"平台上有XX评估可以帮你梳理YY问题"这种自然表述，而不是"请进入XX模块"
-5. 分隔符必须是 <!--JSON-->（前后不带空格），JSON 必须严格有效、单行或紧凑多行均可
-6. moduleProportions 总和必须为1
+2. **严禁继续追问**：这是总结阶段，教师不会再回答。answer 中不得出现以问号结尾的提问句，**不得出现"选项："字样或任何选项列表**；回答必须直接给出分析和建议
+3. 不做精神、医学、法律诊断；不计算量表分数
+4. 不照搬知识库原文，用自己的话组织
+5. 不要在answer里反复说"建议进入XX模块"——这是系统内部的路由信息，已经放在JSON里了。answer要聚焦于分析教师的具体处境和给出可操作的建议。如果确实需要提及平台工具，用"平台上有XX评估可以帮你梳理YY问题"这种自然表述，而不是"请进入XX模块"
+6. 分隔符必须是 <!--JSON-->（前后不带空格），JSON 必须严格有效、单行或紧凑多行均可，JSON 中必须包含 rationale、primaryModule、moduleProportions、suggestedActions 四个字段
+7. moduleProportions 总和必须为1
+8. primaryModule 只能是 self_growth、class_system、home_school、student_case、learning_problem 之一
 
 {{scoresContext}}
 

@@ -6,7 +6,7 @@ import { detectSafetySignals, createSafetyReferral } from '../../../domain/safet
 import { routeWithDeepSeek, semanticSafetySignals, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
 import type { KnowledgeCitation } from '../../../integrations/deepseek'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
-import { composeClarificationSummaryHistory } from '../../../domain/chat-clarification'
+import { composeClarificationSummaryHistory, topModuleFromScores } from '../../../domain/chat-clarification'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
 import { trackProductEvent } from '../../../domain/product-events'
 import { embedModuleResourceQuery } from '../../../integrations/ollama'
@@ -155,11 +155,6 @@ export default defineEventHandler(async (event) => {
       }
 
       // 从 clarificationState.moduleScores 中提取最高分模块作为知识检索过滤条件
-      const topModuleFromScores = (scores: Record<string, number>): ModuleId | undefined => {
-        const entries = Object.entries(scores)
-        if (entries.length === 0) return undefined
-        return entries.reduce((a, b) => (a[1] >= b[1] ? a : b))[0] as ModuleId
-      }
 
       try {
         emit(controller, 'ack', {
