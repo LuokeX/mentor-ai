@@ -55,6 +55,7 @@ export default defineEventHandler(async (event) => {
       teachingGrades: schema.users.teachingGrades,
       subject: schema.users.subject,
       isClassTeacher: schema.users.isClassTeacher,
+      classTeacherYears: schema.users.classTeacherYears,
       title: schema.users.title,
       hiredAt: schema.users.hiredAt,
       /** 自我状态等级（评估回写），管理员修正优先 */

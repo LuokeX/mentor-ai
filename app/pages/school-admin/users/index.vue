@@ -15,6 +15,7 @@ interface UserRow {
   teachingGrades: number[]
   subject: string | null
   isClassTeacher: boolean
+  classTeacherYears: number | null
   title: string | null
   hiredAt: string | null
   selfStatusLevel: string | null
@@ -79,7 +80,7 @@ const formError = ref('')
 const form = reactive({
   name: '', email: '', role: 'teacher' as 'teacher' | 'psychologist', reactivate: false,
   employeeNo: '', phone: '', gender: '__none__', teachingGrades: [] as string[],
-  subject: '', isClassTeacher: false, hiredAt: '', title: '__none__', certNote: '',
+  subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '',
   selfStatusLevel: '__auto__',
 })
 const invitation = ref<InvitationResult | null>(null)
@@ -95,7 +96,7 @@ function openCreate() {
   Object.assign(form, {
     name: '', email: '', role: 'teacher', reactivate: false,
     employeeNo: '', phone: '', gender: '__none__', teachingGrades: [],
-    subject: '', isClassTeacher: false, hiredAt: '', title: '__none__', certNote: '', selfStatusLevel: '__auto__',
+    subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '', selfStatusLevel: '__auto__',
   })
   formError.value = ''
   drawerOpen.value = true
@@ -110,6 +111,7 @@ function openEdit(rowOrId: UserRow | string) {
     employeeNo: row.employeeNo || '', phone: '', gender: row.gender || '__none__',
     teachingGrades: row.teachingGrades?.map(g => `${g} 年级`) || [],
     subject: row.subject || '', isClassTeacher: row.isClassTeacher,
+    classTeacherYears: row.classTeacherYears != null ? String(row.classTeacherYears) : '',
     hiredAt: row.hiredAt ? row.hiredAt.slice(0, 10) : '', title: row.title || '__none__',
     certNote: '', selfStatusLevel: row.overrides?.selfStatusLevel || '__auto__',
   })
@@ -137,6 +139,7 @@ async function saveUser() {
     teachingGrades: form.teachingGrades.map(g => Number(g.replace(' 年级', ''))),
     subject: form.subject || undefined,
     isClassTeacher: form.isClassTeacher,
+    classTeacherYears: form.classTeacherYears === '' ? undefined : Number(form.classTeacherYears),
     hiredAt: form.hiredAt || undefined,
     title: form.title === '__none__' ? null : form.title,
     status: editing.value && editing.value.status === 'disabled' && form.reactivate ? 'active' : undefined,
@@ -273,6 +276,7 @@ async function copyActivationLink() {
           <UFormField label="职称"><USelect v-model="form.title" :items="titleOptions" class="w-full" /></UFormField>
           <UFormField label="入职时间"><UInput v-model="form.hiredAt" type="date" class="w-full" /></UFormField>
           <UFormField label="是否班主任"><UCheckbox v-model="form.isClassTeacher" label="当前承担班主任工作" /></UFormField>
+          <UFormField label="班主任年限（年）"><UInput v-model="form.classTeacherYears" type="number" min="0" max="60" placeholder="如：5" class="w-full" /></UFormField>
         </div>
         <UFormField v-if="editing?.role === 'psychologist'" :label="editing ? '更新资质说明（留空表示不修改）' : '心理资质说明'">
           <UTextarea v-model="form.certNote" :rows="2" placeholder="如：国家二级心理咨询师" class="w-full" />

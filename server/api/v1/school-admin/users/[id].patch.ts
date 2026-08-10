@@ -57,6 +57,7 @@ export default defineEventHandler(async (event) => {
     if (body.teachingGrades !== undefined) setValues.teachingGrades = body.teachingGrades
     if (body.subject !== undefined) setValues.subject = body.subject || null
     if (body.isClassTeacher !== undefined) setValues.isClassTeacher = body.isClassTeacher
+    if (body.classTeacherYears !== undefined) setValues.classTeacherYears = body.classTeacherYears
     if (body.hiredAt !== undefined) setValues.hiredAt = body.hiredAt ? new Date(body.hiredAt) : null
     if (body.title !== undefined) setValues.title = body.title || null
     if (body.certNote !== undefined) setValues.certNote = body.certNote || null

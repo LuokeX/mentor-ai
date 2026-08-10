@@ -31,6 +31,7 @@ export default defineEventHandler(async (event) => {
       teachingGrades: body.teachingGrades || [],
       subject: body.subject || null,
       isClassTeacher: body.isClassTeacher ?? false,
+      classTeacherYears: body.classTeacherYears ?? null,
       hiredAt: body.hiredAt ? new Date(body.hiredAt) : null,
       title: body.title || null,
       certNote: body.certNote || null,

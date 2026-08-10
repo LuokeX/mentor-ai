@@ -74,8 +74,29 @@ function topSteps(t: any): string[] {
       </div>
 
       <template v-else>
+        <!-- 身份画像 -->
+        <section class="panel mt-8 p-6">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p class="text-xs text-slate-400">身份画像</p>
+              <h2 class="mt-1 text-xl font-semibold">{{ data.profile?.name || '未设置姓名' }}</h2>
+            </div>
+          </div>
+          <div class="mt-4 flex flex-wrap gap-2">
+            <UBadge color="neutral" variant="subtle">
+              任教年级：{{ (data.profile?.teachingGrades || []).length ? data.profile.teachingGrades.join('、') + ' 年级' : '未设置' }}
+            </UBadge>
+            <UBadge color="neutral" variant="subtle">
+              班主任年限：{{ data.profile?.classTeacherYears != null ? data.profile.classTeacherYears + ' 年' : '未设置' }}
+            </UBadge>
+            <UBadge v-if="data.profile?.subject" color="neutral" variant="subtle">学科：{{ data.profile.subject }}</UBadge>
+            <UBadge v-if="data.profile?.gender" color="neutral" variant="subtle">性别：{{ data.profile.gender }}</UBadge>
+          </div>
+          <p class="mt-3 text-xs text-slate-400">身份画像由学校管理员维护，如信息有误请联系学校管理员。</p>
+        </section>
+
         <!-- 当前状态 -->
-        <section v-if="data.current" class="panel mt-8 p-6">
+        <section v-if="data.current" class="panel mt-6 p-6">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p class="text-xs text-slate-400">当前状态（{{ data.current.assessedAt ? new Date(data.current.assessedAt).toLocaleDateString('zh-CN') : '' }}）</p>
@@ -90,6 +111,10 @@ function topSteps(t: any): string[] {
                 <UBadge v-for="a in data.current.attributions" :key="a" color="neutral" variant="subtle">{{ a }}</UBadge>
               </div>
             </div>
+          </div>
+          <div class="mt-4 flex flex-wrap gap-4 text-sm">
+            <p class="text-slate-500">最近深度评估：<span class="font-medium text-slate-700">{{ data.current.assessedAt ? new Date(data.current.assessedAt).toLocaleDateString('zh-CN') : '—' }}</span></p>
+            <p class="text-slate-500">建议下次评估：<span class="font-medium text-slate-700">{{ data.nextAssessmentAt ? new Date(data.nextAssessmentAt).toLocaleDateString('zh-CN') : '—' }}</span></p>
           </div>
           <div v-if="data.suggestions?.length" class="mt-4 space-y-1.5 rounded-xl bg-emerald-50/60 p-4">
             <p v-for="(s, i) in data.suggestions" :key="i" class="flex gap-2 text-sm leading-6 text-emerald-900">
@@ -144,6 +169,45 @@ function topSteps(t: any): string[] {
               <span class="w-20 shrink-0 text-slate-500">{{ item.assessedAt ? new Date(item.assessedAt).toLocaleDateString('zh-CN') : '—' }}</span>
               <UBadge :color="levelColor(item.levelName)" variant="subtle" class="shrink-0">{{ item.levelName || '—' }}</UBadge>
               <span class="min-w-0 truncate text-xs text-slate-400">{{ item.primaryAttribution || '' }}</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 成长轨迹 -->
+        <section class="panel mt-6 p-6">
+          <h2 class="font-semibold text-slate-800">成长轨迹</h2>
+          <div class="mt-4 grid gap-3 md:grid-cols-3">
+            <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+              <div class="flex items-center gap-2 text-slate-500">
+                <UIcon name="i-lucide-check-circle-2" class="size-4" />
+                <span class="text-sm">成长打卡次数</span>
+              </div>
+              <p class="mt-2 text-2xl font-semibold text-slate-800">{{ data.growth?.checkinCount ?? 0 }}</p>
+              <p class="mt-1 text-xs text-slate-400">方案动作执行/反馈记录累计</p>
+            </div>
+            <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+              <div class="flex items-center gap-2 text-slate-500">
+                <UIcon name="i-lucide-message-circle" class="size-4" />
+                <span class="text-sm">求助记录</span>
+              </div>
+              <p class="mt-2 text-2xl font-semibold text-slate-800">{{ data.growth?.helpCount ?? 0 }}</p>
+              <p class="mt-1 text-xs text-slate-400">个人成长模块的 AI 咨询会话数</p>
+            </div>
+            <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+              <div class="flex items-center gap-2 text-slate-500">
+                <UIcon name="i-lucide-clipboard-list" class="size-4" />
+                <span class="text-sm">当前执行方案</span>
+              </div>
+              <p v-if="data.growth?.currentPlan" class="mt-2 text-sm font-medium text-slate-800">{{ data.growth.currentPlan.title }}</p>
+              <p v-else class="mt-2 text-sm text-slate-400">暂无进行中的方案</p>
+              <div v-if="data.growth?.currentPlan?.tools?.length" class="mt-2 space-y-1">
+                <p v-for="(t, i) in data.growth.currentPlan.tools" :key="i" class="flex items-center gap-1.5 text-xs text-slate-500">
+                  <UIcon name="i-lucide-wrench" class="size-3" />{{ t.title || t }}
+                </p>
+              </div>
+              <NuxtLink v-if="data.growth?.currentPlan" :to="`/information/plans/${data.growth.currentPlan.id}`" class="mt-2 inline-block text-xs text-emerald-700 hover:underline">
+                查看方案与执行记录 →
+              </NuxtLink>
             </div>
           </div>
         </section>

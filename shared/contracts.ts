@@ -401,6 +401,8 @@ export const schoolAdminUserCreateSchema = z.object({
   teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
   subject: z.string().trim().max(80).optional(),
   isClassTeacher: z.boolean().optional(),
+  /** 班主任年限（年），身份画像必填项 */
+  classTeacherYears: z.coerce.number().int().min(0).max(60).optional(),
   hiredAt: z.string().datetime().optional(),
   title: z.string().trim().max(40).optional(),
   certNote: z.string().trim().max(1000).optional(),
@@ -420,6 +422,8 @@ export const schoolAdminUserUpdateSchema = z.object({
   teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
   subject: z.string().trim().max(80).nullable().optional(),
   isClassTeacher: z.boolean().optional(),
+  /** 班主任年限（年），身份画像必填项 */
+  classTeacherYears: z.coerce.number().int().min(0).max(60).nullable().optional(),
   hiredAt: z.string().datetime().nullable().optional(),
   title: z.string().trim().max(40).nullable().optional(),
   certNote: z.string().trim().max(1000).nullable().optional(),

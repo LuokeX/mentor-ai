@@ -16,7 +16,14 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
 
   const [self] = await db
-    .select({ snapshot: schema.users.selfSnapshot })
+    .select({
+      snapshot: schema.users.selfSnapshot,
+      name: schema.users.name,
+      teachingGrades: schema.users.teachingGrades,
+      classTeacherYears: schema.users.classTeacherYears,
+      subject: schema.users.subject,
+      gender: schema.users.gender,
+    })
     .from(schema.users)
     .where(eq(schema.users.id, user.id))
     .limit(1)
@@ -117,7 +124,58 @@ export default defineEventHandler(async (event) => {
     suggestions.push('还没有自我成长评估记录——先在工作台做一次「班主任状态五问」，这里就会生成你的成长规划。')
   }
 
+  // ---- 身份画像（教师档案字段，学校管理员维护，教师只读展示）----
+  const profile = {
+    name: self?.name ?? null,
+    teachingGrades: self?.teachingGrades ?? [],
+    classTeacherYears: self?.classTeacherYears ?? null,
+    subject: self?.subject ?? null,
+    gender: self?.gender ?? null,
+  }
+
+  // ---- 成长轨迹 ----
+  // 打卡次数：自我成长模块方案下所有动作里已完成/进行中的执行记录数
+  const checkinRows = await db
+    .select({ id: schema.planActions.id })
+    .from(schema.planActions)
+    .innerJoin(schema.plans, eq(schema.plans.id, schema.planActions.planId))
+    .where(and(
+      eq(schema.plans.ownerUserId, user.id),
+      eq(schema.plans.module, 'self_growth'),
+      eq(schema.planActions.schoolId, user.schoolId),
+    ))
+  const checkinCount = checkinRows.length
+  // 求助记录：自我成长模块的 AI 咨询会话数
+  const helpRows = await db
+    .select({ id: schema.chatSessions.id })
+    .from(schema.chatSessions)
+    .where(and(
+      eq(schema.chatSessions.ownerUserId, user.id),
+      eq(schema.chatSessions.schoolId, user.schoolId),
+      eq(schema.chatSessions.contextType, 'none'),
+    ))
+  const helpCount = helpRows.length
+  // 当前执行方案：自我成长模块最近进行中的方案（含工具）
+  const activePlans = await db
+    .select({
+      id: schema.plans.id,
+      title: schema.plans.title,
+      status: schema.plans.status,
+      tools: schema.plans.tools,
+      updatedAt: schema.plans.updatedAt,
+    })
+    .from(schema.plans)
+    .where(and(
+      eq(schema.plans.ownerUserId, user.id),
+      eq(schema.plans.module, 'self_growth'),
+      eq(schema.plans.schoolId, user.schoolId),
+    ))
+    .orderBy(desc(schema.plans.updatedAt))
+    .limit(10)
+  const currentPlan = activePlans.find(p => ['pending_acceptance', 'accepted', 'in_progress', 'active'].includes(p.status)) || activePlans[0] || null
+
   return {
+    profile,
     current: snapshot.levelName
       ? {
           levelName: snapshot.levelName,
@@ -126,10 +184,27 @@ export default defineEventHandler(async (event) => {
           attributions: attributionNames
         }
       : null,
+    /** 建议下次深度评估时间：按每月一次频次，从最近评估时间推算 */
+    nextAssessmentAt: snapshot.assessedAt
+      ? new Date(new Date(snapshot.assessedAt).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      : null,
     trend,
     dimensionLabels,
     weakDimensions,
     recommendedTools,
-    suggestions
+    suggestions,
+    growth: {
+      checkinCount,
+      helpCount,
+      currentPlan: currentPlan
+        ? {
+            id: currentPlan.id,
+            title: currentPlan.title,
+            status: currentPlan.status,
+            tools: Array.isArray(currentPlan.tools) ? currentPlan.tools : [],
+            updatedAt: currentPlan.updatedAt?.toISOString() ?? null,
+          }
+        : null,
+    },
   }
 })
