@@ -390,23 +390,34 @@ export const paginationQuerySchema = z.object({
   order: z.enum(['asc', 'desc']).default('desc')
 })
 
+/** 接受 YYYY-MM-DD（date input 直传）或完整 ISO 8601 时间；服务端 new Date() 均可解析 */
+const dateInputSchema = z.string().refine(value => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return !Number.isNaN(Date.parse(value))
+  const y = Number(match[1])
+  const m = Number(match[2])
+  const d = Number(match[3])
+  const date = new Date(Date.UTC(y, m - 1, d))
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
+}, { message: '无效的日期格式' })
+
 export const schoolAdminUserCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().transform(value => value.toLowerCase()),
   role: z.enum(['teacher', 'psychologist']),
   password: z.string().min(8).max(200),
-  employeeNo: z.string().trim().max(80).optional(),
-  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).optional(),
-  gender: z.string().trim().max(20).optional(),
+  employeeNo: z.string().trim().max(80).nullable().optional(),
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).nullable().optional(),
+  gender: z.string().trim().max(20).nullable().optional(),
   teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
-  subject: z.string().trim().max(80).optional(),
+  subject: z.string().trim().max(80).nullable().optional(),
   isClassTeacher: z.boolean().optional(),
   /** 班主任年限（年），身份画像必填项 */
-  classTeacherYears: z.coerce.number().int().min(0).max(60).optional(),
-  hiredAt: z.string().datetime().optional(),
-  title: z.string().trim().max(40).optional(),
-  certNote: z.string().trim().max(1000).optional(),
-  notes: z.string().trim().max(4000).optional()
+  classTeacherYears: z.coerce.number().int().min(0).max(60).nullable().optional(),
+  hiredAt: dateInputSchema.nullable().optional(),
+  title: z.string().trim().max(40).nullable().optional(),
+  certNote: z.string().trim().max(1000).nullable().optional(),
+  notes: z.string().trim().max(4000).nullable().optional()
 })
 
 export const schoolAdminUserInviteSchema = schoolAdminUserCreateSchema.omit({ password: true })
@@ -424,7 +435,7 @@ export const schoolAdminUserUpdateSchema = z.object({
   isClassTeacher: z.boolean().optional(),
   /** 班主任年限（年），身份画像必填项 */
   classTeacherYears: z.coerce.number().int().min(0).max(60).nullable().optional(),
-  hiredAt: z.string().datetime().nullable().optional(),
+  hiredAt: dateInputSchema.nullable().optional(),
   title: z.string().trim().max(40).nullable().optional(),
   certNote: z.string().trim().max(1000).nullable().optional(),
   notes: z.string().trim().max(4000).nullable().optional(),
@@ -464,7 +475,7 @@ export const schoolAdminClassCreateSchema = z.object({
   departmentId: z.string().uuid().nullable().optional(),
   externalCode: z.string().trim().max(80).optional(),
   studentCount: z.coerce.number().int().min(0).max(1000).default(0),
-  establishedAt: z.string().datetime().optional(),
+  establishedAt: dateInputSchema.optional(),
   section: z.enum(['primary', 'junior', 'senior', 'repeat']).optional(),
   classType: z.enum(['admin', 'rotating', 'other']).optional(),
   deputyOwnerUserId: z.string().uuid().nullable().optional(),
@@ -480,7 +491,7 @@ export const schoolAdminClassUpdateSchema = z.object({
   departmentId: z.string().uuid().nullable().optional(),
   externalCode: z.string().trim().max(80).nullable().optional(),
   studentCount: z.coerce.number().int().min(0).max(1000).optional(),
-  establishedAt: z.string().datetime().nullable().optional(),
+  establishedAt: dateInputSchema.nullable().optional(),
   status: managedRecordStatusSchema.optional(),
   section: z.enum(['primary', 'junior', 'senior', 'repeat']).nullable().optional(),
   classType: z.enum(['admin', 'rotating', 'other']).optional(),
@@ -501,10 +512,10 @@ export const schoolAdminStudentCreateSchema = z.object({
   profile: z.string().trim().max(4000).nullable().optional(),
   notes: z.string().trim().max(4000).nullable().optional(),
   externalRef: z.string().trim().max(120).nullable().optional(),
-  birthDate: z.string().datetime().nullable().optional(),
+  birthDate: dateInputSchema.nullable().optional(),
   studentNo: z.string().trim().max(120).nullable().optional(),
   ethnicity: z.string().trim().max(40).nullable().optional(),
-  enrolledAt: z.string().datetime().nullable().optional(),
+  enrolledAt: dateInputSchema.nullable().optional(),
   boardingType: z.enum(['day', 'boarding']).nullable().optional(),
   address: z.string().trim().max(1000).nullable().optional()
 })

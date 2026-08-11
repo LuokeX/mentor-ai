@@ -117,7 +117,8 @@ export const wizardConditionSchema = z.object({
   /** question 填题目序号（1 起）；dimension 填维度中文名；computed 填计算变量名；total/average 忽略 */
   target: z.string().trim().max(120).default(''),
   comparator: z.enum(['达到或超过', '低于或等于', '正好等于']).default('达到或超过'),
-  value: z.coerce.number().min(0).max(100),
+  /** 判断阈值。不设 100 上限：total（总分）/dimension（求和）/computed（计算变量）都可能超过 100。 */
+  value: z.coerce.number().min(0),
   /** 与上一条的关系，第一条忽略 */
   join: z.enum(['且', '或']).default('且')
 })

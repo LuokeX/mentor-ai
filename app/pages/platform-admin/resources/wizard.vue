@@ -729,9 +729,9 @@ const canNext = computed(() => {
       <!-- 1 模块 -->
       <div v-if="step.key === 'module'" class="mt-5 grid gap-4 sm:grid-cols-2">
         <UFormField label="模块"><USelect v-model="form.module" :items="moduleOptions" class="w-full" /></UFormField>
-        <UFormField label="版本号" hint="每次导入要换一个新号"><UInput v-model="form.version" class="w-full" /></UFormField>
-        <UFormField label="内容出处" hint="写清楚这批内容来自哪份材料，方便日后追溯">
-          <UInput v-model="form.sourceRef" placeholder="如：家校沟通业务手册 v2" class="w-full" />
+        <UFormField label="版本号" hint="每次导入要换一个新号（最多 40 字）"><UInput v-model="form.version" maxlength="40" class="w-full" /></UFormField>
+        <UFormField label="内容出处" hint="写清楚这批内容来自哪份材料，方便日后追溯（最多 160 字）">
+          <UInput v-model="form.sourceRef" maxlength="160" placeholder="如：家校沟通业务手册 v2" class="w-full" />
         </UFormField>
         <div class="sm:col-span-2">
           <UAlert color="info" variant="soft" title="想改系统里已有的内容？"
@@ -750,14 +750,14 @@ const canNext = computed(() => {
               <UFormField label="触发方式"><USelect v-model="form.defaults.triggerMethod" :items="triggerMethodOptions" class="w-full" /></UFormField>
               <UFormField label="作答频次"><USelect v-model="form.defaults.frequency" :items="frequencyOptions" class="w-full" /></UFormField>
               <UFormField label="结果可见性"><USelect v-model="form.defaults.resultVisibility" :items="resultVisibilityOptions" class="w-full" /></UFormField>
-              <UFormField label="责任角色" hint="量表/禁忌规则的责任人"><UInput v-model="form.defaults.responsibleRole" class="w-full" /></UFormField>
+              <UFormField label="责任角色" hint="量表/禁忌规则的责任人（最多 40 字）"><UInput v-model="form.defaults.responsibleRole" maxlength="40" class="w-full" /></UFormField>
               <UFormField label="数据敏感级"><USelect v-model="form.defaults.dataSensitivity" :items="dataSensitivityOptions" class="w-full" /></UFormField>
               <UFormField label="来源属性"><USelect v-model="form.defaults.sourceType" :items="sourceTypeOptions" class="w-full" /></UFormField>
               <UFormField label="工具证据等级"><USelect v-model="form.defaults.evidenceLevel" :items="evidenceLevelOptions" class="w-full" /></UFormField>
               <UFormField label="红线熔断范围"><USelect v-model="form.defaults.redLineScope" :items="redLineScopeOptions" class="w-full" /></UFormField>
-              <UFormField label="红线责任人"><UInput v-model="form.defaults.redLineOwner" class="w-full" /></UFormField>
-              <UFormField label="熔断后动作" class="sm:col-span-2"><UInput v-model="form.defaults.redLineActions" class="w-full" /></UFormField>
-              <UFormField label="恢复条件" class="sm:col-span-2"><UInput v-model="form.defaults.redLineRecovery" class="w-full" /></UFormField>
+              <UFormField label="红线责任人" hint="最多 40 字"><UInput v-model="form.defaults.redLineOwner" maxlength="40" class="w-full" /></UFormField>
+              <UFormField label="熔断后动作" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="form.defaults.redLineActions" maxlength="300" class="w-full" /></UFormField>
+              <UFormField label="恢复条件" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="form.defaults.redLineRecovery" maxlength="300" class="w-full" /></UFormField>
             </div>
           </details>
         </div>
@@ -829,10 +829,10 @@ const canNext = computed(() => {
             <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="form.scales.splice(si, 1)" />
           </div>
           <div class="mt-2 grid gap-3 sm:grid-cols-2">
-            <UFormField label="量表名称"><UInput v-model="scale.name" placeholder="如：家校沟通双维速查" class="w-full" /></UFormField>
+            <UFormField label="量表名称" hint="2-120 字"><UInput v-model="scale.name" maxlength="120" placeholder="如：家校沟通双维速查" class="w-full" /></UFormField>
             <UFormField label="它是什么角色"><USelect v-model="scale.role" :items="roleOptions" class="w-full" /></UFormField>
-            <UFormField label="预计几分钟"><UInput v-model.number="scale.minutes" type="number" class="w-full" /></UFormField>
-            <UFormField label="一句话说明它测什么"><UInput v-model="scale.description" class="w-full" /></UFormField>
+            <UFormField label="预计几分钟" hint="1-120 分钟"><UInput v-model.number="scale.minutes" type="number" min="1" max="120" class="w-full" /></UFormField>
+            <UFormField label="一句话说明它测什么" hint="最多 400 字"><UInput v-model="scale.description" maxlength="400" class="w-full" /></UFormField>
           </div>
           <template v-if="scale.role !== '入口筛查'">
             <div class="mt-3 rounded-lg bg-slate-50 p-3">
@@ -845,14 +845,14 @@ const canNext = computed(() => {
                   <USelect :model-value="conditionKey(c)" :items="targetOptions(scale.prerequisites[0] || scaleNames[0], false)"
                     class="w-44" @update:model-value="(v: string) => setConditionTarget(c, v)" />
                   <USelect v-model="c.comparator" :items="comparatorOptions" class="w-32" />
-                  <UInput v-model.number="c.value" type="number" step="0.5" class="w-24" />
+                  <UInput v-model.number="c.value" type="number" step="0.5" min="0" class="w-24" />
                   <span class="text-xs text-slate-400">分</span>
                   <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="scale.triggerConditions.splice(ci, 1)" />
                 </div>
                 <UButton class="mt-2" size="xs" variant="soft" icon="i-lucide-plus" @click="scale.triggerConditions.push(emptyCondition())">加一个条件</UButton>
               </UFormField>
-              <UFormField class="mt-3" label="用人话说明这个条件" hint="老师会在量表卡片上看到这句">
-                <UInput v-model="scale.triggerNote" placeholder="如：沟通态度维度偏高时才需要判断家长类型" class="w-full" />
+              <UFormField class="mt-3" label="用人话说明这个条件" hint="老师会在量表卡片上看到这句（最多 200 字）">
+                <UInput v-model="scale.triggerNote" maxlength="200" placeholder="如：沟通态度维度偏高时才需要判断家长类型" class="w-full" />
               </UFormField>
             </div>
           </template>
@@ -862,22 +862,22 @@ const canNext = computed(() => {
               <UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" />
             </summary>
             <div class="grid gap-3 border-t border-slate-200 px-3 py-3 sm:grid-cols-2">
-              <UFormField label="量表简称" hint="教师端显示用，不填自动取名字前 8 个字"><UInput v-model="scale.shortName" class="w-full" /></UFormField>
-              <UFormField label="使用时机" hint="如：每次家校沟通前"><UInput v-model="scale.usageTiming" class="w-full" /></UFormField>
-              <UFormField label="作答时限（分钟）"><UInput v-model.number="scale.timeLimitMinutes" type="number" class="w-full" /></UFormField>
-              <UFormField label="最低题数"><UInput v-model.number="scale.minQuestions" type="number" class="w-full" /></UFormField>
-              <UFormField label="重评间隔天数" hint="如 30 表示 30 天后提醒重做"><UInput v-model.number="scale.reAssessmentIntervalDays" type="number" class="w-full" /></UFormField>
+              <UFormField label="量表简称" hint="教师端显示用，不填自动取名字前 8 个字（最多 40 字）"><UInput v-model="scale.shortName" maxlength="40" class="w-full" /></UFormField>
+              <UFormField label="使用时机" hint="如：每次家校沟通前（最多 120 字）"><UInput v-model="scale.usageTiming" maxlength="120" class="w-full" /></UFormField>
+              <UFormField label="作答时限（分钟）" hint="1-120"><UInput v-model.number="scale.timeLimitMinutes" type="number" min="1" max="120" class="w-full" /></UFormField>
+              <UFormField label="最低题数" hint="1-200"><UInput v-model.number="scale.minQuestions" type="number" min="1" max="200" class="w-full" /></UFormField>
+              <UFormField label="重评间隔天数" hint="如 30 表示 30 天后提醒重做（1-3650）"><UInput v-model.number="scale.reAssessmentIntervalDays" type="number" min="1" max="3650" class="w-full" /></UFormField>
               <UFormField label="适用年级" hint="回车分隔，如 7、8、9"><UInputTags v-model="scale.applicableGrades" class="w-full" /></UFormField>
               <UFormField label="适用学科" hint="回车分隔，留空表示不限"><UInputTags v-model="scale.applicableSubjects" class="w-full" /></UFormField>
               <UFormField label="与哪几张量表互斥" hint="做了这张就不建议做那些"><USelectMenu v-model="scale.exclusives" multiple :items="scaleNames.filter(n => n !== scale.name)" class="w-full" /></UFormField>
-              <UFormField label="常模参照" class="sm:col-span-2"><UInput v-model="scale.normReference" placeholder="如：全国中小学班主任常模 N=3200" class="w-full" /></UFormField>
-              <UFormField label="外部授权说明" hint="引用外部量表/工具时的授权备注"><UInput v-model="scale.externalAuthorizationNote" class="w-full" /></UFormField>
-              <UFormField label="信度说明"><UInput v-model="scale.reliabilityNote" placeholder="如：Cronbach α=0.87" class="w-full" /></UFormField>
-              <UFormField label="效度说明"><UInput v-model="scale.validityNote" class="w-full" /></UFormField>
-              <UFormField label="隐私声明" class="sm:col-span-2"><UInput v-model="scale.privacyNotice" class="w-full" /></UFormField>
-              <UFormField label="适用前提" class="sm:col-span-2"><UInput v-model="scale.applicabilityPreconditions" placeholder="如：适用于在职班主任" class="w-full" /></UFormField>
-              <UFormField label="不适合情况" class="sm:col-span-2"><UInput v-model="scale.contraindications" class="w-full" /></UFormField>
-              <UFormField label="后续建议动作" class="sm:col-span-2"><UInput v-model="scale.postAssessmentActions" class="w-full" /></UFormField>
+              <UFormField label="常模参照" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="scale.normReference" maxlength="300" placeholder="如：全国中小学班主任常模 N=3200" class="w-full" /></UFormField>
+              <UFormField label="外部授权说明" hint="引用外部量表/工具时的授权备注（最多 300 字）"><UInput v-model="scale.externalAuthorizationNote" maxlength="300" class="w-full" /></UFormField>
+              <UFormField label="信度说明" hint="最多 300 字"><UInput v-model="scale.reliabilityNote" maxlength="300" placeholder="如：Cronbach α=0.87" class="w-full" /></UFormField>
+              <UFormField label="效度说明" hint="最多 300 字"><UInput v-model="scale.validityNote" maxlength="300" class="w-full" /></UFormField>
+              <UFormField label="隐私声明" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="scale.privacyNotice" maxlength="300" class="w-full" /></UFormField>
+              <UFormField label="适用前提" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="scale.applicabilityPreconditions" maxlength="300" placeholder="如：适用于在职班主任" class="w-full" /></UFormField>
+              <UFormField label="不适合情况" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="scale.contraindications" maxlength="300" class="w-full" /></UFormField>
+              <UFormField label="后续建议动作" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="scale.postAssessmentActions" maxlength="300" class="w-full" /></UFormField>
               <div class="sm:col-span-2 mt-1 rounded-lg bg-white/70 p-3">
                 <p class="text-xs font-medium text-slate-600">覆盖模块通用设置（可选）—— 留空即用模块默认</p>
                 <div class="mt-2 grid gap-3 sm:grid-cols-3">
@@ -887,7 +887,7 @@ const canNext = computed(() => {
                   <UFormField label="触发方式"><USelect v-model="scale.triggerMethod" :items="triggerMethodOptions" class="w-full" /></UFormField>
                   <UFormField label="作答频次"><USelect v-model="scale.frequency" :items="frequencyOptions" class="w-full" /></UFormField>
                   <UFormField label="结果可见性"><USelect v-model="scale.resultVisibility" :items="resultVisibilityOptions" class="w-full" /></UFormField>
-                  <UFormField label="责任角色"><UInput v-model="scale.responsibleRole" class="w-full" /></UFormField>
+                  <UFormField label="责任角色" hint="最多 40 字"><UInput v-model="scale.responsibleRole" maxlength="40" class="w-full" /></UFormField>
                   <UFormField label="数据敏感级"><USelect v-model="scale.dataSensitivity" :items="dataSensitivityOptions" class="w-full" /></UFormField>
                   <UFormField label="来源属性"><USelect v-model="scale.sourceType" :items="sourceTypeOptions" class="w-full" /></UFormField>
                 </div>
@@ -906,14 +906,14 @@ const canNext = computed(() => {
           <h3 class="font-medium text-slate-700">《{{ scale.name || '未命名量表' }}》</h3>
           <div v-for="(q, qi) in (scale.questions as any[])" :key="qi" class="mt-3 rounded-lg bg-slate-50 p-3">
             <div class="grid gap-2 sm:grid-cols-[1fr_auto]">
-              <UFormField :label="qi === 0 ? '题目' : ''">
-                <UInput v-model="q.text" :placeholder="`第 ${qi + 1} 题`" class="w-full" />
+              <UFormField :label="qi === 0 ? '题目' : ''" :hint="qi === 0 ? '最多 400 字' : ''">
+                <UInput v-model="q.text" maxlength="400" :placeholder="`第 ${qi + 1} 题`" class="w-full" />
               </UFormField>
               <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" class="self-end" @click="scale.questions.splice(qi, 1)" />
             </div>
             <div class="mt-2 grid gap-2 sm:grid-cols-[1.5fr_1.2fr_auto]">
-              <UFormField :label="qi === 0 ? '测哪个方面' : ''" :hint="qi === 0 ? '同名的会归成一个维度' : ''">
-                <UInput v-model="q.dimension" placeholder="如：配合度" class="w-full" />
+              <UFormField :label="qi === 0 ? '测哪个方面' : ''" :hint="qi === 0 ? '同名的会归成一个维度（最多 60 字）' : ''">
+                <UInput v-model="q.dimension" maxlength="60" placeholder="如：配合度" class="w-full" />
               </UFormField>
               <UFormField :label="qi === 0 ? '选项' : ''">
                 <UTooltip :text="optionGroupHint(q.optionGroup)">
@@ -924,8 +924,8 @@ const canNext = computed(() => {
                 <UCheckbox v-model="q.reverse" label="反向题" />
               </UFormField>
             </div>
-            <UFormField class="mt-2" :label="qi === 0 ? '答题提示（可选）' : ''">
-              <UInput v-model="q.help" placeholder="老师作答时会看到这句说明，如：按最近 7 天的实际感受作答" class="w-full" />
+            <UFormField class="mt-2" :label="qi === 0 ? '答题提示（可选）' : ''" :hint="qi === 0 ? '最多 200 字' : ''">
+              <UInput v-model="q.help" maxlength="200" placeholder="老师作答时会看到这句说明，如：按最近 7 天的实际感受作答" class="w-full" />
             </UFormField>
           </div>
           <UButton class="mt-3" size="xs" variant="soft" icon="i-lucide-plus" @click="addQuestion(scale)">加一道题</UButton>
@@ -935,12 +935,12 @@ const canNext = computed(() => {
               <div class="grid gap-2 sm:grid-cols-[1fr_1.2fr_1fr]">
                 <span class="self-center text-sm font-medium text-slate-700">{{ def.name }}</span>
                 <UFormField label="计算方式"><USelect v-model="def.calcMethod" :items="calcMethodOptions" class="w-full" /></UFormField>
-                <UFormField label="权重系数"><UInput v-model.number="def.weight" type="number" step="0.1" class="w-full" /></UFormField>
-                <UFormField label="维度说明" class="sm:col-span-3"><UInput v-model="def.description" class="w-full" /></UFormField>
-                <UFormField label="高分解释" hint="如：≥4 分表示风险高"><UInput v-model="def.highInterpretation" class="w-full" /></UFormField>
-                <UFormField label="低分解释"><UInput v-model="def.lowInterpretation" class="w-full" /></UFormField>
-                <UFormField label="常模均值"><UInput v-model.number="def.normMean" type="number" step="0.1" class="w-full" /></UFormField>
-                <UFormField label="常模标准差"><UInput v-model.number="def.normStd" type="number" step="0.1" class="w-full" /></UFormField>
+                <UFormField label="权重系数" hint="0.1-10"><UInput v-model.number="def.weight" type="number" step="0.1" min="0.1" max="10" class="w-full" /></UFormField>
+                <UFormField label="维度说明" class="sm:col-span-3" hint="最多 300 字"><UInput v-model="def.description" maxlength="300" class="w-full" /></UFormField>
+                <UFormField label="高分解释" hint="如：≥4 分表示风险高（最多 300 字）"><UInput v-model="def.highInterpretation" maxlength="300" class="w-full" /></UFormField>
+                <UFormField label="低分解释" hint="最多 300 字"><UInput v-model="def.lowInterpretation" maxlength="300" class="w-full" /></UFormField>
+                <UFormField label="常模均值" hint="0-100"><UInput v-model.number="def.normMean" type="number" step="0.1" min="0" max="100" class="w-full" /></UFormField>
+                <UFormField label="常模标准差" hint="0-100"><UInput v-model.number="def.normStd" type="number" step="0.1" min="0" max="100" class="w-full" /></UFormField>
               </div>
             </div>
           </div>
@@ -958,13 +958,13 @@ const canNext = computed(() => {
           </p>
           <div v-for="(g, gi) in (form.optionGroups as any[])" :key="gi" class="mt-3 rounded-lg border border-slate-200 p-3">
             <div class="flex flex-wrap items-center gap-2">
-              <UInput v-model="g.name" placeholder="组名，如：频率四点" class="w-56" />
+              <UInput v-model="g.name" maxlength="40" placeholder="组名，如：频率四点" class="w-56" />
               <span class="text-xs text-slate-400">显示在题目「选项」下拉里</span>
               <UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" class="ml-auto" @click="form.optionGroups.splice(gi, 1)">删除</UButton>
             </div>
             <div v-for="(o, oi) in (g.options as any[])" :key="oi" class="mt-2 flex items-center gap-2">
-              <UInput v-model="o.label" :placeholder="`选项 ${oi + 1}，如：几乎没有`" class="flex-1" />
-              <UInput v-model.number="o.score" type="number" class="w-20" placeholder="分值" />
+              <UInput v-model="o.label" maxlength="60" :placeholder="`选项 ${oi + 1}，如：几乎没有`" class="flex-1" />
+              <UInput v-model.number="o.score" type="number" min="0" max="100" class="w-20" placeholder="分值" />
               <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="g.options.splice(oi, 1)" />
             </div>
             <UButton class="mt-2" size="xs" variant="soft" icon="i-lucide-plus" @click="g.options.push({ label: '', score: undefined })">加一个选项</UButton>
@@ -979,13 +979,13 @@ const canNext = computed(() => {
           description="后面的工具、话术都要挂到这里的某个原因上。措辞定下来之后尽量别改——改了要同步改工具那一步。" />
         <div v-for="(a, ai) in (form.attributions as any[])" :key="ai" class="rounded-lg border border-slate-200 p-4">
           <div class="grid gap-3 sm:grid-cols-2">
-            <UFormField label="原因名称"><UInput v-model="a.name" placeholder="如：家长配合度低" class="w-full" /></UFormField>
-            <UFormField label="重要程度" hint="默认 1。填 1.5 表示这个原因比别的更值得优先处理">
-              <UInput v-model.number="a.weight" type="number" step="0.1" class="w-full" />
+            <UFormField label="原因名称" hint="2-80 字"><UInput v-model="a.name" maxlength="80" placeholder="如：家长配合度低" class="w-full" /></UFormField>
+            <UFormField label="重要程度" hint="默认 1。填 1.5 表示这个原因比别的更值得优先处理（0.1-10）">
+              <UInput v-model.number="a.weight" type="number" step="0.1" min="0.1" max="10" class="w-full" />
             </UFormField>
-            <UFormField label="出现这个问题时通常什么表现"><UInput v-model="a.highSign" class="w-full" /></UFormField>
-            <UFormField label="通常由什么引起"><UInput v-model="a.typicalTrigger" placeholder="如：家长工作繁忙，缺少固定沟通时间" class="w-full" /></UFormField>
-            <UFormField label="命中后给老师的建议动作"><UInput v-model="a.action" class="w-full" /></UFormField>
+            <UFormField label="出现这个问题时通常什么表现" hint="最多 300 字"><UInput v-model="a.highSign" maxlength="300" class="w-full" /></UFormField>
+            <UFormField label="通常由什么引起" hint="最多 300 字"><UInput v-model="a.typicalTrigger" maxlength="300" placeholder="如：家长工作繁忙，缺少固定沟通时间" class="w-full" /></UFormField>
+            <UFormField label="命中后给老师的建议动作" hint="最多 300 字"><UInput v-model="a.action" maxlength="300" class="w-full" /></UFormField>
             <UFormField label="匹配标签" hint="回车分隔，用于跨库匹配（如 emotion、pressure）">
               <UInputTags v-model="a.tags" class="w-full" />
             </UFormField>
@@ -1003,7 +1003,7 @@ const canNext = computed(() => {
           <div class="grid gap-3 sm:grid-cols-3">
             <UFormField label="哪个原因"><USelect v-model="e.attribution" :items="attributionNames" class="w-full" /></UFormField>
             <UFormField label="看哪张量表"><USelect v-model="e.scale" :items="scaleNames" class="w-full" /></UFormField>
-            <UFormField label="分量" hint="默认 2，关键信号可以给 3"><UInput v-model.number="e.weight" type="number" step="0.5" class="w-full" /></UFormField>
+            <UFormField label="分量" hint="默认 2，关键信号可以给 3（0.1-10）"><UInput v-model.number="e.weight" type="number" step="0.5" min="0.1" max="10" class="w-full" /></UFormField>
           </div>
           <div class="mt-3">
             <p class="text-xs font-medium text-slate-500">答成什么样算命中</p>
@@ -1012,14 +1012,14 @@ const canNext = computed(() => {
               <USelect :model-value="conditionKey(c)" :items="targetOptions(e.scale)" class="w-44"
                 @update:model-value="(v: string) => setConditionTarget(c, v)" />
               <USelect v-model="c.comparator" :items="comparatorOptions" class="w-32" />
-              <UInput v-model.number="c.value" type="number" step="0.5" class="w-24" />
+              <UInput v-model.number="c.value" type="number" step="0.5" min="0" class="w-24" />
               <span class="text-xs text-slate-400">分</span>
               <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="e.conditions.splice(ci, 1)" />
             </div>
             <UButton class="mt-2" size="xs" variant="soft" icon="i-lucide-plus" @click="e.conditions.push(emptyCondition())">加一个条件</UButton>
           </div>
-          <UFormField class="mt-3" label="这条依据怎么描述给老师看">
-            <UInput v-model="e.description" placeholder="如：消息长期不回，配合度已到需要干预的程度" class="w-full" />
+          <UFormField class="mt-3" label="这条依据怎么描述给老师看" hint="最多 300 字">
+            <UInput v-model="e.description" maxlength="300" placeholder="如：消息长期不回，配合度已到需要干预的程度" class="w-full" />
           </UFormField>
           <UButton class="mt-2" size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="form.evidences.splice(ei, 1)">删除</UButton>
         </div>
@@ -1033,10 +1033,10 @@ const canNext = computed(() => {
           </p>
           <div v-for="(v, vi) in (form.computedVariables as any[])" :key="vi" class="mt-3 rounded-lg bg-white p-3">
             <div class="grid gap-2 sm:grid-cols-[1fr_1.4fr_2fr_auto]">
-              <UFormField label="指标名"><UInput v-model="v.name" placeholder="如：沟通压力指数" class="w-full" /></UFormField>
+              <UFormField label="指标名" hint="最多 60 字"><UInput v-model="v.name" maxlength="60" placeholder="如：沟通压力指数" class="w-full" /></UFormField>
               <UFormField label="按哪张量表算"><USelect v-model="v.scale" :items="scaleNames" class="w-full" /></UFormField>
-              <UFormField label="怎么算">
-                <UInput v-model="v.expression" placeholder="如：维度[沟通态度] + 维度[配合度]" class="w-full" />
+              <UFormField label="怎么算" hint="最多 300 字">
+                <UInput v-model="v.expression" maxlength="300" placeholder="如：维度[沟通态度] + 维度[配合度]" class="w-full" />
               </UFormField>
               <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" class="self-center" @click="form.computedVariables.splice(vi, 1)" />
             </div>
@@ -1052,7 +1052,7 @@ const canNext = computed(() => {
         <div v-for="(lv, li) in (form.levels as any[])" :key="li" class="rounded-lg border p-4"
           :class="lv.redLine ? 'border-red-200 bg-red-50/40' : 'border-slate-200'">
           <div class="grid gap-3 sm:grid-cols-2">
-            <UFormField label="等级名称"><UInput v-model="lv.name" placeholder="如：C 级需谨慎" class="w-full" /></UFormField>
+            <UFormField label="等级名称" hint="最多 40 字"><UInput v-model="lv.name" maxlength="40" placeholder="如：C 级需谨慎" class="w-full" /></UFormField>
             <UFormField label="按哪张量表判"><USelect v-model="lv.scale" :items="scaleNames" class="w-full" /></UFormField>
           </div>
           <div class="mt-3">
@@ -1062,25 +1062,25 @@ const canNext = computed(() => {
               <USelect :model-value="conditionKey(c)" :items="targetOptions(lv.scale || scaleNames[0])" class="w-44"
                 @update:model-value="(v: string) => setConditionTarget(c, v)" />
               <USelect v-model="c.comparator" :items="comparatorOptions" class="w-32" />
-              <UInput v-model.number="c.value" type="number" step="0.5" class="w-24" />
+              <UInput v-model.number="c.value" type="number" step="0.5" min="0" class="w-24" />
               <span class="text-xs text-slate-400">分</span>
               <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="lv.conditions.splice(ci, 1)" />
             </div>
             <UButton class="mt-2" size="xs" variant="soft" icon="i-lucide-plus" @click="lv.conditions.push(emptyCondition())">加一个条件</UButton>
           </div>
           <UFormField class="mt-3" label="判到这一级时，系统跟老师说什么"
-            hint="可以用 ${主要归因} 代表算出来的主要原因">
-            <UTextarea v-model="lv.teacherMessage" :rows="2" class="w-full" />
+            hint="最多 800 字；可以用 ${主要归因} 代表算出来的主要原因">
+            <UTextarea v-model="lv.teacherMessage" maxlength="800" :rows="2" class="w-full" />
           </UFormField>
           <div class="mt-3 grid gap-3 sm:grid-cols-3">
-            <UFormField label="什么情况要往上升一级" hint="留空表示不设升级">
-              <UInput v-model="lv.escalationCondition" placeholder="如：两周内无改善" class="w-full" />
+            <UFormField label="什么情况要往上升一级" hint="留空表示不设升级（最多 300 字）">
+              <UInput v-model="lv.escalationCondition" maxlength="300" placeholder="如：两周内无改善" class="w-full" />
             </UFormField>
-            <UFormField label="升级后交给谁">
-              <UInput v-model="lv.escalationTarget" placeholder="如：年级组 / 心理专员" class="w-full" />
+            <UFormField label="升级后交给谁" hint="最多 120 字">
+              <UInput v-model="lv.escalationTarget" maxlength="120" placeholder="如：年级组 / 心理专员" class="w-full" />
             </UFormField>
-            <UFormField label="多久后重新评一次">
-              <UInput v-model="lv.reAssessTrigger" placeholder="如：14 天后复评" class="w-full" />
+            <UFormField label="多久后重新评一次" hint="最多 200 字">
+              <UInput v-model="lv.reAssessTrigger" maxlength="200" placeholder="如：14 天后复评" class="w-full" />
             </UFormField>
           </div>
           <div class="mt-3 grid gap-3 sm:grid-cols-2">
@@ -1098,18 +1098,18 @@ const canNext = computed(() => {
             <UCheckbox v-model="lv.redLine" label="这一级触发红线（不出方案，直接转安全流程）" />
             <UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="form.levels.splice(li, 1)">删除</UButton>
           </div>
-          <UFormField v-if="lv.redLine" class="mt-3" label="触发后要求老师立即做什么">
-            <UInput v-model="lv.redLineAction" placeholder="如：暂停单独沟通，立即上报年级组" class="w-full" />
+          <UFormField v-if="lv.redLine" class="mt-3" label="触发后要求老师立即做什么" hint="最多 300 字">
+            <UInput v-model="lv.redLineAction" maxlength="300" placeholder="如：暂停单独沟通，立即上报年级组" class="w-full" />
           </UFormField>
           <UFormField v-if="lv.redLine" class="mt-3" label="发给责任人的通知文案"
-            hint="触发红线时系统会按这个模板通知责任人（模块设置里的「红线责任人」）">
-            <UInput v-model="lv.notificationTemplate" placeholder="如：[教师姓名]老师触发红线，请尽快登录系统查看" class="w-full" />
+            hint="触发红线时系统会按这个模板通知责任人（模块设置里的「红线责任人」）（最多 500 字）">
+            <UInput v-model="lv.notificationTemplate" maxlength="500" placeholder="如：[教师姓名]老师触发红线，请尽快登录系统查看" class="w-full" />
           </UFormField>
         </div>
         <UButton variant="soft" icon="i-lucide-plus" @click="addLevel">加一个等级</UButton>
         <div class="mt-4 grid gap-3 rounded-lg bg-slate-50 p-4 sm:grid-cols-2">
-          <UFormField label="都不满足时叫什么"><UInput v-model="form.defaultLevelName" class="w-full" /></UFormField>
-          <UFormField label="都不满足时跟老师说什么"><UInput v-model="form.defaultMessage" class="w-full" /></UFormField>
+          <UFormField label="都不满足时叫什么" hint="最多 40 字"><UInput v-model="form.defaultLevelName" maxlength="40" class="w-full" /></UFormField>
+          <UFormField label="都不满足时跟老师说什么" hint="最多 800 字"><UInput v-model="form.defaultMessage" maxlength="800" class="w-full" /></UFormField>
         </div>
       </div>
 
@@ -1119,11 +1119,11 @@ const canNext = computed(() => {
           description="挂原因的工具由归因匹配推出来；不挂原因的工具只能在「分级」步骤里被某一级直接引用（干预工具）。两种方式任一命中就会进方案。" />
         <div v-for="(t, ti) in (form.tools as any[])" :key="ti" class="rounded-lg border border-slate-200 p-4">
           <div class="grid gap-3 sm:grid-cols-2">
-            <UFormField label="工具名称"><UInput v-model="t.name" placeholder="如：三步共情沟通法" class="w-full" /></UFormField>
+            <UFormField label="工具名称" hint="2-120 字"><UInput v-model="t.name" maxlength="120" placeholder="如：三步共情沟通法" class="w-full" /></UFormField>
             <UFormField label="解决哪些原因"><USelectMenu v-model="t.attributions" multiple :items="attributionNames" class="w-full" /></UFormField>
             <UFormField label="形式"><USelect v-model="t.form" :items="toolFormOptions" class="w-full" /></UFormField>
             <UFormField label="适用严重度" hint="越低越常用，越高越紧急"><USelect v-model="t.severity" :items="severityOptions" class="w-full" /></UFormField>
-            <UFormField label="什么时候用" class="sm:col-span-2"><UInput v-model="t.whenToUse" placeholder="如：家长情绪明显、一开口就对立时" class="w-full" /></UFormField>
+            <UFormField label="什么时候用" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="t.whenToUse" maxlength="300" placeholder="如：家长情绪明显、一开口就对立时" class="w-full" /></UFormField>
           </div>
           <UFormField class="mt-3" label="怎么做（一行一步）">
             <div v-for="(_, si) in (t.steps as any[])" :key="si" class="mt-2">
@@ -1135,30 +1135,30 @@ const canNext = computed(() => {
               <details class="ml-8 mt-1 rounded bg-slate-50 px-2 py-1">
                 <summary class="cursor-pointer text-xs text-slate-400">这步的耗时/话术/注意事项（可选）</summary>
                 <div class="grid gap-2 py-2 sm:grid-cols-2">
-                  <UFormField label="预计耗时"><UInput v-model="stepDetailOf(t, si).estimatedTime" placeholder="如：2 分钟" class="w-full" /></UFormField>
-                  <UFormField label="所需材料"><UInput v-model="stepDetailOf(t, si).materials" class="w-full" /></UFormField>
-                  <UFormField label="关键提示" class="sm:col-span-2"><UInput v-model="stepDetailOf(t, si).keyTip" class="w-full" /></UFormField>
-                  <UFormField label="话术模板" class="sm:col-span-2"><UInput v-model="stepDetailOf(t, si).scriptTemplate" class="w-full" /></UFormField>
-                  <UFormField label="成功标准"><UInput v-model="stepDetailOf(t, si).successCriteria" class="w-full" /></UFormField>
-                  <UFormField label="常见问题"><UInput v-model="stepDetailOf(t, si).commonIssues" class="w-full" /></UFormField>
+                  <UFormField label="预计耗时" hint="最多 80 字"><UInput v-model="stepDetailOf(t, si).estimatedTime" maxlength="80" placeholder="如：2 分钟" class="w-full" /></UFormField>
+                  <UFormField label="所需材料" hint="最多 200 字"><UInput v-model="stepDetailOf(t, si).materials" maxlength="200" class="w-full" /></UFormField>
+                  <UFormField label="关键提示" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="stepDetailOf(t, si).keyTip" maxlength="300" class="w-full" /></UFormField>
+                  <UFormField label="话术模板" class="sm:col-span-2" hint="最多 300 字"><UInput v-model="stepDetailOf(t, si).scriptTemplate" maxlength="300" class="w-full" /></UFormField>
+                  <UFormField label="成功标准" hint="最多 300 字"><UInput v-model="stepDetailOf(t, si).successCriteria" maxlength="300" class="w-full" /></UFormField>
+                  <UFormField label="常见问题" hint="最多 300 字"><UInput v-model="stepDetailOf(t, si).commonIssues" maxlength="300" class="w-full" /></UFormField>
                 </div>
               </details>
             </div>
             <UButton class="mt-2" size="xs" variant="soft" icon="i-lucide-plus" @click="addStep(t)">加一步</UButton>
           </UFormField>
           <div class="mt-3 grid gap-3 sm:grid-cols-2">
-            <UFormField label="关键话术"><UInput v-model="t.script" class="w-full" /></UFormField>
-            <UFormField label="不能做什么"><UInput v-model="t.prohibition" class="w-full" /></UFormField>
-            <UFormField label="单次耗时"><UInput v-model="t.timePerSession" placeholder="如：一次 15 分钟" class="w-full" /></UFormField>
-            <UFormField label="疗程与频次"><UInput v-model="t.duration" placeholder="如：每日 1-2 次，连续 7 天" class="w-full" /></UFormField>
-            <UFormField label="预期效果" hint="用可观察的结果描述，如「单次可下降 1-2 分主观压力值」"><UInput v-model="t.expectedEffect" class="w-full" /></UFormField>
-            <UFormField label="效果说明"><UInput v-model="t.effectNote" class="w-full" /></UFormField>
+            <UFormField label="关键话术" hint="最多 500 字"><UInput v-model="t.script" maxlength="500" class="w-full" /></UFormField>
+            <UFormField label="不能做什么" hint="最多 300 字"><UInput v-model="t.prohibition" maxlength="300" class="w-full" /></UFormField>
+            <UFormField label="单次耗时" hint="最多 80 字"><UInput v-model="t.timePerSession" maxlength="80" placeholder="如：一次 15 分钟" class="w-full" /></UFormField>
+            <UFormField label="疗程与频次" hint="最多 80 字"><UInput v-model="t.duration" maxlength="80" placeholder="如：每日 1-2 次，连续 7 天" class="w-full" /></UFormField>
+            <UFormField label="预期效果" hint="用可观察的结果描述，如「单次可下降 1-2 分主观压力值」（最多 300 字）"><UInput v-model="t.expectedEffect" maxlength="300" class="w-full" /></UFormField>
+            <UFormField label="效果说明" hint="最多 300 字"><UInput v-model="t.effectNote" maxlength="300" class="w-full" /></UFormField>
             <UFormField label="作用在哪些方面" hint="对应量表的「测哪个方面」，回车分隔"><UInputTags v-model="t.dimensions" class="w-full" /></UFormField>
-            <UFormField label="证据来源" hint="如：某研究 / 校内实践总结"><UInput v-model="t.evidenceSource" class="w-full" /></UFormField>
-            <UFormField label="重评间隔天数"><UInput v-model.number="t.reAssessmentIntervalDays" type="number" class="w-full" /></UFormField>
+            <UFormField label="证据来源" hint="如：某研究 / 校内实践总结（最多 300 字）"><UInput v-model="t.evidenceSource" maxlength="300" class="w-full" /></UFormField>
+            <UFormField label="重评间隔天数" hint="1-3650"><UInput v-model.number="t.reAssessmentIntervalDays" type="number" min="1" max="3650" class="w-full" /></UFormField>
             <UFormField label="跨模块标签" hint="其他模块也能引用这个工具时用"><UInputTags v-model="t.crossModuleTags" class="w-full" /></UFormField>
-            <UFormField label="输出物" hint="做完这个工具会得到什么，如「一次执行记录」"><UInput v-model="t.outputArtifact" class="w-full" /></UFormField>
-            <UFormField label="禁忌说明" hint="整个工具层面的禁用说明（区别于下方逐条禁忌）"><UInput v-model="t.contraindicationNote" class="w-full" /></UFormField>
+            <UFormField label="输出物" hint="做完这个工具会得到什么，如「一次执行记录」（最多 80 字）"><UInput v-model="t.outputArtifact" maxlength="80" class="w-full" /></UFormField>
+            <UFormField label="禁忌说明" hint="整个工具层面的禁用说明（区别于下方逐条禁忌）（最多 300 字）"><UInput v-model="t.contraindicationNote" maxlength="300" class="w-full" /></UFormField>
             <UFormField label="协同工具" hint="这个工具常与其他工具配合使用"><USelectMenu v-model="t.collaborativeTools" multiple :items="toolNames.filter(n => n !== t.name)" class="w-full" /></UFormField>
             <UFormField label="适用学部" hint="留空用模块通用设置"><USelect v-model="t.schoolSection" :items="schoolSectionOptions" class="w-full" /></UFormField>
             <UFormField label="适用对象" hint="留空用模块通用设置的施测对象"><USelect v-model="t.targetUsers" :items="targetAudienceOptions" class="w-full" /></UFormField>
@@ -1175,17 +1175,17 @@ const canNext = computed(() => {
               <USelect :model-value="t.advancedTools?.[0] || undefined" :items="toolNames.filter(n => n !== t.name)"
                 @update:model-value="(v: string) => setToolRef(t, 'advancedTools', v)" class="w-full" />
             </UFormField>
-            <UFormField label="做之前要准备什么"><UInput v-model="t.preparation" placeholder="如：提前调出近两周的记录" class="w-full" /></UFormField>
-            <UFormField label="需要哪些材料"><UInput v-model="t.materials" placeholder="如：观察记录表" class="w-full" /></UFormField>
-            <UFormField label="怎么算做到位了"><UInput v-model="t.outcomeIndicator" placeholder="如：一周内主动沟通 2 次" class="w-full" /></UFormField>
-            <UFormField label="怎么算没做成，该换别的"><UInput v-model="t.failureCriteria" placeholder="如：连续两次家长拒绝沟通" class="w-full" /></UFormField>
+            <UFormField label="做之前要准备什么" hint="最多 300 字"><UInput v-model="t.preparation" maxlength="300" placeholder="如：提前调出近两周的记录" class="w-full" /></UFormField>
+            <UFormField label="需要哪些材料" hint="最多 300 字"><UInput v-model="t.materials" maxlength="300" placeholder="如：观察记录表" class="w-full" /></UFormField>
+            <UFormField label="怎么算做到位了" hint="最多 300 字"><UInput v-model="t.outcomeIndicator" maxlength="300" placeholder="如：一周内主动沟通 2 次" class="w-full" /></UFormField>
+            <UFormField label="怎么算没做成，该换别的" hint="最多 300 字"><UInput v-model="t.failureCriteria" maxlength="300" placeholder="如：连续两次家长拒绝沟通" class="w-full" /></UFormField>
           </div>
           <UFormField class="mt-3" label="什么情况下这个工具不能用"
             hint="选「直接排除」的话，命中时系统绝不会推荐这个工具">
             <div v-for="(c, ci) in (t.contraindications as any[])" :key="ci" class="mt-2 flex flex-wrap items-center gap-2">
-              <UInput v-model="c.condition" placeholder="如：家长已提出投诉" class="flex-1" />
+              <UInput v-model="c.condition" maxlength="200" placeholder="如：家长已提出投诉" class="flex-1" />
               <USelect v-model="c.type" :items="[{label:'直接排除',value:'block'},{label:'仅提示',value:'warn'}]" class="w-28" />
-              <UInput v-model="c.alternative" placeholder="改用什么" class="w-44" />
+              <UInput v-model="c.alternative" maxlength="300" placeholder="改用什么" class="w-44" />
               <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="t.contraindications.splice(ci, 1)" />
             </div>
             <UButton class="mt-2" size="xs" variant="soft" icon="i-lucide-plus"
@@ -1211,9 +1211,9 @@ const canNext = computed(() => {
             <UFormField label="风险等级">
               <USelect v-model="k.risk" :items="[{label:'红·立即',value:'red'},{label:'橙·尽快',value:'orange'},{label:'黄·关注',value:'yellow'},{label:'无·普通',value:'none'}]" class="w-full" />
             </UFormField>
-            <UFormField label="语义分类"><UInput v-model="k.category" placeholder="如：情绪耗竭" class="w-full" /></UFormField>
-            <UFormField label="情境限定" hint="什么场景下这条路由生效"><UInput v-model="k.contextConstraint" placeholder="如：教师自述状态时" class="w-full" /></UFormField>
-            <UFormField label="场景描述"><UInput v-model="k.description" class="w-full" /></UFormField>
+            <UFormField label="语义分类" hint="最多 60 字"><UInput v-model="k.category" maxlength="60" placeholder="如：情绪耗竭" class="w-full" /></UFormField>
+            <UFormField label="情境限定" hint="什么场景下这条路由生效（最多 120 字）"><UInput v-model="k.contextConstraint" maxlength="120" placeholder="如：教师自述状态时" class="w-full" /></UFormField>
+            <UFormField label="场景描述" hint="最多 200 字"><UInput v-model="k.description" maxlength="200" class="w-full" /></UFormField>
           </div>
           <UButton class="mt-2" size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" @click="form.keywords.splice(ki, 1)">删除</UButton>
         </div>
