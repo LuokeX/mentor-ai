@@ -80,4 +80,52 @@ describe('business-wizard-simulate', () => {
       expect(s.levelName).toBeTruthy()
     }
   })
+
+  it('逐题覆盖：维度全高分但第 6 题单独答最差 → 触发 E 级红线（维度模式测不出）', () => {
+    const result = simulateWizardRun(WIZARD_SAMPLE, dimAnswers('家校沟通六维速查', 5), {
+      perQuestion: { 家校沟通六维速查: { q6: 1 } }
+    })
+    const entry = result.scales.find(s => s.name === '家校沟通六维速查')!
+    expect(entry.error).toBeUndefined()
+    // 全 5 分本应落入兜底等级（现有用例已断言），q6 覆盖 raw=1 → 反向分 5 ≥ 4 → E 级红线
+    expect(entry.redLine).toBe(true)
+    expect(entry.levelName).toBe('E 级保护通道')
+  })
+
+  it('跨量表联动：入口量表沟通质量偏高 → 深度量表触发条件满足；入口量表自身无触发条件', () => {
+    const result = simulateWizardRun(WIZARD_SAMPLE, dimAnswers('家校沟通六维速查', 3))
+    const entry = result.scales.find(s => s.name === '家校沟通六维速查')!
+    const deep = result.scales.find(s => s.name === '家长分型与沟通策略评估')!
+    expect(entry.trigger).toBeNull()
+    expect(deep.trigger).not.toBeNull()
+    // 强度 3 → 反向分 3 ≥ 3，触发「沟通质量 ≥ 3 或 均分 ≥ 3.2」
+    expect(deep.trigger!.met).toBe(true)
+    // 挂在入口表上的计算变量在深度表上仍算不出（引擎语义不变），但挂载量表已作答，不提示补作答
+    expect(deep.unavailableVariables).toContain('沟通压力指数')
+    expect(deep.missingAnswerScales).not.toContain('沟通压力指数')
+  })
+
+  it('跨量表联动：入口量表全部正常（强度 5）→ 深度量表触发条件不满足', () => {
+    const result = simulateWizardRun(WIZARD_SAMPLE, dimAnswers('家校沟通六维速查', 5))
+    const deep = result.scales.find(s => s.name === '家长分型与沟通策略评估')!
+    expect(deep.trigger!.met).toBe(false)
+  })
+
+  it('计算变量：挂载量表作答后能算出值；挂载量表没作答时提示补作答', () => {
+    // 全部作答：入口表上 沟通压力指数 = 沟通质量(3) + 参与效能(3) = 6
+    const all = simulateWizardRun(WIZARD_SAMPLE, {
+      ...dimAnswers('家校沟通六维速查', 3),
+      ...dimAnswers('家长分型与沟通策略评估', 3)
+    })
+    const entry = all.scales.find(s => s.name === '家校沟通六维速查')!
+    expect(entry.computedValues['沟通压力指数']).toBe(6)
+    expect(entry.unavailableVariables).not.toContain('沟通压力指数')
+    expect(entry.missingAnswerScales).toEqual([])
+
+    // 只给深度表作答：挂在入口表上的变量算不出，且提示入口表没作答
+    const onlyDeep = simulateWizardRun(WIZARD_SAMPLE, dimAnswers('家长分型与沟通策略评估', 3))
+    const deep = onlyDeep.scales.find(s => s.name === '家长分型与沟通策略评估')!
+    expect(deep.unavailableVariables).toContain('沟通压力指数')
+    expect(deep.missingAnswerScales).toContain('沟通压力指数')
+  })
 })

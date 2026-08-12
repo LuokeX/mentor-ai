@@ -389,3 +389,52 @@ describe('executeRules 等级干预通道（归因与等级并行）', () => {
     expect(result.actions.map(a => a.detail)).toContain('本不该出现')
   })
 })
+
+describe('算术表达式支持（计算变量四则运算）', () => {
+  const arithConfig = (computed: Record<string, string>): RuleConfig => ({
+    ...config,
+    computed: { ...config.computed, ...computed }
+  })
+
+  it('加/减/乘/除按运算优先级求值', () => {
+    const result = executeRules(
+      arithConfig({ 算术: '维度[D_LOAD] * 2 + 题[q3] - 1 / 2' }),
+      answersA({ q1: 3, q2: 3, q3: 4 }),
+      scaleA
+    )
+    // D_LOAD = (3+3)/2 = 3 → 3*2 + 4 - 0.5 = 9.5
+    expect(result.computedValues['算术']).toBe(9.5)
+    expect(result.unavailableVariables).not.toContain('算术')
+  })
+
+  it('括号改变优先级', () => {
+    const result = executeRules(
+      arithConfig({ 括号: '(维度[D_LOAD] + 题[q3]) * 2' }),
+      answersA({ q1: 3, q2: 3, q3: 4 }),
+      scaleA
+    )
+    expect(result.computedValues['括号']).toBe(14)
+  })
+
+  it('除零得 NaN：不抛错、不进可用变量（条件比较自然为 false）', () => {
+    const result = executeRules(
+      arithConfig({ 除零: '题[q3] / (维度[D_LOAD] - 3)' }),
+      answersA({ q1: 3, q2: 3, q3: 4 }),
+      scaleA
+    )
+    expect(Number.isNaN(result.computedValues['除零'])).toBe(true)
+    expect(result.unavailableVariables).not.toContain('除零')
+  })
+
+  it('算术结果可被归因条件引用（跨表达式组合）', () => {
+    const configWithEvidence: RuleConfig = {
+      ...arithConfig({ 组合: '维度[D_LOAD] + 题[q3]' }),
+      evidences: [
+        { attributionCode: 'AT_LOAD', assessmentCode: 'T_SCALE_A', evidenceCode: 'EV_ARITH', condition: '组合 >= 7', weight: 2, description: '算术组合命中' }
+      ]
+    }
+    const result = executeRules(configWithEvidence, answersA({ q1: 3, q2: 3, q3: 4 }), scaleA)
+    // 组合 = 3 + 4 = 7 ≥ 7 → EV_ARITH 命中
+    expect(result.attributions.find(a => a.code === 'AT_LOAD')!.rawScore).toBe(2)
+  })
+})

@@ -503,6 +503,8 @@ const flowCrossEdges = computed(() => {
 // ---------- 第 9 步：代入试算（v4 模板 ⑪ 推演算例的交互版） ----------
 /** 量表名 → 维度名 → 1..5 强度。维度来自已填的题目，第 9 步时必然已定义。 */
 const simAnswers = reactive<Record<string, Record<string, number>>>({})
+/** 逐题覆盖：量表名 → 题号(qN) → 选项原始分值。覆盖维度强度，未覆盖的题仍按维度强度展开。 */
+const simPerQuestion = reactive<Record<string, Record<string, number | undefined>>>({})
 const simRunning = ref(false)
 const simResult = ref<Record<string, any>>({})
 /** 维度名列表（某张量表） */
@@ -527,10 +529,40 @@ function setSimValue(scaleName: string, dim: string, v: number) {
   runSimulate()
 }
 function setSimPreset(v: number) {
+  // 预设是维度语义：清空逐题覆盖，让维度强度统一接管
+  for (const k of Object.keys(simPerQuestion)) delete simPerQuestion[k]
   for (const s of (form.scales as any[]).filter((s: any) => s.name)) {
     simEnsure(s.name)
     for (const dim of simDimensionsOf(s.name)) simAnswersOf(s.name)[dim] = v
   }
+  runSimulate()
+}
+/** 某题的选项（label + value），与编译端同源：预置组 base+idx，自定义组 score ?? idx+1 */
+function simOptionsOf(q: any): Array<{ label: string, value: number }> {
+  const preset = (WIZARD_OPTION_GROUPS as any)[q.optionGroup]
+  if (preset) return preset.options.map((label: string, i: number) => ({ label, value: preset.base + i }))
+  const g = (form.optionGroups as any[]).find((x: any) => x.id === q.optionGroup)
+  return (g?.options || []).map((o: any, i: number) => ({ label: o.label, value: o.score ?? i + 1 }))
+}
+function simPerQuestionOf(scaleName: string): Record<string, number | undefined> {
+  if (!simPerQuestion[scaleName]) simPerQuestion[scaleName] = {}
+  return simPerQuestion[scaleName]!
+}
+/** 逐题覆盖：只保留当前题目集合里的 qN（题目增删后 qid 会错位，残留的覆盖必须丢弃） */
+function cleanSimPerQuestion(scale: any): Record<string, number> {
+  const valid = new Set(scale.questions.map((_: any, i: number) => `q${i + 1}`))
+  const out: Record<string, number> = {}
+  for (const [k, v] of Object.entries(simPerQuestionOf(scale.name))) {
+    if (v !== undefined && valid.has(k)) out[k] = v
+  }
+  return out
+}
+function setSimQuestionValue(scaleName: string, qid: string, v: number) {
+  simPerQuestionOf(scaleName)[qid] = v
+  runSimulate()
+}
+function resetSimQuestionValue(scaleName: string, qid: string) {
+  delete simPerQuestionOf(scaleName)[qid]
   runSimulate()
 }
 async function runSimulate() {
@@ -538,8 +570,13 @@ async function runSimulate() {
   if (!payload.scales.length) return
   simRunning.value = true
   try {
+    const perQuestion: Record<string, Record<string, number>> = {}
+    for (const s of payload.scales) {
+      const cleaned = cleanSimPerQuestion(s)
+      if (Object.keys(cleaned).length) perQuestion[s.name] = cleaned
+    }
     const res = await $fetch<any>('/api/v1/platform-admin/module-resources/wizard-simulate', {
-      method: 'POST', body: { input: payload, answers: simAnswers }
+      method: 'POST', body: { input: payload, answers: simAnswers, perQuestion }
     })
     simResult.value = Object.fromEntries((res.scales || []).map((s: any) => [s.name, s]))
   } catch (error: any) {
@@ -548,7 +585,18 @@ async function runSimulate() {
     simRunning.value = false
   }
 }
-watch(() => form.scales.map((s: any) => s.name).join('|'), () => { simResult.value = {} }, { deep: true })
+// 量表名或题目结构变化（增删题、维度/选项组改名）时结果与作答全部失效：
+// qid 按题目顺序生成（q1..qn），题目变了之后残留的逐题覆盖会挂到错误的题上；
+// 维度强度按维度名索引，维度改名后同样错位。结构变了，作答作废重来。
+watch(() =>
+  (form.scales as any[]).map(s =>
+    `${s.name}:${(s.questions || []).map((q: any) => `${q.dimension}|${q.optionGroup}`).join(',')}`
+  ).join('~'),
+() => {
+  simResult.value = {}
+  for (const k of Object.keys(simPerQuestion)) delete simPerQuestion[k]
+  for (const k of Object.keys(simAnswers)) delete simAnswers[k]
+})
 
 
 /**
@@ -1277,11 +1325,44 @@ const canNext = computed(() => {
                   </div>
                   <div v-if="!simDimensionsOf(s.name).length" class="text-xs text-slate-400">这张量表还没有题目，无法试算</div>
                 </div>
+                <details class="group mt-2 rounded-lg border border-slate-200 bg-white/70">
+                  <summary class="flex cursor-pointer items-center justify-between px-3 py-1.5 text-[11px] font-medium text-slate-500">
+                    逐题调整（可选）—— 单独改某道题的选项，可验证「第 N 题」这类条件
+                    <UIcon name="i-lucide-chevron-down" class="size-3 transition group-open:rotate-180" />
+                  </summary>
+                  <div class="space-y-2 px-3 py-2">
+                    <div v-for="(q, qi) in (s.questions as any[])" :key="qi" class="flex flex-wrap items-center gap-2">
+                      <span class="w-14 shrink-0 text-[11px] text-slate-400">第 {{ qi + 1 }} 题</span>
+                      <div class="flex flex-wrap gap-1">
+                        <button v-for="opt in simOptionsOf(q)" :key="opt.value" type="button"
+                          class="rounded border px-2 py-0.5 text-[11px] transition"
+                          :class="simPerQuestion[s.name]?.[`q${qi + 1}`] === opt.value
+                            ? 'border-emerald-600 bg-emerald-600 text-white'
+                            : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100'"
+                          @click="setSimQuestionValue(s.name, `q${qi + 1}`, opt.value)">{{ opt.label }}</button>
+                      </div>
+                      <button v-if="simPerQuestion[s.name]?.[`q${qi + 1}`] !== undefined" type="button"
+                        class="text-[11px] text-slate-400 hover:text-slate-600"
+                        @click="resetSimQuestionValue(s.name, `q${qi + 1}`)">恢复维度值</button>
+                    </div>
+                  </div>
+                </details>
                 <div v-if="simResult[s.name]?.redLine" class="mt-2 rounded bg-red-50 px-2 py-1.5 text-xs text-red-700">
                   红线触发：{{ simResult[s.name].redLineAction || '按模块设置执行熔断动作' }}
                 </div>
+                <div v-if="simResult[s.name]?.trigger" class="mt-2 text-xs"
+                  :class="simResult[s.name].trigger.met ? 'text-emerald-700' : 'text-slate-400'">
+                  建议做：{{ simResult[s.name].trigger.met ? '满足（按前面量表的作答，这张需要做）' : '不满足（按前面量表的作答，暂不需要做）' }}
+                  <span v-if="simResult[s.name].trigger.error" class="text-amber-600">（触发条件求值失败：{{ simResult[s.name].trigger.error }}）</span>
+                </div>
                 <div v-if="simResult[s.name]?.unavailableVariables?.length" class="mt-2 text-xs text-amber-600">
                   计算变量算不出（引用了其他量表的数据）：{{ simResult[s.name].unavailableVariables.join('、') }}
+                </div>
+                <div v-if="Object.keys(simResult[s.name]?.computedValues || {}).length" class="mt-2 text-xs text-slate-400">
+                  计算变量：{{ Object.entries(simResult[s.name].computedValues).map(([k, v]: any) => `${k} = ${v}`).join('、') }}
+                </div>
+                <div v-if="simResult[s.name]?.missingAnswerScales?.length" class="mt-2 text-xs text-amber-600">
+                  以下计算变量引用的量表还没作答：{{ simResult[s.name].missingAnswerScales.join('、') }}（给对应量表设定作答后即可算出）
                 </div>
                 <div v-if="simResult[s.name]?.error" class="mt-2 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-700">
                   试算失败：{{ simResult[s.name].error }}

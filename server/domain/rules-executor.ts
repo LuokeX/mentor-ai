@@ -119,7 +119,7 @@ function tokenize(expr: string): Token[] {
       continue
     }
     // 单字符运算符
-    if (ch === '>' || ch === '<' || ch === '!' || ch === '=') {
+    if (ch === '>' || ch === '<' || ch === '!' || ch === '=' || ch === '+' || ch === '-' || ch === '*' || ch === '/') {
       tokens.push({ type: 'OP', value: ch })
       i++
       continue
@@ -147,7 +147,8 @@ function tokenize(expr: string): Token[] {
 // or_expr  → and_expr ('||' and_expr)*
 // and_expr → cmp_expr ('&&' cmp_expr)*
 // cmp_expr → add_expr (('>=' | '<=' | '>' | '<' | '==' | '!=') add_expr)?
-// add_expr → atom
+// add_expr → mul_expr (('+' | '-') mul_expr)*
+// mul_expr → atom (('*' | '/') atom)*
 // atom     → NUMBER | STRING | IDENT [ '(' (expr (',' expr)*)? ')' ] | '(' expr ')'
 
 type ASTNode =
@@ -155,6 +156,7 @@ type ASTNode =
   | { type: 'string'; value: string }
   | { type: 'var'; name: string }
   | { type: 'call'; name: string; args: ASTNode[] }
+  | { type: 'arith'; op: string; left: ASTNode; right: ASTNode }
   | { type: 'cmp'; op: string; left: ASTNode; right: ASTNode }
   | { type: 'logic'; op: string; left: ASTNode; right: ASTNode }
 
@@ -212,11 +214,31 @@ class Parser {
   }
 
   private cmpExpr(): ASTNode {
-    const left = this.atom()
+    const left = this.addExpr()
     const next = this.peek()
     if (next?.type === 'OP' && ['>=', '<=', '>', '<', '==', '!='].includes(next.value)) {
       this.consume()
-      return { type: 'cmp', op: next.value, left, right: this.atom() }
+      return { type: 'cmp', op: next.value, left, right: this.addExpr() }
+    }
+    return left
+  }
+
+  /** 加减法：计算变量表达式（维度[沟通质量] + 题[2] - 3）的算术支持 */
+  private addExpr(): ASTNode {
+    let left = this.mulExpr()
+    while (this.peek()?.type === 'OP' && (this.peek()!.value === '+' || this.peek()!.value === '-')) {
+      const op = String(this.consume().value)
+      left = { type: 'arith', op, left, right: this.mulExpr() }
+    }
+    return left
+  }
+
+  /** 乘除法 */
+  private mulExpr(): ASTNode {
+    let left = this.atom()
+    while (this.peek()?.type === 'OP' && (this.peek()!.value === '*' || this.peek()!.value === '/')) {
+      const op = String(this.consume().value)
+      left = { type: 'arith', op, left, right: this.atom() }
     }
     return left
   }
@@ -311,6 +333,18 @@ function evaluate(node: ASTNode, env: EvalContext): number | string | boolean {
       return val
     }
     case 'call': return evalBuiltin(node.name, node.args, env)
+    case 'arith': {
+      const left = Number(evaluate(node.left, env))
+      const right = Number(evaluate(node.right, env))
+      switch (node.op) {
+        case '+': return left + right
+        case '-': return left - right
+        case '*': return left * right
+        // 除零给 NaN：比较运算（NaN >= x）自然为 false，条件不命中，比 Infinity 安全
+        case '/': return right === 0 ? NaN : left / right
+        default: throw new Error(`Unknown arithmetic operator '${node.op}'`)
+      }
+    }
     case 'cmp': return evalCmp(node.op, evaluate(node.left, env), evaluate(node.right, env))
     case 'logic': {
       // 短路求值：&& 左边为假时不求值右边，|| 左边为真时不求值右边
@@ -558,7 +592,8 @@ export function executeRules(
   config: RuleConfig,
   answers: Record<string, number>,
   definition: AssessmentDefinition,
-  ctx: Record<string, number> = {}
+  ctx: Record<string, number> = {},
+  priors?: Record<string, PriorAssessmentResult>
 ): RuleExecResult {
   // 1. 计算 scored items
   const items = definition.questions.map(q => ({
@@ -582,7 +617,7 @@ export function executeRules(
   // 将 ctx 上下文变量也暴露到 vars 中（用 ctx_ 前缀，避免 tokenizer 点号问题）
   const ctxVars: Record<string, number> = {}
   for (const [k, v] of Object.entries(ctx)) { ctxVars[`ctx_${k}`] = v }
-  const env: EvalContext = { vars: { ...ctxVars }, items, ctx, dimensions, instrumentCode: definition.instrumentCode || definition.code }
+  const env: EvalContext = { vars: { ...ctxVars }, items, ctx, dimensions, instrumentCode: definition.instrumentCode || definition.code, priors }
   // 计算变量是模块级的，但表达式可能引用只属于某一张量表的题号或维度。
   // 用另一张量表作答时这类变量算不出来，此时跳过而不是中断整场评估——
   // 真正引用了它的分级规则应当用「依据量表编码」限定到对应量表。

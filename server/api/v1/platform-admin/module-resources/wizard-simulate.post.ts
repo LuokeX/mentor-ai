@@ -13,7 +13,9 @@ import { requireUser } from '../../../../utils/auth'
 const bodySchema = z.object({
   input: wizardInputSchema,
   /** 量表名 → 维度名 → 1..5 强度 */
-  answers: z.record(z.string(), z.record(z.string(), z.number().min(1).max(5)))
+  answers: z.record(z.string(), z.record(z.string(), z.number().min(1).max(5))),
+  /** 逐题覆盖（可选）：量表名 → 题号 qN → 选项原始分值，覆盖维度强度 */
+  perQuestion: z.record(z.string(), z.record(z.string(), z.number())).optional()
 })
 
 export default defineEventHandler(async (event) => {
@@ -27,7 +29,7 @@ export default defineEventHandler(async (event) => {
     })
   }
   try {
-    return simulateWizardRun(body.data.input, body.data.answers)
+    return simulateWizardRun(body.data.input, body.data.answers, { perQuestion: body.data.perQuestion })
   } catch (error: any) {
     throw createError({ statusCode: 400, message: error?.message || '试算失败' })
   }
