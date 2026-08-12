@@ -63,6 +63,18 @@ export async function writeEntitySnapshot(event: H3Event, params: SnapshotWriteP
   if (!id) return
 
   const { result } = params
+  const dimensions = Object.entries(result.dimensions)
+  // 六维测评明细（家校沟通）：维度中文名 + 得分 + 需关注标记（<3.0 标注，docx 家校沟通字段口径）
+  const dimensionScores = dimensions.map(([code, score]) => ({
+    code,
+    label: result.dimensionLabels[code] || code,
+    score,
+    attention: score < 3
+  }))
+  const attentionDimensions = dimensionScores.filter(item => item.attention).map(item => item.label)
+  const weakestDimension = dimensionScores.length
+    ? dimensionScores.reduce((min, item) => (item.score < min.score ? item : min))
+    : undefined
   const snapshot = {
     module: params.module,
     level: result.level,
@@ -70,8 +82,30 @@ export async function writeEntitySnapshot(event: H3Event, params: SnapshotWriteP
     severity: result.severity,
     blocked: result.blocked,
     primaryAttribution: result.primaryAttribution,
+    /** 次要归因（strength 非 reference 的项），学习问题「次要归因」字段 */
+    secondaryAttributions: result.secondaryAttributions,
     dimensions: result.dimensions,
-    attributions: result.attributions.map(a => a.name),
+    dimensionLabels: result.dimensionLabels,
+    /** 维度明细（含 <3.0 需关注标记），家校沟通「六维测评结果」字段 */
+    dimensionScores,
+    /** 最薄弱维度：取六维度最低分，用于锁定主攻方向 */
+    weakestDimension,
+    /** 六维度总分 */
+    totalScore: dimensions.reduce((sum, [, score]) => sum + score, 0),
+    /** 维度分 < 3.0 的「需关注」维度 */
+    attentionDimensions,
+    /** 命中的红线明细（条件/说明/处置），家校沟通「红线熔断标记」来源 */
+    matchedRedLines: result.matchedRedLines?.map(redLine => ({
+      condition: redLine.condition,
+      description: redLine.description,
+      requiredActions: redLine.requiredActions
+    })) ?? [],
+    /** 命中规则结论说明（触发条件命中项） */
+    reasons: result.reasons,
+    /** 升级目标/责任人（如：心理教师/专业评估机构），学习问题「责任人列表」来源 */
+    escalationTarget: result.escalationTarget,
+    /** 命中归因明细（含编码与排序），学生个体问题「五类十五型编码」来源 */
+    attributions: result.attributions.map(a => ({ code: a.code, name: a.name, rank: a.rank })),
     assessedAt: params.submittedAt.toISOString()
   }
 

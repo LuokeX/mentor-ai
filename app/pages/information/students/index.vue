@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
 import type { ManagedListResult } from '~~/shared/management'
-const { caseLevelLabel, caseLevelColor, caseSolutionStatusLabel, caseSolutionStatusColor } = useDisplayLabels()
+const { caseLevelLabel, caseLevelColor, caseSolutionStatusLabel, caseSolutionStatusColor, learningLevelLabel, learningLevelColor } = useDisplayLabels()
 
 interface StudentRow {
   id: string
@@ -12,6 +12,8 @@ interface StudentRow {
   status: string
   caseLevel: string | null
   caseSolutionStatus: string | null
+  learningLevel: string | null
+  studentSnapshot: Record<string, any> | null
   updatedAt: string
 }
 
@@ -28,6 +30,7 @@ const columns = [
   { key: 'gender', label: '性别', mobileHidden: true },
   { key: 'caseLevel', label: '预警级别' },
   { key: 'caseSolutionStatus', label: '解决状态' },
+  { key: 'learningLevel', label: '学习问题' },
   { key: 'status', label: '状态', sortable: true },
   { key: 'updatedAt', label: '最近更新', sortable: true, mobileHidden: true },
   { key: 'actions', label: '操作' },
@@ -141,6 +144,12 @@ function closeDrawer() {
           }" />
           {{ caseSolutionStatusLabel(row.caseSolutionStatus) || '未标记' }}
         </span>
+      </template>
+      <template #learningLevel-data="{ row }">
+        <UBadge v-if="row.learningLevel" :color="learningLevelColor(row.studentSnapshot?.level || row.learningLevel)" variant="subtle" size="xs">
+          {{ learningLevelLabel(row.studentSnapshot?.levelName || row.learningLevel) }}
+        </UBadge>
+        <span v-else class="text-sm text-slate-300">未评估</span>
       </template>
       <template #updatedAt-data="{ value }">{{ new Date(String(value)).toLocaleDateString('zh-CN') }}</template>
       <template #actions-data="{ row }">

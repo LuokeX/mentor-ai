@@ -346,6 +346,8 @@ export const guardians = pgTable('guardians', {
   contactEnc: text('contact_enc'),
   isPrimary: boolean('is_primary').default(false).notNull(),
   notesEnc: text('notes_enc'),
+  /** 家校关系档案（jsonb 加密）：家长分型 P1-P5、家校关系等级 A-E、二期关联信息（工作坊/家长会/线上家长课/家长会商） */
+  profileEnc: text('profile_enc'),
   // ---- 家校沟通模块业务状态（评估提交时快照回写）----
   /** 最近一次沟通风险等级：E 级保护通道/D 级高冲突/C 级需谨慎/无 */
   commRiskLevel: varchar('comm_risk_level', { length: 40 }),

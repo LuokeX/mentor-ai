@@ -166,7 +166,7 @@ const dimensionLabel: Record<string, string> = {
               <span class="w-8 text-right text-sm font-medium">{{ Number(value).toFixed(1) }}</span>
             </div>
             <p class="rounded-xl bg-sky-50 p-3 text-xs leading-5 text-sky-700">
-              最薄弱系统：{{ data.class.weakestSystem || '—' }}。系统均分低于 3.0 的维度建议标注「需关注」并优先建设。
+              最薄弱系统：{{ data.class.weakestSystem || '—' }}。<template v-if="data?.class?.attentionDimensions?.length">需关注维度：{{ data.class.attentionDimensions.join('、') }}（均分 &lt; 3.0）。</template><template v-else>系统均分低于 3.0 的维度建议标注「需关注」并优先建设。</template>
             </p>
           </div>
           <p v-else class="mt-5 rounded-2xl bg-slate-50 p-6 text-center text-sm text-slate-400">尚未完成班级五系统评估，暂无测评结果</p>

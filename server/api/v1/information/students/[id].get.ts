@@ -62,8 +62,8 @@ export default defineEventHandler(async (event) => {
       caseLevelName: (student.studentSnapshot as any)?.levelName || student.caseLevel || null,
       /** 命中的五类十五型编码（按优先级排序），如 [{ code: 'A1', name: '注意力分散型' }] */
       caseCodes: ((student.studentSnapshot as any)?.attributions || [])
-        .filter((a: any) => a.rank === 0 || a.rank === 1 || a.rank === 2)
-        .map((a: any) => ({ code: a.code, name: a.name })),
+        .filter((a: any) => typeof a === 'string' || a.rank === 0 || a.rank === 1 || a.rank === 2)
+        .map((a: any) => typeof a === 'string' ? ({ code: a, name: a }) : ({ code: a.code, name: a.name })),
       aiContext: { type: 'student', id: student.id, label: decryptSensitive(student.nameEnc, secret) },
       nameEnc: undefined,
       profileEnc: undefined,

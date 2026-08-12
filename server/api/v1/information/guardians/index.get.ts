@@ -47,6 +47,8 @@ export default defineEventHandler(async (event) => {
       status: schema.guardians.status,
       ownerUserId: schema.guardians.ownerUserId,
       schoolId: schema.guardians.schoolId,
+      commRiskLevel: schema.guardians.commRiskLevel,
+      guardianSnapshot: schema.guardians.guardianSnapshot,
       createdAt: schema.guardians.createdAt,
       updatedAt: schema.guardians.updatedAt,
     }).from(schema.guardians).where(and(...conditions)).orderBy(orderFn(sortCol)).limit(query.pageSize).offset(offsetFrom(query.page, query.pageSize)),

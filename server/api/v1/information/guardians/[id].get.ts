@@ -15,6 +15,8 @@ export default defineEventHandler(async (event) => {
     eq(schema.guardians.schoolId, user.schoolId!)
   )).limit(1)
   if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
+  const profileText = guardian.profileEnc ? decryptSensitive(guardian.profileEnc, secret) : ''
+  const profile = profileText ? JSON.parse(profileText) : {}
   const [relations, communications, studentOptions, plans] = await Promise.all([
     db.select().from(schema.studentGuardians).where(and(
       eq(schema.studentGuardians.guardianId, id),
@@ -45,10 +47,15 @@ export default defineEventHandler(async (event) => {
       ...guardian,
       name: decryptSensitive(guardian.nameEnc, secret),
       phone: decryptSensitive(guardian.phoneEnc, secret),
+      externalRef: guardian.externalRefEnc ? decryptSensitive(guardian.externalRefEnc, secret) : null,
+      profile,
       aiContext: { type: 'guardian', id: guardian.id, label: decryptSensitive(guardian.nameEnc, secret) },
       nameEnc: undefined,
       phoneEnc: undefined,
-      nameSearch: undefined
+      externalRefEnc: undefined,
+      externalRefSearch: undefined,
+      nameSearch: undefined,
+      profileEnc: undefined
     },
     students: linkedStudents.map(normalizeStudent),
     studentOptions: studentOptions.map(normalizeStudent),

@@ -1,0 +1,1 @@
+ALTER TABLE "guardians" ADD COLUMN "profile_enc" text;

@@ -7,14 +7,18 @@ interface GuardianRow {
   phoneMasked: string | null
   relation: string | null
   status: string
+  commRiskLevel: string | null
+  guardianSnapshot: Record<string, any> | null
   updatedAt: string
 }
 
 const list = useManagedList<GuardianRow>('/api/v1/information/guardians')
+const { commRiskLevelLabel, commRiskLevelColor } = useDisplayLabels()
 const columns = [
   { key: 'name', label: '家长姓名' },
   { key: 'relation', label: '关系', sortable: true },
   { key: 'phoneMasked', label: '联系电话', mobileHidden: true },
+  { key: 'commRiskLevel', label: '沟通风险' },
   { key: 'status', label: '状态', sortable: true },
   { key: 'updatedAt', label: '最近更新', sortable: true, mobileHidden: true },
   { key: 'actions', label: '操作' },
@@ -101,6 +105,12 @@ function closeDrawer() {
       @sort="list.onSortChange"
       @row-click="openGuardianRow"
     >
+      <template #commRiskLevel-data="{ row }">
+        <UBadge v-if="row.commRiskLevel" :color="commRiskLevelColor(row.guardianSnapshot?.level || row.commRiskLevel)" variant="subtle" size="xs">
+          {{ commRiskLevelLabel(row.guardianSnapshot?.levelName || row.commRiskLevel) }}
+        </UBadge>
+        <span v-else class="text-sm text-slate-300">—</span>
+      </template>
       <template #status-data="{ row }">
         <UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle" size="xs">
           {{ row.status === 'active' ? '有效' : '已归档' }}

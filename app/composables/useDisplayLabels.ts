@@ -50,6 +50,22 @@ const labels = {
     '制度自转期': '制度自转期',
     '文化生成期': '文化生成期'
   },
+  /** 学习问题·严重程度（learning_problem 评估等级，L1 最重 → L5 最轻） */
+  learningLevel: {
+    L1: 'L1·最重',
+    L2: 'L2·重',
+    L3: 'L3·中',
+    L4: 'L4·轻',
+    L5: 'L5·最轻'
+  },
+  /** 家校沟通·沟通风险等级（home_school 评估等级，五色口径） */
+  commRiskLevel: {
+    red: '红色·极重·危机',
+    orange: '橙色·明显问题',
+    yellow: '黄色·关注',
+    blue: '蓝色·轻微',
+    green: '绿色·平稳'
+  },
   planStatus: {
     pending_acceptance: '待确认',
     accepted: '已接受',
@@ -299,7 +315,9 @@ const colors: Record<string, Partial<Record<string, BadgeColor>>> = {
     '关系激活期': 'warning',
     '制度自转期': 'info',
     '文化生成期': 'success'
-  }
+  },
+  learningLevel: { L1: 'error', L2: 'error', L3: 'warning', L4: 'info', L5: 'neutral' },
+  commRiskLevel: { red: 'error', orange: 'warning', yellow: 'warning', blue: 'info', green: 'success' }
 }
 
 function labelFrom(group: keyof typeof labels, value?: string | null) {
@@ -337,6 +355,10 @@ export function useDisplayLabels() {
     caseSolutionStatusColor: (value?: string | null) => colorFrom('caseSolutionStatus', value),
     classStageLabel: (value?: string | null) => labelFrom('classStage', value),
     classStageColor: (value?: string | null) => colorFrom('classStage', value),
+    learningLevelLabel: (value?: string | null) => labelFrom('learningLevel', value),
+    learningLevelColor: (value?: string | null) => colorFrom('learningLevel', value),
+    commRiskLevelLabel: (value?: string | null) => labelFrom('commRiskLevel', value),
+    commRiskLevelColor: (value?: string | null) => colorFrom('commRiskLevel', value),
     accountStatusLabel: (value?: string | null) => labelFrom('accountStatus', value),
     accountStatusColor: (value?: string | null) => colorFrom('accountStatus', value),
     schoolStatusLabel: (value?: string | null) => labelFrom('schoolStatus', value),

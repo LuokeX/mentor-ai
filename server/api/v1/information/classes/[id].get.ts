@@ -53,10 +53,18 @@ export default defineEventHandler(async (event) => {
 
   const snapshot = klass.classSnapshot as {
     levelName?: string
-    primaryAttribution?: { name?: string }
+    primaryAttribution?: string | { name?: string }
     dimensions?: Record<string, number>
+    dimensionLabels?: Record<string, string>
+    /** 取最低分维度（docx 班级系统建设「最薄弱系统」口径） */
+    weakestDimension?: { code: string, label: string, score: number }
+    /** 维度均分 < 3.0 的「需关注」维度 */
+    attentionDimensions?: string[]
     assessedAt?: string
   } | null
+  const weakestSystem = snapshot?.weakestDimension?.label
+    || (typeof snapshot?.primaryAttribution === 'string' ? snapshot.primaryAttribution : snapshot?.primaryAttribution?.name)
+    || null
 
   return {
     class: {
@@ -66,8 +74,10 @@ export default defineEventHandler(async (event) => {
       genderRatio,
       /** 四阶当前阶段 */
       stage: klass.energyStage || null,
-      /** 最薄弱系统维度 */
-      weakestSystem: snapshot?.primaryAttribution?.name || null,
+      /** 最薄弱系统维度（优先取最低分维度，旧快照回退到核心归因） */
+      weakestSystem,
+      /** 需关注维度（均分 < 3.0） */
+      attentionDimensions: snapshot?.attentionDimensions || [],
       /** 五系统维度分 */
       dimensions: snapshot?.dimensions || null,
       /** 最近一次评估时间 */

@@ -3,7 +3,12 @@ const route = useRoute()
 const id = String(route.params.id)
 const { data, error, refresh } = await useFetch<any>(`/api/v1/information/students/${id}`)
 const pending = ref(false)
-const { moduleLabel, planStatusLabel, planStatusColor, riskLevelLabel, caseLevelLabel, caseLevelColor, caseSolutionStatusLabel, caseSolutionStatusColor } = useDisplayLabels()
+const { moduleLabel, planStatusLabel, planStatusColor, riskLevelLabel, caseLevelLabel, caseLevelColor, caseSolutionStatusLabel, caseSolutionStatusColor, learningLevelLabel, learningLevelColor, severityLabel } = useDisplayLabels()
+/** 学习问题评估快照（learning_problem 评估回写），含严重程度/归因/责任人/复评结论 */
+const learningSnapshot = computed(() => (data.value?.student?.studentSnapshot as any)?.module === 'learning_problem' ? (data.value.student.studentSnapshot as any) || null : null)
+/** 学习问题模块的最近进行中方案（复评日期来源） */
+const learningPlan = computed(() => (data.value?.plans || []).find((plan: any) => plan.module === 'learning_problem'))
+const learningBadgeValue = computed(() => learningSnapshot.value?.levelName || data.value?.student?.learningLevel || null)
 const emptyProfile = () => ({
   studentNo: '',
   birthDate: '',
@@ -132,8 +137,8 @@ async function createCommunication() {
           <UBadge v-if="data?.student?.caseLevelName" :color="caseLevelColor(data.student.caseLevelName)" variant="soft">
             <UIcon name="i-lucide-triangle-alert" class="size-3.5" /> {{ caseLevelLabel(data.student.caseLevelName) }}
           </UBadge>
-          <UBadge v-for="code in (data?.student?.caseCodes || [])" :key="code.code" color="primary" variant="subtle" size="sm">
-            {{ code.code }} {{ code.name }}
+          <UBadge v-for="code in (data?.student?.caseCodes || [])" :key="code.code" color="primary" variant="subtle" size="sm" :title="`编码 ${code.code}`">
+            {{ code.name }}
           </UBadge>
           <UBadge :color="caseSolutionStatusColor(data?.student?.caseSolutionStatus)" variant="soft">
             <span class="mr-1 inline-block size-2 rounded-full" :class="{
@@ -141,6 +146,9 @@ async function createCommunication() {
               'bg-yellow-400': data?.student?.caseSolutionStatus === 'in_progress',
               'bg-green-500': data?.student?.caseSolutionStatus === 'resolved',
             }" />{{ caseSolutionStatusLabel(data?.student?.caseSolutionStatus) }}
+          </UBadge>
+          <UBadge v-if="learningBadgeValue" :color="learningLevelColor(learningBadgeValue)" variant="soft">
+            <UIcon name="i-lucide-brain" class="size-3.5" /> 学习问题 {{ learningLevelLabel(learningBadgeValue) }}
           </UBadge>
         </div>
       </div><div class="flex flex-wrap justify-end gap-2"><UButton :to="{ path: '/', query: { contextType: 'student', contextId: id } }" icon="i-lucide-sparkles">向 AI 咨询该学生</UButton><UBadge color="primary" variant="soft">档案完整度 {{ profileCompletion }}%</UBadge><UBadge color="neutral" variant="soft">沟通 {{ data?.communications?.length || 0 }}</UBadge></div></div>
@@ -154,6 +162,62 @@ async function createCommunication() {
       <section class="panel p-6"><h2 class="text-xl font-semibold">关联家长</h2><div class="mt-5 space-y-3"><div v-for="guardian in data?.guardians" :key="guardian.id" class="rounded-2xl border border-slate-100 p-4"><div class="flex items-start justify-between gap-3"><div><NuxtLink :to="`/information/guardians/${guardian.id}`" class="font-semibold hover:text-emerald-700">{{ guardian.name }}</NuxtLink><p class="mt-1 text-xs text-slate-500">{{ guardian.relation || '关系未填' }} · {{ guardian.phone || '电话未填' }}</p></div><UButton size="xs" color="neutral" variant="ghost" :loading="pending" @click="unlinkGuardian(guardian.id)">解除</UButton></div></div><p v-if="!data?.guardians?.length" class="rounded-2xl bg-slate-50 p-4 text-center text-sm text-slate-400">暂无关联家长</p></div><div class="mt-5 flex gap-2"><USelect v-model="linkGuardianId" :items="(data?.guardianOptions || []).filter((item:any)=>!(data?.guardians || []).some((g:any)=>g.id===item.id)).map((item:any)=>({label:`${item.name}${item.relation ? ` · ${item.relation}` : ''}`,value:item.id}))" placeholder="选择已有家长" class="min-w-0 flex-1" /><UButton :disabled="!linkGuardianId" :loading="pending" @click="linkGuardian">关联</UButton></div></section>
     </div>
     <section class="panel mt-6 p-6"><div class="flex items-center justify-between"><h2 class="text-xl font-semibold">家校沟通时间线</h2><UBadge color="neutral" variant="soft">{{ data?.communications?.length || 0 }} 条</UBadge></div><div class="mt-5 grid gap-4 lg:grid-cols-[1fr_.9fr]"><div class="space-y-4"><div v-for="item in data?.communications" :key="item.id" class="rounded-2xl border border-amber-100 bg-amber-50/50 p-4"><div class="flex flex-wrap gap-2"><UBadge v-if="item.guardianName" color="neutral" variant="soft">{{ item.relation || '家长' }}：{{ item.guardianName }}</UBadge><UBadge v-if="item.riskLevel" color="error" variant="soft">{{ riskLevelLabel(item.riskLevel) }}</UBadge></div><p class="mt-3 text-sm leading-7">{{ item.summary }}</p><p class="mt-2 text-xs text-slate-400">{{ new Date(item.occurredAt).toLocaleString('zh-CN') }}</p></div><p v-if="!data?.communications?.length" class="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-400">暂无沟通记录</p></div><div class="rounded-2xl border border-slate-100 p-4"><h3 class="font-semibold">新增沟通记录</h3><div class="mt-4 space-y-3"><USelect v-model="communicationGuardianSelect" :items="[{label:'不指定家长',value:NONE_VALUE}, ...(data?.guardians || []).map((item:any)=>({label:item.name,value:item.id}))]" class="w-full" /><div class="grid gap-3 md:grid-cols-3"><UInput v-model="communication.parentType" placeholder="家长类型" /><UInput v-model="communication.attitudeType" placeholder="态度类型" /><UInput v-model="communication.riskLevel" placeholder="风险等级" /></div><UTextarea v-model="communication.summary" :rows="6" class="w-full" placeholder="记录沟通背景、家长诉求、教师回应和后续动作" /><button type="button" class="w-full rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="communication.summary.trim().length < 5" @click="createCommunication">保存沟通记录</button></div></div></div></section>
+    <section v-if="learningSnapshot" class="panel mt-6 p-6">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 class="text-xl font-semibold">学习问题档案</h2><p class="mt-2 text-sm text-slate-500">来自学习问题三层诊断评估的投影与干预追踪；不构成学习障碍诊断。</p></div>
+        <UBadge v-if="learningSnapshot?.blocked" color="error" variant="soft"><UIcon name="i-lucide-alert-octagon" class="size-3.5" /> 已触发安全熔断</UBadge>
+      </div>
+      <div class="mt-5 grid gap-6 lg:grid-cols-2">
+        <div class="rounded-2xl border border-slate-100 p-5">
+          <h3 class="font-semibold">分析与归因</h3>
+          <div class="mt-4 space-y-4 text-sm">
+            <div class="flex flex-wrap items-center gap-2"><span class="w-24 text-slate-500">严重程度</span>
+              <UBadge :color="learningLevelColor(learningBadgeValue)" variant="subtle">{{ learningLevelLabel(learningBadgeValue) }}</UBadge>
+              <UBadge v-if="learningSnapshot?.severity" color="neutral" variant="soft">严重度 {{ severityLabel(learningSnapshot.severity) }}</UBadge>
+            </div>
+            <div class="flex flex-wrap items-start gap-2"><span class="w-24 shrink-0 text-slate-500">核心归因</span>
+              <span v-if="learningSnapshot?.primaryAttribution" class="font-medium">{{ learningSnapshot.primaryAttribution }}</span>
+              <span v-else class="text-slate-400">—</span>
+            </div>
+            <div class="flex flex-wrap items-start gap-2"><span class="w-24 shrink-0 text-slate-500">次要归因</span>
+              <span v-if="learningSnapshot?.secondaryAttributions?.length">{{ learningSnapshot.secondaryAttributions.join('、') }}</span>
+              <span v-else class="text-slate-400">—</span>
+            </div>
+            <div class="flex flex-wrap items-start gap-2"><span class="w-24 shrink-0 text-slate-500">责任人</span>
+              <span v-if="learningSnapshot?.escalationTarget" class="font-medium">{{ learningSnapshot.escalationTarget }}</span>
+              <span v-else class="text-slate-400">—</span>
+            </div>
+            <div class="flex flex-wrap items-start gap-2"><span class="w-24 shrink-0 text-slate-500">评估结论</span>
+              <span v-if="learningSnapshot?.reasons?.length" class="leading-6 text-slate-600">{{ learningSnapshot.reasons.join('；') }}</span>
+              <span v-else class="text-slate-400">—</span>
+            </div>
+            <div class="flex flex-wrap items-start gap-2"><span class="w-24 shrink-0 text-slate-500">评估时间</span>
+              <span v-if="learningSnapshot?.assessedAt" class="text-slate-600">{{ new Date(learningSnapshot.assessedAt).toLocaleString('zh-CN') }}</span>
+              <span v-else class="text-slate-400">—</span>
+            </div>
+          </div>
+        </div>
+        <div class="rounded-2xl border border-slate-100 p-5">
+          <h3 class="font-semibold">方案与复评</h3>
+          <p v-if="!learningPlan" class="mt-4 rounded-2xl bg-slate-50 p-4 text-center text-sm text-slate-400">尚无学习问题干预方案，可向 AI 咨询或进行三层诊断评估后生成</p>
+          <template v-else>
+            <div class="mt-4 space-y-4 text-sm">
+              <div class="flex flex-wrap items-center gap-2"><span class="w-24 text-slate-500">方案状态</span>
+                <UBadge :color="planStatusColor(learningPlan.status)" variant="soft">{{ planStatusLabel(learningPlan.status) }}</UBadge>
+              </div>
+              <div class="flex flex-wrap items-start gap-2"><span class="w-24 shrink-0 text-slate-500">复评周期</span>
+                <span v-if="learningPlan.nextReviewAt" class="text-slate-600">下次复评 {{ new Date(learningPlan.nextReviewAt).toLocaleDateString('zh-CN') }}</span>
+                <span v-else class="text-slate-400">未设定</span>
+              </div>
+              <div class="flex flex-wrap items-start gap-2"><span class="w-24 shrink-0 text-slate-500">效果评估</span>
+                <span class="text-slate-600">在方案页记录复评（效果评分与结论），随复评持续更新</span>
+              </div>
+              <UButton :to="`/information/plans/${learningPlan.id}`" icon="i-lucide-file-text" size="sm" color="neutral" variant="soft">查看完整方案与复评记录</UButton>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
     <section class="panel mt-6 p-6"><div class="flex items-center justify-between"><h2 class="text-xl font-semibold">相关方案记录</h2><UBadge color="neutral" variant="soft">{{ data?.plans?.length || 0 }} 个</UBadge></div><div class="mt-5 grid gap-4 md:grid-cols-2"><NuxtLink v-for="plan in data?.plans" :key="plan.id" :to="`/information/plans/${plan.id}`" class="block rounded-2xl border border-slate-100 p-4 transition hover:border-emerald-300 hover:bg-emerald-50/40"><div class="flex items-start justify-between gap-3"><div><strong>{{ plan.title }}</strong><p class="mt-1 text-xs text-slate-400">{{ plan.sourceLabel }} · {{ plan.riskLabel || moduleLabel(plan.module) }}</p></div><UBadge :color="planStatusColor(plan.status)" variant="soft">{{ planStatusLabel(plan.status) }}</UBadge></div><p class="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">{{ plan.summary }}</p></NuxtLink><p v-if="!data?.plans?.length" class="rounded-2xl bg-slate-50 p-6 text-center text-sm text-slate-400 md:col-span-2">暂无与该学生关联的方案</p></div></section>
     </template>
   </div>
