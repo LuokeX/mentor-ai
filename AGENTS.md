@@ -22,7 +22,7 @@
 
 1. 运行代码、测试、`package.json`、`nuxt.config.ts`、`docker-compose.yml`、`playwright.config.ts`。
 2. `server/db/schema.ts` 和已提交的 `drizzle/*.sql`。
-3. 共享契约与确定性逻辑：`shared/contracts.ts`、`shared/assessments.ts`、`shared/reports.ts`、`shared/management.ts`。
+3. 共享契约与确定性逻辑：`shared/contracts.ts`、`shared/assessments.ts`、`shared/reports.ts`、`shared/management.ts`、`shared/business-wizard.ts`。
 4. 专题文档：`docs/ROLE_MATRIX.md`、`docs/MANAGEMENT_FRAMEWORK.md`、`docs/AI_ASSISTANT_AND_KNOWLEDGE.md`、`docs/DEVELOPMENT_AND_PRODUCTION.md`、`docs/OPERATIONS.md`、`docs/PILOT_ROLLOUT.md`、`docs/business/**`。
 5. `README.md` 和本文件中的概览性描述。
 
@@ -36,7 +36,7 @@
 
 - `docs/MANAGEMENT_FRAMEWORK.md` 描述并发控制用请求体 `ManagedPatch<T>`；当前 PATCH 路由实际从查询参数读取 `expectedUpdatedAt`（见 `server/api/v1/school-admin/classes/[id].patch.ts`）。
 - `server/utils/db-helpers.ts` 的 `findOwned` 目前没有调用方；`apiContext`、`uuidParam` 也只在少数路由使用。它们是可选简化，不是必须迁移的强制约定。
-- `README.md` 写的是 `http://localhost:3000`，`nuxt.config.ts` 的 `devServer.port` 是 `3300`，Playwright 用 `3100`。
+- `README.md` 写的是 `http://localhost:3000`，`nuxt.config.ts` 的 `devServer.port` 是 `3301`，Playwright 用 `3100`；容器内 App 端口是 `3000`。
 
 ## 3. 当前技术基线
 
@@ -44,7 +44,7 @@
 - Nuxt `^4.4.0`、Vue 3、Nitro（`node-server` preset，`experimental.tasks` 打开）、Nuxt UI、Tailwind CSS v4、Lucide Iconify 图标。
 - 组件自动导入配置为 `pathPrefix: false`：`app/components/management/TableToolbar.vue` 直接写作 `<TableToolbar>`，新增组件注意重名。
 - TypeScript `strict: true` 且 `typeCheck: true`，运行 `pnpm typecheck`。
-- PostgreSQL 18 + pgvector 0.8.5，Drizzle ORM；数据库结构集中在 `server/db/schema.ts`（当前 48 张表）。
+- PostgreSQL 18 + pgvector 0.8.5，Drizzle ORM；数据库结构集中在 `server/db/schema.ts`（当前 51 张表）。
 - Zod 用于请求、模型输出和共享契约校验。
 - 敏感字段使用 AES-256-GCM 应用层加密；密码使用 Argon2id；心理专员登录使用 TOTP（`otpauth`）。
 - DeepSeek 用于受限的澄清分诊和语义辅助；Ollama `qwen3-embedding:0.6b` 生成 `vector(1024)` 向量，当前只用于 `module_resource_chunks`，且需要 `EMBEDDING_ENABLED=true`。
@@ -69,29 +69,39 @@ app/
 server/
   api/v1/                 Nitro REST/SSE 接口，按业务领域分目录
                           （auth、chat、assessments、plans、information、workbench、
-                           notifications、module-resources、admin-access、terms、
-                           school-admin、platform-admin、specialist）
+                           notifications、module-resources、admin-access、
+                           school-admin、platform-admin、specialist；
+                           platform-admin 下含 ai-center、delegated-management、
+                           module-resources 三库运营台）
   db/schema.ts            唯一 Drizzle Schema 文件
   domain/                 业务逻辑：safety、rules、rules-executor、capabilities、
-                          lifecycle、admin-access、ai-governance、assistant-context、
-                          chat-clarification、plan-actions、plan-operations、reports、
-                          module-resource-*（校验/投影/文档/文件导入）、school-management、
-                          school-imports、invitations、pilot-acceptance、product-events
+                          lifecycle、admin-access、ai-governance、ai-config、
+                          assistant-context、chat-clarification、plan-actions、
+                          plan-operations、reports、assessment-instruments、
+                          instrument-recommendation、business-wizard（编译/解编译/模拟）、
+                          entity-snapshots、module-resource-*（校验/投影/文档/交叉引用/
+                          文件导入/知识检索/导出）、school-management、school-imports、
+                          invitations、pilot-acceptance、product-events
   integrations/           deepseek.ts（含 redactPii）、ollama.ts
   middleware/security.ts  安全响应头和 API no-store
   plugins/                validate-config、error-handler、notification-worker
   routes/                 health 探针和 openapi.json
   utils/                  db、auth、crypto、audit、handler(apiContext)、
                           pagination(paginateResult)、params(uuidParam)、db-helpers(findOwned)
-shared/                   contracts、assessments、reports、management（前后端共享）
+shared/                   contracts、assessments、reports、management、
+                          business-wizard（前后端共享）
 drizzle/                  已生成并提交的数据库迁移
 scripts/                  env/migrate/seed/backup/restore、reindex、scaffold-management、
+                          template:build/split/guide、testdata:build、
                           import-business-data/（xlsx-reader、transformers、importers、quality）
-business-libraries/       三库 XLSX 模板与导入源数据（templates/ 下为 v4 填写模板）
+business-libraries/       三库 XLSX 模板与导入源数据（templates/ 下为 v4 填写模板、
+                          test-data/ 测试素材、wizard-inputs/ 向导输入）
 tests/                    Vitest 单元测试 + tests/e2e/ Playwright 用例 + tests/fixtures/
 docs/                     权限矩阵、管理框架、AI/三库、开发发布、运维、试点手册、business/
 infra/                    PostgreSQL 初始化和 Nginx 配置
 ```
+
+原始业务资料（量表/工具/术语库源 Excel 与 Word）不随版本库分发，存放在 `临时文件/` 目录（git 忽略），参考时按实际文件名查找。
 
 通知消费者实现在 `server/plugins/notification-worker.ts`，随 Nitro 应用启动。不存在独立的 `pnpm worker` 进程，不要在没有同步修改实现和部署配置的情况下假设它存在。
 
@@ -158,7 +168,7 @@ export default defineEventHandler(async (event) => {
 
 关键点：
 
-- `requireUser` 是异步函数，必须 `await requireUser(...)`；这是当前 150 个路由文件中的主流写法。
+- `requireUser` 是异步函数，必须 `await requireUser(...)`；这是当前 182 个路由文件中的主流写法。
 - `server/utils/` 下的 `apiContext`、`uuidParam`、`findOwned` 是可选简化封装。新代码可以使用，但不要为了统一风格批量改写既有路由；`findOwned` 只适用于同时具备 `id + schoolId + ownerUserId` 的表。
 - 前端路由守卫只是用户体验层；服务端每个受保护路由仍必须独立认证和鉴权。
 - 当前公开入口仅包括登录、账号激活、容错退出、健康检查和 `/openapi.json`。新增公开接口必须有明确理由。
@@ -251,6 +261,11 @@ export default defineEventHandler(async (event) => {
 - 资源导入禁止包含真实个人业务数据。红线、计分阈值和制度要求必须同步到确定性规则和测试（`tests/rules*.test.ts`、`tests/module-resources*.test.ts`、`tests/fixtures/business-resource-golden.ts`）。
 - 三库字段规范见 `docs/business/library-standards/*.md`，跨模块依赖见 `docs/business/cross-module-dependencies.md`。
 
+### 8.4 AI 中心与三库向导
+
+- 平台后台 AI 中心（`server/api/v1/platform-admin/ai-center/` + `server/domain/ai-config.ts`）：Prompt 模板版本化管理（`prompts` 列表/编辑/发布/重置）、模型调用审计（`model-calls`，只记元数据）、运行时配置与联调测试（`runtime`）。
+- 三库向导（`server/api/v1/platform-admin/module-resources/wizard-*` + `server/domain/business-wizard*.ts`）：以 `business-libraries/wizard-inputs/` 为输入，走编译 → 校验/预览 → 模拟 → 导入链路，与 XLSX 导入共用同一套校验与投影，禁止绕过校验直接写明细表。
+
 涉及这部分的修改应同时阅读 `docs/AI_ASSISTANT_AND_KNOWLEDGE.md`、`server/domain/safety.ts`、`server/domain/rules-executor.ts` 和相关测试。
 
 ## 9. 数据库与迁移约定
@@ -284,7 +299,7 @@ export default defineEventHandler(async (event) => {
 ## 11. 常用命令
 
 ```bash
-pnpm dev                  # 本地 Nuxt 开发服务器（devServer 端口 3300）
+pnpm dev                  # 本地 Nuxt 开发服务器（devServer 端口 3301）
 pnpm build                # 生产构建
 pnpm typecheck            # Nuxt/TypeScript 类型检查
 pnpm test                 # Vitest 单元测试

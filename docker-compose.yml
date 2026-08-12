@@ -117,7 +117,7 @@ services:
   embedding-index:
     build: .
     environment: *app-environment
-    command: ["./node_modules/.bin/tsx", "scripts/reindex-embeddings.ts"]
+    command: ["./node_modules/.bin/tsx", "scripts/reindex-module-resource-embeddings.ts"]
     depends_on:
       migrate:
         condition: service_completed_successfully

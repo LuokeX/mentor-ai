@@ -82,7 +82,9 @@ export default defineEventHandler(async (event) => {
     : []
 
   // 推荐工具：按快照命中的归因名称匹配工具库（payload 在版本表）
-  const attributionNames = (snapshot.attributions ?? []) as string[]
+  const attributionNames = ((snapshot.attributions ?? []) as Array<string | { name?: string }>)
+    .map(item => typeof item === 'string' ? item : item.name || '')
+    .filter(Boolean)
   let recommendedTools: Array<{ name: string, whenToUse: string, steps: string[] }> = []
   if (attributionNames.length) {
     const tools = await db

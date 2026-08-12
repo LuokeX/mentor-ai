@@ -108,7 +108,7 @@ function topSteps(t: any): string[] {
             <div class="text-right text-xs text-slate-400">
               <p v-if="data.current.attributions?.length">需要关注的方向：</p>
               <div class="mt-1 flex flex-wrap justify-end gap-1.5">
-                <UBadge v-for="a in data.current.attributions" :key="a" color="neutral" variant="subtle">{{ a }}</UBadge>
+                <UBadge v-for="a in data.current.attributions" :key="typeof a === 'string' ? a : a.name" color="neutral" variant="subtle">{{ typeof a === 'string' ? a : a.name }}</UBadge>
               </div>
             </div>
           </div>

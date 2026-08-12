@@ -44,7 +44,7 @@ pnpm dev
 
 `db:seed` 只导入本地演示数据，不得在正式环境执行。数据库 Schema 变更、应用发布、生产迁移、备份恢复和禁止事项见 [数据库与应用开发、发布和运行规范](docs/DEVELOPMENT_AND_PRODUCTION.md)。
 
-访问 `http://localhost:3000`。演示账号的初始密码均为 `Mentor@2026`：
+访问 `http://localhost:3301`。演示账号的初始密码均为 `Mentor@2026`：
 
 | 角色 | 账号 |
 |---|---|

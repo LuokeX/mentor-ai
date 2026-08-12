@@ -68,11 +68,11 @@ EMBEDDING_TIMEOUT_MS=8000
 ## 5. 资源放置
 
 ```text
-业务需求/                         原始业务资料
-docs/business/library-standards/   业务整理规范
-business-libraries/[module]/       标准 JSON 数据
-module_resource_libraries          运行时资源库
-module_resource_versions           运行时发布版本
+临时文件/2026_07_27_家校沟通与合作-工具库、评估库、专业知识库0722/   原始业务资料（git 忽略）
+docs/business/library-standards/                                    业务整理规范
+business-libraries/[module]/                                       标准 JSON 数据
+module_resource_libraries                                          运行时资源库
+module_resource_versions                                           运行时发布版本
 ```
 
 标准 JSON 由业务侧按规范整理后导入。导入命令：
@@ -86,7 +86,7 @@ pnpm import:business-data --dry-run --strict-quality
 pnpm import:business-data --dry-run --require-complete
 ```
 
-导入流程默认只读取 `business-libraries/[module]/assessment|attribution|tool.(xlsx|json)` 中按模板整理后的标准资源。旧 `业务需求/` 原始 Excel 不再作为默认发布来源；确需历史排查时才使用 `--include-legacy-raw`。
+导入流程默认只读取 `business-libraries/[module]/assessment|attribution|tool.(xlsx|json)` 中按模板整理后的标准资源。旧原始业务资料（`临时文件/` 下的源 Excel，git 忽略）不再作为默认发布来源；确需历史排查时才使用 `--include-legacy-raw`。
 
 导入流程会在写库前输出质量报告。错误会阻断导入；警告默认允许导入，但会显示评分、投影统计和前 5 条问题。发布前需要零错误；试点验收或正式发版前建议使用 `--strict-quality`，把警告也作为阻断项处理，并用 `--require-complete` 确认 5 个模块 × 3 类资源齐全。
 
