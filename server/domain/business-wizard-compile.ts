@@ -152,9 +152,13 @@ export function compileWizardInput(input: WizardInput): CompileResult {
   // ---------- 等级编码：模板五色分级五档，按从重到轻顺序分配 ----------
   if (input.levels.length > WIZARD_LEVEL_ENUM.length) {
     add('warning', `等级填了 ${input.levels.length} 个，超过了模板五色分级的五档（红/橙/黄/蓝/绿）。`
-      + `第 5 档之后的等级会和前面的共用等级编码，系统文案会互相覆盖，建议合并等级。`)
+      + `第 5 档之后的等级循环使用五色编码（第 6 个起再从红开始），同一颜色的等级同时存在时，`
+      + `系统按各自挂载的量表分别判定，文案互不覆盖。`)
   }
-  const levelEnum = input.levels.map((_, i) => WIZARD_LEVEL_ENUM[Math.min(i, WIZARD_LEVEL_ENUM.length - 1)]!)
+  // 五色编码循环分配：i < 5 时与「逐档分配」等价（向后兼容单套五级体系）；
+  // i >= 5 时循环回到红/橙/黄/蓝/绿，使「一个模块内两套五级体系并存」时
+  // 第二套规则（如挂载在不同量表上的 5级·极重…1级·关注）也能拿到与严重度匹配的颜色。
+  const levelEnum = input.levels.map((_, i) => WIZARD_LEVEL_ENUM[i % WIZARD_LEVEL_ENUM.length]!)
 
   // ---------- ③ 量表-清单 ----------
   const entry = input.scales.filter(s => s.role === '入口筛查')
