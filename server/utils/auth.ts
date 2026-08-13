@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { useDb, schema } from './db'
 import { hashToken } from './crypto'
 import type { AppRole, AuthUser } from '../../app/composables/useAuth'
+import { ROLE_LABELS } from './role-labels'
 
 const COOKIE_NAME = 'mentor_session'
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000
@@ -13,9 +14,6 @@ const SESSION_TTL_MS = 8 * 60 * 60 * 1000
  * 效果：连续空闲满 TTL 才过期；只要窗口内有任何请求就保持会话。
  */
 const SESSION_SLIDING_THRESHOLD_MS = 2 * 60 * 60 * 1000
-const ROLE_LABELS: Record<AppRole, string> = {
-  teacher: '班主任', psychologist: '心理专员', school_admin: '学校管理员', platform_admin: '平台管理员'
-}
 
 const sessionCookieOptions = (expiresAt: Date) => ({
   httpOnly: true,

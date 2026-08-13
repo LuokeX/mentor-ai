@@ -2,12 +2,14 @@
 definePageMeta({ layout: false })
 const config = useRuntimeConfig()
 const showDemoLogin = config.public.showDemoLogin
+const showSsoLogin = config.public.showSsoLogin
 const form = reactive({ email: showDemoLogin ? 'teacher@demo.local' : '', password: showDemoLogin ? 'Mentor@2026' : '', otp: '', recoveryCode: '' })
 const pending = ref(false)
 const hydrated = ref(false)
 const errorMessage = ref('')
 const needOtp = ref(false)
 const useRecoveryCode = ref(false)
+const ssoError = ref(false)
 
 const demoAccounts = [
   { label: '李老师（教师）', value: 'teacher@demo.local' },
@@ -23,7 +25,14 @@ function onDemoSelect(email: string) {
   form.password = 'Mentor@2026'
 }
 
-onMounted(() => { hydrated.value = true })
+onMounted(() => {
+  hydrated.value = true
+  ssoError.value = useRoute().query.error === 'sso'
+})
+
+function ssoLogin() {
+  window.location.href = '/api/v1/auth/sso/authorize'
+}
 
 
 async function login() {
@@ -89,6 +98,13 @@ async function login() {
           <button v-if="needOtp" type="button" class="text-sm text-emerald-700 hover:underline" @click="useRecoveryCode = !useRecoveryCode">{{ useRecoveryCode ? '使用动态验证码' : '无法使用验证器？改用恢复码' }}</button>
           <UAlert v-if="errorMessage" color="error" variant="soft" :description="errorMessage" />
           <button type="submit" class="w-full rounded-lg bg-[var(--ui-primary)] px-6 py-3.5 text-lg font-medium text-white disabled:opacity-50" :disabled="!hydrated">安全登录</button>
+          <div v-if="showSsoLogin" class="space-y-4 pt-1">
+            <div class="flex items-center gap-3 text-xs text-slate-400"><span class="h-px flex-1 bg-slate-200" /><span>或使用统一身份</span><span class="h-px flex-1 bg-slate-200" /></div>
+            <button type="button" class="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-6 py-3 text-base font-medium text-slate-700 transition hover:border-emerald-600 hover:text-emerald-700" @click="ssoLogin">
+              <UIcon name="i-lucide-building-2" class="size-5" />统一身份登录
+            </button>
+            <UAlert v-if="ssoError" color="error" variant="soft" description="统一身份登录未成功，请重试，或使用下方账号密码登录" />
+          </div>
         </form>
         <p class="mt-5 text-center text-sm text-slate-500">收到学校邀请？<NuxtLink class="font-medium text-emerald-700 hover:underline" to="/activate">激活账号</NuxtLink></p>
         <div v-if="showDemoLogin" class="mt-8 rounded-2xl bg-slate-100/80 p-4 text-xs leading-6 text-slate-500">

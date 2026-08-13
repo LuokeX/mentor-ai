@@ -37,7 +37,10 @@ export const users = pgTable('users', {
   schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'restrict' }),
   email: varchar('email', { length: 254 }).notNull(),
   name: varchar('name', { length: 120 }).notNull(),
-  passwordHash: text('password_hash').notNull(),
+  /** 本地账密登录哈希；仅 SSO 用户可为空 */
+  passwordHash: text('password_hash'),
+  /** 统一身份平台 subject，首次 SSO 登录时绑定；绑定后以它为准匹配账号 */
+  oidcSubject: varchar('oidc_subject', { length: 255 }),
   role: varchar('role', { length: 30 }).notNull(),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   totpSecretEnc: text('totp_secret_enc'),
@@ -70,6 +73,7 @@ export const users = pgTable('users', {
   ...timestamps
 }, table => [
   uniqueIndex('users_email_uidx').on(table.email),
+  uniqueIndex('users_oidc_subject_uidx').on(table.oidcSubject),
   index('users_school_role_idx').on(table.schoolId, table.role),
   index('users_school_role_status_idx').on(table.schoolId, table.role, table.status),
   uniqueIndex('users_school_employee_no_uidx').on(table.schoolId, table.employeeNo)

@@ -31,9 +31,16 @@ export default defineNuxtConfig({
     embeddingTimeoutMs: Number(process.env.EMBEDDING_TIMEOUT_MS || 8000),
     smsProvider: process.env.SMS_PROVIDER || 'mock',
     smsWebhookUrl: process.env.SMS_WEBHOOK_URL || '',
+    oidcIssuer: process.env.OIDC_ISSUER || '',
+    oidcClientId: process.env.OIDC_CLIENT_ID || '',
+    oidcClientSecret: process.env.OIDC_CLIENT_SECRET || '',
+    oidcRedirectUri: process.env.OIDC_REDIRECT_URI || '',
     public: {
       appName: '教师赋能智能平台',
-      showDemoLogin: process.env.NUXT_PUBLIC_SHOW_DEMO_LOGIN === 'true' || process.env.NODE_ENV !== 'production'
+      showDemoLogin: process.env.NUXT_PUBLIC_SHOW_DEMO_LOGIN === 'true' || process.env.NODE_ENV !== 'production',
+      // 统一身份登录入口：显式开启，或构建时 OIDC 四项齐全（docker 部署由 compose 按 OIDC_ISSUER 联动注入）
+      showSsoLogin: process.env.NUXT_PUBLIC_SHOW_SSO_LOGIN === 'true' ||
+        !!(process.env.OIDC_ISSUER && process.env.OIDC_CLIENT_ID && process.env.OIDC_CLIENT_SECRET && process.env.OIDC_REDIRECT_URI)
     }
   },
   routeRules: {
