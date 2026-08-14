@@ -3,7 +3,7 @@ export type AppRole = 'teacher' | 'psychologist' | 'school_admin' | 'platform_ad
 export interface AuthUser {
   id: string
   schoolId: string | null
-  email: string
+  phone: string
   name: string
   role: AppRole
   roleLabel: string

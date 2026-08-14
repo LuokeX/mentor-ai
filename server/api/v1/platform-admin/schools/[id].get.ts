@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
     db.select({
       id: schema.users.id,
       name: schema.users.name,
-      email: schema.users.email,
+      phone: schema.users.phone,
       status: schema.users.status,
       lastLoginAt: schema.users.lastLoginAt
     }).from(schema.users).where(and(eq(schema.users.schoolId, id), eq(schema.users.role, 'school_admin'))),

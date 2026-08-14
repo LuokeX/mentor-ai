@@ -25,9 +25,9 @@ function client() {
   }
 }
 
-async function login(api, email, otp) {
+async function login(api, phone, otp) {
   const result = await api('/api/v1/auth/login', {
-    method: 'POST', body: { email, password: 'Mentor@2026', ...(otp ? { otp } : {}) }
+    method: 'POST', body: { phone, password: 'Mentor@2026', ...(otp ? { otp } : {}) }
   })
   assert(result.response.ok, `${email} login failed: ${result.text}`)
 }
@@ -42,12 +42,12 @@ const ready = await teacher('/health/ready')
 assert(live.response.ok && ready.response.ok, 'health checks failed')
 assert((await teacher('/openapi.json')).response.ok, 'OpenAPI contract unavailable')
 
-await login(teacher, 'teacher@demo.local')
+await login(teacher, '13900001001')
 const teacherMe = await teacher('/api/v1/auth/me')
 assert(teacherMe.data.role === 'teacher', 'teacher identity mismatch')
 assert((await teacher('/api/v1/school-admin/dashboard')).response.status === 403, 'teacher crossed into school admin API')
 
-await login(platformAdmin, 'platform.admin@demo.local')
+await login(platformAdmin, '13900001005')
 
 const assistant = await teacher('/api/v1/chat/messages', { method: 'POST', body: { message: '家长在群里公开质疑我，我应该怎么沟通？' } })
 assert(assistant.response.ok && assistant.text.includes('event: answer'), `assistant answer failed: ${assistant.text}`)
@@ -75,15 +75,15 @@ const crisis = await teacher('/api/v1/chat/messages', { method: 'POST', body: { 
 assert(crisis.response.ok && crisis.text.includes('event: fuse'), `crisis fuse failed: ${crisis.text}`)
 
 const totp = new OTPAuth.TOTP({
-  issuer: '教师赋能智能平台', label: 'psychologist@demo.local', algorithm: 'SHA1', digits: 6, period: 30,
+  issuer: '教师赋能智能平台', label: '王心理专员', algorithm: 'SHA1', digits: 6, period: 30,
   secret: OTPAuth.Secret.fromBase32('JBSWY3DPEHPK3PXP')
 })
-await login(psychologist, 'psychologist@demo.local', totp.generate())
+await login(psychologist, '13900001003', totp.generate())
 const referrals = await psychologist('/api/v1/specialist/referrals')
 assert(referrals.response.ok && referrals.data.length > 0, 'assigned psychologist did not receive referral')
 assert(!JSON.stringify(referrals.data).includes('passwordHash'), 'specialist package leaked account fields')
 
-await login(schoolAdmin, 'school.admin@demo.local')
+await login(schoolAdmin, '13900001004')
 assert((await schoolAdmin('/api/v1/information/export')).response.status === 403, 'school administrator could use teacher export')
 const schoolDashboard = await schoolAdmin('/api/v1/school-admin/dashboard')
 assert(schoolDashboard.response.ok, 'school dashboard failed')

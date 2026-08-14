@@ -10,15 +10,15 @@ export type SchoolImportType = 'users' | 'classes' | 'students' | 'guardians'
 export type ImportError = { row: number, code: string, message: string }
 
 export const importTemplates: Record<SchoolImportType, string> = {
-  users: 'name,email,role\n张老师,teacher@example.edu.cn,teacher\n',
-  classes: 'class_code,name,grade,teacher_email\nG7-01,七年级一班,7,teacher@example.edu.cn\n',
+  users: 'name,phone,role\n张老师,13800000001,teacher\n',
+  classes: 'class_code,name,grade,teacher_phone\nG7-01,七年级一班,7,13800000001\n',
   students: 'student_code,name,gender,class_code,notes\nS0001,示例学生,unknown,G7-01,\n',
   guardians: 'guardian_code,student_code,name,relation,phone\nG0001,S0001,示例家长,母亲,13800000000\n'
 }
 
 const requiredHeaders: Record<SchoolImportType, string[]> = {
-  users: ['name', 'email', 'role'],
-  classes: ['class_code', 'name', 'grade', 'teacher_email'],
+  users: ['name', 'phone', 'role'],
+  classes: ['class_code', 'name', 'grade', 'teacher_phone'],
   students: ['student_code', 'name', 'gender', 'class_code', 'notes'],
   guardians: ['guardian_code', 'student_code', 'name', 'relation', 'phone']
 }
@@ -90,12 +90,12 @@ export async function validateSchoolImport(event: H3Event, input: {
   const seen = new Set<string>()
   const db = useDb(event)
   const [users, classes, students] = await Promise.all([
-    db.select({ email: schema.users.email, role: schema.users.role, schoolId: schema.users.schoolId }).from(schema.users),
+    db.select({ phone: schema.users.phone, role: schema.users.role, schoolId: schema.users.schoolId }).from(schema.users),
     db.select({ code: schema.classes.externalCode }).from(schema.classes).where(eq(schema.classes.schoolId, input.schoolId)),
     db.select({ code: schema.students.externalRefSearch }).from(schema.students).where(eq(schema.students.schoolId, input.schoolId))
   ])
-  const teacherEmails = new Set(users.filter(item => item.role === 'teacher' && item.schoolId === input.schoolId).map(item => item.email))
-  const usersByEmail = new Map(users.map(item => [item.email, item]))
+  const teacherPhones = new Set(users.filter(item => item.role === 'teacher' && item.schoolId === input.schoolId).map(item => item.phone))
+  const usersByPhone = new Map(users.map(item => [item.phone, item]))
   const classCodes = new Set(classes.flatMap(item => item.code ? [item.code] : []))
   const studentCodes = new Set(students.flatMap(item => item.code ? [item.code] : []))
   const secret = useRuntimeConfig(event).encryptionKey
@@ -103,17 +103,17 @@ export async function validateSchoolImport(event: H3Event, input: {
     const line = index + 2
     if (input.type === 'users') {
       if (!row.name || row.name.length > 120) addError(errors, line, 'INVALID_NAME', '姓名为空或长度不正确')
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(row.email || '')) addError(errors, line, 'INVALID_EMAIL', '邮箱格式不正确')
-      const existing = usersByEmail.get((row.email || '').toLowerCase())
-      if (existing?.schoolId && existing.schoolId !== input.schoolId) addError(errors, line, 'EMAIL_IN_OTHER_SCHOOL', '邮箱已被其他学校使用')
+      if (!/^1[3-9]\d{9}$/.test(row.phone || '')) addError(errors, line, 'INVALID_PHONE', '手机号格式不正确')
+      const existing = usersByPhone.get(row.phone || '')
+      if (existing?.schoolId && existing.schoolId !== input.schoolId) addError(errors, line, 'PHONE_IN_OTHER_SCHOOL', '手机号已被其他学校使用')
       if (!['teacher', 'psychologist'].includes(row.role || '')) addError(errors, line, 'INVALID_ROLE', '角色只允许 teacher 或 psychologist')
-      const key = `email:${row.email?.toLowerCase()}`
+      const key = `phone:${row.phone || ''}`
       if (seen.has(key)) addError(errors, line, 'DUPLICATE_IN_FILE', '文件内存在重复记录'); else seen.add(key)
     } else if (input.type === 'classes') {
       if (!row.class_code || !row.name) addError(errors, line, 'REQUIRED_FIELD', '必填字段为空')
       const grade = Number(row.grade)
       if (!Number.isInteger(grade) || grade < 1 || grade > 12) addError(errors, line, 'INVALID_GRADE', '年级必须为 1 到 12 的整数')
-      if (!teacherEmails.has((row.teacher_email || '').toLowerCase())) addError(errors, line, 'TEACHER_NOT_FOUND', '负责教师账号不存在')
+      if (!teacherPhones.has(row.teacher_phone || '')) addError(errors, line, 'TEACHER_NOT_FOUND', '负责教师账号不存在')
       if (seen.has(`class:${row.class_code}`)) addError(errors, line, 'DUPLICATE_IN_FILE', '文件内存在重复记录'); else seen.add(`class:${row.class_code}`)
     } else if (input.type === 'students') {
       if (!row.student_code || !row.name || !row.class_code) addError(errors, line, 'REQUIRED_FIELD', '必填字段为空')
@@ -139,17 +139,17 @@ export async function commitSchoolImport(event: H3Event, input: {
   const secret = useRuntimeConfig(event).encryptionKey
   return db.transaction(async (tx) => {
     let created = 0; let updated = 0; let skipped = 0
-    const invitations: Array<{ userId: string, email: string, name: string, activationToken: string, expiresAt: Date }> = []
+    const invitations: Array<{ userId: string, phone: string, name: string, activationToken: string, expiresAt: Date }> = []
     for (const row of parsed.rows) {
       if (input.type === 'users') {
-        const email = row.email!.toLowerCase()
-        const [existing] = await tx.select().from(schema.users).where(eq(schema.users.email, email)).limit(1)
-        if (existing?.schoolId && existing.schoolId !== input.schoolId) throw new Error('EMAIL_CROSS_SCHOOL')
+        const phone = row.phone!
+        const [existing] = await tx.select().from(schema.users).where(eq(schema.users.phone, phone)).limit(1)
+        if (existing?.schoolId && existing.schoolId !== input.schoolId) throw new Error('PHONE_CROSS_SCHOOL')
         let userId = existing?.id
         if (!existing) {
           const placeholderHash = await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id })
           const [user] = await tx.insert(schema.users).values({
-            schoolId: input.schoolId, name: row.name!, email, role: row.role!, status: 'invited',
+            schoolId: input.schoolId, name: row.name!, phone, role: row.role!, status: 'invited',
             passwordHash: placeholderHash
           }).returning({ id: schema.users.id })
           userId = user!.id; created++
@@ -168,19 +168,19 @@ export async function commitSchoolImport(event: H3Event, input: {
           schoolId: input.schoolId,
           userId: userId!,
           name: row.name!,
-          email,
+          phone,
           role: row.role as 'teacher' | 'psychologist',
           invitedBy: input.adminId,
         }, tx as ReturnType<typeof useDb>)
         invitations.push({
           userId: userId!,
-          email,
+          phone,
           name: row.name!,
           activationToken: token,
           expiresAt: invitation.expiresAt,
         })
       } else if (input.type === 'classes') {
-        const [teacher] = await tx.select().from(schema.users).where(and(eq(schema.users.schoolId, input.schoolId), eq(schema.users.email, row.teacher_email!.toLowerCase()))).limit(1)
+        const [teacher] = await tx.select().from(schema.users).where(and(eq(schema.users.schoolId, input.schoolId), eq(schema.users.phone, row.teacher_phone!))).limit(1)
         const [existing] = await tx.select().from(schema.classes).where(and(eq(schema.classes.schoolId, input.schoolId), eq(schema.classes.externalCode, row.class_code!))).limit(1)
         const values = { ownerUserId: teacher!.id, name: row.name!, grade: Number(row.grade), updatedAt: new Date() }
         if (existing) { await tx.update(schema.classes).set(values).where(eq(schema.classes.id, existing.id)); updated++ }

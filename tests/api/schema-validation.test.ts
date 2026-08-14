@@ -25,35 +25,35 @@ import {
 
 describe('loginRequestSchema', () => {
   it('accepts valid login request', () => {
-    const result = loginRequestSchema.parse({ email: 'teacher@school.cn', password: 'password123' })
-    expect(result.email).toBe('teacher@school.cn')
+    const result = loginRequestSchema.parse({ phone: '13800000001', password: 'password123' })
+    expect(result.phone).toBe('13800000001')
   })
 
-  it('lowercases email', () => {
-    const result = loginRequestSchema.parse({ email: 'Teacher@School.CN', password: 'password123' })
-    expect(result.email).toBe('teacher@school.cn')
+  it('trims phone', () => {
+    const result = loginRequestSchema.parse({ phone: ' 13800000001 ', password: 'password123' })
+    expect(result.phone).toBe('13800000001')
   })
 
   it('accepts optional OTP code', () => {
-    const result = loginRequestSchema.parse({ email: 'a@b.cn', password: '12345678', otp: '123456' })
+    const result = loginRequestSchema.parse({ phone: '13800000001', password: '12345678', otp: '123456' })
     expect(result.otp).toBe('123456')
   })
 
   it('rejects empty OTP (treated as undefined)', () => {
-    const result = loginRequestSchema.parse({ email: 'a@b.cn', password: '12345678', otp: '' })
+    const result = loginRequestSchema.parse({ phone: '13800000001', password: '12345678', otp: '' })
     expect(result.otp).toBeUndefined()
   })
 
   it('rejects short password', () => {
-    expect(() => loginRequestSchema.parse({ email: 'a@b.cn', password: '1234567' })).toThrow(ZodError)
+    expect(() => loginRequestSchema.parse({ phone: '13800000001', password: '1234567' })).toThrow(ZodError)
   })
 
-  it('rejects invalid email', () => {
-    expect(() => loginRequestSchema.parse({ email: 'not-email', password: '12345678' })).toThrow(ZodError)
+  it('rejects invalid phone', () => {
+    expect(() => loginRequestSchema.parse({ phone: 'not-a-phone', password: '12345678' })).toThrow(ZodError)
   })
 
   it('rejects non-numeric OTP', () => {
-    expect(() => loginRequestSchema.parse({ email: 'a@b.cn', password: '12345678', otp: 'abcdef' })).toThrow(ZodError)
+    expect(() => loginRequestSchema.parse({ phone: '13800000001', password: '12345678', otp: 'abcdef' })).toThrow(ZodError)
   })
 })
 
@@ -403,9 +403,9 @@ describe('chat → assessment flow schema compatibility', () => {
   })
 
   it('loginRequestSchema integrates with roleSchema', () => {
-    const login = loginRequestSchema.parse({ email: 'teacher@school.cn', password: 'password123' })
+    const login = loginRequestSchema.parse({ phone: '13800000001', password: 'password123' })
     const role = roleSchema.parse('teacher')
-    expect(login.email).toContain('teacher')
+    expect(login.phone).toMatch(/^1[3-9]\d{9}$/)
     expect(role).toBe('teacher')
   })
 })

@@ -217,7 +217,7 @@ export default defineEventHandler(async (event) => {
 
 - `nameEnc`、`phoneEnc`、`profileEnc`、`notesEnc`、`contentEnc`、`summaryEnc`、`descriptionEnc`、`totpSecretEnc`、`handlingNoteEnc` 等字段写入前使用 `encryptSensitive`，读取时使用 `decryptSensitive`。
 - 需要精确检索姓名时使用 `searchableHash`；不要额外保存明文搜索列。
-- API 响应不得泄露 `*Enc`、搜索哈希、密码哈希、TOTP secret 或会话 token。解密后构造明确的响应对象；手机号只在已授权且业务确有需要的教师详情中返回，其他场景用 `maskPhone` / `SENSITIVE_PLACEHOLDER` 脱敏。
+- API 响应不得泄露 `*Enc`、搜索哈希、密码哈希、TOTP secret 或会话 token。解密后构造明确的响应对象；账号手机号作为登录凭证在学校/平台管理列表按业务需要返回，AI 上下文等其余场景用 `maskPhone` / `SENSITIVE_PLACEHOLDER` 脱敏。
 - 日志、审计、模型调用记录、通知正文和测试快照遵循最小披露原则。
 - `.env`、证书、备份和真实业务数据不得提交。不要打印环境变量或密钥值。
 

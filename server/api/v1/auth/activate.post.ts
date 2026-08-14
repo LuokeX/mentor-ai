@@ -38,7 +38,7 @@ export default defineEventHandler(async (event) => {
     return { ok: true, activated: true, needsMfa: false }
   }
   const secret = new OTPAuth.Secret({ size: 20 }).base32
-  const totp = new OTPAuth.TOTP({ issuer: '教师赋能智能平台', label: invitation.email, algorithm: 'SHA1', digits: 6, period: 30, secret: OTPAuth.Secret.fromBase32(secret) })
+  const totp = new OTPAuth.TOTP({ issuer: '教师赋能智能平台', label: invitation.name, algorithm: 'SHA1', digits: 6, period: 30, secret: OTPAuth.Secret.fromBase32(secret) })
   await db.update(schema.invitations).set({
     pendingPasswordHash: passwordHash,
     pendingTotpSecretEnc: encryptSensitive(secret, useRuntimeConfig(event).encryptionKey)

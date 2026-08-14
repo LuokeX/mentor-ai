@@ -28,23 +28,23 @@ let [school] = await db.select().from(schools).where(eq(schools.code, 'demo-scho
 if (!school) [school] = await db.insert(schools).values({ name: '六力学校（演示）', code: 'demo-school' }).returning()
 
 const accounts = [
-  { email: 'teacher@demo.local', name: '李老师', role: 'teacher', schoolId: school.id },
-  { email: 'teacher.zhang@demo.local', name: '张老师', role: 'teacher', schoolId: school.id },
-  { email: 'psychologist@demo.local', name: '王心理专员', role: 'psychologist', schoolId: school.id, totpSecretEnc: encryptSensitive('JBSWY3DPEHPK3PXP', encryptionKey) },
-  { email: 'school.admin@demo.local', name: '学校管理员', role: 'school_admin', schoolId: school.id },
-  { email: 'platform.admin@demo.local', name: '平台管理员', role: 'platform_admin', schoolId: null }
+  { phone: '13900001001', name: '李老师', role: 'teacher', schoolId: school.id },
+  { phone: '13900001002', name: '张老师', role: 'teacher', schoolId: school.id },
+  { phone: '13900001003', name: '王心理专员', role: 'psychologist', schoolId: school.id, totpSecretEnc: encryptSensitive('JBSWY3DPEHPK3PXP', encryptionKey) },
+  { phone: '13900001004', name: '学校管理员', role: 'school_admin', schoolId: school.id },
+  { phone: '13900001005', name: '平台管理员', role: 'platform_admin', schoolId: null }
 ]
 for (const account of accounts) {
-  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, account.email)).limit(1)
+  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.phone, account.phone)).limit(1)
   if (!existing) await db.insert(users).values({ ...account, passwordHash })
 }
-const [psych] = await db.select({ id: users.id }).from(users).where(eq(users.email, 'psychologist@demo.local')).limit(1)
+const [psych] = await db.select({ id: users.id }).from(users).where(eq(users.phone, '13900001003')).limit(1)
 await db.insert(schoolSettings).values({
   schoolId: school.id, helpPhone: '022-00000000', smsRecipients: ['13800000000'], referralPsychologistId: psych?.id
 }).onConflictDoUpdate({ target: schoolSettings.schoolId, set: { referralPsychologistId: psych?.id, updatedAt: new Date() } })
 
-const [teacherLi] = await db.select({ id: users.id }).from(users).where(eq(users.email, 'teacher@demo.local')).limit(1)
-const [teacherZhang] = await db.select({ id: users.id }).from(users).where(eq(users.email, 'teacher.zhang@demo.local')).limit(1)
+const [teacherLi] = await db.select({ id: users.id }).from(users).where(eq(users.phone, '13900001001')).limit(1)
+const [teacherZhang] = await db.select({ id: users.id }).from(users).where(eq(users.phone, '13900001002')).limit(1)
 if (teacherLi && teacherZhang) {
   async function ensureClass(input: { name: string, grade: number, studentCount: number, ownerUserId: string }) {
     let [row] = await db.select().from(classes).where(eq(classes.name, input.name)).limit(1)
@@ -146,4 +146,4 @@ if (teacherLi && teacherZhang) {
 }
 
 await pool.end()
-process.stdout.write('Seed complete. Demo password: Mentor@2026. Psychologist TOTP secret: JBSWY3DPEHPK3PXP. Extra teacher: teacher.zhang@demo.local\n')
+process.stdout.write('Seed complete. Demo password: Mentor@2026. Psychologist TOTP secret: JBSWY3DPEHPK3PXP. Extra teacher: 13900001002\n')

@@ -9,7 +9,7 @@ describe('dateInputSchema 契约验证', () => {
   it('邀请用户：接受 YYYY-MM-DD 纯日期（date input 直传）', () => {
     const result = schoolAdminUserInviteSchema.safeParse({
       name: '测试老师',
-      email: 't@school.edu.cn',
+      phone: '13800000001',
       role: 'teacher',
       hiredAt: '2026-08-11',
     })
@@ -19,7 +19,7 @@ describe('dateInputSchema 契约验证', () => {
   it('邀请用户：仍接受完整 ISO 时间', () => {
     const result = schoolAdminUserInviteSchema.safeParse({
       name: '测试老师',
-      email: 't@school.edu.cn',
+      phone: '13800000001',
       role: 'teacher',
       hiredAt: '2026-08-11T00:00:00.000Z',
     })
@@ -29,7 +29,7 @@ describe('dateInputSchema 契约验证', () => {
   it('邀请用户：不填 hiredAt 正常通过', () => {
     const result = schoolAdminUserInviteSchema.safeParse({
       name: '测试老师',
-      email: 't@school.edu.cn',
+      phone: '13800000001',
       role: 'teacher',
     })
     expect(result.success).toBe(true)
@@ -38,7 +38,7 @@ describe('dateInputSchema 契约验证', () => {
   it('拒绝非法日期字符串', () => {
     const result = schoolAdminUserInviteSchema.safeParse({
       name: '测试老师',
-      email: 't@school.edu.cn',
+      phone: '13800000001',
       role: 'teacher',
       hiredAt: '2026-13-99',
     })
@@ -55,7 +55,7 @@ describe('dateInputSchema 契约验证', () => {
   it('邀请用户：gender / title 传 null（前端“无/其他”默认值）通过', () => {
     const result = schoolAdminUserInviteSchema.safeParse({
       name: '测试老师',
-      email: 't@school.edu.cn',
+      phone: '13800000001',
       role: 'teacher',
       gender: null,
       title: null,
@@ -68,7 +68,7 @@ describe('dateInputSchema 契约验证', () => {
   it('邀请用户：完整表单（模拟前端 saveUser 载荷）通过', () => {
     const result = schoolAdminUserInviteSchema.safeParse({
       name: '测试老师',
-      email: 't@school.edu.cn',
+      phone: '13800000001',
       role: 'teacher',
       employeeNo: 'T001',
       gender: null,

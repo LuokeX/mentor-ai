@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pg = new Pool({ connectionString: 'postgres://mentor_admin:e99ed52b2799dba76638a35842c5841f4781407d4b2ab755e5244fd939078c89@localhost:5432/mentor_ai' })
 
-const ADMIN_ID = '17fa8178-34f0-41e4-a339-af7b3579001a' // platform.admin@demo.local
+const ADMIN_ID = '17fa8178-34f0-41e4-a339-af7b3579001a' // platform.admin（13900001005）
 
 // ====== 题库数据（从 shared/assessments.ts 提取） ======
 const fivePoint = [

@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
   const [teachers, classes, studentsRaw, guardiansRaw, relations, communicationsRaw, plansRaw, assignmentsRaw] = await Promise.all([
-    db.select({ id: schema.users.id, name: schema.users.name, email: schema.users.email, status: schema.users.status }).from(schema.users)
+    db.select({ id: schema.users.id, name: schema.users.name, phone: schema.users.phone, status: schema.users.status }).from(schema.users)
       .where(and(eq(schema.users.schoolId, schoolId), eq(schema.users.role, 'teacher'))).orderBy(asc(schema.users.name)),
     db.select().from(schema.classes).where(eq(schema.classes.schoolId, schoolId)).orderBy(asc(schema.classes.name)),
     db.select().from(schema.students).where(eq(schema.students.schoolId, schoolId)).orderBy(asc(schema.students.createdAt)),

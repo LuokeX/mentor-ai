@@ -21,8 +21,8 @@ describe('management contracts', () => {
   })
 
   it('keeps school-admin user invitations scoped to teacher and psychologist roles', () => {
-    expect(schoolAdminUserInviteSchema.safeParse({ name: '李老师', email: 'teacher@example.edu', role: 'teacher' }).success).toBe(true)
-    expect(schoolAdminUserInviteSchema.safeParse({ name: '校管', email: 'admin@example.edu', role: 'school_admin' }).success).toBe(false)
+    expect(schoolAdminUserInviteSchema.safeParse({ name: '李老师', phone: '13800000001', role: 'teacher' }).success).toBe(true)
+    expect(schoolAdminUserInviteSchema.safeParse({ name: '校管', phone: '13800000001', role: 'school_admin' }).success).toBe(false)
   })
 
   it('validates class and student base-management payloads', () => {

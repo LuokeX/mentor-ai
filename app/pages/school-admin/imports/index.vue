@@ -25,7 +25,7 @@ interface CommitResult {
   created: number
   updated: number
   skipped: number
-  invitations: Array<{ email: string; name: string; activationToken: string; expiresAt: string }>
+  invitations: Array<{ phone: string; name: string; activationToken: string; expiresAt: string }>
 }
 
 const list = useManagedList<ImportRow>('/api/v1/school-admin/imports')
@@ -168,8 +168,8 @@ function activationLink(token: string) {
           <p class="font-medium text-emerald-800">导入完成：新增 {{ committed.created }}，更新 {{ committed.updated }}，跳过 {{ committed.skipped }}</p>
           <div v-if="committed.invitations.length" class="space-y-2">
             <p class="text-amber-800">以下激活链接仅本次展示，请通过安全渠道发送：</p>
-            <div v-for="item in committed.invitations" :key="item.email" class="rounded bg-white p-2">
-              <p>{{ item.name }} · {{ item.email }}</p>
+            <div v-for="item in committed.invitations" :key="item.phone" class="rounded bg-white p-2">
+              <p>{{ item.name }} · {{ item.phone }}</p>
               <code class="break-all text-xs">{{ activationLink(item.activationToken) }}</code>
             </div>
           </div>

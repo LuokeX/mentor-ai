@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
     id: schema.invitations.id,
     userId: schema.invitations.userId,
     name: schema.invitations.name,
-    email: schema.invitations.email,
+    phone: schema.invitations.phone,
     role: schema.invitations.role,
     expiresAt: schema.invitations.expiresAt,
     acceptedAt: schema.invitations.acceptedAt,

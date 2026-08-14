@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
   return useDb(event).select({
     id: schema.users.id,
     name: schema.users.name,
-    email: schema.users.email,
+    phone: schema.users.phone,
     status: schema.users.status,
     lastLoginAt: schema.users.lastLoginAt,
     createdAt: schema.users.createdAt

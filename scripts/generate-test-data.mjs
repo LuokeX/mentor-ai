@@ -14,7 +14,7 @@ import { mkdirSync, rmSync } from 'node:fs'
 import { MODULES, OPTION_GROUPS } from './test-data/modules.mjs'
 
 const BASE_URL = 'http://localhost:3300'
-const ADMIN_EMAIL = 'platform.admin@demo.local'
+const ADMIN_PHONE = '13900001005'
 const ADMIN_PASSWORD = 'Mentor@2026'
 const BASE_DIR = 'business-libraries/test-data'
 // 版本号在 (library, version) 上有唯一约束，重复导入必须换号。
@@ -216,7 +216,7 @@ async function login() {
   const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+    body: JSON.stringify({ phone: ADMIN_PHONE, password: ADMIN_PASSWORD }),
     redirect: 'manual',
   })
   if (!res.ok) throw new Error(`登录失败: ${res.status} ${(await res.text()).slice(0, 200)}`)

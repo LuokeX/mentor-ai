@@ -16,7 +16,7 @@ try {
     await demoSelect.click()
     await page.getByRole('option', { name: '李老师（教师）' }).click()
   } else {
-    await page.getByLabel('邮箱').fill('teacher@demo.local')
+    await page.getByLabel('手机号').fill('13900001001')
   }
   await page.getByLabel('密码').fill('Mentor@2026')
   await submit.click()

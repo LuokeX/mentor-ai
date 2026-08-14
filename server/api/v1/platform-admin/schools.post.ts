@@ -1,6 +1,7 @@
 import argon2 from 'argon2'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import { PHONE_PATTERN } from '../../../../shared/contracts'
 import { issueInvitation } from '../../../domain/invitations'
 import { requireUser } from '../../../utils/auth'
 import { writeAudit } from '../../../utils/audit'
@@ -10,7 +11,7 @@ const bodySchema = z.object({
   name: z.string().trim().min(2).max(160),
   code: z.string().trim().regex(/^[a-z0-9-]{2,40}$/),
   adminName: z.string().trim().min(2).max(120),
-  adminEmail: z.string().email().transform(value => value.toLowerCase()),
+  adminPhone: z.string().trim().regex(PHONE_PATTERN),
 })
 
 export default defineEventHandler(async (event) => {
@@ -25,7 +26,7 @@ export default defineEventHandler(async (event) => {
       const [schoolAdmin] = await tx.insert(schema.users).values({
         schoolId: school.id,
         name: body.adminName,
-        email: body.adminEmail,
+        phone: body.adminPhone,
         role: 'school_admin',
         status: 'invited',
         passwordHash: await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id }),
@@ -36,7 +37,7 @@ export default defineEventHandler(async (event) => {
         schoolId: school.id,
         userId: schoolAdmin.id,
         name: schoolAdmin.name,
-        email: schoolAdmin.email,
+        phone: schoolAdmin.phone,
         role: 'school_admin',
         invitedBy: admin.id,
       }, tx as ReturnType<typeof useDb>)
@@ -52,13 +53,13 @@ export default defineEventHandler(async (event) => {
     })
     return {
       school: result.school,
-      schoolAdmin: { id: result.schoolAdmin.id, name: result.schoolAdmin.name, email: result.schoolAdmin.email },
+      schoolAdmin: { id: result.schoolAdmin.id, name: result.schoolAdmin.name, phone: result.schoolAdmin.phone },
       invitationId: result.invitation.id,
       activationToken: result.token,
       expiresAt: result.invitation.expiresAt,
     }
   } catch (error: unknown) {
-    if ((error as { code?: string }).code === '23505') throw createError({ statusCode: 409, message: '学校代码或管理员邮箱已存在' })
+    if ((error as { code?: string }).code === '23505') throw createError({ statusCode: 409, message: '学校代码或管理员手机号已存在' })
     throw error
   }
 })

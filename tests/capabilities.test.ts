@@ -5,7 +5,7 @@ import { resolveCapabilities, resolvePageCapabilities } from '../server/domain/c
 const teacher: AuthUser = {
   id: 'teacher-1',
   schoolId: 'school-1',
-  email: 'teacher@example.edu',
+  phone: '13800000001',
   name: '李老师',
   role: 'teacher',
   roleLabel: '教师',
@@ -13,7 +13,7 @@ const teacher: AuthUser = {
 const schoolAdmin: AuthUser = {
   ...teacher,
   id: 'admin-1',
-  email: 'admin@example.edu',
+  phone: '13800000002',
   name: '学校管理员',
   role: 'school_admin',
   roleLabel: '学校管理员',

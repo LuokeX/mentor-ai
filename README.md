@@ -49,10 +49,10 @@ pnpm dev
 
 | 角色 | 账号 |
 |---|---|
-| 教师 | `teacher@demo.local` |
-| 心理专员 | `psychologist@demo.local` |
-| 学校管理员 | `school.admin@demo.local` |
-| 平台管理员 | `platform.admin@demo.local` |
+| 教师 | `13900001001` |
+| 心理专员 | `13900001003` |
+| 学校管理员 | `13900001004` |
+| 平台管理员 | `13900001005` |
 
 心理专员演示 TOTP secret 为 `JBSWY3DPEHPK3PXP`。它只用于本地演示，部署时必须删除演示账号或重新绑定。
 

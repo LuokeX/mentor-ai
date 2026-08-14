@@ -5,7 +5,7 @@ import type { ManagedListResult } from '~~/shared/management'
 interface UserRow {
   id: string
   name: string
-  email: string
+  phone: string
   role: 'teacher' | 'psychologist'
   status: 'active' | 'invited' | 'disabled'
   activatedAt: string | null
@@ -31,7 +31,7 @@ interface InvitationResult {
 const list = useManagedList<UserRow>('/api/v1/school-admin/users')
 const columns = [
   { key: 'name', label: '姓名', sortable: true },
-  { key: 'email', label: '邮箱', sortable: true },
+  { key: 'phone', label: '手机号', sortable: true },
   { key: 'role', label: '角色', sortable: true },
   { key: 'selfStatusLevel', label: '自我状态', sortable: true },
   { key: 'status', label: '状态', sortable: true },
@@ -78,8 +78,8 @@ const editing = ref<UserRow | null>(null)
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({
-  name: '', email: '', role: 'teacher' as 'teacher' | 'psychologist', reactivate: false,
-  employeeNo: '', phone: '', gender: '__none__', teachingGrades: [] as string[],
+  name: '', phone: '', role: 'teacher' as 'teacher' | 'psychologist', reactivate: false,
+  employeeNo: '', gender: '__none__', teachingGrades: [] as string[],
   subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '',
   selfStatusLevel: '__auto__',
 })
@@ -94,8 +94,8 @@ const deleteTarget = ref<UserRow | null>(null)
 function openCreate() {
   editing.value = null
   Object.assign(form, {
-    name: '', email: '', role: 'teacher', reactivate: false,
-    employeeNo: '', phone: '', gender: '__none__', teachingGrades: [],
+    name: '', phone: '', role: 'teacher', reactivate: false,
+    employeeNo: '', gender: '__none__', teachingGrades: [],
     subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '', selfStatusLevel: '__auto__',
   })
   formError.value = ''
@@ -107,8 +107,8 @@ function openEdit(rowOrId: UserRow | string) {
   if (!row) return
   editing.value = row
   Object.assign(form, {
-    name: row.name, email: row.email, role: row.role, reactivate: false,
-    employeeNo: row.employeeNo || '', phone: '', gender: row.gender || '__none__',
+    name: row.name, phone: row.phone, role: row.role, reactivate: false,
+    employeeNo: row.employeeNo || '', gender: row.gender || '__none__',
     teachingGrades: row.teachingGrades?.map(g => `${g} 年级`) || [],
     subject: row.subject || '', isClassTeacher: row.isClassTeacher,
     classTeacherYears: row.classTeacherYears != null ? String(row.classTeacherYears) : '',
@@ -124,15 +124,15 @@ function closeDrawer() {
 }
 
 async function saveUser() {
-  if (form.name.trim().length < 2 || !form.email.includes('@')) {
-    formError.value = '请填写有效的姓名和邮箱'
+  if (form.name.trim().length < 2 || !/^1[3-9]\d{9}$/.test(form.phone)) {
+    formError.value = '请填写有效的姓名和手机号'
     return
   }
   saving.value = true
   formError.value = ''
   const body: Record<string, unknown> = {
     name: form.name,
-    email: form.email,
+    phone: form.phone,
     role: form.role,
     employeeNo: form.employeeNo || undefined,
     gender: form.gender === '__none__' ? null : form.gender,
@@ -144,8 +144,7 @@ async function saveUser() {
     title: form.title === '__none__' ? null : form.title,
     status: editing.value && editing.value.status === 'disabled' && form.reactivate ? 'active' : undefined,
   }
-  // 电话/心理资质备注是加密字段：编辑时留空表示不修改
-  if (form.phone) body.phone = form.phone
+  // 心理资质备注是加密字段：编辑时留空表示不修改
   if (form.certNote) body.certNote = form.certNote
   // 自我状态三态：未操作不发送；显式“改回按评估结果”清除；选择具体等级写入
   if (editing.value) {
@@ -239,7 +238,7 @@ async function copyActivationLink() {
 
 <template>
   <ManagementPage title="账号管理" description="邀请、编辑、移交和停用本校教师及心理专员账号。" :can-create="list.pageCapabilities.value.includes('create')" create-label="邀请用户" @create="openCreate">
-    <TableToolbar :search-value="list.q.value" :status-filter="list.statusFilter.value" :status-options="statusOptions" search-placeholder="搜索姓名或邮箱..." :loading="list.loading.value" @search="list.onSearch" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
+    <TableToolbar :search-value="list.q.value" :status-filter="list.statusFilter.value" :status-options="statusOptions" search-placeholder="搜索姓名或手机号..." :loading="list.loading.value" @search="list.onSearch" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #role-data="{ row }">{{ roleLabels[row.role] || row.role }}</template>
       <template #selfStatusLevel-data="{ row }">
@@ -266,10 +265,9 @@ async function copyActivationLink() {
       <form class="space-y-4" @submit.prevent="saveUser">
         <UFormField label="姓名" required><UInput v-model="form.name" class="w-full" /></UFormField>
         <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="邮箱" required><UInput v-model="form.email" type="email" class="w-full" /></UFormField>
+          <UFormField label="手机号" required><UInput v-model="form.phone" type="tel" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>
           <UFormField label="工号"><UInput v-model="form.employeeNo" class="w-full" /></UFormField>
           <UFormField label="角色" required><USelect v-model="form.role" :items="roleOptions" :disabled="Boolean(editing && editing.status !== 'invited')" class="w-full" /></UFormField>
-          <UFormField :label="editing ? '更新手机号（留空表示不修改）' : '手机号'"><UInput v-model="form.phone" class="w-full" /></UFormField>
           <UFormField label="性别"><USelect v-model="form.gender" :items="genderOptions" class="w-full" /></UFormField>
           <UFormField label="任教年级"><USelectMenu v-model="form.teachingGrades" multiple :items="gradeItems" class="w-full" /></UFormField>
           <UFormField label="任教学科"><UInput v-model="form.subject" placeholder="如：语文" class="w-full" /></UFormField>

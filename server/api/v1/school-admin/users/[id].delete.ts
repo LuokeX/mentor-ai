@@ -71,7 +71,7 @@ export default defineEventHandler(async (event) => {
     await writeAudit(event, {
       schoolId, actorId: actor.id, action: 'school_admin.user.delete_invitation',
       targetType: 'user', targetId: id,
-      metadata: { name: target.name, email: target.email, role: target.role, delegatedGrantId }
+      metadata: { name: target.name, phone: target.phone, role: target.role, delegatedGrantId }
     }, tx)
   })
   return { ok: true }

@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
   )).limit(1)
   if (!target || target.status === 'active') throw createError({ statusCode: 409, message: '该账号已激活，无需重新邀请' })
   const { invitation, token } = await issueInvitation(event, {
-    schoolId: admin.schoolId, userId: target.id, name: target.name, email: target.email,
+    schoolId: admin.schoolId, userId: target.id, name: target.name, phone: target.phone,
     role: target.role as 'teacher' | 'psychologist', invitedBy: admin.id
   })
   await writeAudit(event, {

@@ -26,9 +26,9 @@ describe('校内试用核心不变量', () => {
   })
 
   it('CSV 支持 BOM、引号和内容校验值', () => {
-    const csv = '\uFEFFname,email,role\n"张,老师",teacher@example.edu.cn,teacher\n'
+    const csv = '\uFEFFname,phone,role\n"张,老师",13800000001,teacher\n'
     const result = parseImportFile('users', Buffer.from(csv).toString('base64'))
-    expect(result.rows).toEqual([{ name: '张,老师', email: 'teacher@example.edu.cn', role: 'teacher' }])
+    expect(result.rows).toEqual([{ name: '张,老师', phone: '13800000001', role: 'teacher' }])
     expect(result.checksum).toMatch(/^[a-f0-9]{64}$/)
     expect(result.errors).toEqual([])
   })

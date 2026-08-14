@@ -7,7 +7,7 @@ export default defineEventHandler(async (event) => {
   if (!invitation) throw createError({ statusCode: 410, message: '激活链接无效或已过期' })
   return {
     name: invitation.name,
-    email: invitation.email.replace(/^(.{2}).+(@.+)$/, '$1***$2'),
+    phone: invitation.phone.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2'),
     role: invitation.role,
     expiresAt: invitation.expiresAt,
     needsMfa: invitation.role === 'psychologist',

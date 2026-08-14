@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 410, message: '请重新开始心理专员激活流程' })
   }
   const secret = decryptSensitive(invitation.pendingTotpSecretEnc, useRuntimeConfig(event).encryptionKey)
-  const totp = new OTPAuth.TOTP({ issuer: '教师赋能智能平台', label: invitation.email, algorithm: 'SHA1', digits: 6, period: 30, secret: OTPAuth.Secret.fromBase32(secret) })
+  const totp = new OTPAuth.TOTP({ issuer: '教师赋能智能平台', label: invitation.name, algorithm: 'SHA1', digits: 6, period: 30, secret: OTPAuth.Secret.fromBase32(secret) })
   if (totp.validate({ token: body.otp, window: 1 }) === null) throw createError({ statusCode: 422, message: '动态验证码不正确' })
   const recoveryCodes = createRecoveryCodes()
   const now = new Date()

@@ -35,7 +35,8 @@ export const schools = pgTable('schools', {
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'restrict' }),
-  email: varchar('email', { length: 254 }).notNull(),
+  /** 登录凭证与账号唯一标识；回填自原 phone_enc，迁移完成后校验非空 */
+  phone: varchar('phone', { length: 20 }).notNull(),
   name: varchar('name', { length: 120 }).notNull(),
   /** 本地账密登录哈希；仅 SSO 用户可为空 */
   passwordHash: text('password_hash'),
@@ -51,7 +52,6 @@ export const users = pgTable('users', {
   disabledReason: text('disabled_reason'),
   // ---- 教师业务档案（学校管理员维护）----
   employeeNo: varchar('employee_no', { length: 80 }),
-  phoneEnc: text('phone_enc'),
   gender: varchar('gender', { length: 20 }),
   /** 任教年级 1-12，空数组表示不限 */
   teachingGrades: jsonb('teaching_grades').$type<number[]>().default([]).notNull(),
@@ -72,7 +72,7 @@ export const users = pgTable('users', {
   overrides: jsonb('overrides').$type<Record<string, string>>().default({}).notNull(),
   ...timestamps
 }, table => [
-  uniqueIndex('users_email_uidx').on(table.email),
+  uniqueIndex('users_phone_uidx').on(table.phone),
   uniqueIndex('users_oidc_subject_uidx').on(table.oidcSubject),
   index('users_school_role_idx').on(table.schoolId, table.role),
   index('users_school_role_status_idx').on(table.schoolId, table.role, table.status),
@@ -93,7 +93,8 @@ export const sessions = pgTable('sessions', {
 export const invitations = pgTable('invitations', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').references(() => schools.id),
-  email: varchar('email', { length: 254 }).notNull(),
+  /** 被邀请人手机号；迁移期从关联用户回填 */
+  phone: varchar('phone', { length: 20 }).notNull(),
   name: varchar('name', { length: 120 }).notNull(),
   role: varchar('role', { length: 30 }).notNull(),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
@@ -107,7 +108,7 @@ export const invitations = pgTable('invitations', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [
   uniqueIndex('invitations_token_hash_uidx').on(table.tokenHash),
-  index('invitations_school_email_idx').on(table.schoolId, table.email)
+  index('invitations_school_phone_idx').on(table.schoolId, table.phone)
 ])
 
 export const mfaRecoveryCodes = pgTable('mfa_recovery_codes', {

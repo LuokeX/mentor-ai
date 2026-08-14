@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test'
 import * as OTPAuth from 'otpauth'
 
-async function login(page: import('@playwright/test').Page, email: string, options: { password?: string, otp?: string } = {}) {
+async function login(page: import('@playwright/test').Page, phone: string, options: { password?: string, otp?: string } = {}) {
   const response = await page.request.post('/api/v1/auth/login', {
-    data: { email, password: options.password || 'Mentor@2026', ...(options.otp ? { otp: options.otp } : {}) }
+    data: { phone, password: options.password || 'Mentor@2026', ...(options.otp ? { otp: options.otp } : {}) }
   })
   expect(response.ok()).toBeTruthy()
   const result = await response.json()
@@ -20,7 +20,7 @@ test.describe('四角色核心路径', () => {
   test.describe.configure({ timeout: 90_000 })
 
   test('教师登录、移动导航与 AI 咨询', async ({ page }, testInfo) => {
-    await login(page, 'teacher@demo.local')
+    await login(page, '13900001001')
     await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()
     if (testInfo.project.name === 'mobile-chromium') await expect(page.getByRole('link', { name: '事件', exact: true })).toBeVisible()
     await page.getByLabel('向 AI 赋能助手提问').fill('我想先梳理一下班级纪律反复的问题。')
@@ -29,7 +29,7 @@ test.describe('四角色核心路径', () => {
   })
 
   test('教师从模块说明进入评估、确认方案并完成执行闭环', async ({ page }) => {
-    await login(page, 'teacher@demo.local')
+    await login(page, '13900001001')
     await page.goto('/module/self_growth')
     await expect(page.getByRole('heading', { name: '班主任状态五问' })).toBeVisible()
     await expect(page.getByText('完成后会生成确定性评估报告、3 天行动方案和 7 天复盘节点；到期动作会进入“今日待办”。')).toBeVisible()
@@ -77,11 +77,11 @@ test.describe('四角色核心路径', () => {
   })
 
   test('学校管理员邀请并激活教师账号', async ({ page }) => {
-    await login(page, 'school.admin@demo.local')
+    await login(page, '13900001004')
     await expect(page.getByRole('heading', { name: '学校管理后台' })).toBeVisible()
-    const email = `pilot-${Date.now()}@demo.local`
+    const phone = `139${String(Date.now()).slice(-8)}`
     const response = await page.request.post('/api/v1/school-admin/users', {
-      data: { name: '试点教师', email, role: 'teacher' }
+      data: { name: '试点教师', phone, role: 'teacher' }
     })
     expect(response.ok()).toBeTruthy()
     const invitation = await response.json()
@@ -91,17 +91,17 @@ test.describe('四角色核心路径', () => {
     })
     expect(activation.ok()).toBeTruthy()
     await page.getByRole('button', { name: '退出' }).click()
-    await login(page, email, { password: 'PilotTeacher@2026' })
+    await login(page, phone, { password: 'PilotTeacher@2026' })
     await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()
   })
 
   test('统一管理表格 CRUD、并发控制、生命周期与负责人权限', async ({ page }, testInfo) => {
-    await login(page, 'school.admin@demo.local')
+    await login(page, '13900001004')
     const suffix = `${Date.now()}-${testInfo.project.name.replace(/\W+/g, '-')}`
     const teachersResponse = await page.request.get('/api/v1/school-admin/teachers?page=1&pageSize=100&status=active')
     expect(teachersResponse.ok()).toBeTruthy()
-    const teachers = await teachersResponse.json() as { rows: Array<{ id: string, email: string }> }
-    const teacher = teachers.rows.find(item => item.email === 'teacher@demo.local')
+    const teachers = await teachersResponse.json() as { rows: Array<{ id: string, phone: string }> }
+    const teacher = teachers.rows.find(item => item.phone === '13900001001')
     expect(teacher).toBeTruthy()
 
     const className = `验收班级-${suffix}`
@@ -163,14 +163,14 @@ test.describe('四角色核心路径', () => {
     await expect(page.getByRole('table')).toBeVisible()
     await expect(page.getByText(className, { exact: true })).toBeVisible()
 
-    await login(page, 'teacher@demo.local')
+    await login(page, '13900001001')
     await page.goto(`/information/students?q=${encodeURIComponent(studentName)}`)
     await expect(page.getByRole('heading', { name: '我负责的学生' })).toBeVisible()
     await expect(page.getByText(studentName, { exact: true })).toBeVisible()
     const forbidden = await page.request.get('/api/v1/school-admin/classes?page=1&pageSize=20')
     expect(forbidden.status()).toBe(403)
 
-    await login(page, 'school.admin@demo.local')
+    await login(page, '13900001004')
     const updatedClassName = `${className}-已更新`
     const updateClass = await page.request.patch(`/api/v1/school-admin/classes/${createdClass.id}?expectedUpdatedAt=${encodeURIComponent(createdClass.updatedAt)}`, {
       data: { name: updatedClassName },
@@ -222,16 +222,16 @@ test.describe('四角色核心路径', () => {
 
   test('心理专员 MFA 登录并查看 SLA 工作台', async ({ page }) => {
     const totp = new OTPAuth.TOTP({
-      issuer: '教师赋能智能平台', label: 'psychologist@demo.local', algorithm: 'SHA1', digits: 6, period: 30,
+      issuer: '教师赋能智能平台', label: '王心理专员', algorithm: 'SHA1', digits: 6, period: 30,
       secret: OTPAuth.Secret.fromBase32('JBSWY3DPEHPK3PXP')
     })
-    await login(page, 'psychologist@demo.local', { otp: totp.generate() })
+    await login(page, '13900001003', { otp: totp.generate() })
     await expect(page.getByRole('heading', { name: '心理专员工作台' })).toBeVisible()
     await expect(page.getByText('最小必要转介空间')).toBeVisible()
   })
 
   test('平台管理员权限入口', async ({ page }) => {
-    await login(page, 'platform.admin@demo.local')
+    await login(page, '13900001005')
     await expect(page).toHaveURL(/\/platform-admin/)
     await expect(page.getByRole('heading', { name: '平台管理后台' })).toBeVisible()
     await page.goto('/platform-admin/resources')

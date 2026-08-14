@@ -16,7 +16,7 @@ export async function issueInvitation(event: H3Event, input: {
   schoolId: string
   userId: string
   name: string
-  email: string
+  phone: string
   role: 'teacher' | 'psychologist' | 'school_admin'
   invitedBy: string
 }, database: ReturnType<typeof useDb> = useDb(event)) {
@@ -28,7 +28,7 @@ export async function issueInvitation(event: H3Event, input: {
   const [invitation] = await db.insert(schema.invitations).values({
     schoolId: input.schoolId,
     userId: input.userId,
-    email: input.email,
+    phone: input.phone,
     name: input.name,
     role: input.role,
     tokenHash: hashToken(token),

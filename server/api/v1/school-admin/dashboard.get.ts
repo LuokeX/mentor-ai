@@ -10,7 +10,7 @@ export default defineEventHandler(async (event) => {
     db.select({ value: count() }).from(schema.users).where(eq(schema.users.schoolId, schoolId)),
     db.select({ value: count() }).from(schema.safetyEvents).where(and(eq(schema.safetyEvents.schoolId, schoolId), eq(schema.safetyEvents.status, 'open'))),
     db.select({ value: count() }).from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.schoolId, schoolId)),
-    db.select({ id: schema.users.id, name: schema.users.name, email: schema.users.email, role: schema.users.role, status: schema.users.status, lastLoginAt: schema.users.lastLoginAt }).from(schema.users).where(eq(schema.users.schoolId, schoolId)).orderBy(desc(schema.users.createdAt)),
+    db.select({ id: schema.users.id, name: schema.users.name, phone: schema.users.phone, role: schema.users.role, status: schema.users.status, lastLoginAt: schema.users.lastLoginAt }).from(schema.users).where(eq(schema.users.schoolId, schoolId)).orderBy(desc(schema.users.createdAt)),
     db.select().from(schema.adminAccessRequests).where(and(eq(schema.adminAccessRequests.schoolId, schoolId), eq(schema.adminAccessRequests.status, 'pending'))).orderBy(desc(schema.adminAccessRequests.createdAt)),
     db.select({
       id: schema.delegatedManagementGrants.id,
