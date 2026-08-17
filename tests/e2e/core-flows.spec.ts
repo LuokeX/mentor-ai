@@ -235,7 +235,7 @@ test.describe('四角色核心路径', () => {
     await expect(page).toHaveURL(/\/platform-admin/)
     await expect(page.getByRole('heading', { name: '平台管理后台' })).toBeVisible()
     await page.goto('/platform-admin/resources')
-    await expect(page.getByRole('heading', { name: '资源导入、校验与发布' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '三库运营台' })).toBeVisible()
     await expect(page.getByRole('heading', { name: '质量反哺' })).toBeVisible()
   })
 })

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
+import { updatedAtMatches } from '../../../../utils/concurrency'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['platform_admin'])
@@ -17,7 +18,7 @@ export default defineEventHandler(async (event) => {
   try {
     return await db.transaction(async (tx) => {
       const [school] = await tx.update(schema.schools).set({ ...body, updatedAt: new Date() })
-        .where(and(eq(schema.schools.id, id), eq(schema.schools.updatedAt, new Date(expectedUpdatedAt)))).returning()
+        .where(and(eq(schema.schools.id, id), updatedAtMatches(schema.schools.updatedAt, expectedUpdatedAt))).returning()
       if (!school) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '学校已被其他平台管理员修改，请刷新后重试' })
       await writeAudit(event, {
         actorId: admin.id, schoolId: school.id, action: body.status ? `platform_admin.school.${body.status}` : 'platform_admin.school.update',

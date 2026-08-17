@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireUser } from '../../../../utils/auth'
 import { decryptSensitive, encryptSensitive, searchableHash } from '../../../../utils/crypto'
+import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
 import { schema, useDb } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
 
@@ -54,7 +55,7 @@ export default defineEventHandler(async (event) => {
     eq(schema.students.schoolId, user.schoolId!)
   )).limit(1)
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
-  if (expectedUpdatedAt && student.updatedAt.toISOString() !== expectedUpdatedAt) {
+  if (expectedUpdatedAt && !matchesExpectedUpdatedAt(student.updatedAt, expectedUpdatedAt)) {
     throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '学生档案已被其他用户修改，请刷新后重试' })
   }
   if (body.classId) {
@@ -88,7 +89,7 @@ export default defineEventHandler(async (event) => {
     eq(schema.students.ownerUserId, user.id),
     eq(schema.students.schoolId, user.schoolId!),
   ]
-  if (expectedUpdatedAt) finalConditions.push(eq(schema.students.updatedAt, new Date(expectedUpdatedAt)))
+  if (expectedUpdatedAt) finalConditions.push(updatedAtMatches(schema.students.updatedAt, expectedUpdatedAt))
   const [updated] = await db.update(schema.students).set(patch).where(and(...finalConditions)).returning({ id: schema.students.id })
   if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '学生档案已被其他用户修改，请刷新后重试' })
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.student.update', targetType: 'student', targetId: id })

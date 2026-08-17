@@ -4,6 +4,7 @@ import { schoolAdminStudentUpdateSchema } from '../../../../../shared/contracts'
 import { assertActiveTeacher, requireSchoolManagement, resolveClassOwner, transferPlans, writeAssignment } from '../../../../domain/school-management'
 import { writeAudit } from '../../../../utils/audit'
 import { encryptSensitive, searchableHash } from '../../../../utils/crypto'
+import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
 import { schema, useDb } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event) => {
   const secret = useRuntimeConfig(event).encryptionKey
   const [student] = await db.select().from(schema.students).where(and(eq(schema.students.id, id), eq(schema.students.schoolId, schoolId))).limit(1)
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
-  if (expectedUpdatedAt && student.updatedAt.toISOString() !== expectedUpdatedAt) {
+  if (expectedUpdatedAt && !matchesExpectedUpdatedAt(student.updatedAt, expectedUpdatedAt)) {
     throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '学生档案已被其他管理员修改，请刷新后重试' })
   }
 
@@ -62,7 +63,7 @@ export default defineEventHandler(async (event) => {
       if (body.classId !== undefined) patch.classId = nextClassId
       if (nextOwnerUserId !== student.ownerUserId) patch.ownerUserId = nextOwnerUserId
       const finalConditions = [eq(schema.students.id, id), eq(schema.students.schoolId, schoolId)]
-      if (expectedUpdatedAt) finalConditions.push(eq(schema.students.updatedAt, new Date(expectedUpdatedAt)))
+      if (expectedUpdatedAt) finalConditions.push(updatedAtMatches(schema.students.updatedAt, expectedUpdatedAt))
       const [row] = await tx.update(schema.students).set(patch).where(and(...finalConditions)).returning({ id: schema.students.id })
       if (!row) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '学生档案已被其他管理员修改，请刷新后重试' })
       if (nextOwnerUserId !== student.ownerUserId) {

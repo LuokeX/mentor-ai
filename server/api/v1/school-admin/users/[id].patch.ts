@@ -5,6 +5,7 @@ import { writeAudit } from '../../../../utils/audit'
 import { schoolAdminUserUpdateSchema } from '../../../../../shared/contracts'
 import { requireSchoolManagement } from '../../../../domain/school-management'
 import { encryptSensitive } from '../../../../utils/crypto'
+import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
 
 export default defineEventHandler(async (event) => {
   const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'], { allowPlatformAdmin: true })
@@ -27,7 +28,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // 并发冲突检查
-  if (expectedUpdatedAt && target.updatedAt.toISOString() !== expectedUpdatedAt) {
+  if (expectedUpdatedAt && !matchesExpectedUpdatedAt(target.updatedAt, expectedUpdatedAt)) {
     throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '该记录已被其他用户修改，请刷新后重试' })
   }
 
@@ -80,7 +81,7 @@ export default defineEventHandler(async (event) => {
       eq(schema.users.schoolId, schoolId),
       inArray(schema.users.role, ['teacher', 'psychologist']),
     ]
-    if (expectedUpdatedAt) finalConditions.push(eq(schema.users.updatedAt, new Date(expectedUpdatedAt)))
+    if (expectedUpdatedAt) finalConditions.push(updatedAtMatches(schema.users.updatedAt, expectedUpdatedAt))
     const [updated] = await tx.update(schema.users).set(setValues).where(and(...finalConditions)).returning({ id: schema.users.id })
     if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '账号已被其他管理员修改，请刷新后重试' })
     await writeAudit(event, {

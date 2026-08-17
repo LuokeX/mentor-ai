@@ -8,6 +8,7 @@ import type { H3Event } from 'h3'
 import { and, eq } from 'drizzle-orm'
 import { useDb, schema } from '../utils/db'
 import { writeAudit } from '../utils/audit'
+import { matchesExpectedUpdatedAt, updatedAtMatches } from '../utils/concurrency'
 
 type LifecycleTable = typeof schema.classes | typeof schema.students | typeof schema.guardians | typeof schema.departments
 
@@ -43,7 +44,7 @@ export async function archiveRecord(
     const [record] = await tx.select().from(table).where(and(...conditions)).limit(1)
     if (!record) throw createError({ statusCode: 404, message: '记录不存在' })
 
-    if (expectedUpdatedAt && record.updatedAt.toISOString() !== expectedUpdatedAt) {
+    if (expectedUpdatedAt && !matchesExpectedUpdatedAt(record.updatedAt, expectedUpdatedAt)) {
       throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '记录已被他人修改，请刷新后重试' })
     }
 
@@ -52,7 +53,7 @@ export async function archiveRecord(
     }
 
     const finalConditions = [...conditions]
-    if (expectedUpdatedAt) finalConditions.push(eq(table.updatedAt, new Date(expectedUpdatedAt)))
+    if (expectedUpdatedAt) finalConditions.push(updatedAtMatches(table.updatedAt, expectedUpdatedAt))
     const [updated] = await tx.update(table).set({
       status: 'archived',
       archivedAt: new Date(),
@@ -95,7 +96,7 @@ export async function restoreRecord(
       throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '只能恢复已归档的记录' })
     }
 
-    if (expectedUpdatedAt && record.updatedAt.toISOString() !== expectedUpdatedAt) {
+    if (expectedUpdatedAt && !matchesExpectedUpdatedAt(record.updatedAt, expectedUpdatedAt)) {
       throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '记录已被他人修改，请刷新后重试' })
     }
 
@@ -104,7 +105,7 @@ export async function restoreRecord(
       eq(table.schoolId, schoolId),
       eq(table.status, 'archived'),
     ]
-    if (expectedUpdatedAt) conditions.push(eq(table.updatedAt, new Date(expectedUpdatedAt)))
+    if (expectedUpdatedAt) conditions.push(updatedAtMatches(table.updatedAt, expectedUpdatedAt))
     const [updated] = await tx.update(table).set({
       status: 'active',
       archivedAt: null,

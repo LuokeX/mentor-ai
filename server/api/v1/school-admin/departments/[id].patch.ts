@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { schoolAdminDepartmentUpdateSchema } from '../../../../../shared/contracts'
 import { assertActiveTeacher, requireSchoolManagement } from '../../../../domain/school-management'
 import { writeAudit } from '../../../../utils/audit'
+import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
 import { schema, useDb } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
@@ -13,7 +14,7 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
   const [department] = await db.select().from(schema.departments).where(and(eq(schema.departments.id, id), eq(schema.departments.schoolId, schoolId))).limit(1)
   if (!department) throw createError({ statusCode: 404, message: '部门不存在' })
-  if (expectedUpdatedAt && department.updatedAt.toISOString() !== expectedUpdatedAt) {
+  if (expectedUpdatedAt && !matchesExpectedUpdatedAt(department.updatedAt, expectedUpdatedAt)) {
     throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '部门已被其他管理员修改，请刷新后重试' })
   }
   if (body.parentId === id) throw createError({ statusCode: 422, message: '上级部门不能选择自己' })
@@ -43,7 +44,7 @@ export default defineEventHandler(async (event) => {
     if (body.sortOrder !== undefined) patch.sortOrder = body.sortOrder
     if (body.status !== undefined) patch.status = body.status
     const finalConditions = [eq(schema.departments.id, id), eq(schema.departments.schoolId, schoolId)]
-    if (expectedUpdatedAt) finalConditions.push(eq(schema.departments.updatedAt, new Date(expectedUpdatedAt)))
+    if (expectedUpdatedAt) finalConditions.push(updatedAtMatches(schema.departments.updatedAt, expectedUpdatedAt))
     return await db.transaction(async (tx) => {
       const [updated] = await tx.update(schema.departments).set(patch).where(and(...finalConditions)).returning()
       if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '部门已被其他管理员修改，请刷新后重试' })

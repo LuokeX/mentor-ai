@@ -4,6 +4,7 @@ import { schoolAdminGuardianUpdateSchema } from '../../../../../shared/contracts
 import { assertActiveTeacher, requireSchoolManagement, transferPlans, writeAssignment } from '../../../../domain/school-management'
 import { writeAudit } from '../../../../utils/audit'
 import { encryptSensitive, searchableHash } from '../../../../utils/crypto'
+import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
 import { schema, useDb } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event) => {
   const secret = useRuntimeConfig(event).encryptionKey
   const [guardian] = await db.select().from(schema.guardians).where(and(eq(schema.guardians.id, id), eq(schema.guardians.schoolId, schoolId))).limit(1)
   if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
-  if (expectedUpdatedAt && guardian.updatedAt.toISOString() !== expectedUpdatedAt) {
+  if (expectedUpdatedAt && !matchesExpectedUpdatedAt(guardian.updatedAt, expectedUpdatedAt)) {
     throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '家长档案已被其他管理员修改，请刷新后重试' })
   }
   if (body.ownerUserId) await assertActiveTeacher(event, schoolId, body.ownerUserId)
@@ -45,7 +46,7 @@ export default defineEventHandler(async (event) => {
       if (body.status !== undefined) patch.status = body.status
       if (body.ownerUserId) patch.ownerUserId = body.ownerUserId
       const finalConditions = [eq(schema.guardians.id, id), eq(schema.guardians.schoolId, schoolId)]
-      if (expectedUpdatedAt) finalConditions.push(eq(schema.guardians.updatedAt, new Date(expectedUpdatedAt)))
+      if (expectedUpdatedAt) finalConditions.push(updatedAtMatches(schema.guardians.updatedAt, expectedUpdatedAt))
       const [updated] = await tx.update(schema.guardians).set(patch).where(and(...finalConditions)).returning({ id: schema.guardians.id })
       if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '家长档案已被其他管理员修改，请刷新后重试' })
       if (body.ownerUserId && body.ownerUserId !== guardian.ownerUserId) {

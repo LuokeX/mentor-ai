@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireUser } from '../../../../utils/auth'
 import { writeAudit } from '../../../../utils/audit'
 import { encryptSensitive } from '../../../../utils/crypto'
+import { updatedAtMatches } from '../../../../utils/concurrency'
 import { schema, useDb } from '../../../../utils/db'
 
 const bodySchema = z.object({
@@ -32,7 +33,7 @@ export default defineEventHandler(async (event) => {
     eq(schema.communications.schoolId, user.schoolId),
     eq(schema.communications.ownerUserId, user.id),
     eq(schema.communications.status, 'active'),
-    eq(schema.communications.updatedAt, new Date(expectedUpdatedAt)),
+    updatedAtMatches(schema.communications.updatedAt, expectedUpdatedAt),
   )).returning({ id: schema.communications.id })
   if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '沟通记录已被修改或归档，请刷新后重试' })
   await writeAudit(event, {

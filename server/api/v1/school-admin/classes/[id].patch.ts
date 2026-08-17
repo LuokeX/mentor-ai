@@ -5,6 +5,7 @@ import { uuidParam } from '../../../../utils/params'
 import { assertActiveDepartment, assertActiveTeacher, requireSchoolManagement, transferClassOwner } from '../../../../domain/school-management'
 import { writeAudit } from '../../../../utils/audit'
 import { encryptSensitive } from '../../../../utils/crypto'
+import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
 import { schema, useDb } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
@@ -16,7 +17,7 @@ export default defineEventHandler(async (event) => {
   const secret = useRuntimeConfig(event).encryptionKey
   const [klass] = await db.select().from(schema.classes).where(and(eq(schema.classes.id, id), eq(schema.classes.schoolId, schoolId))).limit(1)
   if (!klass) throw createError({ statusCode: 404, message: '班级不存在' })
-  if (expectedUpdatedAt && klass.updatedAt.toISOString() !== expectedUpdatedAt) {
+  if (expectedUpdatedAt && !matchesExpectedUpdatedAt(klass.updatedAt, expectedUpdatedAt)) {
     throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '班级已被其他管理员修改，请刷新后重试' })
   }
   if (body.ownerUserId) await assertActiveTeacher(event, schoolId, body.ownerUserId)
@@ -48,7 +49,7 @@ export default defineEventHandler(async (event) => {
         patch.overrides = merged
       }
       const finalConditions = [eq(schema.classes.id, id), eq(schema.classes.schoolId, schoolId)]
-      if (expectedUpdatedAt) finalConditions.push(eq(schema.classes.updatedAt, new Date(expectedUpdatedAt)))
+      if (expectedUpdatedAt) finalConditions.push(updatedAtMatches(schema.classes.updatedAt, expectedUpdatedAt))
       const [row] = await tx.update(schema.classes).set(patch).where(and(...finalConditions)).returning()
       if (!row) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '班级已被其他管理员修改，请刷新后重试' })
       if (body.ownerUserId && body.ownerUserId !== klass.ownerUserId) {

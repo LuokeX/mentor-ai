@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireUser } from '../../../../utils/auth'
+import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
 import { useDb, schema } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
 
@@ -28,7 +29,7 @@ export default defineEventHandler(async (event) => {
     eq(schema.studentEvents.schoolId, user.schoolId),
   )).limit(1)
   if (!record) throw createError({ statusCode: 404, message: '事件不存在' })
-  if (record.updatedAt.toISOString() !== expectedUpdatedAt) {
+  if (expectedUpdatedAt && !matchesExpectedUpdatedAt(record.updatedAt, expectedUpdatedAt)) {
     throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '事件记录已被其他用户修改，请刷新后重试' })
   }
 
@@ -47,7 +48,7 @@ export default defineEventHandler(async (event) => {
       eq(schema.studentEvents.id, id),
       eq(schema.studentEvents.ownerUserId, user.id),
       eq(schema.studentEvents.schoolId, user.schoolId),
-      eq(schema.studentEvents.updatedAt, new Date(expectedUpdatedAt)),
+      updatedAtMatches(schema.studentEvents.updatedAt, expectedUpdatedAt),
     ))
     .returning()
   if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '事件记录已被其他用户修改，请刷新后重试' })
