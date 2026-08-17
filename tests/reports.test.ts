@@ -28,6 +28,17 @@ describe('assessment reports', () => {
     }
   })
 
+  it('drops single-character tool step fragments instead of failing schema validation', () => {
+    const result = evaluateAssessment('self_growth', answers('self_growth', 3))
+    result.tools = [
+      { title: '单字符残段工具', content: '第一步：先深呼吸。\n。\n；第二步：记录状态。' },
+      { title: '正常工具', content: '正常步骤一。正常步骤二。' }
+    ]
+    const report = createTemplateAssessmentReport({ module: 'self_growth', result })
+    expect(assessmentReportSchema.safeParse(report).success).toBe(true)
+    expect(report.toolPrescriptions?.[0]?.steps.some(step => step.length < 2)).toBe(false)
+  })
+
   it('uses module-specific report language and follow-up plans', () => {
     const reports = (['self_growth', 'class_system', 'home_school', 'student_case'] as ModuleId[]).map(module => {
       const result = evaluateAssessment(module, answers(module, 3))

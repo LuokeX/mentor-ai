@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { moduleIdSchema } from '../../../../shared/contracts'
 import { requireUser } from '../../../utils/auth'
 import { schema, useDb } from '../../../utils/db'
+import { resolveReviewDateRange } from '../../../domain/plan-filters'
 
 const PLAN_STATUSES = [
   'pending_acceptance', 'accepted', 'in_progress', 'review_due',
@@ -25,9 +26,10 @@ const querySchema = z.object({
   status: z.enum([...PLAN_STATUSES, 'active']).optional(),
   module: moduleIdSchema.optional(),
   q: z.string().trim().max(200).optional(),
-  // 复盘日期闭区间（YYYY-MM-DD），对 nextReviewAt 做 gte/lte 过滤
-  reviewFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'reviewFrom 需为 YYYY-MM-DD 日期').optional(),
-  reviewTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'reviewTo 需为 YYYY-MM-DD 日期').optional(),
+  // 复盘日期闭区间（YYYY-MM-DD），对 nextReviewAt 做 gte/lte 过滤；真实性与起止顺序
+  // 在 resolveReviewDateRange 中校验，避免 2026-99-99 之类构造出 Invalid Date。
+  reviewFrom: z.string().optional(),
+  reviewTo: z.string().optional(),
   sort: z.enum(['updatedAt', 'createdAt', 'nextReviewAt', 'title']).default('updatedAt'),
   order: z.enum(['asc', 'desc']).default('desc'),
   page: z.coerce.number().int().min(1).default(1),
@@ -46,18 +48,26 @@ const SORT_COLUMNS = {
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
+  if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const query = querySchema.parse(getQuery(event))
   const db = useDb(event)
 
-  const filters = [eq(schema.plans.ownerUserId, user.id)]
+  // 复盘日期边界按上海时区换算；非法日期或起止倒挂直接 400
+  const { reviewFrom, reviewTo } = resolveReviewDateRange(query.reviewFrom, query.reviewTo)
+
+  // 方案归属同时受教师与学校约束：教师发生学校迁移后不能读到旧学校方案
+  const filters = [
+    eq(schema.plans.ownerUserId, user.id),
+    eq(schema.plans.schoolId, user.schoolId)
+  ]
   if (query.status === 'active') filters.push(inArray(schema.plans.status, ACTIVE_STATUSES))
   else if (query.status) filters.push(eq(schema.plans.status, query.status))
   if (query.module) filters.push(eq(schema.plans.module, query.module))
   // 只按标题搜。摘要是加密列，没法在 SQL 里做模糊匹配。
   if (query.q) filters.push(ilike(schema.plans.title, `%${query.q}%`))
-  // 复盘日期闭区间：reviewFrom 当日 00:00 起，reviewTo 当日 23:59:59 止
-  if (query.reviewFrom) filters.push(gte(schema.plans.nextReviewAt, new Date(`${query.reviewFrom}T00:00:00.000Z`)))
-  if (query.reviewTo) filters.push(lte(schema.plans.nextReviewAt, new Date(`${query.reviewTo}T23:59:59.999Z`)))
+  // 复盘日期闭区间：reviewFrom 当日 00:00 起（上海），reviewTo 当日 23:59:59.999 止
+  if (reviewFrom) filters.push(gte(schema.plans.nextReviewAt, reviewFrom))
+  if (reviewTo) filters.push(lte(schema.plans.nextReviewAt, reviewTo))
   const where = and(...filters)
 
   const [{ total } = { total: 0 }] = await db

@@ -5,26 +5,33 @@ import { decryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
 import { ensurePlanActions } from '../../../domain/plan-actions'
 import { truncateByChars } from '../../../domain/plan-titles'
+import { redactPii } from '../../../integrations/deepseek'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
+  if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const db = useDb(event)
 
   const [plan] = await db.select().from(schema.plans).where(and(
     eq(schema.plans.id, id),
-    eq(schema.plans.ownerUserId, user.id)
+    eq(schema.plans.ownerUserId, user.id),
+    eq(schema.plans.schoolId, user.schoolId)
   )).limit(1)
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
 
   const config = useRuntimeConfig(event)
   const secret = config.encryptionKey
 
-  // LEFT JOIN 学生
+  // LEFT JOIN 学生（方案、学生、班级同属一个学校才可见）
   let student: { name: string; gender: string } | null = null
   if (plan.studentId) {
     const [row] = await db.select({ nameEnc: schema.students.nameEnc, gender: schema.students.gender })
-      .from(schema.students).where(eq(schema.students.id, plan.studentId)).limit(1)
+      .from(schema.students)
+      .where(and(
+        eq(schema.students.id, plan.studentId),
+        eq(schema.students.schoolId, user.schoolId)
+      )).limit(1)
     if (row) student = { name: decryptSensitive(row.nameEnc, secret), gender: row.gender || '' }
   }
 
@@ -32,7 +39,11 @@ export default defineEventHandler(async (event) => {
   let klass: { name: string; grade: number } | null = null
   if (plan.classId) {
     const [row] = await db.select({ name: schema.classes.name, grade: schema.classes.grade })
-      .from(schema.classes).where(eq(schema.classes.id, plan.classId)).limit(1)
+      .from(schema.classes)
+      .where(and(
+        eq(schema.classes.id, plan.classId),
+        eq(schema.classes.schoolId, user.schoolId)
+      )).limit(1)
     if (row) klass = { name: row.name, grade: row.grade }
   }
 
@@ -81,7 +92,7 @@ export default defineEventHandler(async (event) => {
       sourceConversation = {
         sessionId: session.id,
         questionSummary: firstUser
-          ? truncateByChars(decryptSensitive(firstUser.contentEnc, secret), 80)
+          ? truncateByChars(redactPii(decryptSensitive(firstUser.contentEnc, secret)), 80)
           : plan.sourceQuestionSummary || null,
         createdAt: session.createdAt
       }

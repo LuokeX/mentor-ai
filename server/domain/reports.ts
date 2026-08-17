@@ -195,7 +195,8 @@ function splitToolContent(content: string) {
   return content
     .split(/\n|[;；。]/)
     .map(item => item.trim())
-    .filter(Boolean)
+    // 过滤单字符残段：模板报告的 steps 有最短 2 字符校验，短标点行会整单 500
+    .filter(item => item.length >= 2)
     .slice(0, 6)
 }
 

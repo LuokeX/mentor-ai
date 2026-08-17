@@ -1,7 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { encryptSensitive } from '../utils/crypto'
-import { useDb, schema } from '../utils/db'
+import { type DbClient, type DbTx, useDb, schema } from '../utils/db'
 
 const CRISIS_PATTERNS: Array<[string, RegExp]> = [
   ['SAFE-SUICIDE', /(不想活|想死|自杀|结束生命|活着没意思)/i],
@@ -22,12 +22,27 @@ export async function createSafetyReferral(event: H3Event, input: {
   sourceId?: string
   text: string
   matchedRules: string[]
-}) {
+}, tx?: DbTx) {
   const config = useRuntimeConfig(event)
-  const db = useDb(event)
-  return db.transaction(async (tx) => {
-    const [settings] = await tx.select().from(schema.schoolSettings).where(eq(schema.schoolSettings.schoolId, input.schoolId)).limit(1)
-    const [safety] = await tx.insert(schema.safetyEvents).values({
+  const run = (inner: DbClient) => runCreateSafetyReferral(inner, config, input)
+  if (tx) return run(tx)
+  return useDb(event).transaction(inner => run(inner))
+}
+
+async function runCreateSafetyReferral(
+  db: DbClient,
+  config: ReturnType<typeof useRuntimeConfig>,
+  input: {
+    schoolId: string
+    ownerUserId: string
+    sourceType: string
+    sourceId?: string
+    text: string
+    matchedRules: string[]
+  }
+) {
+    const [settings] = await db.select().from(schema.schoolSettings).where(eq(schema.schoolSettings.schoolId, input.schoolId)).limit(1)
+    const [safety] = await db.insert(schema.safetyEvents).values({
       schoolId: input.schoolId,
       ownerUserId: input.ownerUserId,
       sourceType: input.sourceType,
@@ -41,7 +56,7 @@ export async function createSafetyReferral(event: H3Event, input: {
     const acknowledgeDueAt = new Date(now.getTime() + (settings?.referralAckMinutes || 5) * 60_000)
     const escalationDueAt = new Date(now.getTime() + (settings?.referralEscalationMinutes || 15) * 60_000)
     const assignedPsychologistId = settings?.referralPsychologistId || null
-    const [referral] = await tx.insert(schema.referrals).values({
+    const [referral] = await db.insert(schema.referrals).values({
       schoolId: input.schoolId,
       safetyEventId: safety.id,
       psychologistId: assignedPsychologistId,
@@ -52,7 +67,7 @@ export async function createSafetyReferral(event: H3Event, input: {
       escalatedAt: assignedPsychologistId ? null : now
     }).returning()
     if (!referral) throw new Error('转介工单创建失败')
-    await tx.insert(schema.referralEvents).values([
+    await db.insert(schema.referralEvents).values([
       {
         schoolId: input.schoolId, referralId: referral.id, actorId: input.ownerUserId,
         eventType: 'created', toStatus: 'created', metadata: { priority: referral.priority }
@@ -63,18 +78,18 @@ export async function createSafetyReferral(event: H3Event, input: {
       }] : [])
     ])
     if (assignedPsychologistId) {
-      await tx.insert(schema.notifications).values({
+      await db.insert(schema.notifications).values({
         schoolId: input.schoolId, userId: assignedPsychologistId, type: 'referral_assigned',
         title: '新的危机转介工单', body: `危机事件 ${safety.id.slice(0, 8)} 待确认，请立即进入工作台。`,
         targetType: 'referral', targetId: referral.id, deduplicationKey: `referral-assigned:${referral.id}`
       })
     }
     // 通知学校管理员
-    const schoolAdmins = await tx.select({ id: schema.users.id })
+    const schoolAdmins = await db.select({ id: schema.users.id })
       .from(schema.users)
       .where(and(eq(schema.users.schoolId, input.schoolId), eq(schema.users.role, 'school_admin')))
     for (const admin of schoolAdmins) {
-      await tx.insert(schema.notifications).values({
+      await db.insert(schema.notifications).values({
         schoolId: input.schoolId, userId: admin.id, type: 'crisis_alert',
         title: '安全预警：危机事件触发',
         body: `学校内发生危机事件 ${safety.id.slice(0, 8)}，请进入管理后台查看详情。`,
@@ -85,7 +100,7 @@ export async function createSafetyReferral(event: H3Event, input: {
     const escalationRecipients = settings?.safetyContactRecipients?.length
       ? settings.safetyContactRecipients
       : settings?.smsRecipients || []
-    await tx.insert(schema.notificationOutbox).values({
+    await db.insert(schema.notificationOutbox).values({
       schoolId: input.schoolId,
       eventType: 'crisis_referral',
       deduplicationKey: `crisis:${safety.id}`,
@@ -96,7 +111,7 @@ export async function createSafetyReferral(event: H3Event, input: {
         message: `教师赋能平台危机事件 ${safety.id.slice(0, 8)}，请立即登录转介工作台。`
       }
     })
-    await tx.insert(schema.auditLogs).values({
+    await db.insert(schema.auditLogs).values({
       schoolId: input.schoolId,
       actorId: input.ownerUserId,
       action: 'safety.fuse.triggered',
@@ -105,5 +120,4 @@ export async function createSafetyReferral(event: H3Event, input: {
       metadata: { matchedRules: input.matchedRules, referralId: referral.id }
     })
     return { safety, referral, crisisGuide: settings?.crisisGuide || '请立即联系校内心理专员；如存在即时危险，请拨打 110 或 120。' }
-  })
 }

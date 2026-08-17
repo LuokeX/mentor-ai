@@ -168,6 +168,9 @@ const router = useRouter()
       <template #module-data="{ row }">
         <div class="min-w-0">
           <p class="truncate">{{ moduleTitle(row.module) }}</p>
+          <p v-if="row.instrumentSnapshots?.length" class="mt-0.5 truncate text-xs text-slate-400" :title="row.instrumentSnapshots.map(item => item.name).join('、')">
+            {{ row.instrumentSnapshots.slice(0, 2).map(item => item.name).join('、') }}{{ row.instrumentSnapshots.length > 2 ? ` 等 ${row.instrumentSnapshots.length} 份量表` : '' }}
+          </p>
           <p v-if="row.attributionKeywords?.length" class="mt-0.5 truncate text-xs text-slate-400">
             {{ row.attributionKeywords.join('、') }}
           </p>

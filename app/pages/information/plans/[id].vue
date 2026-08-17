@@ -74,6 +74,12 @@ function moduleTitle(module: string) {
   return (moduleMeta as Record<string, { title: string }>)[module]?.title || module
 }
 
+/** 量表名称：优先取方案快照中的名称（历史迁移可能有 name=code 的回填），否则显示编码。 */
+function instrumentName(code?: string) {
+  const snap = (data.value?.instrumentSnapshots || []).find((item: { code: string }) => item.code === code)
+  return snap?.name || code || '-'
+}
+
 /**
  * 按严重度取色，不能按等级码取色：等级码是业务在 ⑤e 自定义的
  * （green / L1 / LP2 / norming…），映射表里一个都对不上，徽章会恒为灰。
@@ -494,7 +500,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
           <div
             v-for="(assessment, index) in data.assessments"
             :key="assessment.attemptId"
-            class="grid gap-3 rounded-xl border border-slate-100 p-3 text-sm md:grid-cols-[2rem_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]"
+            class="grid gap-3 rounded-xl border border-slate-100 p-3 text-sm md:grid-cols-[2rem_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]"
           >
             <div class="grid size-8 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500">
               {{ Number(index) + 1 }}
@@ -502,6 +508,10 @@ useHead({ title: () => data.value?.title || '方案详情' })
             <div>
               <span class="text-slate-400">评估模块</span>
               <p class="mt-1 font-medium">{{ moduleTitle(assessment.module) }}</p>
+            </div>
+            <div>
+              <span class="text-slate-400">量表</span>
+              <p class="mt-1 font-medium">{{ instrumentName(assessment.code) }}</p>
             </div>
             <div>
               <span class="text-slate-400">结果</span>

@@ -1,6 +1,6 @@
 import type { H3Event } from 'h3'
 import { and, asc, eq } from 'drizzle-orm'
-import { schema, useDb } from '../utils/db'
+import { schema, useDb, type DbClient } from '../utils/db'
 import type { ToolStructuredStep, ToolContraindicationRule, Severity } from '../../shared/contracts'
 
 type LegacyAction = { title: string, detail: string, status: string }
@@ -49,10 +49,10 @@ export async function createPlanActions(event: H3Event, input: {
   ownerUserId: string
   createdAt?: Date
   actions: LegacyAction[]
-}) {
+}, db: DbClient = useDb(event)) {
   const createdAt = input.createdAt || new Date()
   if (!input.actions.length) return []
-  return useDb(event).insert(schema.planActions).values(input.actions.map((action, sequence) => ({
+  return db.insert(schema.planActions).values(input.actions.map((action, sequence) => ({
     schoolId: input.schoolId,
     planId: input.planId,
     ownerUserId: input.ownerUserId,

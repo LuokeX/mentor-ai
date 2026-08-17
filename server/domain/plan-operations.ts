@@ -1,5 +1,5 @@
 import type { H3Event } from 'h3'
-import { schema, useDb } from '../utils/db'
+import { schema, useDb, type DbClient } from '../utils/db'
 
 const allowedMetadataTypes = new Set(['string', 'number', 'boolean'])
 
@@ -21,11 +21,11 @@ export async function recordPlanOperationEvent(event: H3Event, input: {
   ownerUserId: string
   eventType: PlanOperationEventType
   metadata?: Record<string, unknown>
-}) {
+}, db: DbClient = useDb(event)) {
   const metadata = Object.fromEntries(Object.entries(input.metadata || {})
     .filter(([, value]) => value === null || allowedMetadataTypes.has(typeof value))
     .slice(0, 24)) as Record<string, string | number | boolean | null>
-  await useDb(event).insert(schema.planOperationEvents).values({
+  await db.insert(schema.planOperationEvents).values({
     schoolId: input.schoolId,
     planId: input.planId,
     actionId: input.actionId || null,

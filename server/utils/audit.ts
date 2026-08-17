@@ -1,6 +1,6 @@
 import type { H3Event } from 'h3'
 import { getRequestIP } from 'h3'
-import { useDb, schema } from './db'
+import { useDb, schema, type DbClient } from './db'
 
 export async function writeAudit(event: H3Event, input: {
   schoolId?: string | null
@@ -10,7 +10,7 @@ export async function writeAudit(event: H3Event, input: {
   targetId?: string
   result?: 'success' | 'denied' | 'failure'
   metadata?: Record<string, unknown>
-}, db = useDb(event)) {
+}, db: DbClient = useDb(event)) {
   await db.insert(schema.auditLogs).values({
     schoolId: input.schoolId || null,
     actorId: input.actorId || null,
