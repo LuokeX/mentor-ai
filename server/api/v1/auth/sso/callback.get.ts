@@ -16,12 +16,13 @@ export default defineEventHandler(async (event) => {
     return sendRedirect(event, '/')
   } catch (err) {
     clearSsoCookies(event)
+    const data = (err as { data?: { email?: string } }).data
     let idp = ''
     try { idp = ssoConfig(event).issuer } catch { /* 未配置时留空 */ }
     await writeAudit(event, {
       action: 'auth.sso.login',
       result: 'denied',
-      metadata: { idp }
+      metadata: { email: data?.email, idp }
     }).catch(() => { /* 审计失败不阻断重定向 */ })
     return sendRedirect(event, '/login?error=sso')
   }

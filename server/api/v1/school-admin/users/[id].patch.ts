@@ -31,27 +31,28 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '该记录已被其他用户修改，请刷新后重试' })
   }
 
-  // 手机号变更时检查全局唯一性（登录凭证）
-  if (body.phone && body.phone !== target.phone) {
+  // 邮箱变更时检查同校唯一性
+  if (body.email && body.email !== target.email) {
     const [conflict] = await db.select({ id: schema.users.id }).from(schema.users).where(and(
-      eq(schema.users.phone, body.phone), ne(schema.users.id, id)
+      eq(schema.users.email, body.email), ne(schema.users.id, id)
     )).limit(1)
-    if (conflict) throw createError({ statusCode: 409, message: '该手机号已被其他账号使用' })
+    if (conflict) throw createError({ statusCode: 409, message: '该邮箱已被其他账号使用' })
   }
 
   const changedFields: string[] = []
   if (body.name) changedFields.push('name')
-  if (body.phone && body.phone !== target.phone) changedFields.push('phone')
+  if (body.email && body.email !== target.email) changedFields.push('email')
   if (body.role && body.role !== target.role) changedFields.push('role')
   if (body.status) changedFields.push('status')
 
   await db.transaction(async (tx) => {
     const setValues: Record<string, unknown> = { updatedAt: new Date() }
     if (body.name) setValues.name = body.name
-    if (body.phone) setValues.phone = body.phone
+    if (body.email) setValues.email = body.email
     if (body.role) setValues.role = body.role
     if (body.status) setValues.status = body.status
     if (body.employeeNo !== undefined) setValues.employeeNo = body.employeeNo || null
+    if (body.phone !== undefined) setValues.phoneEnc = body.phone ? encryptSensitive(body.phone, secret) : null
     if (body.gender !== undefined) setValues.gender = body.gender || null
     if (body.teachingGrades !== undefined) setValues.teachingGrades = body.teachingGrades
     if (body.subject !== undefined) setValues.subject = body.subject || null

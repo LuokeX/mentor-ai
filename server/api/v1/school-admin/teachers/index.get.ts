@@ -7,7 +7,7 @@ import { resolveCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
 
-const SORT_WHITELIST = createSortWhitelist('name', 'phone', 'status', 'activatedAt', 'lastLoginAt', 'classCount', 'studentCount', 'latestActivityAt', 'updatedAt')
+const SORT_WHITELIST = createSortWhitelist('name', 'email', 'status', 'activatedAt', 'lastLoginAt', 'classCount', 'studentCount', 'latestActivityAt', 'updatedAt')
 
 export default defineEventHandler(async (event) => {
   const { schoolId, actor: user, delegatedGrantId } = await requireSchoolManagement(event, ['teachers'])
@@ -22,11 +22,11 @@ export default defineEventHandler(async (event) => {
 
   const conditions = [eq(schema.users.schoolId, schoolId), eq(schema.users.role, 'teacher')]
   if (status !== 'all') conditions.push(eq(schema.users.status, status))
-  if (q) conditions.push(or(ilike(schema.users.name, `%${q}%`), ilike(schema.users.phone, `%${q}%`))!)
+  if (q) conditions.push(or(ilike(schema.users.name, `%${q}%`), ilike(schema.users.email, `%${q}%`))!)
 
   // 动态排序列映射
   const sortCol = sort === 'name' ? schema.users.name
-    : sort === 'phone' ? schema.users.phone
+    : sort === 'email' ? schema.users.email
     : sort === 'status' ? schema.users.status
     : sort === 'activatedAt' ? schema.users.activatedAt
     : sort === 'lastLoginAt' ? schema.users.lastLoginAt
@@ -40,7 +40,7 @@ export default defineEventHandler(async (event) => {
     dataQuery: db.select({
       id: schema.users.id,
       name: schema.users.name,
-      phone: schema.users.phone,
+      email: schema.users.email,
       status: schema.users.status,
       activatedAt: schema.users.activatedAt,
       lastLoginAt: schema.users.lastLoginAt,

@@ -23,11 +23,8 @@ export const reasonCategorySchema = z.enum([
   'risk_review', 'complaint_handling', 'data_correction_verification', 'school_duty', 'other'
 ])
 
-/** 中国大陆手机号（11 位，1 开头） */
-export const PHONE_PATTERN = /^1[3-9]\d{9}$/
-
 export const loginRequestSchema = z.object({
-  phone: z.string().trim().regex(PHONE_PATTERN),
+  email: z.string().trim().email().transform(value => value.toLowerCase()),
   password: z.string().min(8).max(200),
   otp: z.preprocess(
     value => typeof value === 'string' && value.trim() === '' ? undefined : value,
@@ -406,10 +403,11 @@ const dateInputSchema = z.string().refine(value => {
 
 export const schoolAdminUserCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  phone: z.string().trim().regex(PHONE_PATTERN),
+  email: z.string().trim().email().transform(value => value.toLowerCase()),
   role: z.enum(['teacher', 'psychologist']),
   password: z.string().min(8).max(200),
   employeeNo: z.string().trim().max(80).nullable().optional(),
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).nullable().optional(),
   gender: z.string().trim().max(20).nullable().optional(),
   teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
   subject: z.string().trim().max(80).nullable().optional(),
@@ -426,10 +424,11 @@ export const schoolAdminUserInviteSchema = schoolAdminUserCreateSchema.omit({ pa
 
 export const schoolAdminUserUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
-  phone: z.string().trim().regex(PHONE_PATTERN).optional(),
+  email: z.string().trim().email().transform(value => value.toLowerCase()).optional(),
   role: z.enum(['teacher', 'psychologist']).optional(),
   status: z.enum(['active', 'disabled']).optional(),
   employeeNo: z.string().trim().max(80).nullable().optional(),
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).nullable().optional(),
   gender: z.string().trim().max(20).nullable().optional(),
   teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
   subject: z.string().trim().max(80).nullable().optional(),
@@ -530,7 +529,7 @@ export const schoolAdminStudentUpdateSchema = schoolAdminStudentCreateSchema.par
 
 export const schoolAdminGuardianCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  phone: z.string().trim().regex(PHONE_PATTERN).nullable().optional(),
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).nullable().optional(),
   relation: z.string().trim().max(40).nullable().optional(),
   externalRef: z.string().trim().max(120).nullable().optional(),
   ownerUserId: z.string().uuid().optional(),

@@ -3,7 +3,7 @@ definePageMeta({ layout: false })
 const config = useRuntimeConfig()
 const showDemoLogin = config.public.showDemoLogin
 const showSsoLogin = config.public.showSsoLogin
-const form = reactive({ phone: showDemoLogin ? '13900001001' : '', password: showDemoLogin ? 'Mentor@2026' : '', otp: '', recoveryCode: '' })
+const form = reactive({ email: showDemoLogin ? 'teacher@demo.local' : '', password: showDemoLogin ? 'Mentor@2026' : '', otp: '', recoveryCode: '' })
 const pending = ref(false)
 const hydrated = ref(false)
 const errorMessage = ref('')
@@ -12,16 +12,16 @@ const useRecoveryCode = ref(false)
 const ssoError = ref(false)
 
 const demoAccounts = [
-  { label: '李老师（教师）', value: '13900001001' },
-  { label: '张老师（教师）', value: '13900001002' },
-  { label: '王心理专员', value: '13900001003' },
-  { label: '学校管理员', value: '13900001004' },
-  { label: '平台管理员', value: '13900001005' },
+  { label: '李老师（教师）', value: 'teacher@demo.local' },
+  { label: '张老师（教师）', value: 'teacher.zhang@demo.local' },
+  { label: '王心理专员', value: 'psychologist@demo.local' },
+  { label: '学校管理员', value: 'school.admin@demo.local' },
+  { label: '平台管理员', value: 'platform.admin@demo.local' },
 ]
 const selectedDemo = ref(demoAccounts[0]!.value)
 
-function onDemoSelect(phone: string) {
-  form.phone = phone
+function onDemoSelect(email: string) {
+  form.email = email
   form.password = 'Mentor@2026'
 }
 
@@ -42,7 +42,7 @@ async function login() {
     const result = await $fetch<{ role: string }>('/api/v1/auth/login', {
       method: 'POST',
       body: {
-        phone: form.phone,
+        email: form.email,
         password: form.password,
         ...(useRecoveryCode.value && form.recoveryCode.trim() ? { recoveryCode: form.recoveryCode.trim().toUpperCase() } : {}),
         ...(!useRecoveryCode.value && form.otp.trim() ? { otp: form.otp.trim() } : {})
@@ -91,7 +91,7 @@ async function login() {
           <UFormField v-if="showDemoLogin" label="演示账号">
             <USelect v-model="selectedDemo" :items="demoAccounts" class="w-full" @update:model-value="onDemoSelect" />
           </UFormField>
-          <UFormField label="手机号"><UInput v-model="form.phone" size="xl" icon="i-lucide-smartphone" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>
+          <UFormField label="邮箱"><UInput v-model="form.email" size="xl" icon="i-lucide-mail" class="w-full" /></UFormField>
           <UFormField label="密码"><UInput v-model="form.password" type="password" size="xl" icon="i-lucide-lock-keyhole" class="w-full" /></UFormField>
           <UFormField v-if="needOtp && !useRecoveryCode" label="心理专员动态验证码" help="请输入身份验证器中的 6 位验证码"><UInput v-model="form.otp" inputmode="numeric" maxlength="6" size="xl" icon="i-lucide-shield-check" class="w-full" /></UFormField>
           <UFormField v-if="needOtp && useRecoveryCode" label="一次性恢复码" help="恢复码使用后立即失效"><UInput v-model="form.recoveryCode" maxlength="13" size="xl" icon="i-lucide-key-round" class="w-full" placeholder="XXXXXX-XXXXXX" /></UFormField>
@@ -108,7 +108,7 @@ async function login() {
         </form>
         <p class="mt-5 text-center text-sm text-slate-500">收到学校邀请？<NuxtLink class="font-medium text-emerald-700 hover:underline" to="/activate">激活账号</NuxtLink></p>
         <div v-if="showDemoLogin" class="mt-8 rounded-2xl bg-slate-100/80 p-4 text-xs leading-6 text-slate-500">
-          演示账号：13900001001、13900001004、13900001005；统一密码 Mentor@2026。
+          演示账号：teacher@demo.local、school.admin@demo.local、platform.admin@demo.local；统一密码 Mentor@2026。
         </div>
         <p class="mt-6 text-xs leading-5 text-slate-400">登录即表示您已阅读校方隐私告知：学校管理员仅可在填写事由、获得短时只读授权并完整审计的前提下履行校内管理职责；平台管理员须另经学校审批。</p>
       </div>

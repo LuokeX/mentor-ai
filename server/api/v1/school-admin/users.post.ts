@@ -12,13 +12,13 @@ export default defineEventHandler(async (event) => {
   const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'])
   const body = schoolAdminUserInviteSchema.parse(await readBody(event))
   const db = useDb(event)
-  const [existing] = await db.select().from(schema.users).where(eq(schema.users.phone, body.phone)).limit(1)
+  const [existing] = await db.select().from(schema.users).where(eq(schema.users.email, body.email)).limit(1)
 
   if (existing && existing.schoolId !== schoolId) {
-    throw createError({ statusCode: 409, message: '该手机号已绑定其他学校账号' })
+    throw createError({ statusCode: 409, message: '该邮箱已绑定其他学校账号' })
   }
   if (existing?.status === 'active' || existing?.status === 'disabled') {
-    throw createError({ statusCode: 409, message: '该手机号已绑定账号，不能重复邀请' })
+    throw createError({ statusCode: 409, message: '该邮箱已绑定账号，不能重复邀请' })
   }
 
   const result = await db.transaction(async (tx) => {
@@ -26,6 +26,7 @@ export default defineEventHandler(async (event) => {
     const secret = useRuntimeConfig(event).encryptionKey
     const profileFields = {
       employeeNo: body.employeeNo || null,
+      phoneEnc: body.phone ? encryptSensitive(body.phone, secret) : null,
       gender: body.gender || null,
       teachingGrades: body.teachingGrades || [],
       subject: body.subject || null,
@@ -52,7 +53,7 @@ export default defineEventHandler(async (event) => {
       [invitedUser] = await tx.insert(schema.users).values({
         schoolId,
         name: body.name,
-        phone: body.phone,
+        email: body.email,
         role: body.role,
         status: 'invited',
         passwordHash: await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id }),
@@ -65,7 +66,7 @@ export default defineEventHandler(async (event) => {
       schoolId,
       userId: invitedUser.id,
       name: invitedUser.name,
-      phone: invitedUser.phone,
+      email: invitedUser.email,
       role: invitedUser.role as 'teacher' | 'psychologist',
       invitedBy: actor.id,
     }, tx as ReturnType<typeof useDb>)

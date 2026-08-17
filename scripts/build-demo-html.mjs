@@ -38,7 +38,7 @@ const sections = [
     title: '统一入口与安全登录',
     steps: [
       '打开系统地址（本地演示为 http://localhost:3300），进入登录页。',
-      '演示账号：13900001001 / Mentor@2026（李老师）。',
+      '演示账号：teacher@demo.local / Mentor@2026（李老师）。',
       '登录页同时展示：隐私告知说明（管理员只能在事由授权下查看敏感信息）。'
     ],
     points: [
@@ -161,7 +161,7 @@ const sections = [
     kicker: '环节 10 · 心理专员工作台（约 3 分钟）',
     title: '最小必要转介空间 + SLA 倒计时',
     steps: [
-      '心理专员登录（本环境演示账号 13900001003）。',
+      '心理专员登录（本环境演示账号 psychologist@demo.local）。',
       '工作台只显示分配给本人的转介工单：状态、优先级、SLA 倒计时。',
       '处置记录与关闭原因，时间线不可修改。'
     ],
@@ -343,7 +343,7 @@ const html = `<!DOCTYPE html>
   <div class="closing">
     <h2>演示前检查清单</h2>
     <p>① 服务就绪：访问 http://localhost:3300 健康检查通过，数据库已 seed（六力学校、5 名学生及沟通记录）。</p>
-    <p>② 演示账号：13900001001 / 13900001003 / 13900001004 / 13900001005，密码统一 Mentor@2026。</p>
+    <p>② 演示账号：teacher@demo.local / psychologist@demo.local / school.admin@demo.local / platform.admin@demo.local，密码统一 Mentor@2026。</p>
     <p>③ 顺序铁律：先做“危机场景”再登心理专员，转介工单才能实时出现。</p>
     <p>④ 若未配置 DeepSeek Key，首页显示“本地降级模式”——正好讲解 AI 故障降级能力。</p>
     <p>⑤ 危机演示会产生真实转介工单（短信为 mock 仅写日志），演示库可随时 pnpm db:seed 重建。</p>

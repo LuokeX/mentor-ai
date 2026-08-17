@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
     .filter(item => conversationIds.has(item.sessionId))
     .map(item => ({ id: item.id, sessionId: item.sessionId, role: item.role, content: decryptSensitive(item.contentEnc, secret), metadata: item.metadata, createdAt: item.createdAt }))
   const payload = {
-    exportVersion: '1.0', exportedAt: new Date().toISOString(), owner: { id: user.id, name: user.name, phone: user.phone },
+    exportVersion: '1.0', exportedAt: new Date().toISOString(), owner: { id: user.id, name: user.name, email: user.email },
     ownershipNote: '班级、学生、家长、沟通和方案是学校业务档案；本导出仅包含当前由该教师负责或参与的记录。',
     classes,
     students: students.map(item => ({ ...item, name: decryptSensitive(item.nameEnc, secret), notes: decryptSensitive(item.notesEnc, secret), nameEnc: undefined, notesEnc: undefined, nameSearch: undefined })),

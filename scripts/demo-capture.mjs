@@ -16,15 +16,15 @@ async function shot(page, name) {
   console.log(`[ok] ${name}.png`)
 }
 
-async function login(page, phone, withOtp = false) {
+async function login(page, email, withOtp = false) {
   await page.goto(`${BASE}/login`)
-  await page.getByLabel('手机号').fill(phone)
+  await page.getByLabel('邮箱').fill(email)
   await page.getByLabel('密码').fill(PASSWORD)
   await page.getByRole('button', { name: '安全登录' }).click()
   if (withOtp) {
     await page.getByLabel('心理专员动态验证码').waitFor({ timeout: 15000 })
     const totp = new OTPAuth.TOTP({
-      issuer: '教师赋能智能平台', label: '王心理专员',
+      issuer: '教师赋能智能平台', label: email,
       algorithm: 'SHA1', digits: 6, period: 30,
       secret: OTPAuth.Secret.fromBase32('JBSWY3DPEHPK3PXP')
     })
@@ -48,7 +48,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
   await page.waitForTimeout(900)
   await shot(page, '01-login')
 
-  await login(page, '13900001002')
+  await login(page, 'teacher.zhang@demo.local')
   await page.waitForURL(`${BASE}/`)
   await page.getByRole('heading', { name: /今天遇到了什么/ }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(2500) // 打字机问候动画
@@ -137,7 +137,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 
   // ============ 危机熔断 ============
   await logout(page)
-  await login(page, '13900001001')
+  await login(page, 'teacher@demo.local')
   await page.waitForURL(`${BASE}/`)
   await page.getByRole('heading', { name: /今天遇到了什么/ }).waitFor({ timeout: 20000 })
   await page.getByRole('button', { name: '新对话' }).first().click().catch(() => {})
@@ -152,7 +152,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 // ============ 心理专员 ============
 {
   const page = await context.newPage()
-  await login(page, '13900001003', true)
+  await login(page, 'psychologist@demo.local', true)
   await page.waitForURL(/\/specialist/, { timeout: 20000 })
   await page.getByRole('heading', { name: '心理专员工作台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
@@ -163,7 +163,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 // ============ 学校管理员 ============
 {
   const page = await context.newPage()
-  await login(page, '13900001004')
+  await login(page, 'school.admin@demo.local')
   await page.waitForURL(/\/school-admin/, { timeout: 20000 })
   await page.getByRole('heading', { name: '学校管理后台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
@@ -179,7 +179,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 // ============ 平台管理员 ============
 {
   const page = await context.newPage()
-  await login(page, '13900001005')
+  await login(page, 'platform.admin@demo.local')
   await page.waitForURL(/\/platform-admin/, { timeout: 20000 })
   await page.getByRole('heading', { name: '平台管理后台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)

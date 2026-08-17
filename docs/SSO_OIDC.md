@@ -17,7 +17,7 @@
 1. 一个 confidential client，授权类型为 Authorization Code；
 2. 客户端回调地址白名单登记：`https://<本平台域名>/api/v1/auth/sso/callback`（必须完全一致）；
 3. 平台 issuer 地址（Discovery 文档所在源）与 client id / secret；
-4. scope 需包含 `openid profile`，userinfo 需返回 `sub` 与工号 `employee_no`（可选 `name`）。
+4. scope 需包含 `openid profile email`，userinfo 需返回 `sub`、`email`（建议同时返回工号 `employee_no`，可选 `name`）。
 
 ## 配置步骤
 
@@ -36,10 +36,9 @@ OIDC_REDIRECT_URI=https://<本平台域名>/api/v1/auth/sso/callback
 
 IdP 用户信息按以下优先级匹配本地 `users` 表（见 `server/domain/sso.ts`）：
 
-1. `oidc_subject`（首次登录成功时绑定，此后以绑定为准，防止账号变更导致串号）；
-2. `employee_no` → `users.employee_no`（仅唯一命中时采用；多校同工号视为歧义跳过）。
-
-> 注意：平台账号以手机号为本地登录凭证，不再保存邮箱；OIDC 的 `email` 声明不再作为匹配键。IdP 未返回工号且用户未绑定过 `oidc_subject` 时，该用户无法通过统一身份登录，需先在本地激活或由管理员补录工号。
+1. `oidc_subject`（首次登录成功时绑定，此后以绑定为准，防止换邮箱导致串号）；
+2. `email`（本地唯一索引，当前兜底键）；
+3. `employee_no` → `users.employee_no`（仅唯一命中时采用；多校同工号视为歧义跳过）。
 
 命中且用户 `status=active`、所属学校 `status=active` 才放行；命中后首次登录自动回写 `oidc_subject`。未命中返回"该账号未在本平台开通"。
 
@@ -48,7 +47,7 @@ IdP 用户信息按以下优先级匹配本地 `users` 表（见 `server/domain/
 无需真实身份平台即可走通完整流程：
 
 ```bash
-pnpm tsx scripts/mock-oidc-idp.ts --port 3400 --employee-no 1001 --name 李老师
+pnpm tsx scripts/mock-oidc-idp.ts --port 3400 --email teacher@demo.local
 ```
 
 然后设置环境变量（四项指向 mock）：
@@ -65,7 +64,7 @@ OIDC_REDIRECT_URI=http://localhost:3301/api/v1/auth/sso/callback
 ## 审计
 
 - 成功：`auth.sso.login`（含 actor 与学校）。
-- 失败：`auth.sso.login` result=`denied`，metadata 记录 IdP issuer。
+- 失败：`auth.sso.login` result=`denied`，metadata 记录 IdP issuer 与尝试登录的邮箱。
 - 账密登录、TOTP、激活等原有审计不变。
 
 ## 相关代码

@@ -74,7 +74,7 @@ export async function currentUser(event: H3Event): Promise<AuthUser | null> {
   return {
     id: row.user.id,
     schoolId: row.user.schoolId,
-    phone: row.user.phone,
+    email: row.user.email,
     name: row.user.name,
     role,
     roleLabel: ROLE_LABELS[role]

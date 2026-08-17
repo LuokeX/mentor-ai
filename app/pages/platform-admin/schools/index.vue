@@ -30,14 +30,14 @@ const drawerOpen = ref(false)
 const editing = ref<SchoolRow | null>(null)
 const saving = ref(false)
 const formError = ref('')
-const form = reactive({ name: '', code: '', status: 'active' as 'active' | 'disabled', adminName: '', adminPhone: '' })
+const form = reactive({ name: '', code: '', status: 'active' as 'active' | 'disabled', adminName: '', adminEmail: '' })
 const invitation = ref<SchoolCreateResult | null>(null)
 const activationLink = computed(() => invitation.value ? `/activate?token=${encodeURIComponent(invitation.value.activationToken)}` : '')
 const copied = ref(false)
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', code: '', status: 'active', adminName: '', adminPhone: '' })
+  Object.assign(form, { name: '', code: '', status: 'active', adminName: '', adminEmail: '' })
   formError.value = ''
   drawerOpen.value = true
 }
@@ -46,7 +46,7 @@ function openEdit(rowOrId: SchoolRow | string) {
   const row = typeof rowOrId === 'string' ? list.rows.value.find(item => item.id === rowOrId) : rowOrId
   if (!row) return
   editing.value = row
-  Object.assign(form, { name: row.name, code: row.code, status: row.status, adminName: '', adminPhone: '' })
+  Object.assign(form, { name: row.name, code: row.code, status: row.status, adminName: '', adminEmail: '' })
   formError.value = ''
   drawerOpen.value = true
 }
@@ -60,8 +60,8 @@ async function saveSchool() {
     formError.value = '请填写学校名称；编码仅允许小写字母、数字和连字符'
     return
   }
-  if (!editing.value && (form.adminName.trim().length < 2 || !/^1[3-9]\d{9}$/.test(form.adminPhone))) {
-    formError.value = '请填写首位学校管理员姓名和手机号'
+  if (!editing.value && (form.adminName.trim().length < 2 || !form.adminEmail.includes('@'))) {
+    formError.value = '请填写首位学校管理员姓名和邮箱'
     return
   }
   saving.value = true
@@ -76,7 +76,7 @@ async function saveSchool() {
     } else {
       invitation.value = await $fetch<SchoolCreateResult>('/api/v1/platform-admin/schools', {
         method: 'POST',
-        body: { name: form.name, code: form.code, adminName: form.adminName, adminPhone: form.adminPhone },
+        body: { name: form.name, code: form.code, adminName: form.adminName, adminEmail: form.adminEmail },
       })
     }
     drawerOpen.value = false
@@ -115,7 +115,7 @@ async function copyActivationLink() {
         <USelect v-if="editing" v-model="form.status" :items="[{ label: '正常', value: 'active' }, { label: '停用', value: 'disabled' }]" class="w-full" />
         <template v-else>
           <UFormField label="首位管理员姓名" required><UInput v-model="form.adminName" class="w-full" /></UFormField>
-          <UFormField label="首位管理员手机号" required><UInput v-model="form.adminPhone" type="tel" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>
+          <UFormField label="首位管理员邮箱" required><UInput v-model="form.adminEmail" type="email" class="w-full" /></UFormField>
         </template>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         <div class="flex justify-end gap-2"><UButton variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">保存</UButton></div>

@@ -96,19 +96,19 @@ describe('phase 0: security and data protection baseline', () => {
   describe('invitation-only deletion rules', () => {
     it('invitations are scoped to teacher and psychologist roles only', () => {
       expect(schoolAdminUserInviteSchema.safeParse({
-        name: '李老师', phone: '13800000001', role: 'teacher'
+        name: '李老师', email: 'teacher@school.edu', role: 'teacher'
       }).success).toBe(true)
       expect(schoolAdminUserInviteSchema.safeParse({
-        name: '管理员', phone: '13800000001', role: 'school_admin'
+        name: '管理员', email: 'admin@school.edu', role: 'school_admin'
       }).success).toBe(false)
     })
 
-    it('requires name and phone in invitations', () => {
+    it('requires name and email in invitations', () => {
       expect(schoolAdminUserInviteSchema.safeParse({
-        name: '', phone: '13800000001', role: 'teacher'
+        name: '', email: 'x@y.com', role: 'teacher'
       }).success).toBe(false)
       expect(schoolAdminUserInviteSchema.safeParse({
-        name: 'test', phone: 'invalid', role: 'teacher'
+        name: 'test', email: 'invalid', role: 'teacher'
       }).success).toBe(false)
     })
   })
