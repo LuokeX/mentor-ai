@@ -80,9 +80,7 @@ const contextPreview = ref<any>(null)
 const previewLoading = ref(false)
 const withoutRecord = ref(false)
 const deleteCandidate = ref<string>()
-const greeting = ref('')
-const typingDone = ref(false)
-const currentSnapPage = ref(0) // 0: 欢迎区, 1: 聊天面板, 2: 使用闭环
+const currentSnapPage = ref(0) // 0: 聊天面板, 1: 使用闭环
 const snapLocked = ref(false)
 let snapUnlockTimer: number | undefined
 const toast = useToast()
@@ -478,19 +476,10 @@ onMounted(async () => {
   else if (prefill?.contextKey) selectedContextKey.value = prefill.contextKey
   else loadContextPreview()
   if (prefill?.prompt) input.value = prefill.prompt
-
-  // 打字机动画
-  const fullGreeting = `${user.value?.name || '老师'}，今天遇到了什么？`
-  for (let i = 0; i <= fullGreeting.length; i++) {
-    await new Promise(r => setTimeout(r, 40))
-    greeting.value = fullGreeting.slice(0, i)
-  }
-  typingDone.value = true
 })
 
 function getSnapSections() {
   return [
-    document.getElementById('welcome-section'),
     document.getElementById('chat-section'),
     document.getElementById('dashboard-section')
   ].filter((section): section is HTMLElement => Boolean(section))
@@ -543,7 +532,7 @@ function syncSnapPage() {
   currentSnapPage.value = getNearestSnapPage()
 }
 
-// 全页 snap 滚动：欢迎区 → 聊天面板 → 使用闭环
+// 全页 snap 滚动：聊天面板 → 使用闭环
 function handleWheel(event: WheelEvent) {
   if (Math.abs(event.deltaY) < 8) return
   const dir = event.deltaY > 0 ? 1 : -1
@@ -587,27 +576,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-7xl px-5 py-8 sm:py-12">
-    <section id="welcome-section" class="grid gap-8 lg:grid-cols-[1.25fr_.75fr]">
-      <div>
-        <p class="text-sm font-semibold text-emerald-700">{{ new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }) }}</p>
-        <h1 class="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">{{ greeting }}<span v-if="!typingDone" class="animate-pulse text-emerald-500">|</span></h1>
-        <p class="mt-4 max-w-2xl text-base leading-7 text-slate-600">把情况像对同事一样说出来。助手只负责澄清问题和推荐模块；正式方案会在模块内经过量表评估、规则归因和工具匹配后生成。</p>
-      </div>
-      <div class="panel flex items-center gap-4 p-5">
-        <div class="grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-shield-check" class="size-7" /></div>
-        <div><p class="text-sm font-semibold">安全规则正在运行</p><p class="mt-1 text-xs leading-5 text-slate-500">危机与等级由确定性规则执行；AI 只负责理解、检索和表达，不进行心理诊断。</p></div>
-      </div>
-    </section>
-
-    <div class="mt-4 flex justify-center lg:hidden">
-      <button class="flex flex-col items-center gap-1 text-xs text-slate-400 transition hover:text-emerald-600" @click="currentSnapPage = 1; const sections = getSnapSections(); if (sections[1]) scrollToSnapSection(sections[1], 1)">
-        <span>向下滚动查看 AI 助手与今日待办</span>
-        <UIcon name="i-lucide-chevron-down" class="size-5 animate-bounce" />
-      </button>
-    </div>
-
-    <section id="chat-section" class="mt-10 grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
+  <div class="mx-auto max-w-7xl px-5 pb-8 pt-4 sm:pb-12 sm:pt-6">
+    <section id="chat-section" class="grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
       <aside class="panel hidden h-[18rem] flex-col overflow-hidden lg:flex lg:h-[calc(100dvh-7rem)] lg:min-h-[34rem]">
         <div class="border-b border-slate-100 p-4">
           <button type="button" class="w-full flex items-center justify-center gap-2 rounded-lg bg-[var(--ui-primary)] px-4 py-3 text-base font-medium text-white" @click="newConversation"><UIcon name="i-lucide-message-square-plus" class="size-5" />新对话</button>

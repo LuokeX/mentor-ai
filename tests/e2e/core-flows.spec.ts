@@ -14,6 +14,9 @@ async function login(page: import('@playwright/test').Page, phone: string, optio
     platform_admin: '/platform-admin'
   }
   await page.goto(homes[result.role] || '/')
+  // 等待 Nuxt hydration 完成（挂载后 #__nuxt 带 data-v-app），
+  // 避免后续输入被水合阶段的初始状态覆盖
+  await page.waitForFunction(() => document.querySelector('#__nuxt')?.hasAttribute('data-v-app'))
 }
 
 test.describe('四角色核心路径', () => {
@@ -21,7 +24,7 @@ test.describe('四角色核心路径', () => {
 
   test('教师登录、移动导航与 AI 咨询', async ({ page }, testInfo) => {
     await login(page, '13900001001')
-    await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /今天想先聊聊什么/ })).toBeVisible()
     if (testInfo.project.name === 'mobile-chromium') await expect(page.getByRole('link', { name: '事件', exact: true })).toBeVisible()
     await page.getByLabel('向 AI 赋能助手提问').fill('我想先梳理一下班级纪律反复的问题。')
     await page.getByRole('button', { name: '发送消息' }).click()
@@ -92,7 +95,7 @@ test.describe('四角色核心路径', () => {
     expect(activation.ok()).toBeTruthy()
     await page.getByRole('button', { name: '退出' }).click()
     await login(page, phone, { password: 'PilotTeacher@2026' })
-    await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /今天想先聊聊什么/ })).toBeVisible()
   })
 
   test('统一管理表格 CRUD、并发控制、生命周期与负责人权限', async ({ page }, testInfo) => {
