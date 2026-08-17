@@ -1,17 +1,18 @@
 # 数据库与应用开发、发布和运行规范
 
-本文是教师赋能智能平台在本地开发环境和正式环境中的命令与操作基线。涉及数据库结构、数据迁移、应用发布、Worker、备份或恢复时必须遵守本文。事故处置细节另见 [运维手册](OPERATIONS.md)。
+本文是教师赋能智能平台在本地开发、测试演练和正式环境中的命令与操作基线。涉及数据库结构、数据迁移、应用发布、Worker、备份或恢复时必须遵守本文。事故处置细节另见 [运维手册](OPERATIONS.md)。
 
 ## 1. 环境边界
 
 | 环境 | 用途 | 数据要求 | 允许执行 `db:seed` | 启动方式 |
 |---|---|---|---|---|
 | 本地开发 | 编码、调试、单元测试 | 仅使用虚构或脱敏数据 | 允许 | Node.js + 本地专用 Docker PostgreSQL（5434/mentor_ai_dev） |
+| 测试/UAT | 发布前演练：迁移、功能与数据核对 | 正式库最新备份的完整副本（本机回环访问，禁止外传） | 禁止 | `docker-compose.test.yml`（5435/mentor_ai，app 3400） |
 | 正式环境 | 校内封闭试用和正式业务 | 真实业务数据 | 禁止 | Docker Compose + Nginx/TLS |
 
 必须保证：
 
-- 两类环境使用不同的数据库、密钥、短信配置和 DeepSeek 凭据，不得复用正式数据到开发环境。
+- 三类环境使用不同的数据库；测试环境的数据来自正式备份副本，**仅允许 `127.0.0.1` 回环访问**，禁止开放端口、禁止将副本外传或截图外发。
 - `.env` 不提交到版本库，文件权限应为 `600`。日志、备份和截图不得包含密钥或业务正文。
 - `mentor_admin` 只用于初始化、迁移、备份和恢复；App 与 Worker 只能使用无建库、建表权限的 `mentor_app`。
 - 正式环境只部署经过测试并冻结的版本，不直接在服务器上修改源码、Schema 或历史 migration。
@@ -22,6 +23,8 @@
 |---|---|---|
 | `pnpm env:init` | 为本地 `.env` 替换占位值并生成随机密钥 | 仅本地首次初始化 |
 | `pnpm db:up:local` | 启动本地开发专用 PostgreSQL（`docker-compose.local.yml`，端口 5434） | 本地开发 |
+| `bash scripts/refresh-test-db.sh` | 将正式库最新备份恢复进测试库（`docker-compose.test.yml`，端口 5435） | 发布演练前 |
+| `docker compose -f docker-compose.test.yml up -d` | 启动测试环境（migrate + app 3400） | 发布演练 |
 | `pnpm db:up` | 启动正式环境 compose 的 PostgreSQL、Ollama 并执行 migration | 仅正式环境部署流程 |
 | `pnpm db:generate` | 根据 Drizzle Schema 生成新 migration | 本地开发 |
 | `pnpm db:migrate` | 执行尚未执行的 migration | 本地或受控发布流程 |
@@ -198,10 +201,14 @@ docker compose logs --tail=100 app nginx
 
 1. 确认待发布版本、migration 清单、影响范围、负责人和回滚版本。
 2. 执行质量检查，确认无未关闭的 P0 缺陷。
-3. 在变更窗口开始前备份数据库：
+3. **测试环境演练**：用正式库最新备份恢复测试库，在测试环境执行迁移并冒烟：
 
 ```bash
-BACKUP_RETENTION_DAYS=14 ./scripts/backup.sh
+BACKUP_RETENTION_DAYS=14 ./scripts/backup.sh          # 正式库备份（演练与部署共用）
+bash scripts/refresh-test-db.sh                        # 恢复最新备份进测试库（5435）
+docker compose -f docker-compose.test.yml up -d        # 测试环境执行 migrate + app
+curl -s http://127.0.0.1:3400/health/ready             # 期望 200
+# 用正式账号在测试环境登录，并核对 users 等关键表数据量
 ```
 
 4. 记录备份文件名和校验和，并在隔离环境验证备份可读取。

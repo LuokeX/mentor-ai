@@ -1,0 +1,107 @@
+# 测试/UAT 演练环境。
+#
+# 与正式环境使用同一套镜像与配置逻辑（migrate + app + postgres），
+# 但使用独立 project（mentor-ai-test）、独立数据卷和端口：
+# - postgres: 127.0.0.1:5435，库名 mentor_ai，数据卷 mentor-ai-test_postgres-data
+# - app: 127.0.0.1:3400 -> 3000
+# - Ollama 不随测试环境启动；EMBEDDING_ENABLED=false 走关键词模式
+#
+# 数据来源：每次发布前用 scripts/refresh-test-db.sh 将正式库最新备份
+# 恢复进来，再启动本环境演练迁移与功能。
+#
+# 注意：测试环境包含正式数据的完整副本（真实人员与业务内容），
+# 仅允许本机回环访问，禁止开放端口、禁止将数据外传或截图外发。
+name: mentor-ai-test
+
+x-app-environment: &app-environment
+  DATABASE_URL: postgres://${APP_DB_USER:-mentor_app}:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@postgres:5432/mentor_ai
+  NUXT_DATABASE_URL: postgres://${APP_DB_USER:-mentor_app}:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@postgres:5432/mentor_ai
+  SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+  NUXT_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
+  NUXT_ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
+  NUXT_PUBLIC_SHOW_DEMO_LOGIN: ${SHOW_DEMO_LOGIN:-true}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+  NUXT_DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+  DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+  NUXT_DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+  DEEPSEEK_ROUTER_MODEL: ${DEEPSEEK_ROUTER_MODEL:-deepseek-v4-flash}
+  NUXT_DEEPSEEK_ROUTER_MODEL: ${DEEPSEEK_ROUTER_MODEL:-deepseek-v4-flash}
+  DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-pro}
+  NUXT_DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-pro}
+  DEEPSEEK_AGREEMENT_VERSION: ${DEEPSEEK_AGREEMENT_VERSION:-}
+  NUXT_DEEPSEEK_AGREEMENT_VERSION: ${DEEPSEEK_AGREEMENT_VERSION:-}
+  NUXT_DEEPSEEK_TIMEOUT_MS: ${DEEPSEEK_TIMEOUT_MS:-8000}
+  EMBEDDING_ENABLED: "false"
+  NUXT_EMBEDDING_ENABLED: "false"
+  SMS_PROVIDER: ${SMS_PROVIDER:-mock}
+  NUXT_SMS_PROVIDER: ${SMS_PROVIDER:-mock}
+  SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
+  NUXT_SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
+  SMS_WEBHOOK_TOKEN: ${SMS_WEBHOOK_TOKEN:-}
+  OIDC_ISSUER: ${OIDC_ISSUER:-}
+  NUXT_OIDC_ISSUER: ${OIDC_ISSUER:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  NUXT_OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  NUXT_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+  NUXT_OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+  NUXT_PUBLIC_SHOW_SSO_LOGIN: ${OIDC_ISSUER:+true}
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.5-pg18-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mentor_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: mentor_ai
+      APP_DB_USER: ${APP_DB_USER:-mentor_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./infra/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    ports:
+      - "127.0.0.1:5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mentor_admin} -d mentor_ai"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+
+  migrate:
+    build: .
+    environment:
+      <<: *app-environment
+      DATABASE_URL: postgres://${POSTGRES_USER:-mentor_admin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/mentor_ai
+    command: ["./node_modules/.bin/tsx", "scripts/migrate.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "3000"
+    ports:
+      - "127.0.0.1:3400:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres-data:
