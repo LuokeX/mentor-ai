@@ -49,10 +49,8 @@ test.describe('四角色核心路径', () => {
     await expect(submit).toBeEnabled()
     await submit.click()
 
-    await expect(page.getByText('评估完成 · 行动方案已创建')).toBeVisible({ timeout: 45_000 })
-    const firstAction = page.getByRole('link', { name: '开始执行第一个行动' })
-    await expect(firstAction).toHaveAttribute('href', /\/information\/plans\/[0-9a-f-]{36}/)
-    await firstAction.click()
+    // 提交后自动跳转到方案详情页（报告与方案统一在此查看，不再停留完成页）
+    await expect(page).toHaveURL(/\/information\/plans\/[0-9a-f-]{36}/, { timeout: 45_000 })
     await expect(page.getByText('方案确认')).toBeVisible()
     await page.getByRole('button', { name: '接受执行' }).click()
     await expect(page.getByText('已接受')).toBeVisible()

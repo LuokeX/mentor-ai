@@ -168,35 +168,5 @@ const rateStatus = computed(() => {
       </div>
     </div>
 
-    <!-- 最近评估 -->
-    <div v-if="data?.assessments?.length" class="mt-8">
-      <h2 class="text-lg font-semibold text-gray-900">最近评估</h2>
-      <div class="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div class="divide-y divide-gray-50">
-          <!-- 整行可点：报告一直存在 assessment_attempts.result.report 里，
-               此前没有任何入口能把它重新打开。 -->
-          <NuxtLink
-            v-for="a in data.assessments.slice(0, 5)"
-            :key="a.id"
-            :to="`/information/assessments/${a.id}`"
-            class="flex items-center justify-between px-5 py-3.5 transition-colors hover:bg-gray-50/50"
-          >
-            <div>
-              <p class="font-medium text-gray-900">{{ moduleTitle(a.module) }}</p>
-              <p class="text-sm text-gray-400">
-                {{ a.submittedAt ? new Date(a.submittedAt).toLocaleString('zh-CN') : '未提交' }}
-                <span v-if="a.planId" class="ml-2 font-medium text-green-600">已有方案</span>
-              </p>
-            </div>
-            <span
-              class="rounded-full px-2.5 py-0.5 text-xs font-medium"
-              :style="{ backgroundColor: a.levelColor || '#e2e8f0', color: '#475569' }"
-            >
-              {{ a.levelLabel || '—' }}
-            </span>
-          </NuxtLink>
-        </div>
-      </div>
-    </div>
   </ManagementPage>
 </template>

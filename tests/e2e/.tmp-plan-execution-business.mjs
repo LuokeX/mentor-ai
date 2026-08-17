@@ -40,11 +40,8 @@ try {
   }
 
   await page.getByRole('button', { name: '提交并生成方案' }).click()
-  await expect(page.getByText('评估完成 · 行动方案已创建')).toBeVisible({ timeout: 30_000 })
-
-  const actionLink = page.getByRole('link', { name: '开始执行第一个行动' })
-  await expect(actionLink).toHaveAttribute('href', /\/information\/plans\/[0-9a-f-]{36}/)
-  await actionLink.click()
+  // 提交后自动跳转到方案详情页（报告与方案统一在此查看）
+  await page.waitForURL(/\/information\/plans\/[0-9a-f-]{36}/, { timeout: 30_000 })
 
   await expect(page.getByRole('heading', { name: '方案执行' })).toBeVisible()
   await expect(page.getByText(/0\/\d+ 项完成/)).toBeVisible()

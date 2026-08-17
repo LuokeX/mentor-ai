@@ -2,25 +2,12 @@
 import { moduleIdSchema } from '#shared/contracts'
 import { INSTRUMENT_ROLE_LABELS, type InstrumentRole, type LibraryType } from '#shared/contracts'
 import { moduleMeta, type AssessmentDefinition } from '#shared/assessments'
-import type { AssessmentReport } from '#shared/reports'
 
 interface ContextOption {
   id: string
   type: 'student' | 'class' | 'guardian'
   label: string
   description?: string
-}
-
-interface PlanDetail {
-  id: string
-  nextReviewAt?: string | null
-  actions: Array<{
-    id: string
-    title: string
-    detail: string
-    status: string
-    dueAt?: string | null
-  }>
 }
 
 interface ModuleResourceOverview {
@@ -204,7 +191,6 @@ const draftUpdatedAt = ref<string>()
 const attemptId = ref<string>()
 const pending = ref(false)
 const output = ref<any>(null)
-const planDetail = ref<PlanDetail | null>(null)
 const submitError = ref('')
 const draftSaveError = ref('')
 const allowUnlinked = ref(false)
@@ -244,8 +230,6 @@ const question = computed(() => definition.value?.questions[current.value])
 const answeredCount = computed(() => Object.keys(answers).length)
 const hasDraft = computed(() => Boolean(attemptId.value || answeredCount.value))
 const progress = computed(() => definition.value ? Math.round(answeredCount.value / definition.value.questions.length * 100) : 0)
-const report = computed<AssessmentReport | null>(() => output.value?.report || output.value?.result?.report || null)
-const firstAction = computed(() => planDetail.value?.actions.find(item => item.status !== 'completed') || planDetail.value?.actions[0] || null)
 const visibleTools = computed(() => resourceOverview.value?.tools.tools.slice(0, 3) || [])
 const resourceLibraries = computed(() => resourceOverview.value?.libraries || [])
 
@@ -259,15 +243,6 @@ const libraryTypeLabels: Record<LibraryType, string> = {
 
 function libraryTypeLabel(type: LibraryType) {
   return libraryTypeLabels[type] || type
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return '待安排'
-  return new Date(value).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
-}
-
-function printReport() {
-  window.print()
 }
 
 function firstUnansweredIndex() {
@@ -387,8 +362,10 @@ async function submit() {
     // 提交后量表状态会变（这张变 completed，被它的触发条件解锁的那张变 suggested）。
     // 不刷新的话教师返回选择器看到的还是提交前的状态，得手动刷页面才对。
     await refreshRecommendation().catch(() => undefined)
+    // 报告与方案统一在方案详情页查看：提交成功后直接跳转，不再停留完成页。
     if (output.value?.planId) {
-      planDetail.value = await $fetch<PlanDetail>(`/api/v1/plans/${output.value.planId}`).catch(() => null)
+      await navigateTo(`/information/plans/${output.value.planId}`)
+      return
     }
     if (!output.value?.planId && !output.value?.fuse) {
       submitError.value = '评估已保存，但方案生成失败。请稍后在方案列表中查看，或联系管理员。'
@@ -619,16 +596,12 @@ async function submit() {
     </div>
 
     <section v-if="output" class="report-page mt-6 space-y-6">
+      <!-- 安全熔断：必须停留在当前页展示转介指引，不跳方案页 -->
       <div v-if="output.fuse" class="panel border-2 border-red-200 bg-red-50 p-7"><div class="flex gap-4"><UIcon name="i-lucide-siren" class="size-7 text-red-600" /><div><h1 class="text-xl font-semibold text-red-900">已启动安全转介</h1><p class="mt-2 text-sm text-red-800">{{ output.fuse.crisisGuide }}</p><p class="mt-3 text-xs text-red-600">事件编号：{{ output.fuse.eventId }}</p></div></div></div>
-      <template v-else-if="report">
-        <section v-if="output.planId" class="panel border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6 sm:p-7">
-          <div class="flex flex-wrap items-start justify-between gap-4"><div><p class="text-sm font-semibold text-emerald-700">评估完成 · 行动方案已创建</p><h1 class="mt-2 text-2xl font-semibold">先完成一个最小行动</h1><p class="mt-2 text-sm text-slate-600">系统已安排 3 天行动，并在 {{ formatDate(planDetail?.nextReviewAt) }} 进入复盘提醒。</p></div><UIcon name="i-lucide-circle-check-big" class="size-9 text-emerald-600" /></div>
-          <div v-if="firstAction" class="mt-5 rounded-2xl border border-emerald-100 bg-white p-4"><div class="flex flex-wrap items-center justify-between gap-2"><strong>{{ firstAction.title }}</strong><UBadge color="neutral" variant="soft">{{ formatDate(firstAction.dueAt) }} 前</UBadge></div><p class="mt-2 text-sm leading-6 text-slate-600">{{ firstAction.detail }}</p></div>
-          <div class="mt-5 flex flex-wrap gap-3"><UButton :to="`/information/plans/${output.planId}`" icon="i-lucide-list-checks">开始执行第一个行动</UButton><UButton color="neutral" variant="soft" to="/information/plans" icon="i-lucide-calendar-check">查看跟踪复盘</UButton></div>
-        </section>
-        <div class="print-actions flex flex-wrap justify-end gap-2"><UButton icon="i-lucide-printer" color="neutral" variant="soft" @click="printReport">打印/归档</UButton><UButton v-if="output.planId" :to="`/information/plans/${output.planId}`" icon="i-lucide-history">进入复盘记录</UButton></div>
-        <AssessmentReportView :report="report" :tools="output.result.tools" />
-      </template>
+      <!-- 非熔断：提交成功后自动跳转方案详情页，此提示仅作跳转前的过渡 -->
+      <div v-else class="panel p-7 text-center text-sm text-slate-500">
+        <p>评估完成，正在进入方案详情…</p>
+      </div>
       <div class="print-actions flex gap-3"><UButton to="/">返回工作台</UButton><UButton to="/information/plans" color="neutral" variant="soft">查看方案记录</UButton></div>
     </section>
   </div>

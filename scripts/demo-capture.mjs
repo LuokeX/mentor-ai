@@ -101,11 +101,11 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
     await page.waitForTimeout(500)
   }
   await page.getByRole('button', { name: '提交并生成方案' }).click()
-  await page.getByText('评估完成 · 行动方案已创建').waitFor({ timeout: 60000 })
+  // 提交后自动进入方案详情页
+  await page.waitForURL(/\/information\/plans\/[0-9a-f-]{36}/, { timeout: 60000 })
   await shot(page, '06-plan-created')
 
   // 方案确认
-  await page.getByRole('link', { name: '开始执行第一个行动' }).click()
   await page.getByText('方案确认').waitFor({ timeout: 20000 })
   await page.getByRole('button', { name: '接受执行' }).click()
   await page.getByText('已接受').waitFor({ timeout: 15000 })
