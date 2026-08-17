@@ -9,7 +9,7 @@
 import type { ManagedListQuery, ManagedListResult, Capability } from '~~/shared/management'
 import { SEARCH_DEBOUNCE_MS, DEFAULT_PAGE_SIZE } from '~~/shared/management'
 
-export function useManagedList<T>(baseUrl: string) {
+export function useManagedList<T>(baseUrl: string, options?: { extraQuery?: () => Record<string, string | undefined> }) {
   const route = useRoute()
   const router = useRouter()
 
@@ -50,6 +50,10 @@ export function useManagedList<T>(baseUrl: string) {
     }
     if (q.value) query.q = q.value
     if (statusFilter.value !== 'all') query.status = statusFilter.value
+    if (options?.extraQuery) {
+      const extra = options.extraQuery() || {}
+      for (const [key, value] of Object.entries(extra)) if (value) query[key] = value
+    }
     return query
   })
 

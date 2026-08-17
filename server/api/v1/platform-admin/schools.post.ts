@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
         schoolId: school.id,
         userId: schoolAdmin.id,
         name: schoolAdmin.name,
-        phone: schoolAdmin.phone,
+        phone: schoolAdmin.phone ?? '',
         role: 'school_admin',
         invitedBy: admin.id,
       }, tx as ReturnType<typeof useDb>)

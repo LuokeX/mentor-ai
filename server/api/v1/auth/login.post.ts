@@ -11,11 +11,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: '登录信息格式不正确' })
   }
   const body = parsed.data
-  const [user] = await useDb(event).select().from(schema.users).where(eq(schema.users.email, body.email)).limit(1)
+  const [user] = await useDb(event).select().from(schema.users).where(eq(schema.users.phone, body.phone)).limit(1)
   const valid = !!user && user.status === 'active' && !!user.passwordHash && await argon2.verify(user.passwordHash, body.password).catch(() => false)
   if (!valid) {
-    await writeAudit(event, { action: 'auth.login', result: 'denied', metadata: { email: body.email } })
-    throw createError({ statusCode: 401, message: '邮箱或密码不正确' })
+    await writeAudit(event, { action: 'auth.login', result: 'denied', metadata: { phone: body.phone } })
+    throw createError({ statusCode: 401, message: '手机号或密码不正确' })
   }
 
   await createSession(event, user.id)

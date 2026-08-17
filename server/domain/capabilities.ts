@@ -25,7 +25,6 @@ export type ManagedTargetType =
   | 'import'
   | 'plan_operation'
   | 'access_request'
-  | 'delegated_management'
 
 export interface CapabilityContext {
   user: AuthUser
@@ -34,7 +33,6 @@ export interface CapabilityContext {
   recordStatus?: string | null
   targetType: ManagedTargetType
   targetId?: string
-  delegatedGrantId?: string | null
   activatedAt?: Date | string | null
 }
 
@@ -47,11 +45,9 @@ export function resolveCapabilities(ctx: CapabilityContext): Capability[] {
     recordOwnerUserId,
     recordStatus,
     targetType,
-    delegatedGrantId,
   } = ctx
 
   if (user.role !== 'platform_admin' && recordSchoolId && recordSchoolId !== user.schoolId) return []
-  if (user.role === 'platform_admin' && recordSchoolId && !delegatedGrantId && targetType !== 'school') return []
 
   if (user.role === 'teacher') {
     if (!user.schoolId || recordSchoolId !== user.schoolId || recordOwnerUserId !== user.id) return []
@@ -73,7 +69,7 @@ export function resolveCapabilities(ctx: CapabilityContext): Capability[] {
     return targetType === 'referral' ? ['view', 'edit'] : []
   }
 
-  if (user.role === 'school_admin' || (user.role === 'platform_admin' && delegatedGrantId)) {
+  if (user.role === 'school_admin' || user.role === 'platform_admin') {
     const caps: Capability[] = ['view']
     if (targetType === 'audit' || targetType === 'import' || targetType === 'plan_operation' || targetType === 'access_request') {
       return caps
@@ -88,6 +84,7 @@ export function resolveCapabilities(ctx: CapabilityContext): Capability[] {
       if (recordStatus !== 'disabled') caps.push('disable')
       return caps
     }
+    if (user.role === 'platform_admin' && targetType !== 'school') return caps
 
     caps.push('edit')
     if (recordStatus === 'archived') {
@@ -100,17 +97,12 @@ export function resolveCapabilities(ctx: CapabilityContext): Capability[] {
     return caps
   }
 
-  if (user.role === 'platform_admin' && targetType === 'school') {
-    return ['view', 'edit']
-  }
-
   return []
 }
 
 export function resolvePageCapabilities(
   user: AuthUser,
   targetType: ManagedTargetType,
-  delegatedGrantId?: string | null,
 ): Capability[] {
   if (user.role === 'teacher') {
     return ['student', 'guardian', 'communication', 'student_event', 'class_event'].includes(targetType)
@@ -124,8 +116,8 @@ export function resolvePageCapabilities(
       : ['view', 'create']
   }
   if (user.role === 'platform_admin') {
-    if (targetType === 'school') return ['view', 'create']
-    return delegatedGrantId ? ['view', 'create'] : ['view']
+    if (targetType === 'school' || targetType === 'user') return ['view', 'create']
+    return ['view']
   }
   return []
 }

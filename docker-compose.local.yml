@@ -1,0 +1,37 @@
+# 本地开发专用基础服务。
+#
+# 与正式环境的 docker-compose.yml 使用完全独立的 project 名、数据卷和端口：
+# - 本地 postgres: 127.0.0.1:5434，库名 mentor_ai_dev，数据卷 mentor-ai-local_postgres-data
+# - Ollama 复用正式实例（http://localhost:11434，Embedding 模型已就位），不重复拉取
+#
+# 本地日常命令：pnpm db:up:local（等价 docker compose -f docker-compose.local.yml up -d postgres）
+# 禁止在开发机上执行 `pnpm db:up`，它会操作正式环境的 compose 与正式数据库。
+name: mentor-ai-local
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.5-pg18-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mentor_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: mentor_ai_dev
+      APP_DB_USER: ${APP_DB_USER:-mentor_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+    volumes:
+      # PostgreSQL 18 stores data below a major-version directory so upgrades
+      # can use pg_upgrade without crossing a mount boundary.
+      - postgres-data:/var/lib/postgresql
+      - ./infra/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mentor_admin} -d mentor_ai_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres-data:

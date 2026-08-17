@@ -35,7 +35,8 @@ export const schools = pgTable('schools', {
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'restrict' }),
-  email: varchar('email', { length: 254 }).notNull(),
+  /** 登录账号（手机号），与统一身份平台的绑定字段并列 */
+  phone: varchar('phone', { length: 40 }),
   name: varchar('name', { length: 120 }).notNull(),
   /** 本地账密登录哈希；仅 SSO 用户可为空 */
   passwordHash: text('password_hash'),
@@ -72,7 +73,7 @@ export const users = pgTable('users', {
   overrides: jsonb('overrides').$type<Record<string, string>>().default({}).notNull(),
   ...timestamps
 }, table => [
-  uniqueIndex('users_email_uidx').on(table.email),
+  uniqueIndex('users_phone_uidx').on(table.phone),
   uniqueIndex('users_oidc_subject_uidx').on(table.oidcSubject),
   index('users_school_role_idx').on(table.schoolId, table.role),
   index('users_school_role_status_idx').on(table.schoolId, table.role, table.status),
@@ -93,7 +94,7 @@ export const sessions = pgTable('sessions', {
 export const invitations = pgTable('invitations', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').references(() => schools.id),
-  email: varchar('email', { length: 254 }).notNull(),
+  phone: varchar('phone', { length: 40 }).notNull(),
   name: varchar('name', { length: 120 }).notNull(),
   role: varchar('role', { length: 30 }).notNull(),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
@@ -107,7 +108,7 @@ export const invitations = pgTable('invitations', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [
   uniqueIndex('invitations_token_hash_uidx').on(table.tokenHash),
-  index('invitations_school_email_idx').on(table.schoolId, table.email)
+  index('invitations_school_phone_idx').on(table.schoolId, table.phone)
 ])
 
 export const mfaRecoveryCodes = pgTable('mfa_recovery_codes', {

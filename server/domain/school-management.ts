@@ -1,30 +1,24 @@
 import type { H3Event } from 'h3'
 import { and, eq, inArray, sql } from 'drizzle-orm'
-import { getHeader } from 'h3'
-import type { DelegatedManagementScope } from '../../shared/contracts'
+import { z } from 'zod'
 import { requireUser } from '../utils/auth'
 import { schema, useDb } from '../utils/db'
 
-export async function requireSchoolManagement(event: H3Event, scopes: DelegatedManagementScope[]) {
+export async function requireSchoolManagement(event: H3Event, _scopes: string[], opts?: { allowPlatformAdmin?: boolean }) {
   const user = await requireUser(event, ['school_admin', 'platform_admin'])
   if (user.role === 'school_admin') {
     if (!user.schoolId) throw createError({ statusCode: 400, message: '管理员未关联学校' })
     return { actor: user, schoolId: user.schoolId, delegatedGrantId: null as string | null }
   }
-  const grantId = getHeader(event, 'x-delegated-management-grant')
-  if (!grantId) throw createError({ statusCode: 403, message: '平台代管需要学校授权' })
-  const [grant] = await useDb(event).select().from(schema.delegatedManagementGrants).where(and(
-    eq(schema.delegatedManagementGrants.id, grantId),
-    eq(schema.delegatedManagementGrants.requesterId, user.id),
-    eq(schema.delegatedManagementGrants.status, 'approved')
-  )).limit(1)
-  if (!grant || !grant.expiresAt || grant.expiresAt.getTime() <= Date.now() || grant.revokedAt) {
-    throw createError({ statusCode: 403, message: '平台代管授权不存在或已过期' })
+  if (!opts?.allowPlatformAdmin) {
+    throw createError({ statusCode: 403, message: '仅学校管理员可管理该数据' })
   }
-  if (!scopes.every(scope => grant.scopes.includes(scope))) {
-    throw createError({ statusCode: 403, message: '平台代管授权范围不足' })
-  }
-  return { actor: user, schoolId: grant.schoolId, delegatedGrantId: grant.id }
+  const parsed = z.string().uuid().safeParse(getQuery(event).schoolId)
+  if (!parsed.success) throw createError({ statusCode: 400, message: '平台管理员必须通过 schoolId 指定目标学校' })
+  const [school] = await useDb(event).select({ id: schema.schools.id }).from(schema.schools)
+    .where(eq(schema.schools.id, parsed.data)).limit(1)
+  if (!school) throw createError({ statusCode: 404, message: '学校不存在' })
+  return { actor: user, schoolId: parsed.data, delegatedGrantId: null as string | null }
 }
 
 export async function assertActiveTeacher(event: H3Event, schoolId: string, teacherId: string) {

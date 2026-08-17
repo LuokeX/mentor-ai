@@ -5,7 +5,6 @@ const { data: planStats } = await useFetch<any>('/api/v1/school-admin/plan-stati
 
 const metrics = computed(() => data.value?.metrics ?? { users: 0, activeCrises: 0, assessments: 0 })
 const pendingCount = computed(() => (data.value?.pendingRequests ?? []).length)
-const delegatedCount = computed(() => (data.value?.delegatedRequests ?? []).length)
 const completionRate = computed(() => planStats.value?.planCompletion?.rate ?? 0)
 const overdueCount = computed(() => planStats.value?.overduePlans?.length ?? 0)
 const inProgressCount = computed(() => planStats.value?.planCompletion?.inProgress ?? 0)
@@ -31,8 +30,8 @@ const stats = computed<StatCard[]>(() => [
     accent: metrics.value.activeCrises > 0, accentColor: 'red',
   },
   {
-    label: '待审批', value: pendingCount.value + delegatedCount.value, icon: 'i-lucide-shield-check', color: 'amber',
-    sub: `${pendingCount.value} 访问 + ${delegatedCount.value} 代管`,
+    label: '待审批', value: pendingCount.value, icon: 'i-lucide-shield-check', color: 'amber',
+    sub: `${pendingCount.value} 访问申请`,
   },
 ])
 
@@ -219,10 +218,6 @@ const completionStatus = computed(() => {
         <li class="flex items-start gap-2">
           <span class="mt-1.5 block size-1.5 shrink-0 rounded-full bg-indigo-400" />
           危机转介有 SLA 确认时限，超时自动升级
-        </li>
-        <li class="flex items-start gap-2">
-          <span class="mt-1.5 block size-1.5 shrink-0 rounded-full bg-indigo-400" />
-          平台代管仅覆盖基础资料，不含评估、聊天和方案正文
         </li>
       </ul>
     </div>

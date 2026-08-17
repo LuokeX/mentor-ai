@@ -5,7 +5,7 @@ import { writeAudit } from '../../../../utils/audit'
 import { requireSchoolManagement } from '../../../../domain/school-management'
 
 export default defineEventHandler(async (event) => {
-  const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'])
+  const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'], { allowPlatformAdmin: true })
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const db = useDb(event)
 

@@ -6,7 +6,7 @@
  * "统一身份登录"完整回调流程，无需真实身份平台测试环境。
  *
  * 用法：
- *   pnpm tsx scripts/mock-oidc-idp.ts [--port 3400] [--email teacher@demo.local]
+ *   pnpm tsx scripts/mock-oidc-idp.ts [--port 3400] [--phone 13800000001]
  *        [--name 李老师] [--employee-no 1001] [--sub mock-subject-1]
  *        [--client-id mock-client] [--client-secret mock-secret]
  *
@@ -29,7 +29,7 @@ const clientId = argValue('client-id', 'mock-client')
 const clientSecret = argValue('client-secret', 'mock-secret')
 const userProfile = {
   sub: argValue('sub', 'mock-subject-1'),
-  email: argValue('email', 'teacher@demo.local'),
+  phone: argValue('phone', '13800000001'),
   name: argValue('name', '李老师'),
   employee_no: argValue('employee-no', '1001')
 }

@@ -72,7 +72,7 @@ onMounted(() => { if (token.value) validateToken() })
       </div>
 
       <form v-else-if="step === 'password'" class="mt-8 space-y-5" @submit.prevent="setPassword">
-        <UAlert color="primary" variant="soft" :title="account?.name" :description="`${account?.email} · ${account?.role === 'psychologist' ? '心理专员' : '教师'}`" />
+        <UAlert color="primary" variant="soft" :title="account?.name" :description="`${account?.phone} · ${account?.role === 'psychologist' ? '心理专员' : '教师'}`" />
         <UFormField label="设置密码" help="至少 10 位，建议混合字母、数字和符号"><UInput v-model="password" type="password" minlength="10" autocomplete="new-password" size="xl" class="w-full" /></UFormField>
         <UFormField label="确认密码"><UInput v-model="passwordConfirm" type="password" minlength="10" autocomplete="new-password" size="xl" class="w-full" /></UFormField>
         <button type="submit" class="w-full rounded-lg bg-[var(--ui-primary)] px-6 py-3.5 text-lg font-medium text-white">继续</button>
@@ -94,7 +94,7 @@ onMounted(() => { if (token.value) validateToken() })
 
       <div v-else class="mt-8 space-y-5 text-center">
         <span class="mx-auto grid size-16 place-items-center rounded-full bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-check" class="size-8" /></span>
-        <div><h2 class="text-xl font-semibold">账号激活成功</h2><p class="mt-2 text-sm text-slate-500">现在可以使用邮箱和新密码登录。</p></div>
+        <div><h2 class="text-xl font-semibold">账号激活成功</h2><p class="mt-2 text-sm text-slate-500">现在可以使用手机号和新密码登录。</p></div>
         <NuxtLink to="/login" class="inline-block w-full rounded-lg bg-[var(--ui-primary)] px-6 py-3.5 text-center text-lg font-medium text-white">前往登录</NuxtLink>
       </div>
       <UAlert v-if="errorMessage" class="mt-5" color="error" variant="soft" :description="errorMessage" />

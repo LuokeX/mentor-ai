@@ -12,7 +12,7 @@ const transferAndDisableSchema = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-  const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'])
+  const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'], { allowPlatformAdmin: true })
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = transferAndDisableSchema.parse(await readBody(event))
   const db = useDb(event)

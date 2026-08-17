@@ -3,6 +3,9 @@ import { z } from 'zod'
 export const roleSchema = z.enum(['teacher', 'psychologist', 'school_admin', 'platform_admin'])
 export const moduleIdSchema = z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem'])
 
+/** 登录手机号格式（账号体系统一校验规则） */
+export const PHONE_PATTERN = /^1[3-9]\d{9}$/
+
 /**
  * 严重度。分级规则（归因库）与工具库共用同一套取值，这是二者能咬合的唯一键。
  * 定义在文件最前面，因为工具库和归因库两处 schema 都要引用它。
@@ -14,17 +17,16 @@ export const moduleResourceScopeSchema = z.enum(['global', 'school'])
 export const resourceStatusSchema = z.enum(['draft', 'published', 'retired', 'pending_review'])
 export const managedRecordStatusSchema = z.enum(['active', 'archived', 'transferred', 'graduated'])
 export const departmentTypeSchema = z.enum(['administration', 'grade_group', 'subject_group', 'student_support', 'other'])
-export const delegatedManagementScopeSchema = z.enum(['users', 'teachers', 'departments', 'classes', 'students', 'guardians'])
 export const targetTypeSchema = z.enum([
   'teacher_profile', 'assessment', 'conversation', 'student_case', 'guardian_communication', 'plan',
-  'user', 'department', 'class', 'student', 'guardian', 'school', 'delegated_management_grant'
+  'user', 'department', 'class', 'student', 'guardian', 'school'
 ])
 export const reasonCategorySchema = z.enum([
   'risk_review', 'complaint_handling', 'data_correction_verification', 'school_duty', 'other'
 ])
 
 export const loginRequestSchema = z.object({
-  email: z.string().trim().email().transform(value => value.toLowerCase()),
+  phone: z.string().trim().regex(/^1[3-9]\d{9}$/),
   password: z.string().min(8).max(200),
   otp: z.preprocess(
     value => typeof value === 'string' && value.trim() === '' ? undefined : value,
@@ -403,11 +405,10 @@ const dateInputSchema = z.string().refine(value => {
 
 export const schoolAdminUserCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  email: z.string().trim().email().transform(value => value.toLowerCase()),
+  phone: z.string().trim().regex(PHONE_PATTERN),
   role: z.enum(['teacher', 'psychologist']),
   password: z.string().min(8).max(200),
   employeeNo: z.string().trim().max(80).nullable().optional(),
-  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).nullable().optional(),
   gender: z.string().trim().max(20).nullable().optional(),
   teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
   subject: z.string().trim().max(80).nullable().optional(),
@@ -424,11 +425,10 @@ export const schoolAdminUserInviteSchema = schoolAdminUserCreateSchema.omit({ pa
 
 export const schoolAdminUserUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
-  email: z.string().trim().email().transform(value => value.toLowerCase()).optional(),
+  phone: z.string().trim().regex(PHONE_PATTERN).optional(),
   role: z.enum(['teacher', 'psychologist']).optional(),
   status: z.enum(['active', 'disabled']).optional(),
   employeeNo: z.string().trim().max(80).nullable().optional(),
-  phone: z.string().trim().regex(/^1[3-9]\d{9}$/).nullable().optional(),
   gender: z.string().trim().max(20).nullable().optional(),
   teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
   subject: z.string().trim().max(80).nullable().optional(),
@@ -552,16 +552,6 @@ export const schoolAdminStudentGuardianSchema = z.object({
   guardian: schoolAdminGuardianCreateSchema.optional()
 }).refine(value => value.guardianId || value.guardian)
 
-export const delegatedManagementRequestSchema = z.object({
-  schoolId: z.string().uuid(),
-  scopes: z.array(delegatedManagementScopeSchema).min(1).max(6),
-  reason: z.string().trim().min(10).max(500)
-})
-
-export const delegatedManagementReviewSchema = z.object({
-  decision: z.enum(['approved', 'rejected', 'revoked'])
-})
-
 export const routeDecisionSchema = z.object({
   primaryModule: moduleIdSchema,
   secondaryModules: z.array(z.object({ module: moduleIdSchema, confidence: z.number().min(0).max(1) })).max(3),
@@ -582,7 +572,6 @@ export type ModuleResourceScope = z.infer<typeof moduleResourceScopeSchema>
 export type ResourceStatus = z.infer<typeof resourceStatusSchema>
 export type ManagedRecordStatus = z.infer<typeof managedRecordStatusSchema>
 export type DepartmentType = z.infer<typeof departmentTypeSchema>
-export type DelegatedManagementScope = z.infer<typeof delegatedManagementScopeSchema>
 export type RouteDecision = z.infer<typeof routeDecisionSchema>
 export type ModuleToolPayload = z.infer<typeof moduleToolPayloadSchema>
 

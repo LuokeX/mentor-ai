@@ -17,8 +17,8 @@ describe('instrument role parsing (③ 量表角色)', () => {
 
 describe('shared API contracts', () => {
   it('accepts an omitted or empty OTP for roles without MFA', () => {
-    const base = { email: 'Teacher@Demo.Local', password: 'Mentor@2026' }
-    expect(loginRequestSchema.parse(base)).toEqual({ ...base, email: 'teacher@demo.local' })
+    const base = { phone: '13800000001', password: 'Mentor@2026' }
+    expect(loginRequestSchema.parse(base)).toEqual({ ...base, phone: '13800000001' })
     expect(loginRequestSchema.parse({ ...base, otp: '' }).otp).toBeUndefined()
     expect(loginRequestSchema.safeParse({ ...base, otp: '123' }).success).toBe(false)
   })

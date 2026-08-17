@@ -4,8 +4,8 @@ const { data } = await useFetch<any>('/api/v1/platform-admin/dashboard')
 
 const stats = computed(() => [
   { label: '学校租户', value: data.value?.schools?.length || 0, icon: 'i-lucide-building-2', color: 'blue' },
+  { label: '全部账号', value: data.value?.userTotal || 0, icon: 'i-lucide-user-cog', color: 'purple' },
   { label: '应急访问申请', value: data.value?.accessRequests?.length || 0, icon: 'i-lucide-key-round', color: 'amber' },
-  { label: '代管授权', value: data.value?.delegatedManagementGrants?.length || 0, icon: 'i-lucide-shield', color: 'purple' },
   { label: '活跃学校', value: data.value?.schools?.filter((s: any) => s.status === 'active').length || 0, icon: 'i-lucide-school', color: 'green' },
 ])
 

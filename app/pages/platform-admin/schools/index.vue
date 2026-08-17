@@ -30,14 +30,14 @@ const drawerOpen = ref(false)
 const editing = ref<SchoolRow | null>(null)
 const saving = ref(false)
 const formError = ref('')
-const form = reactive({ name: '', code: '', status: 'active' as 'active' | 'disabled', adminName: '', adminEmail: '' })
+const form = reactive({ name: '', code: '', status: 'active' as 'active' | 'disabled', adminName: '', adminPhone: '' })
 const invitation = ref<SchoolCreateResult | null>(null)
 const activationLink = computed(() => invitation.value ? `/activate?token=${encodeURIComponent(invitation.value.activationToken)}` : '')
 const copied = ref(false)
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', code: '', status: 'active', adminName: '', adminEmail: '' })
+  Object.assign(form, { name: '', code: '', status: 'active', adminName: '', adminPhone: '' })
   formError.value = ''
   drawerOpen.value = true
 }
@@ -46,7 +46,7 @@ function openEdit(rowOrId: SchoolRow | string) {
   const row = typeof rowOrId === 'string' ? list.rows.value.find(item => item.id === rowOrId) : rowOrId
   if (!row) return
   editing.value = row
-  Object.assign(form, { name: row.name, code: row.code, status: row.status, adminName: '', adminEmail: '' })
+  Object.assign(form, { name: row.name, code: row.code, status: row.status, adminName: '', adminPhone: '' })
   formError.value = ''
   drawerOpen.value = true
 }
@@ -60,8 +60,8 @@ async function saveSchool() {
     formError.value = '请填写学校名称；编码仅允许小写字母、数字和连字符'
     return
   }
-  if (!editing.value && (form.adminName.trim().length < 2 || !form.adminEmail.includes('@'))) {
-    formError.value = '请填写首位学校管理员姓名和邮箱'
+  if (!editing.value && (form.adminName.trim().length < 2 || !/^1[3-9]\d{9}$/.test(form.adminPhone))) {
+    formError.value = '请填写首位学校管理员姓名和手机号'
     return
   }
   saving.value = true
@@ -76,7 +76,7 @@ async function saveSchool() {
     } else {
       invitation.value = await $fetch<SchoolCreateResult>('/api/v1/platform-admin/schools', {
         method: 'POST',
-        body: { name: form.name, code: form.code, adminName: form.adminName, adminEmail: form.adminEmail },
+        body: { name: form.name, code: form.code, adminName: form.adminName, adminPhone: form.adminPhone },
       })
     }
     drawerOpen.value = false
@@ -103,7 +103,14 @@ async function copyActivationLink() {
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '正常' : '停用' }}</UBadge></template>
       <template #updatedAt-data="{ value }">{{ new Date(String(value)).toLocaleString('zh-CN') }}</template>
-      <template #actions-data="{ row }"><RowActions :capabilities="row._capabilities" :row-id="row.id" @view="openEdit" @edit="openEdit" /></template>
+      <template #actions-data="{ row }">
+        <div class="flex items-center gap-1">
+          <RowActions :capabilities="row._capabilities" :row-id="row.id" @view="openEdit" @edit="openEdit" />
+          <NuxtLink :to="`/platform-admin/schools/${row.id}/users`">
+            <UButton size="xs" variant="soft" color="primary">账户</UButton>
+          </NuxtLink>
+        </div>
+      </template>
     </ManagedDataTable>
     <div v-if="list.error.value || formError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ formError || list.error.value }}</div>
     <TablePagination :page="list.page.value" :page-size="list.pageSize.value" :total="list.total.value" @update:page="list.onPageChange" @update:page-size="list.onPageSizeChange" />
@@ -115,7 +122,7 @@ async function copyActivationLink() {
         <USelect v-if="editing" v-model="form.status" :items="[{ label: '正常', value: 'active' }, { label: '停用', value: 'disabled' }]" class="w-full" />
         <template v-else>
           <UFormField label="首位管理员姓名" required><UInput v-model="form.adminName" class="w-full" /></UFormField>
-          <UFormField label="首位管理员邮箱" required><UInput v-model="form.adminEmail" type="email" class="w-full" /></UFormField>
+          <UFormField label="首位管理员手机号" required><UInput v-model="form.adminPhone" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>
         </template>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         <div class="flex justify-end gap-2"><UButton variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">保存</UButton></div>

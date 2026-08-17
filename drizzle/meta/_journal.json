@@ -232,6 +232,13 @@
       "when": 1786670905094,
       "tag": "0032_yummy_iceman",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786935649412,
+      "tag": "0033_windy_hellcat",
+      "breakpoints": true
     }
   ]
 }

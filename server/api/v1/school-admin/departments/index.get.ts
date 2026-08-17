@@ -11,7 +11,7 @@ import { schema, useDb } from '../../../../utils/db'
 const SORT_WHITELIST = createSortWhitelist('name', 'code', 'type', 'status', 'memberCount', 'classCount', 'updatedAt', 'createdAt')
 
 export default defineEventHandler(async (event) => {
-  const { schoolId, actor: user, delegatedGrantId } = await requireSchoolManagement(event, ['departments'])
+  const { schoolId, actor: user } = await requireSchoolManagement(event, ['departments'])
   const query = getQuery(event)
   const page = Number(query.page) || 1
   const pageSize = ([20, 50, 100].includes(Number(query.pageSize)) ? Number(query.pageSize) : DEFAULT_PAGE_SIZE) as 20 | 50 | 100
@@ -82,7 +82,6 @@ export default defineEventHandler(async (event) => {
       recordStatus: row.status,
       targetType: 'department',
       targetId: row.id,
-      delegatedGrantId,
     })
     return { ...row, _capabilities: capabilities }
   }))

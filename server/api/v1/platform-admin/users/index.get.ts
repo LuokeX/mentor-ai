@@ -1,33 +1,35 @@
-import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
 import { roleSchema } from '../../../../../shared/contracts'
-import { requireSchoolManagement, countSql, offsetFrom } from '../../../../domain/school-management'
+import { countSql, offsetFrom } from '../../../../domain/school-management'
 import { resolveCapabilities } from '../../../../domain/capabilities'
+import { requireUser } from '../../../../utils/auth'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
 
-const SORT_WHITELIST = createSortWhitelist('name', 'phone', 'role', 'status', 'selfStatusLevel', 'activatedAt', 'lastLoginAt', 'updatedAt', 'createdAt')
+const SORT_WHITELIST = createSortWhitelist('name', 'phone', 'role', 'status', 'activatedAt', 'lastLoginAt', 'updatedAt', 'createdAt')
 
 export default defineEventHandler(async (event) => {
-  const { schoolId, actor: user } = await requireSchoolManagement(event, ['users'], { allowPlatformAdmin: true })
+  const user = await requireUser(event, ['platform_admin'])
   const query = getQuery(event)
   const page = Number(query.page) || 1
   const pageSize = ([20, 50, 100].includes(Number(query.pageSize)) ? Number(query.pageSize) : DEFAULT_PAGE_SIZE) as 20 | 50 | 100
   const q = (query.q as string)?.trim().slice(0, 120) || ''
   const role = roleSchema.or(z.literal('all')).default('all').parse(query.role)
   const status = (['active', 'invited', 'disabled', 'all'].includes(query.status as string) ? query.status : 'all') as string
+  const schoolId = z.string().uuid().optional().parse(query.schoolId)
   const sort = validateSort((query.sort as string) || 'updatedAt', SORT_WHITELIST, 'updatedAt')
   const order = (query.order === 'asc' ? 'asc' : 'desc') as 'asc' | 'desc'
   const db = useDb(event)
 
-  const conditions = [eq(schema.users.schoolId, schoolId)]
+  const conditions = [inArray(schema.users.role, ['teacher', 'psychologist'])]
+  if (schoolId) conditions.push(eq(schema.users.schoolId, schoolId))
   if (role !== 'all') conditions.push(eq(schema.users.role, role))
   if (status !== 'all') conditions.push(eq(schema.users.status, status))
   if (q) conditions.push(or(ilike(schema.users.name, `%${q}%`), ilike(schema.users.phone, `%${q}%`))!)
 
-  // 动态排序列映射
   const sortColMap: Record<string, any> = {
     name: schema.users.name,
     phone: schema.users.phone,
@@ -44,6 +46,8 @@ export default defineEventHandler(async (event) => {
   const result = await paginateResult({
     dataQuery: db.select({
       id: schema.users.id,
+      schoolId: schema.users.schoolId,
+      schoolName: schema.schools.name,
       name: schema.users.name,
       phone: schema.users.phone,
       role: schema.users.role,
@@ -58,13 +62,13 @@ export default defineEventHandler(async (event) => {
       classTeacherYears: schema.users.classTeacherYears,
       title: schema.users.title,
       hiredAt: schema.users.hiredAt,
-      /** 自我状态等级（评估回写），管理员修正优先 */
       selfStatusLevel: sql<string | null>`coalesce(${schema.users.overrides}->>'selfStatusLevel', ${schema.users.selfStatusLevel})`,
-      /** 管理员修正原始值（编辑表单回显用） */
       overrides: schema.users.overrides,
       createdAt: schema.users.createdAt,
       updatedAt: schema.users.updatedAt,
-    }).from(schema.users).where(and(...conditions)).orderBy(orderFn(sortCol))
+    }).from(schema.users)
+      .innerJoin(schema.schools, eq(schema.schools.id, schema.users.schoolId))
+      .where(and(...conditions)).orderBy(orderFn(sortCol))
       .limit(pageSize).offset(offsetFrom(page, pageSize)),
     countQuery: db.select({ value: countSql }).from(schema.users).where(and(...conditions)),
     page,
@@ -74,7 +78,7 @@ export default defineEventHandler(async (event) => {
   const rows = await Promise.all(result.rows.map(async (row) => {
     const capabilities: Capability[] = await resolveCapabilities({
       user,
-      recordSchoolId: schoolId,
+      recordSchoolId: row.schoolId,
       recordStatus: row.status,
       activatedAt: row.activatedAt,
       targetType: 'user',

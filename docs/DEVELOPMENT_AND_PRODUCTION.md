@@ -6,13 +6,12 @@
 
 | 环境 | 用途 | 数据要求 | 允许执行 `db:seed` | 启动方式 |
 |---|---|---|---|---|
-| 本地开发 | 编码、调试、单元测试 | 仅使用虚构或脱敏数据 | 允许 | Node.js + Docker PostgreSQL |
-| 测试/UAT | 业务验收、联调、演练 | 使用独立测试库 | 经负责人确认后允许导入专用测试数据 | Docker Compose |
+| 本地开发 | 编码、调试、单元测试 | 仅使用虚构或脱敏数据 | 允许 | Node.js + 本地专用 Docker PostgreSQL（5434/mentor_ai_dev） |
 | 正式环境 | 校内封闭试用和正式业务 | 真实业务数据 | 禁止 | Docker Compose + Nginx/TLS |
 
 必须保证：
 
-- 三类环境使用不同的数据库、密钥、短信配置和 DeepSeek 凭据，不得复用正式数据到开发环境。
+- 两类环境使用不同的数据库、密钥、短信配置和 DeepSeek 凭据，不得复用正式数据到开发环境。
 - `.env` 不提交到版本库，文件权限应为 `600`。日志、备份和截图不得包含密钥或业务正文。
 - `mentor_admin` 只用于初始化、迁移、备份和恢复；App 与 Worker 只能使用无建库、建表权限的 `mentor_app`。
 - 正式环境只部署经过测试并冻结的版本，不直接在服务器上修改源码、Schema 或历史 migration。
@@ -22,10 +21,11 @@
 | 命令 | 作用 | 使用环境 |
 |---|---|---|
 | `pnpm env:init` | 为本地 `.env` 替换占位值并生成随机密钥 | 仅本地首次初始化 |
-| `pnpm db:up` | 启动 pgvector/PostgreSQL、Ollama，拉取 Embedding 模型并执行 migration | 本地 |
+| `pnpm db:up:local` | 启动本地开发专用 PostgreSQL（`docker-compose.local.yml`，端口 5434） | 本地开发 |
+| `pnpm db:up` | 启动正式环境 compose 的 PostgreSQL、Ollama 并执行 migration | 仅正式环境部署流程 |
 | `pnpm db:generate` | 根据 Drizzle Schema 生成新 migration | 本地开发 |
 | `pnpm db:migrate` | 执行尚未执行的 migration | 本地或受控发布流程 |
-| `pnpm db:seed` | 创建演示学校、账号和种子内容 | 仅本地/专用测试环境 |
+| `pnpm db:seed` | 创建演示学校、账号和种子内容 | 仅本地开发环境 |
 | `pnpm import:business-data` | 导入三库标准数据：`assessment`、`attribution`、`tool` | 本地或经审批的正式发布流程 |
 | `pnpm resources:reindex` | 为缺失向量或模型版本不一致的模块资源片段重新生成向量 | 本地或受控发布流程 |
 | `pnpm dev` | 启动 Nuxt App 及内置通知消费者 | 仅本地 |
@@ -45,12 +45,16 @@
 cp .env.example .env
 pnpm install
 pnpm env:init
-pnpm db:up
+pnpm db:up:local
 pnpm db:seed
 pnpm dev
 ```
 
 `cp .env.example .env`、`pnpm env:init` 和 `pnpm db:seed` 通常只执行一次。已有 `.env` 时禁止再次复制模板覆盖它。
+
+本地开发使用独立数据库容器（`docker-compose.local.yml`，project `mentor-ai-local`，端口 `5434`，库名 `mentor_ai_dev`，独立数据卷），与正式环境的 PostgreSQL（`5433`/`mentor_ai`）物理隔离；Ollama 复用正式实例（`http://localhost:11434`，Embedding 模型已就位）。`.env` 中的 `DATABASE_URL` 与 `MIGRATION_DATABASE_URL` 必须指向本地库。
+
+**禁止在开发机上执行 `pnpm db:up`**：它会启动正式环境的 compose 并对正式数据库执行 migration。
 
 危机短信 Outbox 消费者由 `server/plugins/notification-worker.ts` 随 App 启动，不需要独立进程。
 
@@ -59,22 +63,22 @@ pnpm dev
 日常启动：
 
 ```bash
-pnpm db:up
+pnpm db:up:local
 pnpm dev
 ```
 
-若 PostgreSQL 和 Ollama 已在运行，可只执行 `pnpm dev`。查看基础服务和首次模型下载进度：
+若本地 PostgreSQL 和 Ollama 已在运行，可只执行 `pnpm dev`。查看基础服务和首次模型下载进度：
 
 ```bash
-docker compose ps
-docker compose logs --tail=100 postgres
+docker compose -f docker-compose.local.yml ps
+docker compose -f docker-compose.local.yml logs --tail=100 postgres
 docker compose logs --tail=100 ollama-pull embedding-index
 ```
 
 停止开发应用使用终端中的 `Ctrl+C`。停止数据库但保留数据卷：
 
 ```bash
-docker compose stop postgres
+docker compose -f docker-compose.local.yml stop postgres
 ```
 
 禁止把 `docker compose down -v` 当作日常停止命令；`-v` 会删除本地数据库卷及其中全部数据。
@@ -193,7 +197,7 @@ docker compose logs --tail=100 app nginx
 每次发布按以下顺序执行：
 
 1. 确认待发布版本、migration 清单、影响范围、负责人和回滚版本。
-2. 执行质量检查与 UAT，确认无未关闭的 P0 缺陷。
+2. 执行质量检查，确认无未关闭的 P0 缺陷。
 3. 在变更窗口开始前备份数据库：
 
 ```bash

@@ -4,6 +4,8 @@ import type { ManagedListResult } from '~~/shared/management'
 
 interface UserRow {
   id: string
+  schoolId: string
+  schoolName?: string
   name: string
   phone: string
   role: 'teacher' | 'psychologist'
@@ -28,8 +30,19 @@ interface InvitationResult {
   expiresAt: string
 }
 
-const list = useManagedList<UserRow>('/api/v1/school-admin/users')
-const columns = [
+const props = withDefaults(defineProps<{
+  title: string
+  description?: string
+  listEndpoint: string
+  showSchool?: boolean
+  canInvite?: boolean
+  inviteSchoolId?: string
+  extraQuery?: () => Record<string, string | undefined>
+}>(), { showSchool: false, canInvite: false })
+
+const list = useManagedList<UserRow>(props.listEndpoint, props.extraQuery ? { extraQuery: props.extraQuery } : undefined)
+const columns = computed(() => [
+  ...(props.showSchool ? [{ key: 'schoolName', label: '学校' }] : []),
   { key: 'name', label: '姓名', sortable: true },
   { key: 'phone', label: '手机号', sortable: true },
   { key: 'role', label: '角色', sortable: true },
@@ -37,7 +50,7 @@ const columns = [
   { key: 'status', label: '状态', sortable: true },
   { key: 'lastLoginAt', label: '最近登录', sortable: true, mobileHidden: true },
   { key: 'actions', label: '操作' },
-]
+])
 const statusOptions = [
   { label: '全部', value: 'all' },
   { label: '正常', value: 'active' },
@@ -58,20 +71,14 @@ const titleOptions = [
   { label: '一级', value: '一级' }, { label: '二级', value: '二级' },
 ]
 const gradeItems = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'].map(g => `${g} 年级`)
-/** 自我状态等级修正：未操作不发送；显式“改回按评估结果”清除；选择具体等级写入 */
 const selfStatusOptions = [
   { label: '（当前按评估结果）', value: '__auto__' },
   { label: '改回按评估结果', value: '__clear__' },
   { label: '需转介', value: '需转介' }, { label: '需关注', value: '需关注' }, { label: '关注', value: '关注' }, { label: '良好', value: '良好' },
 ]
 
-const { data: teacherData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/teachers', {
-  query: { page: 1, pageSize: 100, status: 'active' },
-})
-const teacherOptions = computed(() => (teacherData.value?.rows || []).map(item => ({ label: item.name, value: item.id })))
-const psychologistOptions = computed(() => list.rows.value
-  .filter(item => item.role === 'psychologist' && item.status === 'active')
-  .map(item => ({ label: item.name, value: item.id })))
+const teacherOptions = ref<{ label: string; value: string }[]>([])
+const psychologistOptions = ref<{ label: string; value: string }[]>([])
 
 const drawerOpen = ref(false)
 const editing = ref<UserRow | null>(null)
@@ -123,7 +130,13 @@ function closeDrawer() {
   drawerOpen.value = false
 }
 
+function opQuery(row: UserRow) {
+  return { schoolId: row.schoolId }
+}
+
 async function saveUser() {
+  const target = editing.value
+  if (!target) return
   if (form.name.trim().length < 2 || !/^1[3-9]\d{9}$/.test(form.phone)) {
     formError.value = '请填写有效的姓名和手机号'
     return
@@ -142,29 +155,20 @@ async function saveUser() {
     classTeacherYears: form.classTeacherYears === '' ? undefined : Number(form.classTeacherYears),
     hiredAt: form.hiredAt || undefined,
     title: form.title === '__none__' ? null : form.title,
-    status: editing.value && editing.value.status === 'disabled' && form.reactivate ? 'active' : undefined,
+    status: target.status === 'disabled' && form.reactivate ? 'active' : undefined,
   }
   // 电话/心理资质备注是加密字段：编辑时留空表示不修改
   if (form.phone) body.phone = form.phone
   if (form.certNote) body.certNote = form.certNote
   // 自我状态三态：未操作不发送；显式“改回按评估结果”清除；选择具体等级写入
-  if (editing.value) {
-    if (form.selfStatusLevel === '__clear__') body.overrides = { selfStatusLevel: '' }
-    else if (form.selfStatusLevel !== '__auto__') body.overrides = { selfStatusLevel: form.selfStatusLevel }
-  }
+  if (form.selfStatusLevel === '__clear__') body.overrides = { selfStatusLevel: '' }
+  else if (form.selfStatusLevel !== '__auto__') body.overrides = { selfStatusLevel: form.selfStatusLevel }
   try {
-    if (editing.value) {
-      await $fetch(`/api/v1/school-admin/users/${editing.value.id}`, {
-        method: 'PATCH',
-        query: { expectedUpdatedAt: editing.value.updatedAt },
-        body,
-      })
-    } else {
-      invitation.value = await $fetch<InvitationResult>('/api/v1/school-admin/users', {
-        method: 'POST',
-        body,
-      })
-    }
+    await $fetch(`/api/v1/school-admin/users/${target.id}`, {
+      method: 'PATCH',
+      query: { ...opQuery(target), expectedUpdatedAt: target.updatedAt },
+      body,
+    })
     drawerOpen.value = false
     await list.refresh()
   } catch (error: unknown) {
@@ -177,12 +181,72 @@ async function saveUser() {
   }
 }
 
+async function inviteUser() {
+  if (form.name.trim().length < 2 || !/^1[3-9]\d{9}$/.test(form.phone)) {
+    formError.value = '请填写有效的姓名和手机号'
+    return
+  }
+  if (!props.inviteSchoolId) {
+    formError.value = '缺少目标学校，无法邀请'
+    return
+  }
+  saving.value = true
+  formError.value = ''
+  try {
+    invitation.value = await $fetch<InvitationResult>('/api/v1/school-admin/users', {
+      method: 'POST',
+      query: { schoolId: props.inviteSchoolId },
+      body: { name: form.name, phone: form.phone, role: form.role },
+    })
+    drawerOpen.value = false
+    await list.refresh()
+  } catch (error: unknown) {
+    formError.value = (error as { data?: { message?: string } }).data?.message || '邀请创建失败'
+  } finally {
+    saving.value = false
+  }
+}
+
+async function reInvite(row: UserRow) {
+  if (row.status !== 'invited') return
+  saving.value = true
+  formError.value = ''
+  try {
+    invitation.value = await $fetch<InvitationResult>('/api/v1/school-admin/users', {
+      method: 'POST',
+      query: opQuery(row),
+      body: { name: row.name, phone: row.phone, role: row.role },
+    })
+    await list.refresh()
+  } catch (error: unknown) {
+    formError.value = (error as { data?: { message?: string } }).data?.message || '重新邀请失败'
+  } finally {
+    saving.value = false
+  }
+}
+
 function openDisable(id: string) {
   const row = list.rows.value.find(item => item.id === id)
   if (!row) return
   disableTarget.value = row
   Object.assign(disableForm, { toUserId: '', newPsychologistId: '__none__', reason: '' })
   formError.value = ''
+  void loadTransferOptions(row)
+}
+
+async function loadTransferOptions(row: UserRow) {
+  teacherOptions.value = []
+  psychologistOptions.value = []
+  const [teachers, psychologists] = await Promise.all([
+    $fetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/teachers', {
+      query: { schoolId: row.schoolId, page: 1, pageSize: 100, status: 'active' },
+    }),
+    $fetch<ManagedListResult<OptionRow>>('/api/v1/platform-admin/users', {
+      query: { schoolId: row.schoolId, role: 'psychologist', status: 'active', page: 1, pageSize: 100 },
+    }),
+  ])
+  teacherOptions.value = (teachers.rows || []).map(item => ({ label: item.name, value: item.id }))
+  psychologistOptions.value = (psychologists.rows || []).map(item => ({ label: item.name, value: item.id }))
 }
 
 function closeDisable() {
@@ -199,6 +263,7 @@ async function transferAndDisable() {
   try {
     await $fetch(`/api/v1/school-admin/users/${disableTarget.value.id}/transfer-and-disable`, {
       method: 'POST',
+      query: opQuery(disableTarget.value),
       body: {
         toUserId: disableForm.toUserId,
         newPsychologistId: disableForm.newPsychologistId === '__none__' ? undefined : disableForm.newPsychologistId,
@@ -219,7 +284,7 @@ async function deleteInvitation(reason: string) {
   saving.value = true
   formError.value = ''
   try {
-    await $fetch(`/api/v1/school-admin/users/${deleteTarget.value.id}`, { method: 'DELETE' })
+    await $fetch(`/api/v1/school-admin/users/${deleteTarget.value.id}`, { method: 'DELETE', query: opQuery(deleteTarget.value) })
     deleteTarget.value = null
     await list.refresh()
   } catch (error: unknown) {
@@ -238,7 +303,7 @@ async function copyActivationLink() {
 </script>
 
 <template>
-  <ManagementPage title="账号管理" description="邀请、编辑、移交和停用本校教师及心理专员账号。" :can-create="list.pageCapabilities.value.includes('create')" create-label="邀请用户" @create="openCreate">
+  <ManagementPage :title="title" :description="description" :can-create="canInvite" create-label="邀请用户" @create="openCreate">
     <TableToolbar :search-value="list.q.value" :status-filter="list.statusFilter.value" :status-options="statusOptions" search-placeholder="搜索姓名或手机号..." :loading="list.loading.value" @search="list.onSearch" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #role-data="{ row }">{{ roleLabels[row.role] || row.role }}</template>
@@ -249,21 +314,24 @@ async function copyActivationLink() {
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : row.status === 'invited' ? 'info' : 'neutral'" variant="subtle">{{ statusLabels[row.status] || row.status }}</UBadge></template>
       <template #lastLoginAt-data="{ value }">{{ value ? new Date(String(value)).toLocaleString('zh-CN') : '从未登录' }}</template>
       <template #actions-data="{ row }">
-        <RowActions
-          :capabilities="row._capabilities"
-          :row-id="row.id"
-          @view="openEdit"
-          @edit="openEdit"
-          @disable="openDisable"
-          @delete="deleteTarget = row"
-        />
+        <div class="flex items-center gap-1">
+          <RowActions
+            :capabilities="row._capabilities"
+            :row-id="row.id"
+            @view="openEdit"
+            @edit="openEdit"
+            @disable="openDisable"
+            @delete="deleteTarget = row"
+          />
+          <UButton v-if="row.status === 'invited'" size="xs" variant="soft" color="primary" @click="reInvite(row)">重新邀请</UButton>
+        </div>
       </template>
     </ManagedDataTable>
     <div v-if="list.error.value || formError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ formError || list.error.value }}</div>
     <TablePagination :page="list.page.value" :page-size="list.pageSize.value" :total="list.total.value" @update:page="list.onPageChange" @update:page-size="list.onPageSizeChange" />
 
     <EntityFormDrawer :open="drawerOpen" :title="editing ? '编辑账号' : '邀请用户'" @close="drawerOpen = false">
-      <form class="space-y-4" @submit.prevent="saveUser">
+      <form class="space-y-4" @submit.prevent="editing ? saveUser() : inviteUser()">
         <UFormField label="姓名" required><UInput v-model="form.name" class="w-full" /></UFormField>
         <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="手机号" required><UInput v-model="form.phone" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>

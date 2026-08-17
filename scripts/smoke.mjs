@@ -29,7 +29,7 @@ async function login(api, phone, otp) {
   const result = await api('/api/v1/auth/login', {
     method: 'POST', body: { phone, password: 'Mentor@2026', ...(otp ? { otp } : {}) }
   })
-  assert(result.response.ok, `${email} login failed: ${result.text}`)
+  assert(result.response.ok, `${phone} login failed: ${result.text}`)
 }
 
 const teacher = client()

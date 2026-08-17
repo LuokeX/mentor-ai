@@ -29,30 +29,30 @@
 cp .env.example .env
 pnpm install
 pnpm env:init
-pnpm db:up
+pnpm db:up:local
 pnpm db:seed
 pnpm dev
 ```
 
-`pnpm env:init` 会替换模板占位值、生成互不相同的随机本地密钥，并为已有 `.env` 补充新配置，不会打印密钥或覆盖已有值。`pnpm db:up` 会启动带 pgvector 的 PostgreSQL 18、Ollama、模型拉取和数据库迁移；首次启动需下载 Ollama 镜像和约 639 MB 的 Embedding 模型。`pnpm db:migrate`、`pnpm db:seed` 和 `pnpm dev` 会自动读取 `.env`；通知消费随 App 启动，无独立 `pnpm worker` 命令。
+`pnpm env:init` 会替换模板占位值、生成互不相同的随机本地密钥，并为已有 `.env` 补充新配置，不会打印密钥或覆盖已有值。本地开发使用独立的 PostgreSQL 容器（`docker-compose.local.yml`，端口 5434，库名 `mentor_ai_dev`），与正式环境数据库物理隔离；Ollama 复用正式实例，Embedding 模型无需重复下载。`pnpm db:migrate`、`pnpm db:seed` 和 `pnpm dev` 会自动读取 `.env`；通知消费随 App 启动，无独立 `pnpm worker` 命令。
 
 日常开发通常只需：
 
 ```bash
-pnpm db:up
+pnpm db:up:local
 pnpm dev
 ```
 
-`db:seed` 只导入本地演示数据，不得在正式环境执行。数据库 Schema 变更、应用发布、生产迁移、备份恢复和禁止事项见 [数据库与应用开发、发布和运行规范](docs/DEVELOPMENT_AND_PRODUCTION.md)。
+`db:seed` 只导入本地演示数据，不得在正式环境执行；**禁止在开发机上执行 `pnpm db:up`**（它会操作正式环境 compose 与正式数据库）。数据库 Schema 变更、应用发布、生产迁移、备份恢复和禁止事项见 [数据库与应用开发、发布和运行规范](docs/DEVELOPMENT_AND_PRODUCTION.md)。
 
 访问 `http://localhost:3301`。演示账号的初始密码均为 `Mentor@2026`：
 
-| 角色 | 账号 |
+| 角色 | 账号（手机号） |
 |---|---|
-| 教师 | `teacher@demo.local` |
-| 心理专员 | `psychologist@demo.local` |
-| 学校管理员 | `school.admin@demo.local` |
-| 平台管理员 | `platform.admin@demo.local` |
+| 教师 | `13900001001`（李老师）/ `13900001002`（张老师） |
+| 心理专员 | `13900001003` |
+| 学校管理员 | `13900001004` |
+| 平台管理员 | `13900001005` |
 
 心理专员演示 TOTP secret 为 `JBSWY3DPEHPK3PXP`。它只用于本地演示，部署时必须删除演示账号或重新绑定。
 

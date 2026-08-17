@@ -15,15 +15,15 @@ async function shot(page, name) {
   console.log(`[ok] ${name}.png`)
 }
 
-async function login(page, email, withOtp = false) {
+async function login(page, phone, withOtp = false) {
   await page.goto(`${BASE}/login`)
-  await page.getByLabel('邮箱').fill(email)
+  await page.getByLabel('手机号').fill(phone)
   await page.getByLabel('密码').fill(PASSWORD)
   await page.getByRole('button', { name: '安全登录' }).click()
   if (withOtp) {
     await page.getByLabel('心理专员动态验证码').waitFor({ timeout: 15000 })
     const totp = new OTPAuth.TOTP({
-      issuer: '教师赋能智能平台', label: email,
+      issuer: '教师赋能智能平台', label: phone,
       algorithm: 'SHA1', digits: 6, period: 30,
       secret: OTPAuth.Secret.fromBase32('JBSWY3DPEHPK3PXP')
     })
@@ -38,7 +38,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 // ============ 10 学生详情（张老师）============
 try {
   const page = await context.newPage()
-  await login(page, 'teacher.zhang@demo.local')
+  await login(page, '13900001002')
   await page.waitForURL(`${BASE}/`)
   console.log('step: student detail')
   const resp = await context.request.get(`${BASE}/api/v1/information/students?page=1&pageSize=20&q=${encodeURIComponent('王浩然')}`)
@@ -55,7 +55,7 @@ try {
 // ============ 11 危机熔断（李老师）============
 try {
   const page = await context.newPage()
-  await login(page, 'teacher@demo.local')
+  await login(page, '13900001001')
   await page.waitForURL(`${BASE}/`)
   await page.getByRole('heading', { name: /今天遇到了什么/ }).waitFor({ timeout: 20000 })
   console.log('step: crisis fuse')
@@ -70,7 +70,7 @@ try {
 // ============ 12 心理专员 ============
 try {
   const page = await context.newPage()
-  await login(page, 'psychologist@demo.local')
+  await login(page, '13900001003')
   await page.waitForURL(/\/specialist/, { timeout: 20000 })
   await page.getByRole('heading', { name: '心理专员工作台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
@@ -81,7 +81,7 @@ try {
 // ============ 13/14 学校管理员 ============
 try {
   const page = await context.newPage()
-  await login(page, 'school.admin@demo.local')
+  await login(page, '13900001004')
   await page.waitForURL(/\/school-admin/, { timeout: 20000 })
   await page.getByRole('heading', { name: '学校管理后台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
@@ -97,7 +97,7 @@ try {
 // ============ 15/16/17 平台管理员 ============
 try {
   const page = await context.newPage()
-  await login(page, 'platform.admin@demo.local')
+  await login(page, '13900001005')
   await page.waitForURL(/\/platform-admin/, { timeout: 20000 })
   await page.getByRole('heading', { name: '平台管理后台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)

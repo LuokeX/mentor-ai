@@ -105,21 +105,23 @@ describe('managed record capabilities', () => {
     })).not.toContain('delete')
   })
 
-  it('requires a delegated grant for platform access to school business records', () => {
+  it('grants platform admins direct account management and read-only view of other school records', () => {
+    const account = resolveCapabilities({
+      user: platformAdmin,
+      recordSchoolId: 'school-1',
+      recordStatus: 'active',
+      targetType: 'user',
+    })
+    expect(account).toContain('view')
+    expect(account).toContain('edit')
+    expect(account).toContain('disable')
     expect(resolveCapabilities({
       user: platformAdmin,
       recordSchoolId: 'school-1',
       recordStatus: 'active',
       targetType: 'student',
-    })).toEqual([])
-    expect(resolveCapabilities({
-      user: platformAdmin,
-      recordSchoolId: 'school-1',
-      recordStatus: 'active',
-      targetType: 'student',
-      delegatedGrantId: 'grant-1',
-    })).toContain('view')
-    expect(resolvePageCapabilities(platformAdmin, 'student')).toEqual(['view'])
+    })).toEqual(['view'])
+    expect(resolvePageCapabilities(platformAdmin, 'user')).toEqual(['view', 'create'])
   })
 
   it('only exposes referral transfer before acknowledgement', () => {

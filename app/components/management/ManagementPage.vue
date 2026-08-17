@@ -35,9 +35,9 @@ const schoolAdminNav = [
 const platformNav = [
   { label: '总览', to: '/platform-admin', icon: 'i-lucide-layout-dashboard' },
   { label: '学校管理', to: '/platform-admin/schools', icon: 'i-lucide-building-2' },
+  { label: '全部账户', to: '/platform-admin/users', icon: 'i-lucide-user-cog' },
   { label: '三库运营台', to: '/platform-admin/resources', icon: 'i-lucide-library' },
   { label: '知识库', to: '/platform-admin/knowledge', icon: 'i-lucide-brain' },
-  { label: '委托授权', to: '/platform-admin/delegated-management', icon: 'i-lucide-shield' },
   { label: '审计日志', to: '/platform-admin/audit', icon: 'i-lucide-list-checks' },
   { label: 'AI 管理中心', to: '/platform-admin/ai-center', icon: 'i-lucide-bot' },
 ]

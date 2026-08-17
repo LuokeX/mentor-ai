@@ -8,7 +8,7 @@ import { ROLE_LABELS } from '../utils/role-labels'
 const SSO_STATE_COOKIE = 'mentor_sso_state'
 const SSO_VERIFIER_COOKIE = 'mentor_sso_verifier'
 const SSO_COOKIE_TTL_SECONDS = 10 * 60
-const SSO_SCOPE = 'openid profile email'
+const SSO_SCOPE = 'openid profile phone'
 
 /** Discovery 结果做进程级缓存；配置变更需重启生效 */
 let discoveryPromise: Promise<oidc.Configuration> | null = null
@@ -74,31 +74,34 @@ export async function ssoAuthorizeUrl(event: H3Event): Promise<string> {
 /** IdP 用户信息中可用于匹配本地账号的字段 */
 export interface IdpProfile {
   sub: string
-  email?: string | null
+  phone?: string | null
+  phoneNumber?: string | null
+  phone_number?: string | null
   employeeNo?: string | null
 }
 
 export interface MappingCandidate {
   subject: string
-  email?: string
+  phone?: string
   employeeNo?: string
 }
 
 /** 从 IdP 用户信息提取本地账号匹配键（纯函数，可单测） */
 export function toMappingCandidate(profile: IdpProfile): MappingCandidate {
+  const rawPhone = profile.phone ?? profile.phoneNumber ?? profile.phone_number
   return {
     subject: profile.sub,
-    email: profile.email?.trim().toLowerCase() || undefined,
+    phone: rawPhone?.trim() || undefined,
     employeeNo: profile.employeeNo?.trim() || undefined
   }
 }
 
-/** 按优先级匹配本地账号：已绑定 subject → email（唯一）→ 工号（仅唯一命中） */
+/** 按优先级匹配本地账号：已绑定 subject → 手机号（唯一）→ 工号（仅唯一命中） */
 export async function findUserByMapping(event: H3Event, candidate: MappingCandidate) {
   const db = useDb(event)
   return matchUser(candidate, {
     bySubject: async (subject) => (await db.select().from(schema.users).where(eq(schema.users.oidcSubject, subject)).limit(1))[0],
-    byEmail: async (email) => (await db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1))[0],
+    byPhone: async (phone) => (await db.select().from(schema.users).where(eq(schema.users.phone, phone)).limit(1))[0],
     // 工号仅 (schoolId, employeeNo) 唯一，多校同工号视为歧义，跳过该键
     byEmployeeNo: async (employeeNo) => await db.select().from(schema.users).where(eq(schema.users.employeeNo, employeeNo)).limit(2)
   })
@@ -108,7 +111,7 @@ type UserRow = typeof schema.users.$inferSelect
 
 export interface UserMatcher {
   bySubject(subject: string): Promise<UserRow | undefined>
-  byEmail(email: string): Promise<UserRow | undefined>
+  byPhone(phone: string): Promise<UserRow | undefined>
   byEmployeeNo(employeeNo: string): Promise<UserRow[]>
 }
 
@@ -116,9 +119,9 @@ export interface UserMatcher {
 export async function matchUser(candidate: MappingCandidate, find: UserMatcher): Promise<UserRow | null> {
   const bySubject = await find.bySubject(candidate.subject)
   if (bySubject) return bySubject
-  if (candidate.email) {
-    const byEmail = await find.byEmail(candidate.email)
-    if (byEmail) return byEmail
+  if (candidate.phone) {
+    const byPhone = await find.byPhone(candidate.phone)
+    if (byPhone) return byPhone
   }
   if (candidate.employeeNo) {
     const byEmployeeNo = await find.byEmployeeNo(candidate.employeeNo)
@@ -127,14 +130,14 @@ export async function matchUser(candidate: MappingCandidate, find: UserMatcher):
   return null
 }
 
-function ssoDenied(message: string, email?: string) {
-  return createError({ statusCode: 403, message, data: { email } })
+function ssoDenied(message: string, phone?: string) {
+  return createError({ statusCode: 403, message, data: { phone } })
 }
 
 /**
  * 完成 OIDC 授权码交换与本地账号映射。
  * 校验 state → 换 token → 取用户信息 → 匹配本地用户 → 绑定 subject。
- * 未预置账号与非 active 账号拒绝（403），错误 data 携带 email 供路由写审计。
+ * 未预置账号与非 active 账号拒绝（403），错误 data 携带 phone 供路由写审计。
  */
 export async function completeSsoLogin(event: H3Event): Promise<AuthUser> {
   const config = await oidcConfiguration(event)
@@ -166,16 +169,16 @@ export async function completeSsoLogin(event: H3Event): Promise<AuthUser> {
   const candidate = toMappingCandidate({ ...profile, sub: subject })
   const user = await findUserByMapping(event, candidate)
   if (!user) {
-    throw ssoDenied('该账号未在本平台开通，请联系学校管理员', candidate.email)
+    throw ssoDenied('该账号未在本平台开通，请联系学校管理员', candidate.phone)
   }
   if (user.status !== 'active') {
-    throw ssoDenied('该账号已被停用，请联系学校管理员', candidate.email)
+    throw ssoDenied('该账号已被停用，请联系学校管理员', candidate.phone)
   }
   if (user.schoolId) {
     const [school] = await useDb(event).select({ status: schema.schools.status }).from(schema.schools)
       .where(eq(schema.schools.id, user.schoolId)).limit(1)
     if (!school || school.status !== 'active') {
-      throw ssoDenied('该账号所属学校不可用，请联系管理员', candidate.email)
+      throw ssoDenied('该账号所属学校不可用，请联系管理员', candidate.phone)
     }
   }
   if (user.oidcSubject !== candidate.subject) {
@@ -187,7 +190,7 @@ export async function completeSsoLogin(event: H3Event): Promise<AuthUser> {
   return {
     id: user.id,
     schoolId: user.schoolId,
-    email: user.email,
+    phone: user.phone ?? '',
     name: user.name,
     role,
     roleLabel: ROLE_LABELS[role]
