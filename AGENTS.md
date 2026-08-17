@@ -36,7 +36,7 @@
 
 - `docs/MANAGEMENT_FRAMEWORK.md` 描述并发控制用请求体 `ManagedPatch<T>`；当前 PATCH 路由实际从查询参数读取 `expectedUpdatedAt`（见 `server/api/v1/school-admin/classes/[id].patch.ts`）。
 - `server/utils/db-helpers.ts` 的 `findOwned` 目前没有调用方；`apiContext`、`uuidParam` 也只在少数路由使用。它们是可选简化，不是必须迁移的强制约定。
-- `README.md` 写的是 `http://localhost:3000`，`nuxt.config.ts` 的 `devServer.port` 是 `3301`，Playwright 用 `3100`；容器内 App 端口是 `3000`。
+- 本地 dev 端口 `3301`（`nuxt.config.ts` 的 `devServer.port`），Playwright 用 `3100`；容器内 App 端口 `3300`，正式环境宿主端口 `3300`（`.env` 的 `APP_PORT`），测试环境宿主端口 `3400`。
 
 ## 3. 当前技术基线
 

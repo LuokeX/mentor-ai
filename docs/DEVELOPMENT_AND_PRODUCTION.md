@@ -189,7 +189,7 @@ docker compose logs --tail=100 migrate
 只有 `migrate` 显示退出码 `0` 后，App 才应进入运行状态；通知消费者随 App 启动。随后验证：
 
 ```bash
-docker compose exec app node -e "fetch('http://127.0.0.1:3000/health/ready').then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })"
+docker compose exec app node -e "fetch('http://127.0.0.1:3300/health/ready').then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })"
 docker compose logs --tail=100 app nginx
 ```
 
@@ -262,7 +262,7 @@ docker compose --profile tls up -d
 ```bash
 docker compose ps
 docker compose logs --since=30m app nginx postgres
-docker compose exec app node -e "fetch('http://127.0.0.1:3000/health/ready').then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })"
+docker compose exec app node -e "fetch('http://127.0.0.1:3300/health/ready').then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })"
 ```
 
 常规重启单个无状态服务：

@@ -3,7 +3,7 @@
 # 与正式环境使用同一套镜像与配置逻辑（migrate + app + postgres），
 # 但使用独立 project（mentor-ai-test）、独立数据卷和端口：
 # - postgres: 127.0.0.1:5435，库名 mentor_ai，数据卷 mentor-ai-test_postgres-data
-# - app: 127.0.0.1:3400 -> 3000
+# - app: 127.0.0.1:3400 -> 3300
 # - Ollama 不随测试环境启动；EMBEDDING_ENABLED=false 走关键词模式
 #
 # 数据来源：每次发布前用 scripts/refresh-test-db.sh 将正式库最新备份
@@ -92,11 +92,11 @@ services:
       migrate:
         condition: service_completed_successfully
     expose:
-      - "3000"
+      - "3300"
     ports:
-      - "127.0.0.1:3400:3000"
+      - "127.0.0.1:3400:3300"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3300/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 12

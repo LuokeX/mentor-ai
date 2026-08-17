@@ -113,11 +113,11 @@ services:
       migrate:
         condition: service_completed_successfully
     expose:
-      - "3000"
+      - "3300"
     ports:
-      - "0.0.0.0:${APP_PORT:-3000}:3000"
+      - "0.0.0.0:${APP_PORT:-3300}:3300"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3300/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 12

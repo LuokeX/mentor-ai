@@ -67,7 +67,7 @@ pnpm dev
 ```bash
 docker compose --profile tls build
 docker compose --profile tls up -d
-docker compose exec app node -e "fetch('http://127.0.0.1:3000/health/ready').then(r=>r.text()).then(console.log)"
+docker compose exec app node -e "fetch('http://127.0.0.1:3300/health/ready').then(r=>r.text()).then(console.log)"
 ```
 
 PostgreSQL 首次初始化会创建无建库/建表权限的 `mentor_app` 运行账户；只有 `migrate` 和备份恢复使用数据库管理员。`migrate` 成功后 App 启动，通知消费者随 App 一起运行。Nginx 将 HTTP 强制跳转到 HTTPS，并对登录接口限速。
