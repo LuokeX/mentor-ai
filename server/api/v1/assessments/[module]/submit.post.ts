@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { and, desc, eq, ne } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNull, max, ne } from 'drizzle-orm'
 import { moduleIdSchema } from '../../../../../shared/contracts'
 import { requireUser } from '../../../../utils/auth'
 import { useDb, schema } from '../../../../utils/db'
@@ -15,6 +15,7 @@ import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
 import { generateAssessmentReport } from '../../../../integrations/deepseek'
 import { findInvalidAnswers } from '../../../../domain/assessment-answers'
+import { buildAttributionKeywords, buildPlanTitle, truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
 
 const bodySchema = z.object({
   attemptId: z.string().uuid().optional(),
@@ -159,6 +160,96 @@ export default defineEventHandler(async (event) => {
       }).returning()
   if (!attempt) throw createError({ statusCode: body.attemptId ? 404 : 500, message: body.attemptId ? '草稿不存在或已经提交' : '评估记录保存失败' })
 
+  // ---- 评估组：同一业务问题（同一对话或同一咨询上下文）的多次量表提交聚合载体 ----
+  const sourceType = body.sourceChatSessionId ? 'assistant_dialogue' : 'direct_assessment'
+  const contextType = body.studentId ? 'student' : linkedClassId ? 'class' : body.guardianId ? 'guardian' : 'none'
+  const contextId = body.studentId || linkedClassId || body.guardianId || null
+  const sessionGroupWhere = body.sourceChatSessionId
+    ? and(
+        eq(schema.assessmentSessions.ownerUserId, user.id),
+        eq(schema.assessmentSessions.schoolId, user.schoolId),
+        eq(schema.assessmentSessions.sourceType, 'assistant_dialogue'),
+        eq(schema.assessmentSessions.sourceChatSessionId, body.sourceChatSessionId),
+        eq(schema.assessmentSessions.status, 'open')
+      )
+    : and(
+        eq(schema.assessmentSessions.ownerUserId, user.id),
+        eq(schema.assessmentSessions.schoolId, user.schoolId),
+        eq(schema.assessmentSessions.module, module),
+        eq(schema.assessmentSessions.sourceType, 'direct_assessment'),
+        eq(schema.assessmentSessions.contextType, contextType),
+        contextId ? eq(schema.assessmentSessions.contextId, contextId) : isNull(schema.assessmentSessions.contextId),
+        eq(schema.assessmentSessions.status, 'open')
+      )
+  let assessmentSessionId: string | null = null
+  {
+    const [existing] = await db.select({ id: schema.assessmentSessions.id }).from(schema.assessmentSessions)
+      .where(sessionGroupWhere)
+      .orderBy(desc(schema.assessmentSessions.createdAt))
+      .limit(1)
+    assessmentSessionId = existing?.id || null
+  }
+  if (!assessmentSessionId) {
+    const [created] = await db.insert(schema.assessmentSessions).values({
+      schoolId: user.schoolId,
+      ownerUserId: user.id,
+      module,
+      sourceType,
+      sourceChatSessionId: body.sourceChatSessionId || null,
+      contextType,
+      contextId,
+      status: 'open'
+    }).returning({ id: schema.assessmentSessions.id })
+    assessmentSessionId = created?.id || null
+  }
+  if (assessmentSessionId) {
+    const [{ maxSeq } = { maxSeq: -1 }] = await db
+      .select({ maxSeq: max(schema.assessmentSessionAttempts.sequence) })
+      .from(schema.assessmentSessionAttempts)
+      .where(eq(schema.assessmentSessionAttempts.assessmentSessionId, assessmentSessionId))
+    await db.insert(schema.assessmentSessionAttempts).values({
+      assessmentSessionId,
+      assessmentAttemptId: attempt.id,
+      sequence: Number(maxSeq) + 1
+    }).onConflictDoNothing()
+  }
+
+  // 组内全部已提交量表的结果归因（按提交顺序），供合并方案时重算标题与关键词。
+  async function collectGroupAttributions(sessionId: string) {
+    const rows = await db.select({ result: schema.assessmentAttempts.result })
+      .from(schema.assessmentSessionAttempts)
+      .innerJoin(schema.assessmentAttempts, eq(schema.assessmentSessionAttempts.assessmentAttemptId, schema.assessmentAttempts.id))
+      .where(eq(schema.assessmentSessionAttempts.assessmentSessionId, sessionId))
+      .orderBy(asc(schema.assessmentSessionAttempts.sequence))
+    const names: string[] = []
+    const descriptions: string[] = []
+    for (const row of rows) {
+      const result = (row.result as Record<string, unknown> | null)?.attributions as Array<{ strength?: string, name?: string, description?: string }> | undefined
+      if (!result) continue
+      for (const attribution of result) {
+        if (attribution.strength !== 'reference' && attribution.name) names.push(attribution.name)
+        if (attribution.description) descriptions.push(attribution.description)
+      }
+    }
+    return { names, descriptions }
+  }
+
+  // AI 来源的提问首句（教师本人可见的摘要，截 80 字；URL 不携带正文）
+  let questionSummary: string | null = null
+  if (body.sourceChatSessionId) {
+    const [firstUser] = await db.select({ contentEnc: schema.chatMessages.contentEnc }).from(schema.chatMessages)
+      .where(and(
+        eq(schema.chatMessages.sessionId, body.sourceChatSessionId),
+        eq(schema.chatMessages.role, 'user')
+      ))
+      .orderBy(asc(schema.chatMessages.createdAt))
+      .limit(1)
+    if (firstUser) {
+      questionSummary = truncateByChars(decryptSensitive(firstUser.contentEnc, useRuntimeConfig(event).encryptionKey), 80)
+    }
+  }
+  const objectLabel = guardianName || studentName || undefined
+
   let fuse: { eventId: string, referralId: string, crisisGuide: string } | null = null
   let planId: string | null = null
   if (result.blocked) {
@@ -179,27 +270,98 @@ export default defineEventHandler(async (event) => {
     const matchedToolCodes = planTools
       .map(tool => (tool as { code?: string }).code)
       .filter((item): item is string => Boolean(item))
-    // 方案标题：对象 ｜ 模块 ｜ 等级（含干预类型）｜ 归因（主+次）｜ 工具数 ｜ 方案
-    // 等级为空时用严重度兜底（低/中/高/危机），无归因省略归因段，无工具省略工具数段
-    const severityLabel = ({ low: '低', medium: '中', high: '高', crisis: '危机' } as Record<string, string>)[result.severity || ''] || ''
-    const levelText = result.levelName || (severityLabel ? `${severityLabel}风险` : '')
-    const attributionText = [result.primaryAttribution, ...result.secondaryAttributions].filter(Boolean).join('、')
-    const title = [
-      guardianName || studentName,
-      moduleMeta[module].title,
-      levelText,
-      attributionText || undefined,
-      planTools.length ? `${planTools.length} 个工具` : undefined,
-      '方案'
-    ].filter(Boolean).join(' ｜ ')
-    const [plan] = await db.insert(schema.plans).values({
+
+    // 标题与快照：按来源生成并固化为 plan 列，列表/详情只投影快照，
+    // 避免旧方案随三库版本发布而「变标题、变归因」。
+    const attributionNames = result.attributions
+      .filter(attribution => attribution.strength !== 'reference')
+      .map(attribution => attribution.name)
+    const attributionDescriptions = result.attributions
+      .filter(attribution => attribution.strength !== 'reference')
+      .map(attribution => attribution.description || attribution.name)
+    const buildTitle = (names: string[], descriptions: string[]) => buildPlanTitle({
+      sourceType: sourceType as PlanSourceType,
+      moduleTitle: moduleMeta[module].title,
+      objectLabel,
+      questionSummary,
+      attributionNames: names,
+      attributionDescriptions: descriptions
+    })
+    const instrumentSnapshot = {
+      code: definition.code || definition.instrumentCode || '',
+      name: definition.title || definition.code || '',
+      version: definition.version,
+      sequence: 0
+    }
+
+    // 合并规则：评估组内已有方案且处于未接受执行状态 → 追加并更新该方案；
+    // 否则（无方案或已进入执行态）新建方案。
+    let mergeTargetId: string | null = null
+    if (assessmentSessionId) {
+      const [linked] = await db.select({ planId: schema.planAssessmentAttempts.planId })
+        .from(schema.planAssessmentAttempts)
+        .innerJoin(schema.assessmentSessionAttempts, eq(schema.planAssessmentAttempts.assessmentAttemptId, schema.assessmentSessionAttempts.assessmentAttemptId))
+        .innerJoin(schema.plans, eq(schema.planAssessmentAttempts.planId, schema.plans.id))
+        .where(and(
+          eq(schema.assessmentSessionAttempts.assessmentSessionId, assessmentSessionId),
+          inArray(schema.plans.status, ['pending_acceptance', 'adjustment_needed'])
+        ))
+        .orderBy(desc(schema.plans.updatedAt))
+        .limit(1)
+      mergeTargetId = linked?.planId || null
+    }
+
+    if (mergeTargetId) {
+      const [{ attemptCount } = { attemptCount: 0 }] = await db
+        .select({ attemptCount: count() })
+        .from(schema.planAssessmentAttempts)
+        .where(eq(schema.planAssessmentAttempts.planId, mergeTargetId))
+      const sequence = Number(attemptCount)
+      await db.insert(schema.planAssessmentAttempts).values({
+        planId: mergeTargetId,
+        assessmentAttemptId: attempt.id,
+        sequence
+      }).onConflictDoNothing()
+      const [plan] = await db.select({
+        instrumentSnapshots: schema.plans.instrumentSnapshots,
+        attributionKeywords: schema.plans.attributionKeywords,
+        sourceQuestionSummary: schema.plans.sourceQuestionSummary
+      }).from(schema.plans).where(eq(schema.plans.id, mergeTargetId)).limit(1)
+      const group = assessmentSessionId ? await collectGroupAttributions(assessmentSessionId) : { names: [], descriptions: [] }
+      const mergedNames = group.names.length ? group.names : [...(plan?.attributionKeywords || []), ...attributionNames]
+      const keywords = buildAttributionKeywords(mergedNames)
+      const mergedTitle = buildTitle(mergedNames, group.descriptions.length ? group.descriptions : attributionDescriptions)
+      await db.update(schema.plans).set({
+        title: mergedTitle.title,
+        titleFull: mergedTitle.titleFull,
+        sourceQuestionSummary: plan?.sourceQuestionSummary || questionSummary || null,
+        attributionKeywords: keywords,
+        instrumentSnapshots: [...(plan?.instrumentSnapshots || []), { ...instrumentSnapshot, sequence }],
+        updatedAt: new Date()
+      }).where(eq(schema.plans.id, mergeTargetId))
+      planId = mergeTargetId
+      await recordPlanOperationEvent(event, {
+        schoolId: user.schoolId,
+        ownerUserId: user.id,
+        planId: mergeTargetId,
+        eventType: 'plan_merged',
+        metadata: { module, attemptId: attempt.id, sequence }
+      })
+    } else {
+      const builtTitle = buildTitle(attributionNames, attributionDescriptions)
+      const [plan] = await db.insert(schema.plans).values({
       schoolId: user.schoolId, ownerUserId: user.id, module,
       studentId: body.studentId,
       classId: linkedClassId,
       guardianId: body.guardianId,
       sourceChatSessionId: body.sourceChatSessionId,
       sourceAssessmentAttemptId: attempt.id,
-      title,
+      title: builtTitle.title,
+      titleFull: builtTitle.titleFull,
+      sourceType,
+      sourceQuestionSummary: questionSummary,
+      attributionKeywords: buildAttributionKeywords(attributionNames),
+      instrumentSnapshots: [instrumentSnapshot],
       summaryEnc: encryptSensitive(narrative || result.reasons.join('；'), useRuntimeConfig(event).encryptionKey),
       actions: result.actions,
       tools: planTools,
@@ -239,6 +401,11 @@ export default defineEventHandler(async (event) => {
     }).returning({ id: schema.plans.id, createdAt: schema.plans.createdAt })
     planId = plan?.id || null
     if (plan) {
+      await db.insert(schema.planAssessmentAttempts).values({
+        planId: plan.id,
+        assessmentAttemptId: attempt.id,
+        sequence: 0
+      }).onConflictDoNothing()
       await createPlanActions(event, {
         planId: plan.id, schoolId: user.schoolId, ownerUserId: user.id,
         createdAt: plan.createdAt, actions: result.actions
@@ -250,6 +417,7 @@ export default defineEventHandler(async (event) => {
         eventType: 'plan_generated',
         metadata: { module, ruleCount: result.matchedRuleIds.length, toolCount: planTools.length }
       })
+    }
     }
   }
   await writeAudit(event, {

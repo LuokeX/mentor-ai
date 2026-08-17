@@ -118,6 +118,11 @@ export function useManagedList<T>(baseUrl: string, options?: { extraQuery?: () =
     fetchList()
   }
 
+  function resetPage() {
+    page.value = 1
+    syncUrl()
+  }
+
   function onPageSizeChange(newSize: 20 | 50 | 100) {
     pageSize.value = newSize
     page.value = 1
@@ -146,6 +151,7 @@ export function useManagedList<T>(baseUrl: string, options?: { extraQuery?: () =
     onSortChange,
     onPageChange,
     onPageSizeChange,
+    resetPage,
     refresh,
     fetchList,
   }

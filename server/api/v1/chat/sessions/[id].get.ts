@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id') || ''
   const db = useDb(event)
   const [session] = await db.select().from(schema.chatSessions)
-    .where(and(eq(schema.chatSessions.id, id), eq(schema.chatSessions.ownerUserId, user.id)))
+    .where(and(eq(schema.chatSessions.id, id), eq(schema.chatSessions.ownerUserId, user.id), eq(schema.chatSessions.schoolId, user.schoolId!)))
     .limit(1)
   if (!session) throw createError({ statusCode: 404, message: '对话不存在' })
   const config = useRuntimeConfig(event)

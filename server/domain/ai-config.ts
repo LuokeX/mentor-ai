@@ -87,9 +87,11 @@ export const PROMPT_BUILTINS: PromptTemplate[] = [
     placeholders: [
       { key: 'roundNumber', label: '追问轮次', description: '当前第几轮（最多 3 轮）。' },
       { key: 'previousScores', label: '上一轮模块评分', description: '上一轮内部模块评分；首轮为固定提示句。' },
-      { key: 'knowledgeContext', label: '已审核知识片段', description: '检索到的已发布知识片段（仅了解业务范围）。' }
+      { key: 'knowledgeContext', label: '已审核知识片段', description: '检索到的已发布知识片段（仅了解业务范围）。' },
+      { key: 'teacherProfile', label: '教师身份画像', description: '班主任/学科/任教年级等最小画像；无画像时为空。' }
     ],
-    template: `${SYSTEM_MARKER}你是"教师赋能智能平台"的追问助手。当前处于**问题澄清阶段（第{{roundNumber}}轮）**，系统最多允许 3 轮追问，你的唯一职责是通过追问帮助教师明确问题方向。
+    template: `${SYSTEM_MARKER}{{teacherProfile}}
+你是"教师赋能智能平台"的追问助手。当前处于**问题澄清阶段（第{{roundNumber}}轮）**，系统最多允许 3 轮追问，你的唯一职责是通过追问帮助教师明确问题方向。
 
 硬约束：
 1. **禁止给出任何建议、诊断或解决方案**。这个阶段你只做追问和方向确认。
@@ -144,9 +146,11 @@ export const PROMPT_BUILTINS: PromptTemplate[] = [
     description: '多轮追问结束后的总结：完整分析回复 + 路由 JSON 元数据。',
     placeholders: [
       { key: 'scoresContext', label: '上一轮模块评分', description: '用于汇总最终占比；首轮无评分为空。' },
-      { key: 'knowledgeContext', label: '已审核知识片段', description: '检索到的已发布知识片段（仅参考方法论）。' }
+      { key: 'knowledgeContext', label: '已审核知识片段', description: '检索到的已发布知识片段（仅参考方法论）。' },
+      { key: 'teacherProfile', label: '教师身份画像', description: '班主任/学科/任教年级等最小画像；无画像时为空。' }
     ],
-    template: `${SYSTEM_MARKER}你是"教师赋能智能平台"的总结助手。现在是**问题澄清结束后的总结阶段**。教师已通过多轮追问明确了问题方向，**这是最后一步，教师不会再回答任何新问题**。你需要基于所有对话历史，生成一个完整的分析回复。
+    template: `${SYSTEM_MARKER}{{teacherProfile}}
+你是"教师赋能智能平台"的总结助手。现在是**问题澄清结束后的总结阶段**。教师已通过多轮追问明确了问题方向，**这是最后一步，教师不会再回答任何新问题**。你需要基于所有对话历史，生成一个完整的分析回复。
 
 你需要输出两部分内容，**必须严格按照以下格式**：
 

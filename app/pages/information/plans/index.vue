@@ -12,17 +12,47 @@ import { useManagedList } from '~/composables/useManagedList'
 interface PlanRow {
   id: string
   title: string
+  titleFull?: string | null
+  sourceType?: string | null
   module: string
   status: string
+  attributionKeywords?: string[]
+  instrumentSnapshots?: Array<{ code: string, name: string, version: string, sequence: number }>
   nextReviewAt: string | null
   completedAt: string | null
   updatedAt: string
 }
 
+const moduleTab = ref('all')
+const reviewFrom = ref('')
+const reviewTo = ref('')
+
 const {
   rows, total, page, pageSize, q, statusFilter, sort, order, loading, error,
-  onSearch, onStatusChange, onSortChange, onPageChange, onPageSizeChange, refresh
-} = useManagedList<PlanRow>('/api/v1/plans')
+  onSearch, onStatusChange, onSortChange, onPageChange, onPageSizeChange, refresh, fetchList, resetPage
+} = useManagedList<PlanRow>('/api/v1/plans', {
+  extraQuery: () => ({
+    module: moduleTab.value !== 'all' ? moduleTab.value : undefined,
+    reviewFrom: reviewFrom.value || undefined,
+    reviewTo: reviewTo.value || undefined,
+  }),
+})
+
+const moduleTabs = [
+  { label: '全部', value: 'all' },
+  ...Object.entries(moduleMeta).map(([value, meta]) => ({ label: meta.title, value })),
+]
+
+function onModuleChange(value: string) {
+  moduleTab.value = value
+  resetPage()
+  fetchList()
+}
+
+watch([reviewFrom, reviewTo], () => {
+  resetPage()
+  fetchList()
+})
 
 const columns = [
   { key: 'title', label: '方案标题', sortable: true },
@@ -76,6 +106,30 @@ const router = useRouter()
     description="由评估生成的行动方案，含执行、复盘与质量反馈记录"
     :can-create="false"
   >
+    <!-- 模块页签：全部 + 五模块，横向滚动 -->
+    <div class="mb-4 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="按模块筛选方案">
+      <UButton
+        v-for="tab in moduleTabs"
+        :key="tab.value"
+        size="sm"
+        :variant="moduleTab === tab.value ? 'solid' : 'soft'"
+        :color="moduleTab === tab.value ? 'primary' : 'neutral'"
+        class="shrink-0"
+        @click="onModuleChange(tab.value)"
+      >
+        {{ tab.label }}
+      </UButton>
+    </div>
+
+    <!-- 复盘日期范围 -->
+    <div class="mb-4 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+      <UIcon name="i-lucide-calendar-range" class="size-4 text-slate-400" />
+      <span class="shrink-0 text-slate-500">复盘日期</span>
+      <UInput v-model="reviewFrom" type="date" class="w-40" aria-label="复盘开始日期" />
+      <span class="text-slate-400">至</span>
+      <UInput v-model="reviewTo" type="date" class="w-40" aria-label="复盘结束日期" />
+    </div>
+
     <TableToolbar
       :search-value="q"
       :status-filter="statusFilter"
@@ -97,11 +151,28 @@ const router = useRouter()
       @row-click="(row: PlanRow) => router.push(`/information/plans/${row.id}`)"
     >
       <template #title-data="{ row }">
-        <NuxtLink :to="`/information/plans/${row.id}`" class="font-medium text-emerald-700 hover:underline">
+        <UTooltip
+          v-if="row.titleFull && row.titleFull !== row.title"
+          :text="row.titleFull"
+          class="block min-w-0"
+          :popper="{ placement: 'top', strategy: 'fixed' }"
+        >
+          <NuxtLink :to="`/information/plans/${row.id}`" class="block truncate font-medium text-emerald-700 hover:underline">
+            {{ row.title }}
+          </NuxtLink>
+        </UTooltip>
+        <NuxtLink v-else :to="`/information/plans/${row.id}`" class="block truncate font-medium text-emerald-700 hover:underline">
           {{ row.title }}
         </NuxtLink>
       </template>
-      <template #module-data="{ row }">{{ moduleTitle(row.module) }}</template>
+      <template #module-data="{ row }">
+        <div class="min-w-0">
+          <p class="truncate">{{ moduleTitle(row.module) }}</p>
+          <p v-if="row.attributionKeywords?.length" class="mt-0.5 truncate text-xs text-slate-400">
+            {{ row.attributionKeywords.join('、') }}
+          </p>
+        </div>
+      </template>
       <template #status-data="{ row }">
         <UBadge :color="STATUS_COLOR[row.status] || 'neutral'" variant="soft" size="md">
           {{ STATUS_TEXT[row.status] || row.status }}

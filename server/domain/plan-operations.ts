@@ -5,6 +5,7 @@ const allowedMetadataTypes = new Set(['string', 'number', 'boolean'])
 
 export type PlanOperationEventType =
   | 'plan_generated'
+  | 'plan_merged'
   | 'plan_acceptance_updated'
   | 'plan_action_updated'
   | 'plan_action_blocked'

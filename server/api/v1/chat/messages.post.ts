@@ -32,12 +32,29 @@ function getClarificationState(sessionMetadata: Record<string, unknown> | null |
   return cs
 }
 
+/** 最小教师画像快照：只取业务所需的班主任/学科/任教年级，不含姓名电话等 PII；全空时返回 null 不注入。 */
+async function buildTeacherProfileText(db: ReturnType<typeof useDb>, userId: string): Promise<string | null> {
+  const [row] = await db.select({
+    subject: schema.users.subject,
+    teachingGrades: schema.users.teachingGrades,
+    isClassTeacher: schema.users.isClassTeacher,
+    classTeacherYears: schema.users.classTeacherYears
+  }).from(schema.users).where(eq(schema.users.id, userId)).limit(1)
+  if (!row) return null
+  const parts: string[] = []
+  if (row.isClassTeacher) parts.push(row.classTeacherYears ? `班主任（${row.classTeacherYears}年）` : '班主任')
+  if (row.subject) parts.push(`${row.subject}学科教师`)
+  if (row.teachingGrades?.length) parts.push(`任教年级：${row.teachingGrades.join('、')}`)
+  return parts.length ? parts.join('；') : null
+}
+
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const body = chatMessageSchema.parse(await readBody(event))
   const config = useRuntimeConfig(event)
   const db = useDb(event)
+  const teacherProfileText = (await buildTeacherProfileText(db, user.id)) ?? undefined
   const governance = await resolveAiGovernance(event, user.schoolId, user.id)
   let sessionId = body.sessionId
   let sessionMetadata: Record<string, unknown> = {}
@@ -201,6 +218,7 @@ export default defineEventHandler(async (event) => {
               history: combinedHistory,
               citations,
               lastModuleScores: clarificationState.moduleScores,
+              teacherProfileText,
               onDelta: text => emit(controller, 'answer_delta', { text })
             })
             await db.update(schema.chatSessions).set({
@@ -245,6 +263,7 @@ export default defineEventHandler(async (event) => {
               history: combinedHistory,
               citations,
               lastModuleScores: clarificationState.moduleScores,
+              teacherProfileText,
               onDelta: text => emit(controller, 'answer_delta', { text })
             })
             await db.update(schema.chatSessions).set({
@@ -279,6 +298,7 @@ export default defineEventHandler(async (event) => {
             citations,
             clarificationRound: nextRound,
             previousModuleScores: clarificationState.moduleScores,
+            teacherProfileText,
             onDelta: text => emit(controller, 'answer_delta', { text })
           })
 
@@ -316,6 +336,7 @@ export default defineEventHandler(async (event) => {
         // 知识库检索：基于用户消息 + 路由确定的模块检索相关文档
         const triageCitations = await fetchKnowledgeCitations(body.message, route.primaryModule)
 
+        const identityText = teacherProfileText ? `您是${teacherProfileText}。` : ''
         const contextText = businessContext && !body.withoutRecord ? `已关联当前对象“${businessContext.label}”。` : '本次分诊未纳入具体学生、班级或家长档案。'
         const prepItems = [
           '准备最近一周或最近一次事件的具体事实。',
@@ -326,7 +347,7 @@ export default defineEventHandler(async (event) => {
         const knowledgeSuffix = triageCitations.length > 0
           ? ` 以下已发布资源可作参考：${triageCitations.slice(0, 3).map(c => `《${c.documentTitle}》${c.heading ? `"${c.heading}"` : ''}`).join('、')}。`
           : ''
-        const answer = `${contextText} 我建议先进入「${moduleTitle}」模块完成评估。${route.rationale}${knowledgeSuffix} 进入前请先准备：${prepItems.join('；')}`
+        const answer = `${identityText}${contextText} 我建议先进入「${moduleTitle}」模块完成评估。${route.rationale}${knowledgeSuffix} 进入前请先准备：${prepItems.join('；')}`
         emit(controller, 'answer_start', { mode: triageMode, suggestedActions: [] })
         emit(controller, 'answer_delta', { text: answer })
         const [decision] = await db.insert(schema.routingDecisions).values({

@@ -86,13 +86,16 @@ let snapUnlockTimer: number | undefined
 const toast = useToast()
 const { moduleLabel, libraryTypeLabel, actionStatusLabel } = useDisplayLabels()
 const quickPrompts = [
-  '小明上课经常走神，作业拖拉到半夜，数学计算经常看错符号，考前紧张到手抖，说自己就是学不好。',
-  '我们班最近死气沉沉的，学生不愿意来学校，班委也形同虚设，制定了班级公约没人执行，我每天都在救火。',
-  '有个家长经常越级投诉到校长，说我没管好，还联合其他家长在群里攻击我，沟通渠道基本断了。',
-  '我真的快扛不住了，每天都像打仗一样，回家就瘫在沙发上什么都不想干，学生犯错我现在连气都懒得生了。',
-  '班上有个女生最近经常哭，成绩突然大幅下滑，被同学孤立，说自己什么都做不好，不想活了。',
-  '我们班有个男生上课睡觉、不交作业、跟同学打架，家长也不配合还经常投诉我。'
+  '小明上课经常走神，作业拖拉到半夜，数学计算经常看错符号，考前紧张到手抖，说自己就是学不好。我该如何处理？',
+  '我们班最近死气沉沉的，学生不愿意来学校，班委也形同虚设，制定了班级公约没人执行，我每天都在救火。我该如何处理？',
+  '有个家长经常越级投诉到校长，说我没管好，还联合其他家长在群里攻击我，沟通渠道基本断了。我该如何处理？',
+  '我真的快扛不住了，每天都像打仗一样，回家就瘫在沙发上什么都不想干，学生犯错我现在连气都懒得生了。我该如何处理？'
 ]
+const greetingName = computed(() => {
+  const name = user.value?.name?.trim()
+  if (!name) return '老师'
+  return name.endsWith('老师') ? name : `${name}老师`
+})
 const contextSelectItems = computed(() => [
   { label: '不指定对象', value: 'none' },
   ...((contextOptions.value?.students || []).map((item: any) => ({ label: `学生 · ${item.label}`, value: `student:${item.id}` }))),
@@ -464,6 +467,8 @@ async function confirmModule(module: ModuleId) {
 
 onMounted(async () => {
   const query = useRoute().query
+  // 会话深链：?sessionId=<uuid> 打开指定会话；归属由 /api/v1/chat/sessions/[id] 服务端校验，跨教师返回 404
+  const deepLinkSessionId = typeof query.sessionId === 'string' && query.sessionId ? query.sessionId : ''
   const type = typeof query.contextType === 'string' ? query.contextType : ''
   const id = typeof query.contextId === 'string' ? query.contextId : ''
   let prefill: { prompt?: string, contextKey?: string } | null = null
@@ -472,7 +477,9 @@ onMounted(async () => {
     try { prefill = JSON.parse(storedPrefill) } catch { /* 忽略损坏的本地预填数据 */ }
     sessionStorage.removeItem('assistant-prefill')
   }
-  if (type && id) selectedContextKey.value = `${type}:${id}`
+  if (deepLinkSessionId) {
+    await loadSession(deepLinkSessionId)
+  } else if (type && id) selectedContextKey.value = `${type}:${id}`
   else if (prefill?.contextKey) selectedContextKey.value = prefill.contextKey
   else loadContextPreview()
   if (prefill?.prompt) input.value = prefill.prompt
@@ -697,14 +704,14 @@ onUnmounted(() => {
           </div>
 
           <div v-else class="mx-auto flex h-full max-w-2xl flex-col items-center justify-center py-8 text-center">
-            <div class="grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-6" /></div><h2 class="mt-4 text-lg font-semibold">今天想先聊聊什么？</h2><p class="mt-2 text-sm leading-6 text-slate-500">自然描述真实情况即可，助手会帮您判断先进入哪个模块评估。</p>
+            <div class="grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-6" /></div><h2 class="mt-4 text-lg font-semibold">{{ greetingName }}，今天遇到了什么？</h2><p class="mt-2 text-sm leading-6 text-slate-500">自然描述真实情况即可，助手会帮您判断先进入哪个模块评估。</p>
             <div class="mt-6 grid w-full gap-2 sm:grid-cols-2"><button v-for="prompt in quickPrompts" :key="prompt" type="button" class="rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm leading-5 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800" @click="usePrompt(prompt)">{{ prompt }}<UIcon name="i-lucide-arrow-up-right" class="ml-1 inline size-3.5 text-slate-300" /></button></div>
           </div>
         </div>
 
         <form class="sticky bottom-0 border-t border-slate-100 bg-white px-4 py-3.5 sm:px-6" @submit.prevent="ask">
           <div class="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100">
-            <UTextarea v-model="input" :rows="1" :maxrows="5" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="请详细描述您的问题，包括：问题表现、涉及对象、发生频率、您的感受。系统将自动匹配关键词进行智能识别。" aria-label="向 AI 赋能助手提问" @keydown.enter.exact.prevent="ask" />
+            <UTextarea v-model="input" :rows="2" :maxrows="5" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="请详细描述您的问题，包括：问题表现、涉及对象、发生频率、您的感受。系统将自动匹配关键词进行智能识别。" aria-label="向 AI 赋能助手提问" @keydown.enter.exact.prevent="ask" />
             <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
           </div>
           <div class="mt-2 flex items-center justify-between px-1 text-[11px] text-slate-400"><span>Enter 发送 · Shift + Enter 换行</span><span>{{ input.length }}/4000</span></div>
@@ -802,7 +809,7 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section class="mt-12">
+    <section id="modules" class="mt-12">
       <div class="flex items-end justify-between"><div><p class="text-sm font-semibold text-emerald-700">快捷入口</p><h2 class="mt-1 text-2xl font-semibold">我知道要处理什么</h2></div><UButton to="/information" variant="ghost" color="neutral" trailing-icon="i-lucide-arrow-right">信息管理中心</UButton></div>
       <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <NuxtLink v-for="(item, id) in moduleMeta" :key="id" :to="`/module/${id}`" class="panel group flex min-h-64 flex-col p-5 transition hover:-translate-y-1 hover:shadow-xl">

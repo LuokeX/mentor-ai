@@ -9,7 +9,9 @@ export default defineConfig({
   retries: 1,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
   use: {
-    baseURL: 'http://localhost:3100',
+    // 固定 IPv4：Node/undici 解析 localhost 可能优先 ::1，而 Nuxt dev 只监听 IPv4，
+    // 会偶发 ECONNREFUSED ::1:3100
+    baseURL: 'http://127.0.0.1:3100',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure'
   },
@@ -19,7 +21,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'pnpm dev --port 3100',
-    url: 'http://localhost:3100/health/ready',
+    url: 'http://127.0.0.1:3100/health/ready',
     reuseExistingServer: true,
     timeout: 120_000
   }

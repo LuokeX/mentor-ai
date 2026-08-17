@@ -239,6 +239,13 @@
       "when": 1786935649412,
       "tag": "0033_windy_hellcat",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786952877445,
+      "tag": "0034_shocking_malcolm_colcord",
+      "breakpoints": true
     }
   ]
 }

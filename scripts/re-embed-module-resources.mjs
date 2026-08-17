@@ -11,7 +11,14 @@ function loadEnvDatabaseUrl() {
   } catch {}
   return null
 }
-const CONNECTION = process.env.DATABASE_URL || loadEnvDatabaseUrl() || 'postgres://mentor_admin:e99ed52b2799dba76638a35842c5841f4781407d4b2ab755e5244fd939078c89@localhost:5432/mentor_ai'
+function resolveConnection() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL
+  const fromFile = loadEnvDatabaseUrl()
+  if (fromFile) return fromFile
+  // 不内置连接凭据：缺失时明确报错，引导配置 .env
+  throw new Error('DATABASE_URL 未配置：请复制 .env.example 为 .env 或在环境变量中设置 DATABASE_URL')
+}
+const CONNECTION = resolveConnection()
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
 const MODEL = process.env.EMBEDDING_MODEL || 'qwen3-embedding:0.6b'
 const BATCH_SIZE = 10

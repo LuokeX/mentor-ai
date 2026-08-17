@@ -5,9 +5,28 @@ import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const pg = new Pool({ connectionString: 'postgres://mentor_admin:e99ed52b2799dba76638a35842c5841f4781407d4b2ab755e5244fd939078c89@localhost:5432/mentor_ai' })
 
-const ADMIN_ID = '17fa8178-34f0-41e4-a339-af7b3579001a' // platform.admin（13900001005）
+// 连接串不内置：优先环境变量，其次仓库根 .env；缺失时明确报错退出
+function loadDatabaseUrl() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL
+  try {
+    const envContent = readFileSync(resolve(__dirname, '../.env'), 'utf-8')
+    const match = envContent.match(/^DATABASE_URL\s*=\s*(.+)$/m)
+    if (match) return match[1].trim()
+  } catch { /* .env 缺失时走下方报错 */ }
+  throw new Error('DATABASE_URL 未配置：请复制 .env.example 为 .env 或在环境变量中设置 DATABASE_URL')
+}
+
+const pg = new Pool({ connectionString: loadDatabaseUrl() })
+
+// 写入人不内置固定管理员 ID：优先 SEED_ADMIN_ID，否则取最早的 platform_admin
+async function resolveActorId() {
+  if (process.env.SEED_ADMIN_ID) return process.env.SEED_ADMIN_ID
+  const { rows } = await pg.query(`SELECT id FROM users WHERE role = 'platform_admin' ORDER BY created_at ASC LIMIT 1`)
+  const id = rows[0]?.id
+  if (!id) throw new Error('未找到 platform_admin 账号，请先运行 pnpm db:seed 或创建平台管理员')
+  return id
+}
 
 // ====== 题库数据（从 shared/assessments.ts 提取） ======
 const fivePoint = [
@@ -103,6 +122,7 @@ const assessments = [
 ]
 
 async function seed() {
+  const actorId = await resolveActorId()
   // 先查已有 code，避免重复插入
   const existing = await pg.query(`SELECT code FROM content_packages WHERE type = 'assessment'`)
   const existingCodes = new Set(existing.rows.map(r => r.code))
@@ -116,7 +136,7 @@ async function seed() {
     await pg.query(
       `INSERT INTO content_packages (code, name, version, type, status, payload, created_by, published_at)
        VALUES ($1, $2, $3, $4, 'published', $5, $6, NOW())`,
-      [a.code, a.name, a.version, a.type, JSON.stringify(a.payload), ADMIN_ID]
+      [a.code, a.name, a.version, a.type, JSON.stringify(a.payload), actorId]
     )
     console.log(`INSERTED: ${a.code} — ${a.name}`)
     inserted++

@@ -135,6 +135,7 @@ function buildClarificationPrompt(input: {
   citations: KnowledgeCitation[]
   clarificationRound: number
   previousModuleScores?: Record<string, number>
+  teacherProfileText?: string
 }) {
   const knowledgeContext = input.citations.length
     ? input.citations.map(item => `[${item.chunkId}] 来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`).join('\n\n')
@@ -142,7 +143,7 @@ function buildClarificationPrompt(input: {
   const previousScores = input.previousModuleScores
     ? `参考：上一轮内部模块评分 ${JSON.stringify(input.previousModuleScores)}（仅用于内部记录，不影响追问方向和选项设计。）`
     : '这是第一轮追问，暂无历史模块评分。'
-  return { knowledgeContext, previousScores, roundNumber: String(input.clarificationRound) }
+  return { knowledgeContext, previousScores, roundNumber: String(input.clarificationRound), teacherProfile: input.teacherProfileText || '' }
 }
 
 /** 澄清追问消息：system 提示词来自 AI 管理中心模板。 */
@@ -152,12 +153,14 @@ async function buildClarificationMessages(event: H3Event, input: {
   citations: KnowledgeCitation[]
   clarificationRound: number
   previousModuleScores?: Record<string, number>
+  teacherProfileText?: string
 }) {
   const parts = buildClarificationPrompt(input)
   const prompt = await renderPrompt(event, 'clarification_round', {
     roundNumber: parts.roundNumber,
     previousScores: parts.previousScores,
-    knowledgeContext: parts.knowledgeContext
+    knowledgeContext: parts.knowledgeContext,
+    teacherProfile: parts.teacherProfile
   })
   const messages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
@@ -173,6 +176,7 @@ function buildSummaryPrompt(input: {
   history: Array<{ role: 'user' | 'assistant', content: string }>
   citations: KnowledgeCitation[]
   lastModuleScores?: Record<string, number>
+  teacherProfileText?: string
 }) {
   const knowledgeContext = input.citations.length
     ? input.citations.map(item => `[${item.chunkId}] 来源：${item.documentTitle}${item.heading ? ` / ${item.heading}` : ''}\n${item.excerpt}`).join('\n\n')
@@ -180,7 +184,7 @@ function buildSummaryPrompt(input: {
   const scoresContext = input.lastModuleScores
     ? `上一轮模块评分：${JSON.stringify(input.lastModuleScores)}。请在此基础上汇总最终占比。`
     : ''
-  return { knowledgeContext, scoresContext }
+  return { knowledgeContext, scoresContext, teacherProfile: input.teacherProfileText || '' }
 }
 
 /** 澄清总结消息：system 提示词来自 AI 管理中心模板。 */
@@ -188,11 +192,13 @@ async function buildSummaryMessages(event: H3Event, input: {
   history: Array<{ role: 'user' | 'assistant', content: string }>
   citations: KnowledgeCitation[]
   lastModuleScores?: Record<string, number>
+  teacherProfileText?: string
 }) {
   const parts = buildSummaryPrompt(input)
   const prompt = await renderPrompt(event, 'clarification_summary', {
     scoresContext: parts.scoresContext,
-    knowledgeContext: parts.knowledgeContext
+    knowledgeContext: parts.knowledgeContext,
+    teacherProfile: parts.teacherProfile
   })
   const messages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
@@ -216,6 +222,7 @@ export async function streamClarificationRound(event: H3Event, input: {
   citations: KnowledgeCitation[]
   clarificationRound: number
   previousModuleScores?: Record<string, number>
+  teacherProfileText?: string
   onDelta: (text: string) => void
 }): Promise<{ data: ClarificationRound; fallback: boolean }> {
   const config = useRuntimeConfig(event)
@@ -241,7 +248,8 @@ export async function streamClarificationRound(event: H3Event, input: {
     history: input.history,
     citations: input.citations,
     clarificationRound: input.clarificationRound,
-    previousModuleScores: input.previousModuleScores
+    previousModuleScores: input.previousModuleScores,
+    teacherProfileText: input.teacherProfileText
   })
 
   try {
@@ -402,6 +410,7 @@ export async function streamClarificationSummary(event: H3Event, input: {
   history: Array<{ role: 'user' | 'assistant', content: string }>
   citations: KnowledgeCitation[]
   lastModuleScores?: Record<string, number>
+  teacherProfileText?: string
   onDelta: (text: string) => void
 }): Promise<{ data: ClarificationSummary; fallback: boolean }> {
   const config = useRuntimeConfig(event)
@@ -432,7 +441,8 @@ export async function streamClarificationSummary(event: H3Event, input: {
     const messages = await buildSummaryMessages(event, {
       history: input.history,
       citations: input.citations,
-      lastModuleScores: input.lastModuleScores
+      lastModuleScores: input.lastModuleScores,
+      teacherProfileText: input.teacherProfileText
     })
     if (options.extraSystem) messages.unshift({ role: 'system', content: options.extraSystem })
     const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {

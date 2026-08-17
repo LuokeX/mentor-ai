@@ -1,9 +1,10 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
 import { ensurePlanActions } from '../../../domain/plan-actions'
+import { truncateByChars } from '../../../domain/plan-titles'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -35,12 +36,56 @@ export default defineEventHandler(async (event) => {
     if (row) klass = { name: row.name, grade: row.grade }
   }
 
-  // LEFT JOIN 来源评估
-  let sourceAssessment: { module: string; result: Record<string, unknown>; submittedAt: Date | null } | null = null
-  if (plan.sourceAssessmentAttemptId) {
-    const [row] = await db.select({ module: schema.assessmentAttempts.module, result: schema.assessmentAttempts.result, submittedAt: schema.assessmentAttempts.submittedAt })
-      .from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.id, plan.sourceAssessmentAttemptId)).limit(1)
-    if (row) sourceAssessment = { module: row.module, result: (row.result as Record<string, unknown>) || {}, submittedAt: row.submittedAt }
+  // LEFT JOIN 来源评估（多量表按提交顺序；迁移已把旧方案的单量表关系回填到 plan_assessment_attempts）
+  const assessmentRows = await db.select({
+    attemptId: schema.assessmentAttempts.id,
+    module: schema.assessmentAttempts.module,
+    code: schema.assessmentAttempts.assessmentCode,
+    result: schema.assessmentAttempts.result,
+    submittedAt: schema.assessmentAttempts.submittedAt
+  })
+    .from(schema.planAssessmentAttempts)
+    .innerJoin(schema.assessmentAttempts, eq(schema.planAssessmentAttempts.assessmentAttemptId, schema.assessmentAttempts.id))
+    .where(eq(schema.planAssessmentAttempts.planId, id))
+    .orderBy(asc(schema.planAssessmentAttempts.sequence))
+  const assessments = assessmentRows.map(row => ({
+    attemptId: row.attemptId,
+    module: row.module,
+    code: row.code,
+    result: (row.result as Record<string, unknown>) || {},
+    submittedAt: row.submittedAt
+  }))
+  // 兼容字段：首个来源评估，供既有消费方使用
+  const sourceAssessment = assessments[0] || null
+
+  // 来源对话摘要：仅 AI 来源且会话仍属于当前教师/学校时返回（跨教师/跨学校视为不存在）
+  let sourceConversation: { sessionId: string, questionSummary: string | null, createdAt: Date } | null = null
+  if (plan.sourceChatSessionId) {
+    const [session] = await db.select({ id: schema.chatSessions.id, createdAt: schema.chatSessions.createdAt })
+      .from(schema.chatSessions)
+      .where(and(
+        eq(schema.chatSessions.id, plan.sourceChatSessionId),
+        eq(schema.chatSessions.ownerUserId, user.id),
+        eq(schema.chatSessions.schoolId, user.schoolId!)
+      ))
+      .limit(1)
+    if (session) {
+      const [firstUser] = await db.select({ contentEnc: schema.chatMessages.contentEnc })
+        .from(schema.chatMessages)
+        .where(and(
+          eq(schema.chatMessages.sessionId, session.id),
+          eq(schema.chatMessages.role, 'user')
+        ))
+        .orderBy(asc(schema.chatMessages.createdAt))
+        .limit(1)
+      sourceConversation = {
+        sessionId: session.id,
+        questionSummary: firstUser
+          ? truncateByChars(decryptSensitive(firstUser.contentEnc, secret), 80)
+          : plan.sourceQuestionSummary || null,
+        createdAt: session.createdAt
+      }
+    }
   }
 
   // LEFT JOIN 复盘记录
@@ -63,6 +108,8 @@ export default defineEventHandler(async (event) => {
     student,
     class: klass,
     sourceAssessment,
+    assessments,
+    sourceConversation,
     actions: actions.map(({ blockNoteEnc, evidenceSummaryEnc, ...action }) => ({
       ...action,
       blockNote: blockNoteEnc ? decryptSensitive(blockNoteEnc, secret) : null,

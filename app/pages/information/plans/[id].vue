@@ -444,9 +444,37 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
       </section>
 
-      <!-- ══════════ 2. 来源评估卡片 ══════════ -->
+      <!-- ══════════ 2. 来源对话卡片（仅 AI 来源展示） ══════════ -->
       <section
-        v-if="data.sourceAssessment"
+        v-if="data.sourceConversation"
+        class="rounded-2xl border border-slate-200 bg-white p-5"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-message-circle" class="size-4 text-emerald-600" />
+            <h3 class="font-semibold text-slate-800">我与助手的对话</h3>
+          </div>
+          <a
+            :href="`/?sessionId=${data.sourceConversation.sessionId}`"
+            target="_blank"
+            rel="noopener"
+            class="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 transition hover:text-emerald-900"
+          >
+            查看完整对话
+            <UIcon name="i-lucide-external-link" class="size-3.5" />
+          </a>
+        </div>
+        <p v-if="data.sourceConversation.questionSummary" class="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">
+          {{ data.sourceConversation.questionSummary }}
+        </p>
+        <p class="mt-1 text-xs text-slate-400">
+          {{ new Date(data.sourceConversation.createdAt).toLocaleString('zh-CN') }}
+        </p>
+      </section>
+
+      <!-- ══════════ 3. 来源评估卡片（多量表按提交顺序） ══════════ -->
+      <section
+        v-if="data.assessments?.length"
         class="rounded-2xl border border-slate-200 bg-white"
       >
         <button
@@ -455,30 +483,37 @@ useHead({ title: () => data.value?.title || '方案详情' })
         >
           <span class="flex items-center gap-2">
             <UIcon name="i-lucide-clipboard-check" class="size-4 text-emerald-600" />
-            来源评估
+            来源评估（{{ data.assessments.length }} 份）
           </span>
           <UIcon
             :name="sourceExpanded ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
             class="size-4 text-slate-400"
           />
         </button>
-        <div v-if="sourceExpanded" class="border-t border-slate-100 px-5 pb-5 pt-4">
-          <div class="grid gap-3 text-sm md:grid-cols-3">
+        <div v-if="sourceExpanded" class="space-y-3 border-t border-slate-100 px-5 pb-5 pt-4">
+          <div
+            v-for="(assessment, index) in data.assessments"
+            :key="assessment.attemptId"
+            class="grid gap-3 rounded-xl border border-slate-100 p-3 text-sm md:grid-cols-[2rem_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]"
+          >
+            <div class="grid size-8 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500">
+              {{ Number(index) + 1 }}
+            </div>
             <div>
               <span class="text-slate-400">评估模块</span>
-              <p class="mt-1 font-medium">{{ moduleTitle(data.sourceAssessment.module) }}</p>
+              <p class="mt-1 font-medium">{{ moduleTitle(assessment.module) }}</p>
             </div>
             <div>
               <span class="text-slate-400">结果</span>
               <p class="mt-1 font-medium">
-                {{ data.sourceAssessment.result?.risk?.label || data.sourceAssessment.result?.profile?.title || '-' }}
+                {{ assessment.result?.risk?.label || assessment.result?.profile?.title || '-' }}
               </p>
             </div>
             <div>
               <span class="text-slate-400">提交时间</span>
               <p class="mt-1 font-medium">
-                {{ data.sourceAssessment.submittedAt
-                  ? new Date(data.sourceAssessment.submittedAt).toLocaleString('zh-CN')
+                {{ assessment.submittedAt
+                  ? new Date(assessment.submittedAt).toLocaleString('zh-CN')
                   : '-' }}
               </p>
             </div>
@@ -486,8 +521,12 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
       </section>
 
-      <!-- ══════════ 3. 方案执行表单（跟踪动作 + 反馈） ══════════ -->
-      <section class="rounded-2xl border border-slate-200 bg-white p-5">
+      <!-- ══════════ 4. 方案执行表单（跟踪动作 + 反馈） ══════════
+           待确认/需调整时只展示报告与接受决策，接受后才进入执行态。 -->
+      <section
+        v-if="!['pending_acceptance', 'adjustment_needed'].includes(data.status)"
+        class="rounded-2xl border border-slate-200 bg-white p-5"
+      >
         <div class="flex items-center justify-between">
           <h3 class="flex items-center gap-2 font-semibold text-slate-800">
             <UIcon name="i-lucide-list-checks" class="size-4 text-indigo-600" />

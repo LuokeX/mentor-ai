@@ -11,8 +11,8 @@ function loadEnv(): string {
     const match = envContent.match(/DATABASE_URL\s*=\s*(.+)/)
     if (match) return match[1]!.trim()
   } catch {}
-  // fallback: 从其他 seed 脚本的默认值
-  return 'postgres://mentor_admin:e99ed52b2799dba76638a35842c5841f4781407d4b2ab755e5244fd939078c89@localhost:5432/mentor_ai'
+  // 不内置连接凭据：缺失时明确报错，引导配置 .env
+  throw new Error('DATABASE_URL 未配置：请复制 .env.example 为 .env 或在环境变量中设置 DATABASE_URL')
 }
 
 let pool: pg.Pool | null = null

@@ -439,6 +439,41 @@ export const assessmentAttempts = pgTable('assessment_attempts', {
   ...timestamps
 }, table => [index('assessment_owner_module_idx').on(table.ownerUserId, table.module)])
 
+/**
+ * 评估组：同一业务问题（同一次 AI 对话或同一咨询上下文）下连续评估过程的聚合载体。
+ * 教师在该组内完成多张量表后，方案按提交顺序汇总展示（见 plan_assessment_attempts）。
+ */
+export const assessmentSessions = pgTable('assessment_sessions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  module: varchar('module', { length: 40 }).notNull(),
+  // assistant_dialogue | direct_assessment
+  sourceType: varchar('source_type', { length: 30 }).notNull(),
+  sourceChatSessionId: uuid('source_chat_session_id').references(() => chatSessions.id, { onDelete: 'set null' }),
+  contextType: varchar('context_type', { length: 30 }).default('none').notNull(),
+  contextId: uuid('context_id'),
+  // open | completed
+  status: varchar('status', { length: 20 }).default('open').notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  ...timestamps
+}, table => [
+  index('assessment_sessions_owner_module_idx').on(table.ownerUserId, table.module),
+  index('assessment_sessions_source_chat_idx').on(table.sourceChatSessionId)
+])
+
+/** 评估组内的量表提交记录，sequence 保证展示顺序稳定（先提交在前）。 */
+export const assessmentSessionAttempts = pgTable('assessment_session_attempts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  assessmentSessionId: uuid('assessment_session_id').notNull().references(() => assessmentSessions.id, { onDelete: 'cascade' }),
+  assessmentAttemptId: uuid('assessment_attempt_id').notNull().references(() => assessmentAttempts.id, { onDelete: 'cascade' }).unique(),
+  sequence: integer('sequence').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('assessment_session_attempts_seq_uidx').on(table.assessmentSessionId, table.sequence),
+  index('assessment_session_attempts_attempt_idx').on(table.assessmentAttemptId)
+])
+
 export const studentEvents = pgTable('student_events', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
@@ -473,6 +508,17 @@ export const plans = pgTable('plans', {
   sourceAssessmentAttemptId: uuid('source_assessment_attempt_id').references(() => assessmentAttempts.id, { onDelete: 'set null' }),
   module: varchar('module', { length: 40 }).notNull(),
   title: varchar('title', { length: 200 }).notNull(),
+  // ---- 方案来源与展示快照（生成时固化，不依赖三库当前发布版本）----
+  // assistant_dialogue | direct_assessment；迁移按 source_chat_session_id 是否为空回填
+  sourceType: varchar('source_type', { length: 30 }),
+  /** AI 来源的脱敏提问首句（varchar 200，生成时截断） */
+  sourceQuestionSummary: varchar('source_question_summary', { length: 200 }),
+  /** 标题全文，列表 tooltip 展示；title 是 200 截断的展示值 */
+  titleFull: text('title_full'),
+  /** 归因关键词按序去重快照（生成时取前 5） */
+  attributionKeywords: jsonb('attribution_keywords').$type<string[]>().default([]).notNull(),
+  /** 量表快照 [{ code, name, version, sequence }]，列表/详情直接投影 */
+  instrumentSnapshots: jsonb('instrument_snapshots').$type<Array<{ code: string, name: string, version: string, sequence: number }>>().default([]).notNull(),
   summaryEnc: text('summary_enc').notNull(),
   actions: jsonb('actions').$type<Array<{ title: string, detail: string, status: string }>>().default([]).notNull(),
   tools: jsonb('tools').$type<Array<{ title: string, content: string }>>().default([]).notNull(),
@@ -496,6 +542,18 @@ export const plans = pgTable('plans', {
   index('plans_class_idx').on(table.classId),
   index('plans_guardian_idx').on(table.guardianId),
   index('plans_source_chat_idx').on(table.sourceChatSessionId)
+])
+
+/** 方案与评估提交的多对多关系（一次方案可汇总多张量表，按 sequence 保序）。 */
+export const planAssessmentAttempts = pgTable('plan_assessment_attempts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
+  assessmentAttemptId: uuid('assessment_attempt_id').notNull().references(() => assessmentAttempts.id, { onDelete: 'cascade' }).unique(),
+  sequence: integer('sequence').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('plan_assessment_attempts_seq_uidx').on(table.planId, table.sequence),
+  index('plan_assessment_attempts_attempt_idx').on(table.assessmentAttemptId)
 ])
 
 export const planActions = pgTable('plan_actions', {
