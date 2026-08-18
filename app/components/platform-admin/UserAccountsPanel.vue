@@ -241,7 +241,7 @@ async function loadTransferOptions(row: UserRow) {
     $fetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/teachers', {
       query: { schoolId: row.schoolId, page: 1, pageSize: 100, status: 'active' },
     }),
-    $fetch<ManagedListResult<OptionRow>>('/api/v1/platform-admin/users', {
+    $fetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/users', {
       query: { schoolId: row.schoolId, role: 'psychologist', status: 'active', page: 1, pageSize: 100 },
     }),
   ])

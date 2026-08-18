@@ -407,7 +407,8 @@ export const schoolAdminUserCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   phone: z.string().trim().regex(PHONE_PATTERN),
   role: z.enum(['teacher', 'psychologist']),
-  password: z.string().min(8).max(200),
+  /** 初始密码（选填）：提供则直接激活；留空由系统生成随机初始密码并在创建响应中一次性返回 */
+  password: z.string().min(8).max(200).optional(),
   employeeNo: z.string().trim().max(80).nullable().optional(),
   gender: z.string().trim().max(20).nullable().optional(),
   teachingGrades: z.array(z.coerce.number().int().min(1).max(12)).optional(),
@@ -440,7 +441,29 @@ export const schoolAdminUserUpdateSchema = z.object({
   certNote: z.string().trim().max(1000).nullable().optional(),
   notes: z.string().trim().max(4000).nullable().optional(),
   /** 手动修正业务状态（如 selfStatusLevel），留痕；评估提交时以新评估为准 */
-  overrides: z.record(z.string(), z.string()).optional()
+  overrides: z.record(z.string(), z.string()).optional(),
+  /** 重置密码（选填）：管理员为已激活账号设置新密码 */
+  password: z.string().min(8).max(200).optional()
+}).refine(value => Object.keys(value).length > 0)
+
+/** 平台管理员直接创建学校管理员（school_admin）账号；role 固定为 school_admin，不做邀请 */
+export const platformAdminSchoolAdminCreateSchema = z.object({
+  schoolId: z.string().uuid(),
+  name: z.string().trim().min(2).max(120),
+  phone: z.string().trim().regex(PHONE_PATTERN),
+  /** 可选初始密码；留空则系统生成随机密码并仅在响应中返回一次 */
+  password: z.string().min(8).max(200).optional(),
+  employeeNo: z.string().trim().max(80).nullable().optional()
+})
+
+/** 平台管理员编辑学校管理员基本信息与启停状态；role 固定为 school_admin */
+export const platformAdminSchoolAdminUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  phone: z.string().trim().regex(PHONE_PATTERN).optional(),
+  status: z.enum(['active', 'disabled']).optional(),
+  employeeNo: z.string().trim().max(80).nullable().optional(),
+  /** 停用事由，可选 */
+  reason: z.string().trim().max(500).optional()
 }).refine(value => Object.keys(value).length > 0)
 
 export const schoolAdminDepartmentCreateSchema = z.object({
@@ -866,3 +889,29 @@ export const surveyFeedbackSettingsPatchSchema = z.object({
   title: z.string().trim().min(1).max(40).optional(),
   url: z.string().trim().url().max(500).nullable().optional()
 })
+
+// ---- 角色与权限管理（platform-admin/roles）----
+// 固定四角色，不引入自定义角色；users.role 仍是身份判定来源，
+// roles 表只承载「角色能干什么」的权限清单（capabilities.ts 先查表、查不到回退硬编码）。
+
+/** 角色编码（与 users.role / AppRole 取值一致）。 */
+export const roleCodeSchema = z.enum(['teacher', 'psychologist', 'school_admin', 'platform_admin'])
+export type RoleCode = z.infer<typeof roleCodeSchema>
+
+/** 单个权限能力值，取值与 shared/management.ts 的 Capability 一致。 */
+export const roleCapabilitySchema = z.enum([
+  'view', 'view_sensitive', 'create', 'edit', 'inline_edit',
+  'archive', 'restore', 'transfer', 'graduate', 'delete', 'disable'
+])
+
+/** 角色权限清单：页面级能力 + 记录级能力，键为 ManagedTargetType。 */
+export const rolePermissionSchema = z.object({
+  pages: z.record(z.string(), z.array(roleCapabilitySchema)),
+  records: z.record(z.string(), z.array(roleCapabilitySchema))
+})
+export type RolePermissionData = z.infer<typeof rolePermissionSchema>
+
+/** 平台管理员更新角色：只允许改权限清单；expectedUpdatedAt 由查询参数承担（并发控制）。 */
+export const platformAdminRoleUpdateSchema = z.object({
+  permissions: rolePermissionSchema.optional()
+}).refine(value => Object.keys(value).length > 0)

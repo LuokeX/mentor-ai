@@ -1,8 +1,7 @@
-import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
-import { roleSchema } from '../../../../../shared/contracts'
 import { countSql, offsetFrom } from '../../../../domain/school-management'
 import { resolveCapabilities } from '../../../../domain/capabilities'
 import { requireUser } from '../../../../utils/auth'
@@ -17,14 +16,16 @@ export default defineEventHandler(async (event) => {
   const page = Number(query.page) || 1
   const pageSize = ([20, 50, 100].includes(Number(query.pageSize)) ? Number(query.pageSize) : DEFAULT_PAGE_SIZE) as 20 | 50 | 100
   const q = (query.q as string)?.trim().slice(0, 120) || ''
-  const role = roleSchema.or(z.literal('all')).default('all').parse(query.role)
+  // 平台管理员在此页仅管理 school_admin 账户；role 参数只接受 school_admin/all，
+  // 传 teacher/psychologist 将被 zod 拒绝（400），避免平台侧看到教师/心理专员账户。
+  const role = z.enum(['school_admin', 'all']).default('school_admin').parse(query.role)
   const status = (['active', 'invited', 'disabled', 'all'].includes(query.status as string) ? query.status : 'all') as string
   const schoolId = z.string().uuid().optional().parse(query.schoolId)
   const sort = validateSort((query.sort as string) || 'updatedAt', SORT_WHITELIST, 'updatedAt')
   const order = (query.order === 'asc' ? 'asc' : 'desc') as 'asc' | 'desc'
   const db = useDb(event)
 
-  const conditions = [inArray(schema.users.role, ['teacher', 'psychologist'])]
+  const conditions = [eq(schema.users.role, 'school_admin')]
   if (schoolId) conditions.push(eq(schema.users.schoolId, schoolId))
   if (role !== 'all') conditions.push(eq(schema.users.role, role))
   if (status !== 'all') conditions.push(eq(schema.users.status, status))

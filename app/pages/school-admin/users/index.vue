@@ -23,9 +23,9 @@ interface UserRow {
   updatedAt: string
 }
 interface OptionRow { id: string; name: string; role?: string }
-interface InvitationResult {
-  activationToken: string
-  expiresAt: string
+interface CreateResult {
+  id: string
+  generatedPassword?: string
 }
 
 const list = useManagedList<UserRow>('/api/v1/school-admin/users')
@@ -79,12 +79,12 @@ const saving = ref(false)
 const formError = ref('')
 const form = reactive({
   name: '', phone: '', role: 'teacher' as 'teacher' | 'psychologist', reactivate: false,
+  password: '',
   employeeNo: '', gender: '__none__', teachingGrades: [] as string[],
   subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '',
   selfStatusLevel: '__auto__',
 })
-const invitation = ref<InvitationResult | null>(null)
-const activationLink = computed(() => invitation.value ? `/activate?token=${encodeURIComponent(invitation.value.activationToken)}` : '')
+const createResult = ref<{ id: string; name: string; role: string; generatedPassword?: string } | null>(null)
 const copied = ref(false)
 
 const disableTarget = ref<UserRow | null>(null)
@@ -95,6 +95,7 @@ function openCreate() {
   editing.value = null
   Object.assign(form, {
     name: '', phone: '', role: 'teacher', reactivate: false,
+    password: '',
     employeeNo: '', gender: '__none__', teachingGrades: [],
     subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '', selfStatusLevel: '__auto__',
   })
@@ -108,6 +109,7 @@ function openEdit(rowOrId: UserRow | string) {
   editing.value = row
   Object.assign(form, {
     name: row.name, phone: row.phone, role: row.role, reactivate: false,
+    password: '',
     employeeNo: row.employeeNo || '', gender: row.gender || '__none__',
     teachingGrades: row.teachingGrades?.map(g => `${g} 年级`) || [],
     subject: row.subject || '', isClassTeacher: row.isClassTeacher,
@@ -134,6 +136,7 @@ async function saveUser() {
     name: form.name,
     phone: form.phone,
     role: form.role,
+    password: form.password || undefined,
     employeeNo: form.employeeNo || undefined,
     gender: form.gender === '__none__' ? null : form.gender,
     teachingGrades: form.teachingGrades.map(g => Number(g.replace(' 年级', ''))),
@@ -160,10 +163,16 @@ async function saveUser() {
         body,
       })
     } else {
-      invitation.value = await $fetch<InvitationResult>('/api/v1/school-admin/users', {
+      const result = await $fetch<CreateResult>('/api/v1/school-admin/users', {
         method: 'POST',
         body,
       })
+      createResult.value = {
+        id: result.id,
+        name: form.name,
+        role: form.role,
+        generatedPassword: result.generatedPassword,
+      }
     }
     drawerOpen.value = false
     await list.refresh()
@@ -229,16 +238,16 @@ async function deleteInvitation(reason: string) {
   }
 }
 
-async function copyActivationLink() {
-  if (!import.meta.client) return
-  await navigator.clipboard.writeText(`${window.location.origin}${activationLink.value}`)
+async function copyGeneratedPassword() {
+  if (!import.meta.client || !createResult.value?.generatedPassword) return
+  await navigator.clipboard.writeText(createResult.value.generatedPassword)
   copied.value = true
   window.setTimeout(() => { copied.value = false }, 2000)
 }
 </script>
 
 <template>
-  <ManagementPage title="账号管理" description="邀请、编辑、移交和停用本校教师及心理专员账号。" :can-create="list.pageCapabilities.value.includes('create')" create-label="邀请用户" @create="openCreate">
+  <ManagementPage title="账号管理" description="添加、编辑、移交和停用本校教师及心理专员账号。" :can-create="list.pageCapabilities.value.includes('create')" create-label="添加用户" @create="openCreate">
     <TableToolbar :search-value="list.q.value" :status-filter="list.statusFilter.value" :status-options="statusOptions" search-placeholder="搜索姓名或手机号..." :loading="list.loading.value" @search="list.onSearch" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #role-data="{ row }">{{ roleLabels[row.role] || row.role }}</template>
@@ -262,14 +271,17 @@ async function copyActivationLink() {
     <div v-if="list.error.value || formError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ formError || list.error.value }}</div>
     <TablePagination :page="list.page.value" :page-size="list.pageSize.value" :total="list.total.value" @update:page="list.onPageChange" @update:page-size="list.onPageSizeChange" />
 
-    <EntityFormDrawer :open="drawerOpen" :title="editing ? '编辑账号' : '邀请用户'" @close="drawerOpen = false">
+    <EntityFormDrawer :open="drawerOpen" :title="editing ? '编辑账号' : '添加用户'" @close="drawerOpen = false">
       <form class="space-y-4" @submit.prevent="saveUser">
         <UFormField label="姓名" required><UInput v-model="form.name" class="w-full" /></UFormField>
         <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="手机号" required><UInput v-model="form.phone" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>
           <UFormField label="工号"><UInput v-model="form.employeeNo" class="w-full" /></UFormField>
+          <UFormField :label="editing ? '重置密码（选填）' : '初始密码（选填）'" :hint="editing ? '留空表示不修改当前密码' : '留空则系统自动生成 16 位随机密码，创建成功后一次性展示'">
+            <UInput v-model="form.password" type="password" minlength="8" maxlength="200" autocomplete="new-password" class="w-full" />
+          </UFormField>
           <UFormField label="角色" required><USelect v-model="form.role" :items="roleOptions" :disabled="Boolean(editing && editing.status !== 'invited')" class="w-full" /></UFormField>
-          <UFormField :label="editing ? '更新手机号（留空表示不修改）' : '手机号'"><UInput v-model="form.phone" class="w-full" /></UFormField>
+          <UFormField v-if="editing" :label="editing ? '更新手机号（留空表示不修改）' : '手机号'"><UInput v-model="form.phone" class="w-full" /></UFormField>
           <UFormField label="性别"><USelect v-model="form.gender" :items="genderOptions" class="w-full" /></UFormField>
           <UFormField label="任教年级"><USelectMenu v-model="form.teachingGrades" multiple :items="gradeItems" class="w-full" /></UFormField>
           <UFormField label="任教学科"><UInput v-model="form.subject" placeholder="如：语文" class="w-full" /></UFormField>
@@ -288,17 +300,21 @@ async function copyActivationLink() {
           </UFormField>
         </div>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
-        <div class="flex justify-end gap-2"><UButton color="neutral" variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">{{ editing ? '保存' : '生成邀请' }}</UButton></div>
+        <div class="flex justify-end gap-2"><UButton color="neutral" variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">{{ editing ? '保存' : '添加账号' }}</UButton></div>
       </form>
     </EntityFormDrawer>
 
-    <UModal :open="Boolean(invitation)" @update:open="value => { if (!value) invitation = null }">
-      <template #header><h3 class="text-lg font-semibold">邀请已创建</h3></template>
+    <UModal :open="Boolean(createResult)" @update:open="value => { if (!value) createResult = null }">
+      <template #header><h3 class="text-lg font-semibold">账号已创建</h3></template>
       <template #body>
         <div class="space-y-3">
-          <p class="text-sm text-gray-600">请通过校内安全渠道发送激活链接。链接 72 小时内有效，关闭后不再展示令牌。</p>
-          <UInput :model-value="activationLink" readonly class="w-full" />
-          <UButton icon="i-lucide-copy" variant="outline" @click="copyActivationLink">{{ copied ? '已复制' : '复制完整链接' }}</UButton>
+          <p class="text-sm text-gray-600">账号 <strong>{{ createResult?.name }}</strong>（{{ createResult?.role === 'psychologist' ? '心理专员' : '教师' }}）已创建并可直接登录。</p>
+          <div v-if="createResult?.generatedPassword" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p class="text-sm font-medium text-amber-800">系统生成的初始密码仅展示一次，关闭后不再显示，请立即复制并安全转交。</p>
+            <code class="mt-2 block break-all rounded bg-white px-3 py-2 font-mono text-sm">{{ createResult.generatedPassword }}</code>
+            <UButton size="sm" icon="i-lucide-copy" variant="outline" class="mt-2" @click="copyGeneratedPassword">{{ copied ? '已复制' : '复制密码' }}</UButton>
+          </div>
+          <p v-else class="text-sm text-gray-600">已使用管理员设置的初始密码，可直接登录。</p>
         </div>
       </template>
     </UModal>

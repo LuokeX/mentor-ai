@@ -1,4 +1,5 @@
 import { and, eq, inArray, ne } from 'drizzle-orm'
+import argon2 from 'argon2'
 import { z } from 'zod'
 import { useDb, schema } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
@@ -45,6 +46,7 @@ export default defineEventHandler(async (event) => {
   if (body.phone && body.phone !== target.phone) changedFields.push('phone')
   if (body.role && body.role !== target.role) changedFields.push('role')
   if (body.status) changedFields.push('status')
+  if (body.password) changedFields.push('password')
 
   await db.transaction(async (tx) => {
     const setValues: Record<string, unknown> = { updatedAt: new Date() }
@@ -55,6 +57,7 @@ export default defineEventHandler(async (event) => {
     }
     if (body.role) setValues.role = body.role
     if (body.status) setValues.status = body.status
+    if (body.password) setValues.passwordHash = await argon2.hash(body.password, { type: argon2.argon2id })
     if (body.employeeNo !== undefined) setValues.employeeNo = body.employeeNo || null
     if (body.gender !== undefined) setValues.gender = body.gender || null
     if (body.teachingGrades !== undefined) setValues.teachingGrades = body.teachingGrades
