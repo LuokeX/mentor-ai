@@ -15,7 +15,7 @@ const informationNav = [
   { label: '我负责的学生', to: '/information/students', icon: 'i-lucide-users' },
   { label: '关联家长', to: '/information/guardians', icon: 'i-lucide-user-round' },
   { label: '家校沟通', to: '/information/communications', icon: 'i-lucide-messages-square' },
-  { label: '事件记录', to: '/information/events', icon: 'i-lucide-clipboard-list' },
+  { label: '学生事件记录', to: '/information/events', icon: 'i-lucide-clipboard-list' },
 ]
 const schoolAdminNav = [
   { label: '总览', to: '/school-admin', icon: 'i-lucide-layout-dashboard' },
@@ -34,7 +34,7 @@ const schoolAdminNav = [
 const platformNav = [
   { label: '总览', to: '/platform-admin', icon: 'i-lucide-layout-dashboard' },
   { label: '学校管理', to: '/platform-admin/schools', icon: 'i-lucide-building-2' },
-  { label: '全部账户', to: '/platform-admin/users', icon: 'i-lucide-user-cog' },
+  { label: '学校管理员', to: '/platform-admin/users', icon: 'i-lucide-user-cog' },
   { label: '三库运营台', to: '/platform-admin/resources', icon: 'i-lucide-library' },
   { label: '知识库', to: '/platform-admin/knowledge', icon: 'i-lucide-brain' },
   { label: '审计日志', to: '/platform-admin/audit', icon: 'i-lucide-list-checks' },

@@ -53,7 +53,7 @@ const filterItems: Array<{ label: string, value: EventFilter, icon: string }> = 
   { label: '待复盘', value: 'review', icon: 'i-lucide-refresh-ccw' },
   { label: '草稿', value: 'draft', icon: 'i-lucide-file-clock' },
   { label: '移交', value: 'assignment', icon: 'i-lucide-git-branch' },
-  { label: '事件记录', value: 'student_event', icon: 'i-lucide-clipboard-list' }
+  { label: '学生事件记录', value: 'student_event', icon: 'i-lucide-clipboard-list' }
 ]
 
 const kindMeta: Record<EventKind, { label: string, icon: string, color: any }> = {

@@ -26,7 +26,7 @@ const statuses = [
   { label: '已解决', value: 'resolved' },
   { label: '已关闭', value: 'closed' },
 ]
-const eventStatusLabel = (s: string) => s === 'open' ? '待处理' : s === 'resolved' ? '已解决' : s === 'closed' ? '已关闭' : s
+const eventStatusLabel = (s: string) => s === 'open' ? '待处理' : s === 'resolved' ? '已解决' : s === 'closed' ? '已关闭' : s === 'archived' ? '已归档' : s
 
 function openCreate() {
   editingId.value = null
@@ -69,7 +69,7 @@ async function saveEvent() {
         query: { expectedUpdatedAt: row?.updatedAt },
         body: {
           title: form.title, eventType: form.eventType, severity: form.severity,
-          description: form.description || null, resolution: form.resolution || null,
+          description: form.description || undefined, resolution: form.resolution || undefined,
           status: form.status, occurredAt: form.occurredAt ? new Date(form.occurredAt).toISOString() : undefined,
         },
       })
@@ -204,7 +204,7 @@ const dimensionLabel: Record<string, string> = {
       </section>
 
       <!-- 事件抽屉 -->
-      <USlideover v-model="drawerOpen">
+      <USlideover :open="drawerOpen" @update:open="value => { if (!value) drawerOpen = false }">
         <div class="p-5">
           <h3 class="text-lg font-semibold">{{ editingId ? '编辑班级事件' : '新增班级事件' }}</h3>
           <div class="mt-5 space-y-4">

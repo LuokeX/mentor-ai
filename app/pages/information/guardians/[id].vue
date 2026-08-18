@@ -3,6 +3,7 @@ const route = useRoute()
 const id = String(route.params.id)
 const { data, error, refresh } = await useFetch<any>(`/api/v1/information/guardians/${id}`)
 const pending = ref(false)
+const formError = ref('')
 const { moduleLabel, planStatusLabel, planStatusColor, riskLevelLabel, commRiskLevelLabel, commRiskLevelColor, severityLabel } = useDisplayLabels()
 const form = reactive({ name: '', phone: '', relation: '', externalRef: '', profile: { parentProfileType: '', parentProfileSubtype: '', relationLevel: '', workshopParticipation: '', parentMeetingParticipation: '', onlineCourseParticipation: '', consultation: '' } })
 const linkStudentId = ref('')
@@ -49,9 +50,12 @@ watchEffect(() => {
 
 async function saveGuardian() {
   pending.value = true
+  formError.value = ''
   try {
     await $fetch(`/api/v1/information/guardians/${id}`, { method: 'PATCH', body: { ...form, externalRef: form.externalRef || null, profile: { ...form.profile } } })
     await refresh()
+  } catch (err: any) {
+    formError.value = err?.data?.message || '保存失败，请重试'
   } finally { pending.value = false }
 }
 
@@ -118,7 +122,7 @@ async function createCommunication() {
           <UFormField label="线上家长课参与情况"><UInput v-model="form.profile.onlineCourseParticipation" class="w-full" placeholder="如：已完成 3 节" /></UFormField>
           <UFormField label="家长会商"><UInput v-model="form.profile.consultation" class="w-full" placeholder="是·详细说明 / 否" /></UFormField>
         </div></div>
-        <UButton :loading="pending" @click="saveGuardian">保存家长信息</UButton></div></section>
+        <UButton :loading="pending" @click="saveGuardian">保存家长信息</UButton><p v-if="formError" class="mt-2 text-sm text-red-500">{{ formError }}</p></div></section>
       <section class="panel p-6"><h2 class="text-xl font-semibold">关联学生</h2><div class="mt-5 space-y-3"><div v-for="student in data?.students" :key="student.id" class="rounded-2xl border border-slate-100 p-4"><div class="flex items-start justify-between gap-3"><div><NuxtLink :to="`/information/students/${student.id}`" class="font-semibold hover:text-emerald-700">{{ student.name }}</NuxtLink><p class="mt-1 text-xs text-slate-500">{{ student.className || '未分班' }} · {{ student.gender || '性别未填' }}</p></div><UButton size="xs" color="neutral" variant="ghost" :loading="pending" @click="unlinkStudent(student.id)">解除</UButton></div></div><p v-if="!data?.students?.length" class="rounded-2xl bg-slate-50 p-4 text-center text-sm text-slate-400">暂无关联学生</p></div><div class="mt-5 flex gap-2"><USelect v-model="linkStudentId" :items="(data?.studentOptions || []).filter((item:any)=>!(data?.students || []).some((s:any)=>s.id===item.id)).map((item:any)=>({label:`${item.name}${item.className ? ` · ${item.className}` : ''}`,value:item.id}))" placeholder="选择已有学生" class="min-w-0 flex-1" /><UButton :disabled="!linkStudentId" :loading="pending" @click="linkStudent">关联</UButton></div></section>
     </div>
     <section v-if="commSnapshot" class="panel mt-6 p-6">

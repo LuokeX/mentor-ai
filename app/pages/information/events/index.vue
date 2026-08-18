@@ -131,10 +131,21 @@ async function saveEvent() {
 function closeDrawer() {
   drawerOpen.value = false
 }
+
+async function archiveEvent(eventId: string) {
+  if (!confirm('确定归档这条学生事件吗？归档后历史记录保留，仅归档处理。')) return
+  try {
+    await $fetch(`/api/v1/information/student-events/${eventId}`, { method: 'DELETE' })
+    await list.refresh()
+  } catch (error: unknown) {
+    const response = error as { data?: { message?: string } }
+    formError.value = response.data?.message || '归档失败，请重试'
+  }
+}
 </script>
 
 <template>
-  <ManagementPage title="事件记录" description="记录、解决和关闭学生事件，历史记录不物理删除。" :can-create="list.pageCapabilities.value.includes('create')" create-label="新增事件" @create="openCreate">
+  <ManagementPage title="学生事件记录" description="记录、解决和关闭学生事件，历史记录不物理删除。" :can-create="list.pageCapabilities.value.includes('create')" create-label="新增学生事件" @create="openCreate">
     <TableToolbar
       :search-value="list.q.value"
       :status-filter="list.statusFilter.value"
@@ -149,7 +160,7 @@ function closeDrawer() {
       <template #severity-data="{ value }"><UBadge :color="value === '严重' ? 'error' : value === '高' ? 'warning' : 'neutral'" variant="subtle">{{ value }}</UBadge></template>
       <template #status-data="{ value }"><UBadge :color="value === 'open' ? 'warning' : value === 'resolved' ? 'success' : 'neutral'" variant="subtle">{{ value === 'open' ? '待处理' : value === 'resolved' ? '已解决' : '已关闭' }}</UBadge></template>
       <template #occurredAt-data="{ value }">{{ new Date(String(value)).toLocaleString('zh-CN') }}</template>
-      <template #actions-data="{ row }"><RowActions :capabilities="row._capabilities" :row-id="row.id" @view="openEdit" @edit="openEdit" /></template>
+      <template #actions-data="{ row }"><RowActions :capabilities="row._capabilities" :row-id="row.id" @view="openEdit" @edit="openEdit" @archive="archiveEvent" /></template>
     </ManagedDataTable>
     <div v-if="list.error.value || formError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ formError || list.error.value }}</div>
     <TablePagination :page="list.page.value" :page-size="list.pageSize.value" :total="list.total.value" @update:page="list.onPageChange" @update:page-size="list.onPageSizeChange" />
