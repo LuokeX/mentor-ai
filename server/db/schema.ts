@@ -1102,3 +1102,25 @@ export const classEvents = pgTable('class_events', {
   index('class_events_owner_idx').on(table.ownerUserId),
   index('class_events_school_idx').on(table.schoolId, table.occurredAt)
 ])
+
+/**
+ * 角色权限配置（固定四角色，不引入自定义角色）。
+ * 身份判定仍以 users.role 为准；本表只承载「角色能干什么」的权限清单，
+ * 由 server/domain/capabilities.ts 先查表、查不到回退硬编码逻辑。
+ * permissions 结构见 shared/management.ts 的 RolePermissions：
+ *   { pages: { <targetType>: Capability[] }, records: { <targetType>: Capability[] } }
+ * 四角色默认数据在迁移 SQL 中 INSERT ... ON CONFLICT DO NOTHING（seed 不重复插入）。
+ */
+export const roles = pgTable('roles', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  /** 角色编码：teacher / psychologist / school_admin / platform_admin */
+  code: varchar('code', { length: 30 }).notNull(),
+  name: varchar('name', { length: 80 }).notNull(),
+  description: text('description'),
+  /** 系统内置角色标记；当前四角色均为系统角色 */
+  isSystem: boolean('is_system').default(true).notNull(),
+  permissions: jsonb('permissions').$type<import('../../shared/management').RolePermissions>().notNull(),
+  ...timestamps
+}, table => [
+  uniqueIndex('roles_code_uidx').on(table.code)
+])

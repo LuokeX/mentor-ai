@@ -69,7 +69,7 @@ export default defineEventHandler(async (event) => {
       recordStatus: row.status,
       targetType: 'user',
       targetId: row.id,
-    })
+    }, event)
     return { ...row, _capabilities: capabilities }
   }))
 

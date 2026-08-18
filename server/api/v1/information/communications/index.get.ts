@@ -61,14 +61,14 @@ export default defineEventHandler(async (event) => {
     page: query.page, pageSize: query.pageSize,
   })
   const secret = useRuntimeConfig(event).encryptionKey
-  const rows = result.rows.map((row) => {
+  const rows = await Promise.all(result.rows.map(async (row) => {
     const { summaryEnc, ...safeRow } = row
     const summary = decryptSensitive(summaryEnc, secret)
     return {
       ...safeRow,
       summaryPreview: summary.length > 80 ? `${summary.slice(0, 80)}…` : summary,
-      _capabilities: resolveCapabilities({ user, recordSchoolId: row.schoolId, recordOwnerUserId: row.ownerUserId, recordStatus: row.status, targetType: 'communication', targetId: row.id }),
+      _capabilities: await resolveCapabilities({ user, recordSchoolId: row.schoolId, recordOwnerUserId: row.ownerUserId, recordStatus: row.status, targetType: 'communication', targetId: row.id }, event),
     }
-  })
+  }))
   return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: ['view', 'create'] as Capability[] } satisfies ManagedListResult<(typeof rows)[number]>
 })

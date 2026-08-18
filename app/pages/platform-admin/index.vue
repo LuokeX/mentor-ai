@@ -54,6 +54,19 @@ const health = computed(() => [
       </div>
     </div>
 
+    <!-- 管理入口 -->
+    <div class="mt-8">
+      <h2 class="text-lg font-semibold text-gray-900">管理入口</h2>
+      <div class="mt-4 flex flex-wrap gap-2">
+        <UButton to="/platform-admin/schools" icon="i-lucide-building-2" variant="soft" color="neutral">学校管理</UButton>
+        <UButton to="/platform-admin/users" icon="i-lucide-user-cog" variant="soft" color="neutral">全部账户</UButton>
+        <UButton to="/platform-admin/roles" icon="i-lucide-shield" variant="soft" color="primary">角色管理</UButton>
+        <UButton to="/platform-admin/audit" icon="i-lucide-list-checks" variant="soft" color="neutral">审计日志</UButton>
+        <UButton to="/platform-admin/resources" icon="i-lucide-library" variant="soft" color="neutral">三库运营台</UButton>
+        <UButton to="/platform-admin/ai-center" icon="i-lucide-bot" variant="soft" color="neutral">AI 管理中心</UButton>
+      </div>
+    </div>
+
     <!-- 服务状态 -->
     <div class="mt-8">
       <h2 class="text-lg font-semibold text-gray-900">服务状态</h2>

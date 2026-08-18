@@ -27,22 +27,22 @@ const platformAdmin: AuthUser = {
 }
 
 describe('managed record capabilities', () => {
-  it('keeps teacher records within school and owner boundaries', () => {
-    expect(resolveCapabilities({
+  it('keeps teacher records within school and owner boundaries', async () => {
+    expect(await resolveCapabilities({
       user: teacher,
       recordSchoolId: 'school-1',
       recordOwnerUserId: 'teacher-1',
       recordStatus: 'active',
       targetType: 'student',
     })).toEqual(['view', 'edit', 'inline_edit'])
-    expect(resolveCapabilities({
+    expect(await resolveCapabilities({
       user: teacher,
       recordSchoolId: 'school-2',
       recordOwnerUserId: 'teacher-1',
       recordStatus: 'active',
       targetType: 'student',
     })).toEqual([])
-    expect(resolveCapabilities({
+    expect(await resolveCapabilities({
       user: teacher,
       recordSchoolId: 'school-1',
       recordOwnerUserId: 'teacher-2',
@@ -51,15 +51,15 @@ describe('managed record capabilities', () => {
     })).toEqual([])
   })
 
-  it('does not let teachers archive school-owned students or classes', () => {
-    expect(resolveCapabilities({
+  it('does not let teachers archive school-owned students or classes', async () => {
+    expect(await resolveCapabilities({
       user: teacher,
       recordSchoolId: 'school-1',
       recordOwnerUserId: 'teacher-1',
       recordStatus: 'active',
       targetType: 'student',
     })).not.toContain('archive')
-    expect(resolveCapabilities({
+    expect(await resolveCapabilities({
       user: teacher,
       recordSchoolId: 'school-1',
       recordOwnerUserId: 'teacher-1',
@@ -68,8 +68,8 @@ describe('managed record capabilities', () => {
     })).toEqual(['view'])
   })
 
-  it('exposes archive and restore according to school record lifecycle', () => {
-    const active = resolveCapabilities({
+  it('exposes archive and restore according to school record lifecycle', async () => {
+    const active = await resolveCapabilities({
       user: schoolAdmin,
       recordSchoolId: 'school-1',
       recordStatus: 'active',
@@ -78,7 +78,7 @@ describe('managed record capabilities', () => {
     expect(active).toContain('archive')
     expect(active).not.toContain('restore')
 
-    const archived = resolveCapabilities({
+    const archived = await resolveCapabilities({
       user: schoolAdmin,
       recordSchoolId: 'school-1',
       recordStatus: 'archived',
@@ -88,15 +88,15 @@ describe('managed record capabilities', () => {
     expect(archived).not.toContain('archive')
   })
 
-  it('only permits deletion for never-activated invitations', () => {
-    expect(resolveCapabilities({
+  it('only permits deletion for never-activated invitations', async () => {
+    expect(await resolveCapabilities({
       user: schoolAdmin,
       recordSchoolId: 'school-1',
       recordStatus: 'invited',
       activatedAt: null,
       targetType: 'user',
     })).toContain('delete')
-    expect(resolveCapabilities({
+    expect(await resolveCapabilities({
       user: schoolAdmin,
       recordSchoolId: 'school-1',
       recordStatus: 'invited',
@@ -105,8 +105,8 @@ describe('managed record capabilities', () => {
     })).not.toContain('delete')
   })
 
-  it('grants platform admins direct account management and read-only view of other school records', () => {
-    const account = resolveCapabilities({
+  it('grants platform admins direct account management and read-only view of other school records', async () => {
+    const account = await resolveCapabilities({
       user: platformAdmin,
       recordSchoolId: 'school-1',
       recordStatus: 'active',
@@ -115,29 +115,29 @@ describe('managed record capabilities', () => {
     expect(account).toContain('view')
     expect(account).toContain('edit')
     expect(account).toContain('disable')
-    expect(resolveCapabilities({
+    expect(await resolveCapabilities({
       user: platformAdmin,
       recordSchoolId: 'school-1',
       recordStatus: 'active',
       targetType: 'student',
     })).toEqual(['view'])
-    expect(resolvePageCapabilities(platformAdmin, 'user')).toEqual(['view', 'create'])
+    expect(await resolvePageCapabilities(platformAdmin, 'user')).toEqual(['view', 'create'])
   })
 
-  it('only exposes referral transfer before acknowledgement', () => {
-    expect(resolveCapabilities({
+  it('only exposes referral transfer before acknowledgement', async () => {
+    expect(await resolveCapabilities({
       user: schoolAdmin,
       recordSchoolId: 'school-1',
       recordStatus: 'created',
       targetType: 'referral',
     })).toEqual(['view', 'transfer'])
-    expect(resolveCapabilities({
+    expect(await resolveCapabilities({
       user: schoolAdmin,
       recordSchoolId: 'school-1',
       recordStatus: 'acknowledged',
       targetType: 'referral',
     })).toEqual(['view'])
-    expect(resolveCapabilities({
+    expect(await resolveCapabilities({
       user: schoolAdmin,
       recordSchoolId: 'school-2',
       recordStatus: 'created',

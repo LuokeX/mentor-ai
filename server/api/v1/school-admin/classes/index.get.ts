@@ -78,7 +78,7 @@ export default defineEventHandler(async (event) => {
       recordStatus: row.status,
       targetType: 'class',
       targetId: row.id,
-    })
+    }, event)
     return { ...row, _capabilities: capabilities }
   }))
 

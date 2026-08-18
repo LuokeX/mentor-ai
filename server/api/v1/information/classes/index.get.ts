@@ -107,15 +107,15 @@ export default defineEventHandler(async (event) => {
     genderByClass.set(row.classId, entry)
   }
 
-  const rows = result.rows.map((row) => {
-    const capabilities: Capability[] = resolveCapabilities({
+  const rows = await Promise.all(result.rows.map(async (row) => {
+    const capabilities: Capability[] = await resolveCapabilities({
       user,
       recordSchoolId: row.schoolId,
       recordOwnerUserId: row.ownerUserId,
       recordStatus: row.status,
       targetType: 'class',
       targetId: row.id,
-    })
+    }, event)
     const gender = genderByClass.get(row.id) || { male: 0, female: 0, unknown: 0 }
     return {
       ...row,
@@ -125,7 +125,7 @@ export default defineEventHandler(async (event) => {
       weakestSystem: weakestByClass.get(row.id) || null,
       _capabilities: capabilities,
     }
-  })
+  }))
 
   const pageCapabilities: Capability[] = ['view']
 

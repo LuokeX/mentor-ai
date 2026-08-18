@@ -82,7 +82,7 @@ export default defineEventHandler(async (event) => {
       recordStatus: row.status,
       targetType: 'department',
       targetId: row.id,
-    })
+    }, event)
     return { ...row, _capabilities: capabilities }
   }))
 

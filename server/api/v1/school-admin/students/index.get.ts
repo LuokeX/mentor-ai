@@ -88,7 +88,7 @@ export default defineEventHandler(async (event) => {
       recordStatus: row.status,
       targetType: 'student',
       targetId: row.id,
-    })
+    }, event)
     return {
       id: row.id,
       ownerUserId: row.ownerUserId,

@@ -153,7 +153,26 @@ const labels = {
     module_resource_library: '三库资源',
     module_resource_version: '三库版本',
     module_resource_document: '资源文档',
-    student_event: '学生事件'
+    student_event: '学生事件',
+    class_event: '班级事件',
+    audit: '审计日志',
+    import: '导入管理',
+    plan_operation: '方案操作',
+    access_request: '应急访问申请'
+  },
+  /** 角色权限能力（roles 权限清单勾选项） */
+  capability: {
+    view: '查看',
+    view_sensitive: '查看敏感详情',
+    create: '新增',
+    edit: '编辑',
+    inline_edit: '行内编辑',
+    archive: '归档',
+    restore: '恢复',
+    transfer: '移交',
+    graduate: '毕业',
+    delete: '删除',
+    disable: '停用'
   },
   reasonCategory: {
     risk_review: '风险复核',
@@ -240,6 +259,7 @@ const labels = {
     'content.rollback': '回滚内容包',
     'admin_access.request.approved': '批准应急访问',
     'admin_access.request.rejected': '拒绝应急访问',
+    'platform_admin.role.update': '更新角色权限',
     'assessment.submit': '提交评估',
     'plan.status.update': '更新方案状态',
     'plan.acceptance.update': '更新方案确认',
@@ -365,6 +385,7 @@ export function useDisplayLabels() {
     schoolStatusColor: (value?: string | null) => colorFrom('schoolStatus', value),
     targetTypeLabel: (value?: string | null) => labelFrom('targetType', value),
     reasonCategoryLabel: (value?: string | null) => labelFrom('reasonCategory', value),
+    capabilityLabel: (value?: string | null) => labelFrom('capability', value),
     recordStatusLabel: (value?: string | null) => labelFrom('recordStatus', value),
     recordStatusColor: (value?: string | null) => colorFrom('recordStatus', value),
     riskLevelLabel: (value?: string | null) => labelFrom('riskLevel', value),

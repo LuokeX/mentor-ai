@@ -1,6 +1,40 @@
 // 统一管理框架：共享类型、契约和能力定义
 // 跨越前后端的公共类型，不依赖服务端或前端具体实现
 
+// ===== 管理目标类型（记录级能力按此分桶）=====
+// 与 server/domain/capabilities.ts 的 ManagedTargetType 同源；
+// roles 表 permissions.records 的键必须取自这里。
+export const MANAGED_TARGET_TYPES = [
+  'class',
+  'student',
+  'guardian',
+  'communication',
+  'guardian_communication',
+  'student_event',
+  'class_event',
+  'student_case',
+  'department',
+  'user',
+  'school',
+  'referral',
+  'audit',
+  'import',
+  'plan_operation',
+  'access_request',
+] as const
+export type ManagedTargetType = typeof MANAGED_TARGET_TYPES[number]
+
+// ===== 角色权限清单（roles 表 permissions jsonb）=====
+// 结构：{ pages: { <targetType>: Capability[] }, records: { <targetType>: Capability[] } }
+//   pages   —— 页面级能力（列表页顶部操作入口，如 create）
+//   records —— 记录级能力（行级操作入口），仍受代码中的行级业务规则约束
+//              （跨校隔离、负责人过滤、归档/移交/删除等状态门禁）。
+// 键为 ManagedTargetType；缺键的目标类型回退到 capabilities.ts 硬编码逻辑。
+export interface RolePermissions {
+  pages: Record<string, Capability[]>
+  records: Record<string, Capability[]>
+}
+
 // ===== 能力（Capability）类型 =====
 // 服务端返回的原子操作能力，前端根据这些能力渲染/隐藏按钮
 export type Capability =

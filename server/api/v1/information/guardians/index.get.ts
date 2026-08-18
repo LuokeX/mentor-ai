@@ -55,15 +55,15 @@ export default defineEventHandler(async (event) => {
     countQuery: db.select({ value: countSql }).from(schema.guardians).where(and(...conditions)),
     page: query.page, pageSize: query.pageSize,
   })
-  const rows = result.rows.map((row) => {
+  const rows = await Promise.all(result.rows.map(async (row) => {
     const { nameEnc, phoneEnc, ...safeRow } = row
     const phone = decryptSensitive(phoneEnc, secret)
     return {
       ...safeRow,
       name: decryptSensitive(nameEnc, secret),
       phoneMasked: phone ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : null,
-      _capabilities: resolveCapabilities({ user, recordSchoolId: row.schoolId, recordOwnerUserId: row.ownerUserId, recordStatus: row.status, targetType: 'guardian', targetId: row.id }),
+      _capabilities: await resolveCapabilities({ user, recordSchoolId: row.schoolId, recordOwnerUserId: row.ownerUserId, recordStatus: row.status, targetType: 'guardian', targetId: row.id }, event),
     }
-  })
+  }))
   return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: ['view', 'create'] as Capability[] } satisfies ManagedListResult<(typeof rows)[number]>
 })

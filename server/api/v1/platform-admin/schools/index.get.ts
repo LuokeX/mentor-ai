@@ -32,9 +32,9 @@ export default defineEventHandler(async (event) => {
     page: query.page,
     pageSize: query.pageSize,
   })
-  const rows = result.rows.map(row => ({
+  const rows = await Promise.all(result.rows.map(async row => ({
     ...row,
-    _capabilities: resolveCapabilities({ user, recordSchoolId: row.id, recordStatus: row.status, targetType: 'school', targetId: row.id }),
-  }))
+    _capabilities: await resolveCapabilities({ user, recordSchoolId: row.id, recordStatus: row.status, targetType: 'school', targetId: row.id }, event),
+  })))
   return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: ['view', 'create'] as Capability[] } satisfies ManagedListResult<(typeof rows)[number]>
 })

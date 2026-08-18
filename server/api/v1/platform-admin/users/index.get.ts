@@ -84,7 +84,7 @@ export default defineEventHandler(async (event) => {
       activatedAt: row.activatedAt,
       targetType: 'user',
       targetId: row.id,
-    })
+    }, event)
     return { ...row, _capabilities: capabilities }
   }))
 
