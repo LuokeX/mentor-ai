@@ -19,12 +19,15 @@ const feedback = computed(() => (data.value?.enabled && data.value?.url)
       :to="feedback.url"
       target="_blank"
       rel="noopener noreferrer"
-      icon="i-lucide-clipboard-pen-line"
-      :label="feedback.title"
       color="primary"
       size="xl"
-      class="fixed bottom-20 left-1/2 z-40 -translate-x-1/2 shadow-xl print:hidden md:bottom-6 md:h-14 md:px-8 md:text-base"
+      class="fixed right-4 top-1/2 z-40 -translate-y-1/2 shadow-xl print:hidden md:right-6"
       :aria-label="`打开${feedback.title}`"
-    />
+    >
+      <span class="flex flex-col items-center gap-2 py-2 pr-1 pl-1.5">
+        <UIcon name="i-lucide-clipboard-pen-line" class="size-5" />
+        <span class="text-sm font-medium tracking-widest [writing-mode:vertical-rl]">{{ feedback.title }}</span>
+      </span>
+    </UButton>
   </UTooltip>
 </template>
