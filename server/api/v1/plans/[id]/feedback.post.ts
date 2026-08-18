@@ -58,7 +58,6 @@ export default defineEventHandler(async (event) => {
     toolUsability: body.toolUsability,
     scriptNaturalness: body.scriptNaturalness,
     actionDifficulty: body.actionDifficulty,
-    reviewUsefulness: body.reviewUsefulness,
     tags: body.tags,
     noteEnc: body.note ? encryptSensitive(body.note, useRuntimeConfig(event).encryptionKey) : null
   }).returning()
@@ -72,7 +71,6 @@ export default defineEventHandler(async (event) => {
     metadata: {
       attributionAccuracy: body.attributionAccuracy,
       toolUsability: body.toolUsability,
-      reviewUsefulness: body.reviewUsefulness,
       tags: body.tags
     }
   })
@@ -85,7 +83,6 @@ export default defineEventHandler(async (event) => {
     metadata: {
       attributionAccuracy: body.attributionAccuracy,
       toolUsability: body.toolUsability,
-      reviewUsefulness: body.reviewUsefulness,
       ruleCount: (body.ruleIds?.length ? body.ruleIds : plan.matchedRuleIds).length,
       toolCount: (body.toolCodes?.length ? body.toolCodes : plan.matchedToolCodes).length,
       tagCount: body.tags.length
@@ -100,7 +97,6 @@ export default defineEventHandler(async (event) => {
     metadata: {
       attributionAccuracy: body.attributionAccuracy,
       toolUsability: body.toolUsability,
-      reviewUsefulness: body.reviewUsefulness,
       tagCount: body.tags.length
     }
   })

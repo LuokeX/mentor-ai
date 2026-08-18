@@ -190,7 +190,6 @@ describe('plan operation schemas', () => {
       toolUsability: 4,
       scriptNaturalness: 4,
       actionDifficulty: 5,
-      reviewUsefulness: 3,
       tags: ['场景不匹配']
     })
     expect(result.ruleIds).toEqual(['hs-high'])

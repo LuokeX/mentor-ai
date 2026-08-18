@@ -70,12 +70,11 @@ const feedbackForm = reactive({
   toolUsability: 3,
   scriptNaturalness: 3,
   actionDifficulty: 3,
-  reviewUsefulness: 3,
   tags: [] as string[],
   note: '',
 })
 const feedbackPending = ref(false)
-const feedbackTags = ['归因准确', '工具可用', '话术自然', '行动过难', '需要人工协同', '场景不匹配', '复盘有效']
+const feedbackTags = ['归因准确', '工具可用', '话术自然', '行动过难', '需要人工协同', '场景不匹配']
 const blockReasonOptions = [
   { label: '时间不足', value: 'time_limited' },
   { label: '学生暂不可用', value: 'student_unavailable' },
@@ -595,7 +594,6 @@ async function submitFeedback() {
         toolUsability: Number(feedbackForm.toolUsability),
         scriptNaturalness: Number(feedbackForm.scriptNaturalness),
         actionDifficulty: Number(feedbackForm.actionDifficulty),
-        reviewUsefulness: Number(feedbackForm.reviewUsefulness),
         tags: feedbackForm.tags,
         note: feedbackForm.note.trim() || undefined,
       },
@@ -605,7 +603,6 @@ async function submitFeedback() {
       toolUsability: 3,
       scriptNaturalness: 3,
       actionDifficulty: 3,
-      reviewUsefulness: 3,
       tags: [],
       note: '',
     })
@@ -1425,10 +1422,10 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
 
         <div v-if="data.feedback?.length" class="mt-4 rounded-xl bg-sky-50 p-3 text-xs leading-5 text-sky-900">
-          最近反馈：归因 {{ scoreOutOfFive(data.feedback[0].attributionAccuracy) }}/5 · 工具 {{ scoreOutOfFive(data.feedback[0].toolUsability) }}/5 · 复盘 {{ scoreOutOfFive(data.feedback[0].reviewUsefulness) }}/5
+          最近反馈：归因 {{ scoreOutOfFive(data.feedback[0].attributionAccuracy) }}/5 · 工具 {{ scoreOutOfFive(data.feedback[0].toolUsability) }}/5
         </div>
 
-        <div class="mt-4 grid gap-3 md:grid-cols-5">
+        <div class="mt-4 grid gap-3 md:grid-cols-4">
           <UFormField label="归因准确">
             <USelect v-model="feedbackForm.attributionAccuracy" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v}`, value: v }))" class="w-full" />
           </UFormField>
@@ -1440,9 +1437,6 @@ useHead({ title: () => data.value?.title || '方案详情' })
           </UFormField>
           <UFormField label="行动难度">
             <USelect v-model="feedbackForm.actionDifficulty" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v}`, value: v }))" class="w-full" />
-          </UFormField>
-          <UFormField label="复盘有效">
-            <USelect v-model="feedbackForm.reviewUsefulness" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v}`, value: v }))" class="w-full" />
           </UFormField>
         </div>
 

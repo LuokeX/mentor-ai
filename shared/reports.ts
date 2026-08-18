@@ -182,8 +182,7 @@ export const planFeedbackCreateSchema = z.object({
   toolUsability: z.number().int().min(1).max(5),
   scriptNaturalness: z.number().int().min(1).max(5),
   actionDifficulty: z.number().int().min(1).max(5),
-  reviewUsefulness: z.number().int().min(1).max(5),
-  tags: z.array(z.enum(['归因准确', '工具可用', '话术自然', '行动过难', '需要人工协同', '场景不匹配', '复盘有效'])).max(8).default([]),
+  tags: z.array(z.enum(['归因准确', '工具可用', '话术自然', '行动过难', '需要人工协同', '场景不匹配'])).max(8).default([]),
   note: z.string().trim().max(500).optional()
 })
 

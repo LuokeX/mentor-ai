@@ -15,7 +15,6 @@ export default defineEventHandler(async (event) => {
       toolUsability: schema.planFeedback.toolUsability,
       scriptNaturalness: schema.planFeedback.scriptNaturalness,
       actionDifficulty: schema.planFeedback.actionDifficulty,
-      reviewUsefulness: schema.planFeedback.reviewUsefulness,
       tags: schema.planFeedback.tags,
       createdAt: schema.planFeedback.createdAt
     }).from(schema.planFeedback)
@@ -40,8 +39,7 @@ export default defineEventHandler(async (event) => {
       attributionAccuracy: sql<number>`coalesce(round(avg(${schema.planFeedback.attributionAccuracy}), 1), 0)::float`,
       toolUsability: sql<number>`coalesce(round(avg(${schema.planFeedback.toolUsability}), 1), 0)::float`,
       scriptNaturalness: sql<number>`coalesce(round(avg(${schema.planFeedback.scriptNaturalness}), 1), 0)::float`,
-      actionDifficulty: sql<number>`coalesce(round(avg(${schema.planFeedback.actionDifficulty}), 1), 0)::float`,
-      reviewUsefulness: sql<number>`coalesce(round(avg(${schema.planFeedback.reviewUsefulness}), 1), 0)::float`
+      actionDifficulty: sql<number>`coalesce(round(avg(${schema.planFeedback.actionDifficulty}), 1), 0)::float`
     }).from(schema.planFeedback)
       .groupBy(schema.planFeedback.module)
   ])
@@ -102,7 +100,6 @@ interface QualityBucket {
   toolTotal: number
   scriptTotal: number
   difficultyTotal: number
-  reviewTotal: number
 }
 
 function addBucket(
@@ -113,7 +110,6 @@ function addBucket(
     toolUsability: number
     scriptNaturalness: number
     actionDifficulty: number
-    reviewUsefulness: number
   },
   meta: { module: string, code: string, version?: string, libraryType?: string, scope?: string }
 ) {
@@ -126,8 +122,7 @@ function addBucket(
     attributionTotal: 0,
     toolTotal: 0,
     scriptTotal: 0,
-    difficultyTotal: 0,
-    reviewTotal: 0
+    difficultyTotal: 0
   }
   bucket.count++
   bucket.lowAttribution += row.attributionAccuracy < 3 ? 1 : 0
@@ -137,7 +132,6 @@ function addBucket(
   bucket.toolTotal += row.toolUsability
   bucket.scriptTotal += row.scriptNaturalness
   bucket.difficultyTotal += row.actionDifficulty
-  bucket.reviewTotal += row.reviewUsefulness
   map.set(key, bucket)
 }
 
@@ -148,17 +142,16 @@ function rankBuckets(map: Map<string, QualityBucket>, primary: 'attributionAccur
     toolUsability: round(bucket.toolTotal / bucket.count),
     scriptNaturalness: round(bucket.scriptTotal / bucket.count),
     actionDifficulty: round(bucket.difficultyTotal / bucket.count),
-    reviewUsefulness: round(bucket.reviewTotal / bucket.count),
     lowAttributionRate: round(bucket.lowAttribution / bucket.count),
     lowToolRate: round(bucket.lowTool / bucket.count),
     hardActionRate: round(bucket.hardAction / bucket.count)
   })).sort((a, b) => {
     const scoreA = primary === 'attributionAccuracy'
       ? a.attributionAccuracy
-      : primary === 'toolUsability' ? a.toolUsability : (a.attributionAccuracy + a.toolUsability + a.reviewUsefulness) / 3
+      : primary === 'toolUsability' ? a.toolUsability : (a.attributionAccuracy + a.toolUsability + a.scriptNaturalness + a.actionDifficulty) / 4
     const scoreB = primary === 'attributionAccuracy'
       ? b.attributionAccuracy
-      : primary === 'toolUsability' ? b.toolUsability : (b.attributionAccuracy + b.toolUsability + b.reviewUsefulness) / 3
+      : primary === 'toolUsability' ? b.toolUsability : (b.attributionAccuracy + b.toolUsability + b.scriptNaturalness + b.actionDifficulty) / 4
     return scoreA - scoreB || b.count - a.count
   }).slice(0, 30)
 }

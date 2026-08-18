@@ -71,8 +71,7 @@ export default defineEventHandler(async (event) => {
       attributionAccuracy: sql<number | null>`avg(${schema.planFeedback.attributionAccuracy})`,
       toolUsability: sql<number | null>`avg(${schema.planFeedback.toolUsability})`,
       scriptNaturalness: sql<number | null>`avg(${schema.planFeedback.scriptNaturalness})`,
-      actionDifficulty: sql<number | null>`avg(${schema.planFeedback.actionDifficulty})`,
-      reviewUsefulness: sql<number | null>`avg(${schema.planFeedback.reviewUsefulness})`
+      actionDifficulty: sql<number | null>`avg(${schema.planFeedback.actionDifficulty})`
     }).from(schema.planFeedback).where(and(eq(schema.planFeedback.schoolId, admin.schoolId), gte(schema.planFeedback.createdAt, weekAgo))),
     db.select({
       total: sql<number>`count(*)::int`,
@@ -115,8 +114,7 @@ export default defineEventHandler(async (event) => {
     attributionAccuracy: null,
     toolUsability: null,
     scriptNaturalness: null,
-    actionDifficulty: null,
-    reviewUsefulness: null
+    actionDifficulty: null
   }
   const report = reportCompleteness[0] || {
     total: 0,
@@ -164,8 +162,7 @@ export default defineEventHandler(async (event) => {
       attributionAccuracy: normalizeAvg(quality.attributionAccuracy),
       toolUsability: normalizeAvg(quality.toolUsability),
       scriptNaturalness: normalizeAvg(quality.scriptNaturalness),
-      actionDifficulty: normalizeAvg(quality.actionDifficulty),
-      reviewUsefulness: normalizeAvg(quality.reviewUsefulness)
+      actionDifficulty: normalizeAvg(quality.actionDifficulty)
     },
     reportCompleteness: {
       ...report,

@@ -60,7 +60,6 @@ export default defineEventHandler(async (event) => {
     toolUsability: sql<number>`coalesce(round(avg(${schema.planFeedback.toolUsability}), 1), 0)::float`,
     scriptNaturalness: sql<number>`coalesce(round(avg(${schema.planFeedback.scriptNaturalness}), 1), 0)::float`,
     actionDifficulty: sql<number>`coalesce(round(avg(${schema.planFeedback.actionDifficulty}), 1), 0)::float`,
-    reviewUsefulness: sql<number>`coalesce(round(avg(${schema.planFeedback.reviewUsefulness}), 1), 0)::float`,
   }).from(schema.planFeedback).where(eq(schema.planFeedback.schoolId, admin.schoolId))
 
   const feedbackTagSource = await db.select({ tags: schema.planFeedback.tags })
@@ -82,7 +81,6 @@ export default defineEventHandler(async (event) => {
     teacherName: schema.users.name,
     toolUsability: schema.planFeedback.toolUsability,
     attributionAccuracy: schema.planFeedback.attributionAccuracy,
-    reviewUsefulness: schema.planFeedback.reviewUsefulness,
     createdAt: schema.planFeedback.createdAt,
   }).from(schema.planFeedback)
     .innerJoin(schema.plans, eq(schema.plans.id, schema.planFeedback.planId))
@@ -112,7 +110,6 @@ export default defineEventHandler(async (event) => {
       toolUsability: quality?.toolUsability ?? 0,
       scriptNaturalness: quality?.scriptNaturalness ?? 0,
       actionDifficulty: quality?.actionDifficulty ?? 0,
-      reviewUsefulness: quality?.reviewUsefulness ?? 0,
       tagDistribution: feedbackTagRows,
       lowRatedTools
     }

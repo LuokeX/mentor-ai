@@ -89,7 +89,6 @@ export default defineEventHandler(async (event) => {
       attributionAccuracy: schema.planFeedback.attributionAccuracy,
       toolUsability: schema.planFeedback.toolUsability,
       actionDifficulty: schema.planFeedback.actionDifficulty,
-      reviewUsefulness: schema.planFeedback.reviewUsefulness,
       createdAt: schema.planFeedback.createdAt
     }).from(schema.planFeedback)
       .innerJoin(schema.plans, eq(schema.plans.id, schema.planFeedback.planId))
@@ -99,7 +98,6 @@ export default defineEventHandler(async (event) => {
         or(
           lt(schema.planFeedback.attributionAccuracy, 3),
           lt(schema.planFeedback.toolUsability, 3),
-          lt(schema.planFeedback.reviewUsefulness, 3),
           eq(schema.planFeedback.actionDifficulty, 5)
         )
       ))

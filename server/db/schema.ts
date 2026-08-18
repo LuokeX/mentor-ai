@@ -645,7 +645,6 @@ export const planFeedback = pgTable('plan_feedback', {
   toolUsability: integer('tool_usability').notNull(),
   scriptNaturalness: integer('script_naturalness').notNull(),
   actionDifficulty: integer('action_difficulty').notNull(),
-  reviewUsefulness: integer('review_usefulness').notNull(),
   tags: jsonb('tags').$type<string[]>().default([]).notNull(),
   noteEnc: text('note_enc'),
   dataClassification: varchar('data_classification', { length: 30 }).default('sensitive').notNull(),

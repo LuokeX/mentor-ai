@@ -288,6 +288,13 @@
       "when": 1787036719542,
       "tag": "0040_cynical_lilandra",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787040851177,
+      "tag": "0041_lovely_boom_boom",
+      "breakpoints": true
     }
   ]
 }
