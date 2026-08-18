@@ -7,6 +7,7 @@ import { routeWithDeepSeek, semanticSafetySignals, streamClarificationRound, str
 import type { KnowledgeCitation } from '../../../integrations/deepseek'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
 import { composeClarificationSummaryHistory, topModuleFromScores } from '../../../domain/chat-clarification'
+import { buildChatTitle } from '../../../domain/chat-titles'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
 import { trackProductEvent } from '../../../domain/product-events'
 import { embedModuleResourceQuery } from '../../../integrations/ollama'
@@ -80,7 +81,7 @@ export default defineEventHandler(async (event) => {
     const [session] = await db.insert(schema.chatSessions).values({
       schoolId: user.schoolId,
       ownerUserId: user.id,
-      title: body.message.slice(0, 40),
+      title: buildChatTitle({ messages: [body.message] }),
       contextType: businessContext?.type || 'none',
       contextId: businessContext?.id,
       metadata: { clarificationState: { phase: 'clarifying', round: 0, moduleScores: {} } }
@@ -222,6 +223,7 @@ export default defineEventHandler(async (event) => {
               onDelta: text => emit(controller, 'answer_delta', { text })
             })
             await db.update(schema.chatSessions).set({
+              title: buildChatTitle({ messages: [...history.filter((h) => h.role === 'user').map((h) => h.content), body.message] }),
               metadata: { clarificationState: { phase: 'done', round: clarificationState.round, moduleScores: summary.data.moduleProportions } },
               updatedAt: new Date()
             }).where(eq(schema.chatSessions.id, ownedSessionId))
@@ -267,6 +269,7 @@ export default defineEventHandler(async (event) => {
               onDelta: text => emit(controller, 'answer_delta', { text })
             })
             await db.update(schema.chatSessions).set({
+              title: buildChatTitle({ messages: [...history.filter((h) => h.role === 'user').map((h) => h.content), body.message] }),
               metadata: { clarificationState: { phase: 'done', round: clarificationState.round, moduleScores: summary.data.moduleProportions } },
               updatedAt: new Date()
             }).where(eq(schema.chatSessions.id, ownedSessionId))
