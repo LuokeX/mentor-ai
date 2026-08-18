@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { assessmentBadge, moduleMeta } from '#shared/assessments'
+import { moduleMeta } from '#shared/assessments'
 import type { ModuleId, RouteDecision } from '#shared/contracts'
 import { useModuleScores } from '~/composables/useModuleScores'
 
@@ -48,7 +48,6 @@ const { updateScores, moduleScores } = useModuleScores()
 const { data: sessions, refresh: refreshSessions } = await useFetch<any[]>('/api/v1/chat/sessions')
 const { data: assistantStatus } = await useFetch<any>('/api/v1/chat/status')
 const { data: governance, refresh: refreshGovernance } = await useFetch<any>('/api/v1/chat/data-governance')
-const { data: today, refresh: refreshToday } = await useFetch<any>('/api/v1/workbench/today')
 const { data: activePlans } = await useFetch<any>('/api/v1/plans/active')
 const { data: contextOptions } = await useFetch<any>('/api/v1/chat/context-options')
 const input = ref('')
@@ -80,9 +79,6 @@ const contextPreview = ref<any>(null)
 const previewLoading = ref(false)
 const withoutRecord = ref(false)
 const deleteCandidate = ref<string>()
-const currentSnapPage = ref(0) // 0: 聊天面板, 1: 使用闭环
-const snapLocked = ref(false)
-let snapUnlockTimer: number | undefined
 const toast = useToast()
 const { moduleLabel, libraryTypeLabel, actionStatusLabel } = useDisplayLabels()
 const quickPrompts = [
@@ -117,43 +113,6 @@ const selectedContext = computed(() => {
   return allContextOptions.value.find((item: any) => item.type === type && item.id === id) || null
 })
 const contextPayload = computed(() => selectedContext.value ? { contextType: selectedContext.value.type, contextId: selectedContext.value.id } : {})
-const todayTodoMetrics = computed(() => {
-  const actions = today.value?.actions || []
-  const reviews = today.value?.reviews || []
-  const drafts = today.value?.drafts || []
-  const assignments = today.value?.recentAssignments || []
-  const unread = today.value?.unreadCount || 0
-  return {
-    unread,
-    actions: actions.length,
-    overdueActions: actions.filter((item: any) => item.overdue).length,
-    reviews: reviews.length,
-    drafts: drafts.length,
-    assignments: assignments.length,
-    total: unread + actions.length + reviews.length + drafts.length + assignments.length
-  }
-})
-
-function getModuleState(id: string) {
-  return today.value?.moduleStates?.[id] || null
-}
-
-function getModuleBadge(id: string) {
-  return assessmentBadge(getModuleState(id)?.lastLevel)
-}
-
-function getModuleBadgeColor(id: string): any {
-  return getModuleBadge(id)?.color || 'neutral'
-}
-
-function relativeDate(value?: string) {
-  if (!value) return ''
-  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000)
-  if (days <= 0) return '今天'
-  if (days === 1) return '昨天'
-  if (days < 7) return `${days} 天前`
-  return new Date(value).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
-}
 
 async function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
   await nextTick()
@@ -375,7 +334,6 @@ async function ask() {
       }
     }
     await refreshSessions()
-    await refreshToday()
   } catch (error: any) {
     timeline.value.push({ role: 'assistant', text: error?.message || '处理失败，请稍后重试。' })
   } finally {
@@ -437,7 +395,6 @@ async function submitPlanExecution() {
     item.planUpdateSuggestions![index].appliedAt = new Date().toISOString()
     pendingPlanSuggestion.value = null
     toast.add({ title: '方案已更新', color: 'success' })
-    await refreshToday()
   } catch (error: any) { toast.add({ title: '方案更新失败', description: error?.data?.message || '请稍后重试', color: 'error' }) }
 }
 
@@ -483,102 +440,6 @@ onMounted(async () => {
   else if (prefill?.contextKey) selectedContextKey.value = prefill.contextKey
   else loadContextPreview()
   if (prefill?.prompt) input.value = prefill.prompt
-})
-
-function getSnapSections() {
-  return [
-    document.getElementById('chat-section'),
-    document.getElementById('dashboard-section')
-  ].filter((section): section is HTMLElement => Boolean(section))
-}
-
-function getStickyHeaderOffset() {
-  return (document.querySelector('header') as HTMLElement | null)?.offsetHeight || 0
-}
-
-function getSnapPoint(section: HTMLElement, index: number) {
-  if (index === 0) return 0
-  const top = section.getBoundingClientRect().top + window.scrollY
-  return Math.max(0, top - getStickyHeaderOffset() - 16)
-}
-
-function getNearestSnapPage(sections = getSnapSections()) {
-  let nearestIndex = 0
-  let nearestDistance = Number.POSITIVE_INFINITY
-  sections.forEach((section, index) => {
-    const distance = Math.abs(getSnapPoint(section, index) - window.scrollY)
-    if (distance < nearestDistance) {
-      nearestDistance = distance
-      nearestIndex = index
-    }
-  })
-  return nearestIndex
-}
-
-function scrollToSnapSection(section: HTMLElement, index: number) {
-  window.scrollTo({ top: getSnapPoint(section, index), behavior: 'smooth' })
-}
-
-function canScrollInside(target: EventTarget | null, dir: number) {
-  let el = target instanceof Element ? target : null
-  while (el && el !== document.body) {
-    if (el.matches('input, textarea, select, [contenteditable="true"], [role="listbox"]')) return true
-    const style = window.getComputedStyle(el)
-    const canScroll = /(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 2
-    if (canScroll) {
-      const atTop = el.scrollTop <= 2
-      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
-      if ((dir > 0 && !atBottom) || (dir < 0 && !atTop)) return true
-    }
-    el = el.parentElement
-  }
-  return false
-}
-
-function syncSnapPage() {
-  currentSnapPage.value = getNearestSnapPage()
-}
-
-// 全页 snap 滚动：聊天面板 → 使用闭环
-function handleWheel(event: WheelEvent) {
-  if (Math.abs(event.deltaY) < 8) return
-  const dir = event.deltaY > 0 ? 1 : -1
-  if (canScrollInside(event.target, dir)) return
-
-  if (snapLocked.value) {
-    event.preventDefault()
-    return
-  }
-
-  const sections = getSnapSections()
-  const activePage = getNearestSnapPage(sections)
-  const nextPage = activePage + dir
-  if (nextPage < 0 || nextPage >= sections.length) return
-
-  event.preventDefault()
-  currentSnapPage.value = nextPage
-  snapLocked.value = true
-  scrollToSnapSection(sections[nextPage]!, nextPage)
-
-  if (snapUnlockTimer) window.clearTimeout(snapUnlockTimer)
-  snapUnlockTimer = window.setTimeout(() => {
-    snapLocked.value = false
-    syncSnapPage()
-  }, 700)
-}
-
-onMounted(() => {
-  syncSnapPage()
-  window.addEventListener('wheel', handleWheel, { passive: false })
-  window.addEventListener('scroll', syncSnapPage, { passive: true })
-  window.addEventListener('resize', syncSnapPage, { passive: true })
-})
-
-onUnmounted(() => {
-  if (snapUnlockTimer) window.clearTimeout(snapUnlockTimer)
-  window.removeEventListener('wheel', handleWheel)
-  window.removeEventListener('scroll', syncSnapPage)
-  window.removeEventListener('resize', syncSnapPage)
 })
 </script>
 
@@ -717,111 +578,6 @@ onUnmounted(() => {
           <div class="mt-2 flex items-center justify-between px-1 text-[11px] text-slate-400"><span>Enter 发送 · Shift + Enter 换行</span><span>{{ input.length }}/4000</span></div>
           <p class="mt-1 text-center text-[11px] text-slate-300">AI 辅助建议，需人工专业判断</p>
         </form>
-      </div>
-    </section>
-
-    <section id="dashboard-section" v-if="today" class="mt-12">
-      <div class="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p class="text-sm font-semibold text-emerald-700">持续使用闭环</p>
-          <h2 class="mt-1 text-2xl font-semibold">今日待办</h2>
-        </div>
-        <NuxtLink to="/notifications" class="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 hover:shadow-md">
-          <UIcon name="i-lucide-bell-ring" class="size-4" />
-          进入工作日志
-          <UIcon name="i-lucide-arrow-right" class="size-4" />
-        </NuxtLink>
-      </div>
-
-      <!-- 指标卡片 -->
-      <div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div class="panel flex flex-col items-center p-5 text-center transition hover:shadow-md">
-          <div class="grid size-10 place-items-center rounded-xl bg-blue-100">
-            <UIcon name="i-lucide-bell" class="size-5 text-blue-600" />
-          </div>
-          <strong class="mt-3 text-2xl font-bold text-slate-900">{{ todayTodoMetrics.unread }}</strong>
-          <p class="mt-0.5 text-xs text-slate-500">未读通知</p>
-        </div>
-        <div class="panel flex flex-col items-center p-5 text-center transition hover:shadow-md">
-          <div class="grid size-10 place-items-center rounded-xl" :class="todayTodoMetrics.overdueActions ? 'bg-red-100' : 'bg-emerald-100'">
-            <UIcon name="i-lucide-clipboard-check" class="size-5" :class="todayTodoMetrics.overdueActions ? 'text-red-600' : 'text-emerald-600'" />
-          </div>
-          <strong class="mt-3 text-2xl font-bold" :class="todayTodoMetrics.overdueActions ? 'text-red-700' : 'text-slate-900'">{{ todayTodoMetrics.actions }}</strong>
-          <p class="mt-0.5 text-xs text-slate-500">
-            今日动作
-            <span v-if="todayTodoMetrics.overdueActions" class="ml-0.5 text-red-500">({{ todayTodoMetrics.overdueActions }} 逾期)</span>
-          </p>
-        </div>
-        <div class="panel flex flex-col items-center p-5 text-center transition hover:shadow-md">
-          <div class="grid size-10 place-items-center rounded-xl bg-amber-100">
-            <UIcon name="i-lucide-rotate-ccw" class="size-5 text-amber-600" />
-          </div>
-          <strong class="mt-3 text-2xl font-bold text-slate-900">{{ todayTodoMetrics.reviews }}</strong>
-          <p class="mt-0.5 text-xs text-slate-500">待复盘</p>
-        </div>
-        <div class="panel flex flex-col items-center p-5 text-center transition hover:shadow-md">
-          <div class="grid size-10 place-items-center rounded-xl bg-purple-100">
-            <UIcon name="i-lucide-file-text" class="size-5 text-purple-600" />
-          </div>
-          <strong class="mt-3 text-2xl font-bold text-slate-900">{{ todayTodoMetrics.drafts + todayTodoMetrics.assignments }}</strong>
-          <p class="mt-0.5 text-xs text-slate-500">草稿/移交</p>
-        </div>
-      </div>
-
-      <!-- 待办列表：今日动作 + 待复盘 -->
-      <div class="mt-5 grid gap-4 lg:grid-cols-2">
-        <div class="panel flex flex-col p-5">
-          <div class="flex items-center justify-between">
-            <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-800">
-              <UIcon name="i-lucide-clipboard-check" class="size-4 text-emerald-600" />今日动作
-            </h3>
-            <NuxtLink to="/notifications?tab=action" class="text-xs font-medium text-emerald-600 transition hover:text-emerald-800">查看全部</NuxtLink>
-          </div>
-          <div class="mt-4 flex-1 space-y-2">
-            <NuxtLink v-for="action in today.actions.slice(0, 4)" :key="action.id" :to="`/plans/${action.planId}`" class="flex flex-col gap-1.5 rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-emerald-200 hover:bg-emerald-50/50">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-xs font-medium text-slate-500">{{ (moduleMeta as Record<string, { title: string }>)[action.planModule]?.title || '' }}</span>
-                <UBadge :color="action.overdue ? 'error' : 'neutral'" variant="soft" size="xs">{{ action.overdue ? '已逾期' : '今日' }}</UBadge>
-              </div>
-              <p class="line-clamp-2 text-sm leading-5 text-slate-700">{{ action.detail }}</p>
-            </NuxtLink>
-            <p v-if="!today.actions.length" class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-sm text-slate-400">暂无到期动作</p>
-          </div>
-        </div>
-
-        <div class="panel flex flex-col p-5">
-          <div class="flex items-center justify-between">
-            <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-800">
-              <UIcon name="i-lucide-rotate-ccw" class="size-4 text-amber-600" />待复盘
-            </h3>
-            <span v-if="todayTodoMetrics.drafts" class="flex items-center gap-1 text-xs text-slate-400">
-              <UIcon name="i-lucide-file-clock" class="size-3" />{{ todayTodoMetrics.drafts }} 份草稿
-            </span>
-          </div>
-          <div class="mt-4 flex-1 space-y-2">
-            <NuxtLink v-for="review in today.reviews.slice(0, 4)" :key="review.id" :to="`/plans/${review.id}`" class="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-amber-200 hover:bg-amber-50/50">
-              <span class="min-w-0 truncate"><strong>{{ review.title }}</strong><small class="ml-1.5 text-slate-400">{{ (moduleMeta as Record<string, { title: string }>)[review.module]?.title || review.module }}</small></span>
-              <UIcon name="i-lucide-chevron-right" class="size-4 shrink-0 text-slate-300" />
-            </NuxtLink>
-            <p v-if="!today.reviews.length" class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-sm text-slate-400">暂无待复盘方案</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="modules" class="mt-12">
-      <div class="flex items-end justify-between"><div><p class="text-sm font-semibold text-emerald-700">快捷入口</p><h2 class="mt-1 text-2xl font-semibold">我知道要处理什么</h2></div><UButton to="/information" variant="ghost" color="neutral" trailing-icon="i-lucide-arrow-right">信息管理中心</UButton></div>
-      <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <NuxtLink v-for="(item, id) in moduleMeta" :key="id" :to="`/module/${id}`" class="panel group flex min-h-64 flex-col p-5 transition hover:-translate-y-1 hover:shadow-xl">
-          <div class="flex items-start justify-between gap-3"><div class="grid size-11 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon :name="item.icon" class="size-5" /></div><UBadge v-if="getModuleBadge(id)" :color="getModuleBadgeColor(id)" variant="soft">{{ getModuleBadge(id)?.label }}</UBadge></div>
-          <h3 class="mt-5 font-semibold">{{ item.title }}</h3><p class="mt-2 text-sm text-slate-500">{{ item.short }}</p>
-          <div class="mt-auto border-t border-slate-100 pt-4 text-xs">
-            <div v-if="getModuleState(id)?.draftId" class="flex items-center justify-between gap-2 text-amber-700"><span class="flex items-center gap-1.5"><UIcon name="i-lucide-file-clock" class="size-3.5" />继续未完成评估</span><span>{{ getModuleState(id).draftAnswerCount }} 题</span></div>
-            <div v-else-if="getModuleState(id)?.lastSubmittedAt" class="flex items-center justify-between gap-2 text-slate-500"><span>最近评估</span><span>{{ relativeDate(getModuleState(id).lastSubmittedAt) }}</span></div>
-            <div v-else class="flex items-center gap-1.5 text-emerald-700"><UIcon name="i-lucide-play" class="size-3.5" />开始首次评估</div>
-            <div v-if="getModuleState(id)?.pendingActions || getModuleState(id)?.reviewDue" class="mt-2 flex flex-wrap gap-1.5"><UBadge v-if="getModuleState(id)?.pendingActions" color="neutral" variant="soft">{{ getModuleState(id).pendingActions }} 个待执行</UBadge><UBadge v-if="getModuleState(id)?.reviewDue" color="warning" variant="soft">{{ getModuleState(id).reviewDue }} 个待复盘</UBadge></div>
-          </div>
-        </NuxtLink>
       </div>
     </section>
 
