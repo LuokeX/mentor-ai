@@ -53,15 +53,15 @@ describe('buildPlanTitle · assistant_dialogue', () => {
     attributionNames: ['学习动机', '时间管理']
   }
 
-  it('带关联对象：对象 ｜ 提问首句', () => {
+  it('带关联对象：对象 ｜ AI问题：提问首句', () => {
     const { title, titleFull } = buildPlanTitle({ ...base, objectLabel: '小明' })
-    expect(titleFull).toBe('小明 ｜ 小明上课经常走神，作业拖拉到半夜')
+    expect(titleFull).toBe('小明 ｜ AI问题：小明上课经常走神，作业拖拉到半夜')
     expect(title).toBe(titleFull)
   })
 
   it('关联对象为空时省略该段', () => {
     const { titleFull } = buildPlanTitle({ ...base, objectLabel: '' })
-    expect(titleFull).toBe(base.questionSummary)
+    expect(titleFull).toBe('AI问题：小明上课经常走神，作业拖拉到半夜')
   })
 
   it('提问为空时兜底模块名 ｜ 方案', () => {
@@ -84,13 +84,26 @@ describe('buildPlanTitle · direct_assessment', () => {
     attributionNames: ['沟通渠道断裂', '家长信任不足']
   }
 
-  it('归因描述取前三句', () => {
+  it('按归因顺序每条取首句拼接', () => {
     const { titleFull } = buildPlanTitle({
       ...base,
       attributionDescriptions: [
         '沟通渠道基本断裂，家长拒绝正面沟通。',
         '家长对班主任缺乏信任，多次越级投诉。',
         '过去几次沟通都演变成冲突，双方关系紧张。'
+      ]
+    })
+    expect(titleFull).toBe('沟通渠道基本断裂，家长拒绝正面沟通。家长对班主任缺乏信任，多次越级投诉。过去几次沟通都演变成冲突，双方关系紧张。')
+  })
+
+  it('单条描述含多句时只取首句，最多取前 3 条归因', () => {
+    const { titleFull } = buildPlanTitle({
+      ...base,
+      attributionDescriptions: [
+        '沟通渠道基本断裂，家长拒绝正面沟通。家长已多次越级投诉到校长。双方关系持续紧张。',
+        '家长对班主任缺乏信任，多次越级投诉。',
+        '过去几次沟通都演变成冲突，双方关系紧张。',
+        '第四条归因的描述不应进入标题。'
       ]
     })
     expect(titleFull).toBe('沟通渠道基本断裂，家长拒绝正面沟通。家长对班主任缺乏信任，多次越级投诉。过去几次沟通都演变成冲突，双方关系紧张。')

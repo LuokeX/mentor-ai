@@ -21,6 +21,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "backfill:plan-titles": "tsx scripts/backfill-plan-titles.ts",
+    "backfill:chat-titles": "tsx scripts/backfill-chat-titles.ts",
     "resources:reindex": "tsx scripts/reindex-module-resource-embeddings.ts",
     "import:business-data": "tsx scripts/import-business-data/index.ts",
     "template:build": "tsx scripts/build-template-v4.mjs",
