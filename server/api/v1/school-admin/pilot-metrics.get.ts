@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
       .groupBy(schema.assessmentAttempts.module),
     db.select({
       total: sql<number>`count(distinct ${schema.plans.id})::int`,
-      acted: sql<number>`count(distinct ${schema.plans.id}) filter (where ${schema.planActions.completedAt} is not null and ${schema.planActions.completedAt} <= ${schema.plans.createdAt} + interval '7 days')::int`,
+      acted: sql<number>`count(distinct ${schema.plans.id}) filter (where ${schema.planActions.decision} = 'included' and ${schema.planActions.completedAt} is not null and ${schema.planActions.completedAt} <= ${schema.plans.createdAt} + interval '7 days')::int`,
       reviewed: sql<number>`count(distinct ${schema.plans.id}) filter (where ${schema.planReviews.createdAt} is not null and ${schema.planReviews.createdAt} <= ${schema.plans.createdAt} + interval '7 days')::int`
     }).from(schema.plans)
       .leftJoin(schema.planActions, eq(schema.planActions.planId, schema.plans.id))

@@ -16,6 +16,7 @@ import {
 } from '../../shared/contracts'
 import {
   planAcceptanceSchema,
+  planActionDecisionUpdateSchema,
   planActionExecutionSchema,
   planFeedbackCreateSchema,
   planReviewCreateSchema
@@ -167,6 +168,18 @@ describe('plan operation schemas', () => {
     expect(planActionExecutionSchema.safeParse({ blockReason: 'time_limited' }).success).toBe(true)
     expect(planActionExecutionSchema.safeParse({ blockReason: 'other' }).success).toBe(false)
     expect(planActionExecutionSchema.safeParse({ blockReason: 'other', blockNote: '特殊排期冲突' }).success).toBe(true)
+  })
+
+  it('requires structured feedback for rejected action recommendations', () => {
+    expect(planActionDecisionUpdateSchema.safeParse({ decision: 'included' }).success).toBe(true)
+    expect(planActionDecisionUpdateSchema.safeParse({ decision: 'rejected' }).success).toBe(false)
+    expect(planActionDecisionUpdateSchema.safeParse({ decision: 'rejected', reason: 'scene_mismatch' }).success).toBe(true)
+    expect(planActionDecisionUpdateSchema.safeParse({ decision: 'rejected', reason: 'other' }).success).toBe(false)
+    expect(planActionDecisionUpdateSchema.safeParse({
+      decision: 'rejected',
+      reason: 'other',
+      note: '学校排期与建议周期冲突'
+    }).success).toBe(true)
   })
 
   it('allows feedback to carry rule and tool trace ids', () => {

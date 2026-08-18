@@ -145,6 +145,7 @@ export default defineEventHandler(async (event) => {
       eq(schema.plans.ownerUserId, user.id),
       eq(schema.plans.module, 'self_growth'),
       eq(schema.planActions.schoolId, user.schoolId),
+      eq(schema.planActions.decision, 'included'),
     ))
   const checkinCount = checkinRows.length
   // 求助记录：自我成长模块的 AI 咨询会话数

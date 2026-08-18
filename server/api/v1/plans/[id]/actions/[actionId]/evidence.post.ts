@@ -33,13 +33,16 @@ export default defineEventHandler(async (event) => {
   if (!canUpdatePlanActions(plan)) {
     throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '请先接受方案，再上传执行证据' })
   }
-  const [action] = await db.select({ id: schema.planActions.id }).from(schema.planActions).where(and(
+  const [action] = await db.select({ id: schema.planActions.id, decision: schema.planActions.decision }).from(schema.planActions).where(and(
     eq(schema.planActions.id, actionId),
     eq(schema.planActions.planId, planId),
     eq(schema.planActions.ownerUserId, user.id),
     eq(schema.planActions.schoolId, schoolId)
   )).limit(1)
   if (!action) throw createError({ statusCode: 404, message: '方案行动不存在' })
+  if (action.decision !== 'included') {
+    throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '该行动尚未纳入方案，不能上传执行证据' })
+  }
 
   const buffer = Buffer.from(body.contentBase64, 'base64')
   const validation = validatePlanEvidence(buffer, body.mimeType)

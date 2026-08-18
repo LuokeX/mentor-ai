@@ -3,6 +3,8 @@ import { moduleMeta } from '#shared/assessments'
 
 type PlanAction = {
   id: string; sequence: number; title: string; detail: string;
+  decision: 'pending' | 'included' | 'rejected';
+  decisionReason?: string | null; decisionNote?: string | null; decidedAt?: string | null;
   status: string; dueAt: string | null; completedAt: string | null;
   executedAt: string | null; executionNote: string | null;
   startedAt?: string | null; blockedAt?: string | null; blockReason?: string | null;
@@ -13,6 +15,15 @@ type PlanAction = {
   }>;
 }
 
+type RecommendationAudience = 'teacher' | 'student' | 'guardian' | 'school'
+type RecommendationGroupDecision = 'pending' | 'included' | 'rejected' | 'mixed'
+type RecommendationGroup = {
+  key: RecommendationAudience
+  audience: RecommendationAudience
+  actions: PlanAction[]
+  decision: RecommendationGroupDecision
+}
+
 const route = useRoute()
 const id = String(route.params.id)
 const { data, error: loadError, refresh } = await useFetch<any>(`/api/v1/plans/${id}`)
@@ -21,6 +32,9 @@ const actionPendingId = ref<string | null>(null)
 const sourceExpanded = ref(true)
 const expandedActionId = ref<string | null>(null)
 const acceptancePending = ref(false)
+const decisionPendingGroupKey = ref<RecommendationAudience | null>(null)
+const rejectGroup = ref<RecommendationGroup | null>(null)
+const rejectModalOpen = ref(false)
 const addActionOpen = ref(false)
 const addActionPending = ref(false)
 const execEvidenceFiles = ref<File[]>([])
@@ -30,6 +44,7 @@ const toast = useToast()
 const acceptanceForm = reactive({
   reason: ''
 })
+const rejectForm = reactive({ reason: '', note: '' })
 const addActionForm = reactive({ title: '', detail: '', dueAt: '' })
 
 // 执行反馈表单状态
@@ -70,6 +85,13 @@ const blockReasonOptions = [
   { label: '风险升级', value: 'risk_escalated' },
   { label: '需要协同', value: 'need_collaboration' },
   { label: '其他', value: 'other' }
+]
+const rejectReasonOptions = [
+  { label: '模糊、不够具体', value: 'vague' },
+  { label: '场景不适配', value: 'scene_mismatch' },
+  { label: '话术不自然', value: 'unnatural_script' },
+  { label: '不实际、行动过难', value: 'impractical_or_hard' },
+  { label: '其他原因', value: 'other' }
 ]
 const reviewDecisionOptions = [
   { label: '继续原方案', value: 'continue_plan' },
@@ -147,8 +169,12 @@ const activeActions = computed<PlanAction[]>(() => {
   return data.value?.actions || []
 })
 
+const executableActions = computed(() =>
+  activeActions.value.filter(action => action.decision === 'included')
+)
+
 const completedActionCount = computed(() =>
-  activeActions.value.filter(a => a.status === 'completed').length
+  executableActions.value.filter(a => a.status === 'completed').length
 )
 const needsAcceptance = computed(() => data.value?.status === 'pending_acceptance'
   || (data.value?.status === 'adjustment_needed' && !data.value?.acceptedAt))
@@ -159,7 +185,7 @@ const canReview = computed(() => canExecute.value
 const showReviewForm = computed(() => canReview.value && (
   data.value?.status === 'review_due'
   || Boolean(data.value?.reviews?.length)
-  || activeActions.value.some(action => ['in_progress', 'completed', 'blocked', 'skipped'].includes(action.status))
+  || executableActions.value.some(action => ['in_progress', 'completed', 'blocked', 'skipped'].includes(action.status))
 ))
 const report = computed(() => data.value?.report || {})
 const planStructure = computed(() => report.value?.planStructure || {})
@@ -170,6 +196,51 @@ const attributions = computed<Array<{ name: string, strength: 'primary' | 'secon
 /** 只呈现强弱分组，不呈现占比小数——占比是规则匹配强度，不是测量精度。 */
 function attributionStrengthLabel(strength: 'primary' | 'secondary' | 'reference') {
   return { primary: '主要', secondary: '次要', reference: '参考' }[strength] || '参考'
+}
+
+function recommendationAudience(action: PlanAction): RecommendationAudience {
+  const text = `${action.title} ${action.detail}`
+  if (/学校|年级组|德育|心理专员|校方|校内协同|管理层/.test(text)) return 'school'
+  if (/家长|父母|家庭|家校|监护人/.test(text)) return 'guardian'
+  if (/学生|孩子|小组|同伴|班委|课堂|作业|学习/.test(text)) return 'student'
+  return 'teacher'
+}
+
+function recommendationMeta(audience: RecommendationAudience) {
+  const studentName = data.value?.student?.name || '学生'
+  const map = {
+    teacher: { title: '教师行动计划', executor: '负责教师', icon: 'i-lucide-user-round' },
+    student: { title: '学生行动计划（学生辅导技术与学习/生活落地方案）', executor: `${studentName}、负责教师`, icon: 'i-lucide-graduation-cap' },
+    guardian: { title: '家长配合部分', executor: '家长配合；由负责教师发起沟通并跟进', icon: 'i-lucide-house' },
+    school: { title: '学校配合部分', executor: '学校相关人员协同；由负责教师发起申请并跟进', icon: 'i-lucide-school' }
+  } as const
+  return map[audience]
+}
+
+function recommendationGroupPeriod(group: RecommendationGroup) {
+  const dates = group.actions
+    .map(action => action.dueAt ? new Date(action.dueAt) : null)
+    .filter((date): date is Date => Boolean(date))
+    .sort((a, b) => a.getTime() - b.getTime())
+  if (!dates.length) return '接受方案后协商确定'
+  const start = dates[0]!
+  const end = dates[dates.length - 1]!
+  const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1)
+  return `${days}天（${start.toLocaleDateString('zh-CN')} ～ ${end.toLocaleDateString('zh-CN')}）`
+}
+
+function recommendationImplementation(group: RecommendationGroup) {
+  return group.actions
+    .map((action, index) => group.actions.length > 1
+      ? `${index + 1}. ${action.title}：${action.detail}`
+      : action.detail)
+    .join('\n')
+}
+
+function recommendationGroupOutcome(group: RecommendationGroup) {
+  if (!successCriteria.value.length) return supportGoal.value.observableChange
+  const outcomes = group.actions.map(action => successCriteria.value[action.sequence % successCriteria.value.length])
+  return [...new Set(outcomes)].filter(Boolean).join('；')
 }
 const supportGoal = computed(() => report.value?.supportGoal || {
   weeklyGoal: planStructure.value?.summary || data.value?.summary || '围绕当前问题先完成一个可观察、可复盘的小目标。',
@@ -212,6 +283,46 @@ const toolPrescriptions = computed(() => report.value?.toolPrescriptions?.length
 const escalationConditions = computed(() => report.value?.escalationConditions || report.value?.sevenDayFollowUp?.escalationSignals || [])
 const successCriteria = computed(() => report.value?.successCriteria || report.value?.sevenDayFollowUp?.observationPoints || [])
 
+const recommendationGroups = computed<RecommendationGroup[]>(() => {
+  const byAudience = new Map<RecommendationAudience, PlanAction[]>()
+  for (const action of activeActions.value) {
+    const audience = recommendationAudience(action)
+    byAudience.set(audience, [...(byAudience.get(audience) || []), action])
+  }
+  const order: RecommendationAudience[] = ['student', 'guardian', 'school', 'teacher']
+  return order.flatMap((audience) => {
+    const actions = byAudience.get(audience) || []
+    if (!actions.length) return []
+    const decisions = new Set(actions.map(action => action.decision))
+    const decision: RecommendationGroupDecision = decisions.size === 1
+      ? (actions[0]!.decision || 'pending')
+      : 'mixed'
+    return [{ key: audience, audience, actions, decision }]
+  })
+})
+
+const pendingRecommendationCount = computed(() =>
+  recommendationGroups.value.filter(group => ['pending', 'mixed'].includes(group.decision)).length
+)
+const includedRecommendationCount = computed(() =>
+  recommendationGroups.value.filter(group => group.decision === 'included').length
+)
+const rejectedRecommendationCount = computed(() =>
+  recommendationGroups.value.filter(group => group.decision === 'rejected').length
+)
+
+function rejectReasonLabel(reason?: string | null) {
+  return rejectReasonOptions.find(item => item.value === reason)?.label || reason || '未填写'
+}
+
+function recommendationRejectSummary(group: RecommendationGroup) {
+  const summaries = group.actions.map((action) => {
+    const reason = rejectReasonLabel(action.decisionReason)
+    return action.decisionNote ? `${reason}：${action.decisionNote}` : reason
+  })
+  return [...new Set(summaries)].join('；')
+}
+
 // 展开/折叠某个动作的反馈区域
 function toggleExpand(actionId: string) {
   const action = activeActions.value.find(a => a.id === actionId)
@@ -251,6 +362,59 @@ async function updateAcceptance(decision: 'accepted' | 'deferred' | 'not_applica
   } finally {
     acceptancePending.value = false
   }
+}
+
+async function saveRecommendationGroupDecision(group: RecommendationGroup, decision: 'included' | 'rejected', input?: { reason?: string, note?: string }) {
+  decisionPendingGroupKey.value = group.key
+  try {
+    for (const action of group.actions) {
+      await $fetch(`/api/v1/plans/${data.value!.id}/actions/${action.id}/decision`, {
+        method: 'PATCH',
+        body: {
+          decision,
+          reason: decision === 'rejected' ? input?.reason : undefined,
+          note: decision === 'rejected' ? input?.note?.trim() || undefined : undefined
+        }
+      })
+    }
+    await refresh()
+  } catch (error: any) {
+    await refresh()
+    toast.add({
+      title: '方案确认状态保存失败',
+      description: error?.data?.message || error?.message || '请稍后重试',
+      color: 'error'
+    })
+    throw error
+  } finally {
+    decisionPendingGroupKey.value = null
+  }
+}
+
+function openRejectModal(group: RecommendationGroup) {
+  rejectGroup.value = group
+  const firstRejected = group.actions.find(action => action.decision === 'rejected')
+  rejectForm.reason = firstRejected?.decisionReason || ''
+  rejectForm.note = firstRejected?.decisionNote || ''
+  rejectModalOpen.value = true
+}
+
+async function submitRecommendationRejection() {
+  if (!rejectGroup.value) return
+  await saveRecommendationGroupDecision(rejectGroup.value, 'rejected', rejectForm)
+  rejectModalOpen.value = false
+  rejectGroup.value = null
+  Object.assign(rejectForm, { reason: '', note: '' })
+}
+
+async function finalizeRecommendations() {
+  if (pendingRecommendationCount.value > 0) return
+  if (includedRecommendationCount.value > 0) {
+    await updateAcceptance('accepted')
+    return
+  }
+  acceptanceForm.reason = '所有行动方案建议均暂不接受'
+  await updateAcceptance('deferred')
 }
 
 async function updateActionStatus(actionId: string, status: string, extra: Record<string, unknown> = {}) {
@@ -537,30 +701,6 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
       </section>
 
-      <section
-        v-if="needsAcceptance"
-        class="order-2 rounded-2xl border border-amber-200 bg-amber-50 p-5"
-      >
-        <div class="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p class="text-sm font-semibold text-amber-900">方案确认</p>
-            <p class="mt-1 text-sm leading-6 text-amber-800">
-              请先确认这份方案是否适合当前场景。不适用或暂不执行会进入学校后台运营清单，便于后续协同和三库优化。
-            </p>
-          </div>
-          <UButton color="success" icon="i-lucide-check" :loading="acceptancePending" @click="updateAcceptance('accepted')">
-            接受执行
-          </UButton>
-        </div>
-        <UFormField class="mt-4" label="暂不执行或不适用原因">
-          <UTextarea v-model="acceptanceForm.reason" :rows="2" class="w-full" placeholder="例如：当前对象不适合、需要先与年级组确认、方案动作暂时过难" />
-        </UFormField>
-        <div class="mt-3 flex flex-wrap gap-2">
-          <UButton color="neutral" variant="soft" :disabled="acceptanceForm.reason.trim().length < 4" :loading="acceptancePending" @click="updateAcceptance('deferred')">暂不执行</UButton>
-          <UButton color="warning" variant="soft" :disabled="acceptanceForm.reason.trim().length < 4" :loading="acceptancePending" @click="updateAcceptance('not_applicable')">标记不适用</UButton>
-        </div>
-      </section>
-
       <!-- ══════════ 2. 来源对话卡片（仅 AI 来源展示） ══════════ -->
       <section
         v-if="data.sourceConversation"
@@ -646,7 +786,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
            待确认/需调整时只展示报告与接受决策，接受后才进入执行态。 -->
       <section
         v-if="canExecute"
-        class="order-7 rounded-2xl border border-slate-200 bg-white p-5"
+        class="order-8 rounded-2xl border border-slate-200 bg-white p-5"
       >
         <div class="flex items-center justify-between gap-3">
           <h3 class="flex items-center gap-2 font-semibold text-slate-800">
@@ -654,19 +794,19 @@ useHead({ title: () => data.value?.title || '方案详情' })
             方案执行
           </h3>
           <div class="flex items-center gap-2">
-            <span v-if="activeActions.length" class="text-xs text-slate-400">{{ completedActionCount }}/{{ activeActions.length }} 项完成</span>
+            <span v-if="executableActions.length" class="text-xs text-slate-400">{{ completedActionCount }}/{{ executableActions.length }} 项完成</span>
             <span v-else class="text-xs text-slate-400">尚未添加行动</span>
             <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="addActionOpen = true">新增行动</UButton>
           </div>
         </div>
 
-        <div v-if="!activeActions.length" class="mt-4 rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-400">
+        <div v-if="!executableActions.length" class="mt-4 rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-400">
           当前方案尚未生成跟踪动作，可点击“新增行动”补充一项可执行、可复盘的行动。
         </div>
 
         <div class="mt-4 space-y-2">
           <div
-            v-for="action in activeActions"
+            v-for="action in executableActions"
             :key="action.id"
           >
             <!-- 动作主行 -->
@@ -978,9 +1118,8 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
 
         <div v-if="data.report.threeDayPlan?.length" class="mt-7">
-          <h4 class="text-base font-semibold text-slate-800">行动方案建议</h4>
-          <p class="mt-1 text-xs text-slate-500">根据本次测评结果生成，执行前请结合实际情况人工确认。</p>
-          <h5 class="mt-4 text-sm font-semibold text-slate-700">3 天行动方案</h5>
+          <h4 class="text-base font-semibold text-slate-800">3 天行动节奏</h4>
+          <p class="mt-1 text-xs text-slate-500">用于理解建议的先后顺序，具体行动请在下方逐条确认。</p>
           <div class="mt-3 grid gap-3 md:grid-cols-3">
             <div
               v-for="day in data.report.threeDayPlan"
@@ -1057,11 +1196,132 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
       </section>
 
-      <!-- AI 合规声明（《生成式人工智能服务管理暂行办法》） -->
-      <p class="order-6 mt-3 text-center text-xs text-slate-400">AI 辅助建议，需人工专业判断</p>
+      <!-- ══════════ 5. 行动方案建议（按方案块确认） ══════════ -->
+      <section v-if="activeActions.length || needsAcceptance" class="order-6 rounded-2xl border border-slate-200 bg-white p-5">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 class="flex items-center gap-2 font-semibold text-slate-800">
+              <UIcon name="i-lucide-clipboard-check" class="size-4 text-indigo-600" />
+              行动方案建议
+            </h3>
+            <p class="mt-1 text-xs leading-5 text-slate-500">
+              请结合实际情况按方案块确认。接受家长或学校配合部分，表示教师同意发起协同，不代表替对方承诺执行。
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2 text-xs">
+            <UBadge color="success" variant="soft">已接受 {{ includedRecommendationCount }}</UBadge>
+            <UBadge color="neutral" variant="soft">暂不接受 {{ rejectedRecommendationCount }}</UBadge>
+            <UBadge v-if="pendingRecommendationCount" color="warning" variant="soft">待处理 {{ pendingRecommendationCount }}</UBadge>
+          </div>
+        </div>
 
-      <!-- ══════════ 5. 复盘时间线 ══════════ -->
-      <section v-if="canReview && data.reviews?.length" class="order-8 rounded-2xl border border-slate-200 bg-white p-5">
+        <div v-if="!activeActions.length" class="mt-5 rounded-xl border border-amber-100 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+          当前未生成可执行的行动建议，建议暂不进入执行阶段，并将该情况提交为调整反馈。
+        </div>
+
+        <div class="mt-5 space-y-5">
+          <article
+            v-for="group in recommendationGroups"
+            :key="`recommendation-${group.key}`"
+            class="overflow-hidden rounded-xl border"
+            :class="group.decision === 'included'
+              ? 'border-emerald-200'
+              : group.decision === 'rejected'
+                ? 'border-slate-200 bg-slate-50/50'
+                : 'border-indigo-100'"
+          >
+            <header class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
+              <div class="flex min-w-0 items-start gap-3">
+                <span class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                  <UIcon :name="recommendationMeta(group.audience).icon" class="size-4" />
+                </span>
+                <h4 class="min-w-0 font-semibold leading-7 text-slate-800">{{ recommendationMeta(group.audience).title }}</h4>
+              </div>
+              <UBadge
+                :color="group.decision === 'included' ? 'success' : group.decision === 'rejected' ? 'neutral' : 'warning'"
+                variant="soft"
+              >
+                {{ group.decision === 'included' ? '已接受' : group.decision === 'rejected' ? '暂不接受' : group.decision === 'mixed' ? '部分已确认' : '待确认' }}
+              </UBadge>
+            </header>
+
+            <dl class="divide-y divide-slate-100 text-sm md:grid md:grid-cols-[9rem_1fr] md:divide-y-0">
+              <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-b md:border-r md:border-slate-100">具体实施方案</dt>
+              <dd class="whitespace-pre-line px-4 py-3 leading-7 text-slate-700 md:border-b md:border-slate-100">{{ recommendationImplementation(group) }}</dd>
+              <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-b md:border-r md:border-slate-100">执行人</dt>
+              <dd class="px-4 py-3 text-slate-700 md:border-b md:border-slate-100">{{ recommendationMeta(group.audience).executor }}</dd>
+              <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-b md:border-r md:border-slate-100">时间周期</dt>
+              <dd class="px-4 py-3 text-slate-700 md:border-b md:border-slate-100">{{ recommendationGroupPeriod(group) }}</dd>
+              <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-r md:border-slate-100">达成效果</dt>
+              <dd class="px-4 py-3 leading-6 text-slate-700">{{ recommendationGroupOutcome(group) }}</dd>
+            </dl>
+
+            <div v-if="group.decision === 'rejected'" class="border-t border-slate-100 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">
+              <span class="font-medium text-slate-700">暂不接受原因：</span>{{ recommendationRejectSummary(group) }}
+            </div>
+
+            <footer v-if="needsAcceptance" class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 px-4 py-3 print:hidden">
+              <UButton
+                v-if="group.decision !== 'included'"
+                size="sm"
+                :loading="decisionPendingGroupKey === group.key"
+                @click="saveRecommendationGroupDecision(group, 'included')"
+              >
+                接受
+              </UButton>
+              <UButton
+                v-if="group.decision !== 'rejected'"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :disabled="decisionPendingGroupKey === group.key"
+                @click="openRejectModal(group)"
+              >
+                暂不接受
+              </UButton>
+              <UButton
+                v-else
+                color="neutral"
+                variant="ghost"
+                size="sm"
+                @click="openRejectModal(group)"
+              >
+                修改原因
+              </UButton>
+            </footer>
+          </article>
+        </div>
+
+        <div v-if="needsAcceptance" class="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p class="text-sm font-medium text-slate-800">
+                {{ pendingRecommendationCount ? `还有 ${pendingRecommendationCount} 个方案块待处理` : '全部方案块已处理，可以提交确认' }}
+              </p>
+              <p class="mt-1 text-xs leading-5 text-slate-500">
+                {{ includedRecommendationCount
+                  ? `确认后进入执行阶段，共接受 ${includedRecommendationCount} 个方案块。`
+                  : '若全部暂不接受，将提交反馈并保持方案待调整，不会进入执行阶段。' }}
+              </p>
+            </div>
+            <UButton
+              :color="includedRecommendationCount ? 'primary' : 'neutral'"
+              :variant="includedRecommendationCount ? 'solid' : 'outline'"
+              :loading="acceptancePending"
+              :disabled="pendingRecommendationCount > 0"
+              @click="finalizeRecommendations"
+            >
+              {{ includedRecommendationCount ? '确认方案并开始执行' : '提交暂不接受反馈' }}
+            </UButton>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI 合规声明（《生成式人工智能服务管理暂行办法》） -->
+      <p class="order-7 mt-3 text-center text-xs text-slate-400">AI 辅助建议，需人工专业判断</p>
+
+      <!-- ══════════ 6. 复盘时间线 ══════════ -->
+      <section v-if="canReview && data.reviews?.length" class="order-9 rounded-2xl border border-slate-200 bg-white p-5">
         <h3 class="flex items-center gap-2 font-semibold text-slate-800">
           <UIcon name="i-lucide-clock" class="size-4 text-slate-600" />
           复盘时间线
@@ -1085,8 +1345,8 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
       </section>
 
-      <!-- ══════════ 6. 新增复盘 ══════════ -->
-      <section v-if="showReviewForm" class="order-9 rounded-2xl border border-slate-200 bg-white p-5 print:hidden">
+      <!-- ══════════ 7. 新增复盘 ══════════ -->
+      <section v-if="showReviewForm" class="order-10 rounded-2xl border border-slate-200 bg-white p-5 print:hidden">
         <h3 class="flex items-center gap-2 font-semibold text-slate-800">
           <UIcon name="i-lucide-plus-circle" class="size-4 text-emerald-600" />
           新增复盘
@@ -1118,11 +1378,11 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </UFormField>
 
         <!-- 本次完成动作多选 -->
-        <div v-if="activeActions.filter(a => a.status !== 'completed').length" class="mt-4">
+        <div v-if="executableActions.filter(a => a.status !== 'completed').length" class="mt-4">
           <p class="mb-2 text-xs font-medium text-slate-500">本次完成了哪些动作？（勾选后自动标记为已完成）</p>
           <div class="space-y-1 rounded-xl border border-slate-100 p-3">
             <label
-              v-for="action in activeActions.filter(a => a.status !== 'completed')"
+              v-for="action in executableActions.filter(a => a.status !== 'completed')"
               :key="action.id"
               class="flex cursor-pointer items-center gap-2.5 py-1 text-sm"
             >
@@ -1155,8 +1415,8 @@ useHead({ title: () => data.value?.title || '方案详情' })
         </div>
       </section>
 
-      <!-- ══════════ 7. 方案质量反馈 ══════════ -->
-      <section v-if="canReview" class="order-10 rounded-2xl border border-slate-200 bg-white p-5 print:hidden">
+      <!-- ══════════ 8. 方案质量反馈 ══════════ -->
+      <section v-if="canReview" class="order-11 rounded-2xl border border-slate-200 bg-white p-5 print:hidden">
         <div class="flex flex-wrap items-center gap-3">
           <h3 class="flex items-center gap-2 font-semibold text-slate-800">
             <UIcon name="i-lucide-message-square-check" class="size-4 text-sky-600" />
@@ -1209,6 +1469,48 @@ useHead({ title: () => data.value?.title || '方案详情' })
       </section>
     </div>
   </div>
+
+  <UModal v-model:open="rejectModalOpen" title="请反馈原因" description="反馈将用于调整后续建议，不会自动改变确定性测评结果。">
+    <template #body>
+      <form class="space-y-4" @submit.prevent="submitRecommendationRejection">
+        <div>
+          <p class="mb-2 text-sm font-medium text-slate-700">请选择主要原因</p>
+          <div class="grid gap-2 sm:grid-cols-2">
+            <UButton
+              v-for="option in rejectReasonOptions"
+              :key="option.value"
+              type="button"
+              color="neutral"
+              :variant="rejectForm.reason === option.value ? 'solid' : 'outline'"
+              class="justify-start"
+              @click="rejectForm.reason = option.value"
+            >
+              {{ option.label }}
+            </UButton>
+          </div>
+        </div>
+        <UFormField label="补充说明" :required="rejectForm.reason === 'other'">
+          <UTextarea
+            v-model="rejectForm.note"
+            class="w-full"
+            :rows="3"
+            maxlength="200"
+            placeholder="请输入"
+          />
+        </UFormField>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="ghost" type="button" @click="rejectModalOpen = false">取消</UButton>
+          <UButton
+            type="submit"
+            :loading="decisionPendingGroupKey === rejectGroup?.key"
+            :disabled="!rejectForm.reason || (rejectForm.reason === 'other' && rejectForm.note.trim().length < 2)"
+          >
+            提交反馈
+          </UButton>
+        </div>
+      </form>
+    </template>
+  </UModal>
 
   <UModal v-model:open="addActionOpen" title="新增行动" description="补充一项可执行、可复盘的方案行动。">
     <template #body>

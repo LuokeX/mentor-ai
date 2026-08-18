@@ -140,10 +140,11 @@ export default defineEventHandler(async (event) => {
     sourceAssessment,
     assessments,
     sourceConversation,
-    actions: actions.map(({ blockNoteEnc, evidenceSummaryEnc, ...action }) => ({
+    actions: actions.map(({ blockNoteEnc, evidenceSummaryEnc, decisionNoteEnc, ...action }) => ({
       ...action,
       blockNote: blockNoteEnc ? decryptSensitive(blockNoteEnc, secret) : null,
       evidenceSummary: evidenceSummaryEnc ? decryptSensitive(evidenceSummaryEnc, secret) : null,
+      decisionNote: decisionNoteEnc ? decryptSensitive(decisionNoteEnc, secret) : null,
       evidenceFiles: evidenceByAction.get(action.id) || []
     })),
     reviews,

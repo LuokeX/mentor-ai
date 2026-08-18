@@ -47,6 +47,7 @@ export default defineEventHandler(async (event) => {
     .innerJoin(schema.users, eq(schema.users.id, schema.plans.ownerUserId))
     .where(and(
       eq(schema.plans.schoolId, admin.schoolId),
+      eq(schema.planActions.decision, 'included'),
       eq(schema.users.role, 'teacher')
     ))
     .groupBy(schema.plans.ownerUserId, schema.users.name)

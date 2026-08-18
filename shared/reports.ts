@@ -27,6 +27,29 @@ export const planAcceptanceSchema = z.object({
   }
 })
 
+export const planActionDecisionSchema = z.enum(['pending', 'included', 'rejected'])
+
+export const planActionRejectReasonSchema = z.enum([
+  'vague',
+  'scene_mismatch',
+  'unnatural_script',
+  'impractical_or_hard',
+  'other'
+])
+
+export const planActionDecisionUpdateSchema = z.object({
+  decision: z.enum(['included', 'rejected']),
+  reason: planActionRejectReasonSchema.optional(),
+  note: z.string().trim().max(200).optional()
+}).superRefine((value, context) => {
+  if (value.decision === 'rejected' && !value.reason) {
+    context.addIssue({ code: 'custom', path: ['reason'], message: '请选择暂不接受原因' })
+  }
+  if (value.decision === 'rejected' && value.reason === 'other' && (!value.note || value.note.length < 2)) {
+    context.addIssue({ code: 'custom', path: ['note'], message: '请补充其他原因' })
+  }
+})
+
 export const planActionStatusSchema = z.enum(['pending', 'in_progress', 'completed', 'blocked', 'skipped', 'cancelled'])
 
 export const planActionBlockReasonSchema = z.enum([
@@ -169,5 +192,7 @@ export type PlanReviewCreate = z.infer<typeof planReviewCreateSchema>
 export type PlanFeedbackCreate = z.infer<typeof planFeedbackCreateSchema>
 export type PlanStatus = z.infer<typeof planStatusSchema>
 export type PlanActionStatus = z.infer<typeof planActionStatusSchema>
+export type PlanActionDecision = z.infer<typeof planActionDecisionSchema>
+export type PlanActionRejectReason = z.infer<typeof planActionRejectReasonSchema>
 export type PlanActionBlockReason = z.infer<typeof planActionBlockReasonSchema>
 export type PlanReviewDecision = z.infer<typeof planReviewDecisionSchema>

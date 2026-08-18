@@ -51,7 +51,10 @@ test.describe('四角色核心路径', () => {
     // 提交后自动跳转到方案详情页（报告与方案统一在此查看，不再停留完成页）
     await expect(page).toHaveURL(/\/plans\/[0-9a-f-]{36}/, { timeout: 45_000 })
     await expect(page.getByText('方案确认')).toBeVisible()
-    await page.getByRole('button', { name: '接受执行' }).click()
+    const recommendations = page.locator('section').filter({ has: page.getByRole('heading', { name: '行动方案建议' }) })
+    const includeButtons = recommendations.getByRole('button', { name: '接受', exact: true })
+    while (await includeButtons.count()) await includeButtons.first().click()
+    await recommendations.getByRole('button', { name: '确认方案并开始执行' }).click()
     await expect(page.getByText('已接受')).toBeVisible()
 
     const executionSection = page.locator('section').filter({ hasText: '方案执行' })

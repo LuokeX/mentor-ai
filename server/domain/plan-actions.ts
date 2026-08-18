@@ -3,7 +3,12 @@ import { and, asc, eq, max } from 'drizzle-orm'
 import { schema, useDb, type DbClient } from '../utils/db'
 import type { ToolStructuredStep, ToolContraindicationRule, Severity } from '../../shared/contracts'
 
-type LegacyAction = { title: string, detail: string, status: string }
+type LegacyAction = {
+  title: string
+  detail: string
+  status: string
+  decision?: 'pending' | 'included' | 'rejected'
+}
 
 type ReportActionSnapshot = {
   firstAction?: { title?: unknown, detail?: unknown }
@@ -80,6 +85,8 @@ export async function ensurePlanActions(event: H3Event, planId: string, ownerUse
     sequence,
     title: action.title,
     detail: action.detail,
+    decision: plan.acceptedAt ? 'included' : (action.decision || 'pending'),
+    decidedAt: plan.acceptedAt || null,
     status: action.status || 'pending',
     dueAt: defaultActionDueAt(plan.createdAt, sequence),
     completedAt: action.status === 'completed' ? plan.updatedAt : null
@@ -106,6 +113,7 @@ export async function createPlanActions(event: H3Event, input: {
     sequence: startSequence + index,
     title: action.title,
     detail: action.detail,
+    decision: action.decision || 'pending',
     status: action.status || 'pending',
     dueAt: defaultActionDueAt(createdAt, startSequence + index)
   }))).returning()

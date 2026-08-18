@@ -9,6 +9,7 @@ export type PlanOperationEventType =
   | 'plan_acceptance_updated'
   | 'plan_action_updated'
   | 'plan_action_added'
+  | 'plan_action_decision_updated'
   | 'plan_action_blocked'
   | 'plan_review_completed'
   | 'plan_feedback_submitted'

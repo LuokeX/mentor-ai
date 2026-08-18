@@ -36,6 +36,26 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '当前状态不可接受或拒绝方案' })
   }
 
+  const actions = await db.select({
+    id: schema.planActions.id,
+    decision: schema.planActions.decision
+  }).from(schema.planActions).where(and(
+    eq(schema.planActions.planId, plan.id),
+    eq(schema.planActions.ownerUserId, user.id),
+    eq(schema.planActions.schoolId, schoolId)
+  ))
+  if (body.decision === 'accepted' && actions.length) {
+    if (actions.some(action => action.decision === 'pending')) {
+      throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '请先处理全部行动方案建议' })
+    }
+    if (!actions.some(action => action.decision === 'included')) {
+      throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '请至少纳入一项行动方案建议' })
+    }
+  }
+  if (body.decision === 'deferred' && actions.length && actions.some(action => action.decision !== 'rejected')) {
+    throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '暂不执行前，请逐条反馈行动方案建议' })
+  }
+
   const now = new Date()
   const nextStatus = body.decision === 'accepted' ? 'accepted' : 'adjustment_needed'
   const updated = await db.transaction(async (tx) => {

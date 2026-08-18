@@ -28,6 +28,8 @@ for (const plan of plans) {
       sequence,
       title: action.title,
       detail: action.detail,
+      decision: plan.acceptedAt ? 'included' : 'pending',
+      decidedAt: plan.acceptedAt || null,
       status: action.status || 'pending',
       dueAt: new Date(plan.createdAt.getTime() + Math.min(sequence + 1, 3) * 86_400_000),
       completedAt: action.status === 'completed' ? plan.updatedAt : null

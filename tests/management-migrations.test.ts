@@ -36,4 +36,15 @@ describe('management migration safety', () => {
     expect(sql).toContain('library.school_id IS NULL')
     expect(sql).toContain('ORDER BY candidate.scope_priority')
   })
+
+  it('backfills accepted plan actions before decision metrics are enabled', () => {
+    const sql = readFileSync(new URL('../drizzle/0040_cynical_lilandra.sql', import.meta.url), 'utf8')
+    const decisionColumn = sql.indexOf('ADD COLUMN "decision"')
+    const acceptedBackfill = sql.indexOf('UPDATE "plan_actions" AS pa')
+    const decisionIndex = sql.indexOf('CREATE INDEX "plan_actions_plan_decision_idx"')
+    expect(decisionColumn).toBeGreaterThan(-1)
+    expect(acceptedBackfill).toBeGreaterThan(decisionColumn)
+    expect(sql).toContain("p.\"accepted_at\" IS NOT NULL")
+    expect(decisionIndex).toBeGreaterThan(acceptedBackfill)
+  })
 })

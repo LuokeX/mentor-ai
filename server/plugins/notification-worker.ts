@@ -43,6 +43,7 @@ export default defineNitroPlugin(() => {
       FROM plan_actions pa
       JOIN plans p ON p.id = pa.plan_id
       WHERE pa.status IN ('pending', 'in_progress')
+        AND pa.decision = 'included'
         AND pa.due_at IS NOT NULL AND pa.due_at < CURRENT_DATE + INTERVAL '1 day'
         AND p.status = 'in_progress'
       ON CONFLICT (deduplication_key) DO NOTHING

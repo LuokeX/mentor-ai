@@ -20,6 +20,7 @@ export default defineEventHandler(async (event) => {
     db.select({ action: schema.planActions, planTitle: schema.plans.title, planModule: schema.plans.module }).from(schema.planActions)
       .innerJoin(schema.plans, eq(schema.planActions.planId, schema.plans.id)).where(and(
         eq(schema.planActions.ownerUserId, user.id),
+        eq(schema.planActions.decision, 'included'),
         inArray(schema.planActions.status, ['pending', 'in_progress']),
         lte(schema.planActions.dueAt, tomorrow)
       )).orderBy(schema.planActions.dueAt).limit(20),
@@ -50,7 +51,9 @@ export default defineEventHandler(async (event) => {
       )).orderBy(desc(schema.assessmentAttempts.submittedAt)).limit(100),
     db.select({ id: schema.planActions.id, planId: schema.planActions.planId, module: schema.plans.module, status: schema.planActions.status })
       .from(schema.planActions).innerJoin(schema.plans, eq(schema.planActions.planId, schema.plans.id)).where(and(
-        eq(schema.planActions.ownerUserId, user.id), inArray(schema.planActions.status, ['pending', 'in_progress'])
+        eq(schema.planActions.ownerUserId, user.id),
+        eq(schema.planActions.decision, 'included'),
+        inArray(schema.planActions.status, ['pending', 'in_progress'])
       )).limit(200)
   ])
   const now = Date.now()

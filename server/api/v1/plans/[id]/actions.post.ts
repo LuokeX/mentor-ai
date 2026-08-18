@@ -62,7 +62,20 @@ export default defineEventHandler(async (event) => {
     let result = created
     if (body.dueAt !== undefined) {
       const [updated] = await tx.update(schema.planActions).set({
+        decision: 'included',
+        decidedAt: new Date(),
         dueAt: body.dueAt ? new Date(body.dueAt) : null,
+        updatedAt: new Date()
+      }).where(and(
+        eq(schema.planActions.id, created.id),
+        eq(schema.planActions.ownerUserId, user.id),
+        eq(schema.planActions.planId, plan.id)
+      )).returning()
+      result = updated || created
+    } else {
+      const [updated] = await tx.update(schema.planActions).set({
+        decision: 'included',
+        decidedAt: new Date(),
         updatedAt: new Date()
       }).where(and(
         eq(schema.planActions.id, created.id),

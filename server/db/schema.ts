@@ -571,6 +571,10 @@ export const planActions = pgTable('plan_actions', {
   sequence: integer('sequence').notNull(),
   title: varchar('title', { length: 200 }).notNull(),
   detail: text('detail').notNull(),
+  decision: varchar('decision', { length: 20 }).default('pending').notNull(),
+  decisionReason: varchar('decision_reason', { length: 40 }),
+  decisionNoteEnc: text('decision_note_enc'),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
   status: varchar('status', { length: 30 }).default('pending').notNull(),
   dueAt: timestamp('due_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
@@ -586,6 +590,7 @@ export const planActions = pgTable('plan_actions', {
   ...timestamps
 }, table => [
   uniqueIndex('plan_actions_plan_sequence_uidx').on(table.planId, table.sequence),
+  index('plan_actions_plan_decision_idx').on(table.planId, table.decision),
   index('plan_actions_owner_due_idx').on(table.ownerUserId, table.status, table.dueAt)
 ])
 

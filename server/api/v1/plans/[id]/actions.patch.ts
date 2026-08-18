@@ -61,6 +61,9 @@ export default defineEventHandler(async (event) => {
     ? persisted.find(item => item.id === body.actionId)
     : persisted.find(item => item.sequence === body.actionIndex)
   if (!action) throw createError({ statusCode: 422, message: '方案动作不存在' })
+  if (action.decision !== 'included') {
+    throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '该行动尚未纳入方案，不能执行' })
+  }
   const now = new Date()
   const secret = useRuntimeConfig(event).encryptionKey
   const nextPlanStatus = body.status === 'blocked'

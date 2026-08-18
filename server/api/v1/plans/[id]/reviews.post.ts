@@ -43,7 +43,9 @@ export default defineEventHandler(async (event) => {
     const action = actionRows.find(item => item.sequence === index)
     if (action) requestedCompletedIds.add(action.id)
   }
-  const completedIds = new Set(actionRows.filter(item => requestedCompletedIds.has(item.id)).map(item => item.id))
+  const completedIds = new Set(actionRows
+    .filter(item => item.decision === 'included' && requestedCompletedIds.has(item.id))
+    .map(item => item.id))
 
   // 新实体与旧快照同步，旧客户端仍可按索引读取一个试用版本。
   const nextLegacyActions = [...(((plan.actions as Array<{ title: string; detail: string; status: string }>) || []))]

@@ -21,7 +21,10 @@ export default defineEventHandler(async (event) => {
       completed: sql<number>`count(*) filter (where ${schema.planActions.status} = 'completed')::int`,
       blocked: sql<number>`count(*) filter (where ${schema.planActions.status} = 'blocked')::int`,
       overdue: sql<number>`count(*) filter (where ${schema.planActions.status} in ('pending','in_progress','blocked') and ${schema.planActions.dueAt} < ${now})::int`
-    }).from(schema.planActions).where(eq(schema.planActions.schoolId, admin.schoolId)),
+    }).from(schema.planActions).where(and(
+      eq(schema.planActions.schoolId, admin.schoolId),
+      eq(schema.planActions.decision, 'included')
+    )),
     db.select({
       total: sql<number>`count(distinct ${schema.plans.id})::int`,
       due: sql<number>`count(distinct ${schema.plans.id}) filter (where ${schema.plans.status} in ('accepted','in_progress','review_due','adjustment_needed','escalated') and ${schema.plans.nextReviewAt} <= ${now})::int`,
@@ -39,7 +42,11 @@ export default defineEventHandler(async (event) => {
     }).from(schema.planActions)
       .innerJoin(schema.plans, eq(schema.plans.id, schema.planActions.planId))
       .innerJoin(schema.users, eq(schema.users.id, schema.planActions.ownerUserId))
-      .where(and(eq(schema.planActions.schoolId, admin.schoolId), eq(schema.planActions.status, 'blocked')))
+      .where(and(
+        eq(schema.planActions.schoolId, admin.schoolId),
+        eq(schema.planActions.decision, 'included'),
+        eq(schema.planActions.status, 'blocked')
+      ))
       .orderBy(desc(schema.planActions.updatedAt))
       .limit(30),
     db.select({
@@ -54,6 +61,7 @@ export default defineEventHandler(async (event) => {
       .innerJoin(schema.users, eq(schema.users.id, schema.planActions.ownerUserId))
       .where(and(
         eq(schema.planActions.schoolId, admin.schoolId),
+        eq(schema.planActions.decision, 'included'),
         inArray(schema.planActions.status, ['pending', 'in_progress', 'blocked']),
         lt(schema.planActions.dueAt, threeDaysAgo)
       ))
@@ -103,16 +111,16 @@ export default defineEventHandler(async (event) => {
       planCount: sql<number>`count(distinct ${schema.plans.id})::int`,
       pendingCount: sql<number>`count(distinct ${schema.plans.id}) filter (where ${schema.plans.status} = 'pending_acceptance')::int`,
       dueReviewCount: sql<number>`count(distinct ${schema.plans.id}) filter (where ${schema.plans.nextReviewAt} <= ${now} and ${schema.plans.status} in ('accepted','in_progress','review_due','adjustment_needed','escalated'))::int`,
-      blockedActionCount: sql<number>`count(${schema.planActions.id}) filter (where ${schema.planActions.status} = 'blocked')::int`,
-      overdueActionCount: sql<number>`count(${schema.planActions.id}) filter (where ${schema.planActions.status} in ('pending','in_progress','blocked') and ${schema.planActions.dueAt} < ${now})::int`,
-      completedActionCount: sql<number>`count(${schema.planActions.id}) filter (where ${schema.planActions.status} = 'completed')::int`,
-      totalActionCount: sql<number>`count(${schema.planActions.id})::int`
+      blockedActionCount: sql<number>`count(${schema.planActions.id}) filter (where ${schema.planActions.decision} = 'included' and ${schema.planActions.status} = 'blocked')::int`,
+      overdueActionCount: sql<number>`count(${schema.planActions.id}) filter (where ${schema.planActions.decision} = 'included' and ${schema.planActions.status} in ('pending','in_progress','blocked') and ${schema.planActions.dueAt} < ${now})::int`,
+      completedActionCount: sql<number>`count(${schema.planActions.id}) filter (where ${schema.planActions.decision} = 'included' and ${schema.planActions.status} = 'completed')::int`,
+      totalActionCount: sql<number>`count(${schema.planActions.id}) filter (where ${schema.planActions.decision} = 'included')::int`
     }).from(schema.users)
       .leftJoin(schema.plans, and(eq(schema.plans.ownerUserId, schema.users.id), eq(schema.plans.schoolId, admin.schoolId)))
       .leftJoin(schema.planActions, eq(schema.planActions.planId, schema.plans.id))
       .where(and(eq(schema.users.schoolId, admin.schoolId), eq(schema.users.role, 'teacher')))
       .groupBy(schema.users.id, schema.users.name)
-      .orderBy(desc(sql`count(${schema.planActions.id}) filter (where ${schema.planActions.status} in ('pending','in_progress','blocked') and ${schema.planActions.dueAt} < ${now})`))
+      .orderBy(desc(sql`count(${schema.planActions.id}) filter (where ${schema.planActions.decision} = 'included' and ${schema.planActions.status} in ('pending','in_progress','blocked') and ${schema.planActions.dueAt} < ${now})`))
       .limit(50),
     db.select({
       eventType: schema.planOperationEvents.eventType,
