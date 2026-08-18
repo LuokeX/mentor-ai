@@ -456,6 +456,7 @@ export default defineEventHandler(async (event) => {
 
   // 模型调用不持有数据库事务。若等待期间同组又补交了量表，plan.updatedAt
   // 会变化，本次增强报告只回写当前评估，不覆盖更新后的合并方案。
+  // AI 失败（无密钥/超时/非法输出）只降级为确定性报告，不能让整个提交 500。
   if (!result.blocked) {
     const enhancedReport = await generateAssessmentReport(event, {
       schoolId,
@@ -463,39 +464,41 @@ export default defineEventHandler(async (event) => {
       module,
       result: outcome.mergedResult,
       definition
-    })
-    const enhancedNarrative = enhancedReport.profile.summary || outcome.mergedResult.reasons.join('；')
-    outcome.report = enhancedReport
-    outcome.result = {
-      ...result,
-      narrative: enhancedNarrative,
-      report: enhancedReport
-    }
-    await db.transaction(async (tx) => {
-      await tx.update(schema.assessmentAttempts).set({
-        result: outcome.result as unknown as Record<string, unknown>,
-        updatedAt: new Date()
-      }).where(and(
-        eq(schema.assessmentAttempts.id, outcome.attemptId),
-        eq(schema.assessmentAttempts.ownerUserId, user.id),
-        eq(schema.assessmentAttempts.schoolId, schoolId)
-      ))
-      if (outcome.planId && outcome.planUpdatedAt && outcome.planReport) {
-        await tx.update(schema.plans).set({
-          summaryEnc: encryptSensitive(enhancedNarrative, secret),
-          report: {
-            ...(enhancedReport as unknown as Record<string, unknown>),
-            planStructure: outcome.planReport.planStructure
-          },
+    }).catch(() => null)
+    if (enhancedReport) {
+      const enhancedNarrative = enhancedReport.profile.summary || outcome.mergedResult.reasons.join('；')
+      outcome.report = enhancedReport
+      outcome.result = {
+        ...result,
+        narrative: enhancedNarrative,
+        report: enhancedReport
+      }
+      await db.transaction(async (tx) => {
+        await tx.update(schema.assessmentAttempts).set({
+          result: outcome.result as unknown as Record<string, unknown>,
           updatedAt: new Date()
         }).where(and(
-          eq(schema.plans.id, outcome.planId),
-          eq(schema.plans.ownerUserId, user.id),
-          eq(schema.plans.schoolId, schoolId),
-          eq(schema.plans.updatedAt, outcome.planUpdatedAt)
+          eq(schema.assessmentAttempts.id, outcome.attemptId),
+          eq(schema.assessmentAttempts.ownerUserId, user.id),
+          eq(schema.assessmentAttempts.schoolId, schoolId)
         ))
-      }
-    })
+        if (outcome.planId && outcome.planUpdatedAt && outcome.planReport) {
+          await tx.update(schema.plans).set({
+            summaryEnc: encryptSensitive(enhancedNarrative, secret),
+            report: {
+              ...(enhancedReport as unknown as Record<string, unknown>),
+              planStructure: outcome.planReport.planStructure
+            },
+            updatedAt: new Date()
+          }).where(and(
+            eq(schema.plans.id, outcome.planId),
+            eq(schema.plans.ownerUserId, user.id),
+            eq(schema.plans.schoolId, schoolId),
+            eq(schema.plans.updatedAt, outcome.planUpdatedAt)
+          ))
+        }
+      })
+    }
   }
 
   await writeAudit(event, {

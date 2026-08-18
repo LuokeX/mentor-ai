@@ -944,7 +944,17 @@ export async function generateAssessmentReport(event: H3Event, input: {
     tools: input.result.tools,
     matchedRuleIds: input.result.matchedRuleIds
   }
-  const format = JSON.stringify(assessmentReportSchema.parse({ ...fallback, printMeta: { ...fallback.printMeta, source: 'ai' } }))
+  const format = (() => {
+    const base = { ...fallback, printMeta: { ...fallback.printMeta, source: 'ai' as const } }
+    try {
+      return JSON.stringify(assessmentReportSchema.parse(base))
+    } catch {
+      // fallback 来自确定性模板，个别旧模板渲染内容可能越界（如工具正文超长）。
+      // 降级为未校验的 JSON 示例，避免提交 500；模型输出仍会被 validate 校验，
+      // 非法输出走 catch 回退 fallback。
+      return JSON.stringify(base)
+    }
+  })()
   const rt = await getAiRuntimeConfig(event)
   const generatorModel = rt.generatorModel || config.deepseekGeneratorModel
   const prompt = await renderPrompt(event, 'assessment_report', {

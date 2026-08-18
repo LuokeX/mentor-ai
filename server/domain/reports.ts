@@ -79,7 +79,14 @@ function moduleScript(module: ModuleId, result: ReportResult) {
       { scenario: '与家长沟通学习', text: '我们关注的不只是分数，而是孩子在学习过程中遇到了什么困难。请您也观察一下他在家做作业时的状态，我们一起看看哪些支持有效。' }
     ]
   }[module]
-  return result.tools.length ? [...scripts, ...result.tools.slice(0, 1).map(tool => ({ scenario: tool.title, text: tool.content }))] : scripts
+  // 工具正文可能远超 500 字符（步骤+话术+达标拼接），scripts 是话术片段不是全文，
+  // 必须截断到 schema 上限，否则任何命中长工具的报告都会在提交时 500。
+  return result.tools.length
+    ? [...scripts, ...result.tools.slice(0, 1).map(tool => ({
+        scenario: fitReportText(tool.title, 80),
+        text: fitReportText(tool.content, 500)
+      }))]
+    : scripts
 }
 
 function moduleProfile(module: ModuleId, result: ReportResult, weak: string, strong: string) {

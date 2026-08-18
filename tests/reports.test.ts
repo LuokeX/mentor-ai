@@ -90,4 +90,17 @@ describe('assessment reports', () => {
     expect(report.attributionNarrative).toBeUndefined()
     expect(report.toolIntro).toBeUndefined()
   })
+
+  it('truncates oversized tool body injected into scripts instead of failing', () => {
+    const base = evaluateAssessment('home_school', answers('home_school', 3))
+    const longBody = `步骤 1：${'详细做法 '.repeat(80)}\n步骤 2：${'话术示例 '.repeat(80)}\n步骤 3：${'达标标准 '.repeat(80)}`
+    expect(longBody.length).toBeGreaterThan(500)
+    const result = { ...base, tools: [{ title: `超长工具名称${'甲'.repeat(90)}`, content: longBody }] }
+    const report = createTemplateAssessmentReport({ module: 'home_school', result })
+    expect(assessmentReportSchema.safeParse(report).success).toBe(true)
+    const toolScript = report.scripts[report.scripts.length - 1]
+    expect(toolScript!.scenario.length).toBeLessThanOrEqual(80)
+    expect(toolScript!.text.length).toBeLessThanOrEqual(500)
+    expect(toolScript!.text.length).toBeGreaterThan(6)
+  })
 })
