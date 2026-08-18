@@ -155,8 +155,7 @@ const router = useRouter()
     >
       <template #title-data="{ row }">
         <UTooltip
-          v-if="row.titleFull && row.titleFull !== row.title"
-          :text="row.titleFull"
+          :text="row.titleFull || row.title"
           class="block min-w-0"
           :popper="{ placement: 'top', strategy: 'fixed' }"
         >
@@ -164,19 +163,20 @@ const router = useRouter()
             {{ row.title }}
           </NuxtLink>
         </UTooltip>
-        <NuxtLink v-else :to="`/plans/${row.id}`" class="block truncate font-medium text-emerald-700 hover:underline">
-          {{ row.title }}
-        </NuxtLink>
+        <p
+          v-if="row.attributionKeywords?.length"
+          class="mt-0.5 truncate text-xs text-slate-400"
+          :title="`归因关键词：${row.attributionKeywords.join('、')}`"
+        >
+          归因关键词：{{ row.attributionKeywords.join('、') }}
+        </p>
+        <p v-if="row.instrumentSnapshots?.length" class="mt-0.5 whitespace-normal break-words text-xs text-slate-400">
+          测评量表：{{ row.instrumentSnapshots.map(item => item.name || item.code).join('、') }}
+        </p>
       </template>
       <template #module-data="{ row }">
         <div class="min-w-0">
           <p class="truncate">{{ moduleTitle(row.module) }}</p>
-          <p v-if="row.instrumentSnapshots?.length" class="mt-0.5 truncate text-xs text-slate-400" :title="row.instrumentSnapshots.map(item => item.name).join('、')">
-            {{ row.instrumentSnapshots.slice(0, 2).map(item => item.name).join('、') }}{{ row.instrumentSnapshots.length > 2 ? ` 等 ${row.instrumentSnapshots.length} 份量表` : '' }}
-          </p>
-          <p v-if="row.attributionKeywords?.length" class="mt-0.5 truncate text-xs text-slate-400">
-            {{ row.attributionKeywords.join('、') }}
-          </p>
         </div>
       </template>
       <template #status-data="{ row }">

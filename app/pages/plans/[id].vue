@@ -502,6 +502,12 @@ useHead({ title: () => data.value?.title || '方案详情' })
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div class="min-w-0 flex-1">
             <h1 class="text-xl font-semibold text-slate-900">{{ data.title }}</h1>
+            <p v-if="(data.attributionKeywords?.length)" class="mt-1 break-words text-xs text-slate-400">
+              归因关键词：{{ (data.attributionKeywords || []).join('、') }}
+            </p>
+            <p v-if="(data.instrumentSnapshots?.length)" class="mt-1 break-words text-xs text-slate-400">
+              测评量表：{{ (data.instrumentSnapshots || []).map((item: { name?: string; code?: string }) => item.name || item.code).join('、') }}
+            </p>
             <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500">
               <span v-if="data.student">
                 <span class="text-slate-400">学生</span>
