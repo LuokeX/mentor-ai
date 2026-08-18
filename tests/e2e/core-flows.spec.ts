@@ -34,15 +34,25 @@ test.describe('四角色核心路径', () => {
   test('教师从模块说明进入评估、确认方案并完成执行闭环', async ({ page }) => {
     await login(page, '13900001001')
     await page.goto('/module/self_growth')
-    await expect(page.getByRole('heading', { name: '班主任状态五问' })).toBeVisible()
-
+    // SSR 首屏 HTML 立即可见，但 Vue 事件要等客户端 hydration 完成才绑定；
+    // 不等就直接点卡片，点击会落在未绑定事件的 DOM 上而无效。
+    await page.waitForFunction(() => !!document.querySelector('#__nuxt')?.__vue_app__)
+    // 模块页为卡片式选量表（入口筛查 + 深度诊断），点五问自评卡片进入评估准备；
+    // 已完成的量表可重新作答，不影响后续断言。
+    await expect(page.getByRole('heading', { name: '自我成长赋能 评估' })).toBeVisible()
+    await page.getByRole('button', { name: /教师自我成长五问自评/ }).click()
+    // 等评估准备页出现（组件初始化完成）再开始作答，避免点击落在组件挂载前
     const start = page.getByRole('button', { name: /^(开始完整评估|重新开始)$/ })
     await expect(start).toBeVisible()
     await start.click()
 
     for (let questionIndex = 0; questionIndex < 5; questionIndex++) {
       await expect(page.getByText(`${questionIndex + 1} / 5`, { exact: true })).toBeVisible()
-      await page.getByRole('button', { name: '3 有时', exact: true }).click()
+      // 业务数据的量表题目选项文案随题型变化（频率型「4 经常」/信心型「4 比较有信心」），
+      // 统一点中数值为 4 的选项即可。注意不能全选 3 分：绿色兜底作答会触发
+      // 「状态良好，无需方案」分支（不生成方案），本用例需要方案闭环，必须选到
+      // 能命中归因证据的高分作答。
+      await page.getByRole('button', { name: /^4 / }).click()
     }
     const submit = page.getByRole('button', { name: '提交并生成方案' })
     await expect(submit).toBeEnabled()
@@ -50,17 +60,22 @@ test.describe('四角色核心路径', () => {
 
     // 提交后自动跳转到方案详情页（报告与方案统一在此查看，不再停留完成页）
     await expect(page).toHaveURL(/\/plans\/[0-9a-f-]{36}/, { timeout: 45_000 })
-    await expect(page.getByText('方案确认')).toBeVisible()
+    // 方案页按「行动方案建议」区块确认；全部接受后按钮变为「确认方案并开始执行」
     const recommendations = page.locator('section').filter({ has: page.getByRole('heading', { name: '行动方案建议' }) })
+    await expect(recommendations).toBeVisible()
     const includeButtons = recommendations.getByRole('button', { name: '接受', exact: true })
-    while (await includeButtons.count()) await includeButtons.first().click()
+    // 点击后按钮先进入 loading 再随刷新消失，不能循环连点；点一次并等待计数变化
+    if (await includeButtons.count()) await includeButtons.first().click()
+    await expect(recommendations.getByText(/^已接受 1$/)).toBeVisible()
     await recommendations.getByRole('button', { name: '确认方案并开始执行' }).click()
-    await expect(page.getByText('已接受')).toBeVisible()
+    // 页面同时存在「已接受 1」计数与方案块「已接受」徽标，取任意一个即可
+    await expect(page.getByText('已接受').first()).toBeVisible()
 
     const executionSection = page.locator('section').filter({ hasText: '方案执行' })
     const firstActionRow = executionSection.locator('.cursor-pointer').first()
     await firstActionRow.click()
-    await page.getByLabel('执行结果').fill('已完成一次最小行动，并记录了当天状态变化。')
+    // 执行表单当前以「证据摘要」记录执行结果（图片/视频证据为可选补充）
+    await page.getByLabel('证据摘要').fill('已完成一次最小行动，并记录了当天状态变化。')
     const completedResponse = page.waitForResponse(response =>
       response.url().includes('/api/v1/plans/') &&
       response.url().includes('/actions') &&
@@ -76,7 +91,8 @@ test.describe('四角色核心路径', () => {
     await expect(page.getByText('效果 3/5')).toBeVisible()
 
     await page.getByRole('button', { name: '提交质量反馈' }).click()
-    await expect(page.getByText('1 次反馈')).toBeVisible()
+    // 反馈提交后显示「最近反馈」摘要（旧版为「1 次反馈」计数）
+    await expect(page.getByText(/最近反馈：归因/)).toBeVisible()
   })
 
   test('学校管理员邀请并激活教师账号', async ({ page }) => {

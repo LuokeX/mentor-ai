@@ -151,12 +151,27 @@ export const assessmentDefinitions: Record<ModuleId, AssessmentDefinition> = {
   learning_problem: learningProblem
 }
 
-export const moduleMeta: Record<ModuleId, { title: string, short: string, color: string, icon: string }> = {
-  self_growth: { title: '自我成长赋能', short: '看见状态，补充力量', color: 'emerald', icon: 'i-lucide-heart-handshake' },
-  class_system: { title: '班级系统建设', short: '定位短板，建设班级', color: 'sky', icon: 'i-lucide-school' },
-  home_school: { title: '家校沟通合作', short: '理解关系，准备沟通', color: 'amber', icon: 'i-lucide-messages-square' },
-  student_case: { title: '学生个体问题', short: '快速编码，分级支持', color: 'violet', icon: 'i-lucide-user-round-search' },
-  learning_problem: { title: '学生学习问题', short: '三层诊断，精准支持', color: 'rose', icon: 'i-lucide-brain' }
+export const moduleMeta: Record<ModuleId, { title: string, short: string, color: string, icon: string, intro: string }> = {
+  self_growth: {
+    title: '自我成长赋能', short: '看见状态，补充力量', color: 'emerald', icon: 'i-lucide-heart-handshake',
+    intro: '本模块量表聚焦解决教师职业压力、教学心理困惑等问题。开展状态评估并输出归因依据分析，为教师提供心理调适关怀建议，同时面向教师、家长、学校提供关键问题解决行动方案。'
+  },
+  class_system: {
+    title: '班级系统建设', short: '定位短板，建设班级', color: 'sky', icon: 'i-lucide-school',
+    intro: '本模块量表聚焦解决班级管理问题。开展状态评估并输出归因依据分析，输出教师班级管理行动策略，提供学生群体引导及学校德育班风建设方案。'
+  },
+  home_school: {
+    title: '家校沟通合作', short: '理解关系，准备沟通', color: 'amber', icon: 'i-lucide-messages-square',
+    intro: '本模块量表聚焦解决家校矛盾、家庭教育协同困境等问题。开展状态评估并输出归因依据分析，给到教师实操沟通行动话术，输出家庭相处指引及学校家校共育落地建议。'
+  },
+  student_case: {
+    title: '学生个体问题', short: '快速编码，分级支持', color: 'violet', icon: 'i-lucide-user-round-search',
+    intro: '本模块量表聚焦解决学生情绪困扰、行为偏差、人际适应困难等个案问题。开展状态评估并输出归因依据分析，给到教师个案干预行动方法，配套学生疏导建议与学校个案预警干预参考。'
+  },
+  learning_problem: {
+    title: '学生学习问题', short: '三层诊断，精准支持', color: 'rose', icon: 'i-lucide-brain',
+    intro: '本模块量表聚焦解决厌学、注意力不足、考试焦虑等学习心理类问题。开展状态评估并输出归因依据分析，提供教师课堂干预行动策略，配套学生心态调节及学校学业心理帮扶方案。'
+  }
 }
 
 // level → { label, color } 映射，用于评估结果徽章展示

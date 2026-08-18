@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import { and, asc, eq, max } from 'drizzle-orm'
 import { schema, useDb, type DbClient } from '../utils/db'
-import type { ToolStructuredStep, ToolContraindicationRule, Severity } from '../../shared/contracts'
+import type { RuleExecResult, ToolStructuredStep, ToolContraindicationRule, Severity } from '../../shared/contracts'
 
 type LegacyAction = {
   title: string
@@ -12,6 +12,21 @@ type LegacyAction = {
 
 type ReportActionSnapshot = {
   firstAction?: { title?: unknown, detail?: unknown }
+}
+
+/**
+ * 工具处方 → 行动项。匹配到的工具正文（结构化步骤渲染结果）作为一条可执行
+ * 行动进入方案「行动方案建议」，让教师端的实施方案能看到工具库结构化步骤，
+ * 而不是只有归因/干预话术。无正文的工具不生成动作。
+ */
+export function toToolActions(planTools: RuleExecResult['tools']): RuleExecResult['actions'] {
+  return planTools
+    .filter(tool => tool.content?.trim())
+    .map(tool => ({
+      title: `使用工具「${tool.title.trim().slice(0, 180)}」`,
+      detail: tool.content,
+      status: 'pending' as const
+    }))
 }
 
 /**
@@ -62,26 +77,40 @@ export async function ensurePlanActions(event: H3Event, planId: string, ownerUse
   const existing = await db.select().from(schema.planActions)
     .where(and(eq(schema.planActions.planId, planId), eq(schema.planActions.ownerUserId, ownerUserId)))
     .orderBy(asc(schema.planActions.sequence))
-  if (existing.length) return existing
-
   const [plan] = await db.select().from(schema.plans)
     .where(and(eq(schema.plans.id, planId), eq(schema.plans.ownerUserId, ownerUserId))).limit(1)
-  if (!plan) return []
-  const legacy = derivePlanActionSnapshots((plan.actions || []) as LegacyAction[], plan.report)
-  if (!legacy.length) return []
-  return db.insert(schema.planActions).values(legacy.map((action, sequence) => ({
+  if (!plan) return existing
+
+  // 期望的动作集：旧 JSON 快照 + plans.tools 里已匹配的工具（结构化步骤正文）。
+  // 老方案在工具动作落库前生成，plans.tools 已含匹配结果，这里补成可跟踪的动作；
+  // 已接受执行的方案直接标 included（决策状态跟随方案接受状态），否则保持待确认。
+  const want = mergePlanActionSnapshots(
+    derivePlanActionSnapshots((plan.actions || []) as LegacyAction[], plan.report),
+    toToolActions((plan.tools || []) as RuleExecResult['tools'])
+  )
+  if (!want.length) return existing
+  const seen = new Set(existing.map(action => `${action.title.trim()}\u0000${action.detail.trim()}`))
+  const toInsert = want.filter(action => !seen.has(`${action.title.trim()}\u0000${action.detail.trim()}`))
+  if (!toInsert.length) return existing
+
+  const [{ maxSequence } = { maxSequence: -1 }] = await db.select({
+    maxSequence: max(schema.planActions.sequence)
+  }).from(schema.planActions).where(eq(schema.planActions.planId, planId))
+  const startSequence = nextPlanActionSequence(maxSequence)
+  const inserted = await db.insert(schema.planActions).values(toInsert.map((action, index) => ({
     schoolId: plan.schoolId,
     planId: plan.id,
     ownerUserId: plan.ownerUserId,
-    sequence,
+    sequence: startSequence + index,
     title: action.title,
     detail: action.detail,
     decision: plan.acceptedAt ? 'included' : (action.decision || 'pending'),
     decidedAt: plan.acceptedAt || null,
     status: action.status || 'pending',
-    dueAt: defaultActionDueAt(plan.createdAt, sequence),
+    dueAt: defaultActionDueAt(plan.createdAt, startSequence + index),
     completedAt: action.status === 'completed' ? plan.updatedAt : null
   }))).onConflictDoNothing().returning()
+  return [...existing, ...inserted]
 }
 
 export async function createPlanActions(event: H3Event, input: {

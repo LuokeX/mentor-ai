@@ -8,6 +8,7 @@ import {
   severityRank,
   worseSeverity,
 } from '../server/domain/plan-merge'
+import { toToolActions } from '../server/domain/plan-actions'
 
 const attribution = (overrides: Partial<AttributionOutcome>): AttributionOutcome => ({
   code: 'AT_A',
@@ -158,5 +159,27 @@ describe('mergeGroupResults', () => {
     expect(merged?.severity).toBe('medium')
     expect(merged?.dimensions).toEqual(single.dimensions)
     expect(merged?.attributions).toHaveLength(1)
+  })
+})
+
+describe('toToolActions', () => {
+  it('工具正文转为「使用工具」行动项，标题取工具名', () => {
+    const actions = toToolActions([{ title: '结构化沟通三步法', content: '1. 开场：…\n提示：…' }])
+    expect(actions).toEqual([
+      { title: '使用工具「结构化沟通三步法」', detail: '1. 开场：…\n提示：…', status: 'pending' },
+    ])
+  })
+
+  it('无正文的工具不生成行动项', () => {
+    expect(toToolActions([{ title: '空工具', content: '  ' }])).toEqual([])
+    expect(toToolActions([])).toEqual([])
+  })
+
+  it('多个工具按顺序各生成一条行动项', () => {
+    const actions = toToolActions([
+      { title: '工具A', content: '正文A' },
+      { title: '工具B', content: '正文B' },
+    ])
+    expect(actions.map(action => action.title)).toEqual(['使用工具「工具A」', '使用工具「工具B」'])
   })
 })

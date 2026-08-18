@@ -3,6 +3,15 @@ import { moduleIdSchema } from '#shared/contracts'
 import { INSTRUMENT_ROLE_LABELS, type InstrumentRole } from '#shared/contracts'
 import { moduleMeta, type AssessmentDefinition } from '#shared/assessments'
 
+/** 模块主题色图标底色；写成完整 class 字面量以便 Tailwind 扫描生成 */
+const moduleIconTone: Record<string, string> = {
+  emerald: 'bg-emerald-100 text-emerald-700',
+  sky: 'bg-sky-100 text-sky-700',
+  amber: 'bg-amber-100 text-amber-700',
+  violet: 'bg-violet-100 text-violet-700',
+  rose: 'bg-rose-100 text-rose-700'
+}
+
 interface ContextOption {
   id: string
   type: 'student' | 'class' | 'guardian'
@@ -45,6 +54,9 @@ const sourceChatSessionId = computed(() => typeof route.query.sourceChatSessionI
 // 从对话分诊进来时会带上关联量表编码和教师原话，用于 AI 推荐
 const routedInstrumentCode = computed(() => typeof route.query.instrumentCode === 'string' ? route.query.instrumentCode : undefined)
 const routedText = computed(() => typeof route.query.q === 'string' ? route.query.q : undefined)
+const meta = moduleMeta[moduleId]
+/** 是否从 AI 对话分诊跳转进来（带会话 id 或教师原话）。两种入口的引导语完全不同。 */
+const fromChat = computed(() => Boolean(sourceChatSessionId.value || routedText.value))
 
 const {
   data: recommendation,
@@ -81,6 +93,32 @@ const instrumentSections = computed(() => {
     .filter(section => section.options.length)
 })
 
+/**
+ * 评估前分两步：先选量表（pick），选定后进评估准备（prepare，选对象 / 续草稿 / 开始作答）。
+ * 模块只有一张量表时没有可选项，直接进第二步，保持原来的单量表体验。
+ */
+const stage = ref<'pick' | 'prepare'>(hasMultipleInstruments.value ? 'pick' : 'prepare')
+const hasRoleSections = computed(() => instrumentSections.value.some(section => section.label))
+const completedCount = computed(() => instrumentOptions.value.filter(option => option.status === 'completed').length)
+
+/**
+ * 量表列表上方的一句引导语。
+ * 从 AI 对话进来时已经有一张按教师描述推荐的量表，教师只需确认或改选；
+ * 直接进模块时没有任何上下文，按「入口筛查 → 深度诊断」的编排顺序引导。
+ */
+const pickerHint = computed(() => {
+  const total = instrumentOptions.value.length
+  if (fromChat.value) return `模块有 ${total} 张量表，系统已按你的描述推荐了一张，你也可以自己改选。`
+  if (completedCount.value) return `模块有 ${total} 张量表，已完成 ${completedCount.value} 张；可以继续做建议的量表，也可以重做已完成的量表。`
+  if (hasRoleSections.value) return '首次评估，建议优先选用入口筛查量表，逐个解锁深度诊断量表。'
+  return `模块有 ${total} 张量表，选一张开始评估。`
+})
+
+/** 推荐说明只在 AI 参与或被前置量表改推时才有信息量，规则兜底时不占版面。 */
+const showRecommendationNote = computed(
+  () => Boolean(recommendation.value?.rationale) && recommendation.value?.source !== 'fallback'
+)
+
 const { data: definition, error: definitionError, refresh: refreshDefinition } = await useFetch<AssessmentDefinition>(
   () => `/api/v1/assessments/${moduleId}`,
   { query: computed(() => selectedCode.value ? { instrumentCode: selectedCode.value } : {}) }
@@ -99,6 +137,15 @@ async function selectInstrument(code: string) {
   draftUpdatedAt.value = undefined
   output.value = null
   await refreshDefinition()
+  // 草稿按「模块 + 量表」分别存，换量表后必须重新读，否则这张的未完成作答不会出现在续做入口
+  await loadDraft()
+}
+
+/** 卡片上的「去评估」：选中该量表并进入评估准备。 */
+async function pickInstrument(option: InstrumentOption) {
+  if (option.status === 'locked') return
+  await selectInstrument(option.code)
+  stage.value = 'prepare'
 }
 
 const recommendationTitle = computed(() => ({
@@ -157,6 +204,11 @@ const draftLoaded = ref(false)
 const draftUpdatedAt = ref<string>()
 const attemptId = ref<string>()
 const pending = ref(false)
+/** 连续量表流程：全部建议量表完成后进入 finalize 生成方案 */
+const flowState = ref<'idle' | 'finalizing'>('idle')
+const finalizeError = ref('')
+/** 连续量表流程：评估组 id（首次提交后由服务端返回；本地持久化以支持刷新后续做） */
+const assessmentSessionId = ref<string>()
 const output = ref<any>(null)
 const submitError = ref('')
 const draftSaveError = ref('')
@@ -265,7 +317,18 @@ onMounted(async () => {
   const queryId = typeof route.query.contextId === 'string' ? route.query.contextId : ''
   const storedContext = localStorage.getItem(`assessment-context:${moduleId}`)
   selectedContextKey.value = queryType && queryId ? `${queryType}:${queryId}` : storedContext || 'none'
+  // 连续量表流程：恢复上次评估组，刷新后继续做同一组的下一张量表。
+  // 服务端会对续接的组做新鲜度校验（24 小时未提交视为过期），过期后自动开新组，
+  // 因此这里即使带着旧 id 也不会把跨天的新问题误并入旧流程。
+  const storedSession = localStorage.getItem(`assessment-session:${moduleId}`)
+  if (storedSession) assessmentSessionId.value = storedSession
 
+  await loadDraft()
+})
+
+/** 读取当前量表的草稿：本地先回填，服务端草稿为准。进页面和换量表时都要走一遍。 */
+async function loadDraft() {
+  draftLoaded.value = false
   const localDraft = localStorage.getItem(draftStorageKey.value)
   if (localDraft) {
     try { Object.assign(answers, JSON.parse(localDraft)) } catch { localStorage.removeItem(draftStorageKey.value) }
@@ -284,7 +347,29 @@ onMounted(async () => {
   } finally {
     draftLoaded.value = true
   }
-})
+}
+
+/** 全部建议量表完成后，聚合评估组内结果统一生成方案并跳转方案详情页。失败时停留当前页可重试。 */
+async function finalizeAndGo() {
+  if (!assessmentSessionId.value) return
+  flowState.value = 'finalizing'
+  finalizeError.value = ''
+  try {
+    const result = await $fetch<{ planId: string, noPlanNeeded?: boolean, levelName?: string }>(`/api/v1/assessments/${moduleId}/finalize`, {
+      method: 'POST',
+      body: { sessionId: assessmentSessionId.value }
+    })
+    // 绿色兜底：状态良好无需方案，停留当前页展示结论。
+    if (result?.noPlanNeeded) {
+      output.value = result
+      flowState.value = 'idle'
+      return
+    }
+    await navigateTo(`/plans/${result.planId}`)
+  } catch (error: any) {
+    finalizeError.value = error?.data?.message || error?.message || '方案生成失败，请稍后重试。'
+  }
+}
 
 async function submit() {
   if (!selectedContext.value && requiredContext.value && !allowUnlinked.value) {
@@ -294,10 +379,19 @@ async function submit() {
   }
   pending.value = true
   submitError.value = ''
+  finalizeError.value = ''
   try {
     if (saveTimer) clearTimeout(saveTimer)
     if (saveInFlight) await saveInFlight
-    output.value = await $fetch(`/api/v1/assessments/${moduleId}/submit`, {
+    const res = await $fetch<{
+      attemptId: string
+      planId?: string | null
+      fuse?: { eventId: string, referralId: string, crisisGuide: string } | null
+      noPlanNeeded?: boolean
+      levelName?: string
+      deferred?: boolean
+      assessmentSessionId?: string | null
+    }>(`/api/v1/assessments/${moduleId}/submit`, {
       method: 'POST',
       body: {
         attemptId: attemptId.value,
@@ -306,22 +400,50 @@ async function submit() {
         classId: selectedContext.value?.type === 'class' ? selectedContext.value.id : undefined,
         guardianId: selectedContext.value?.type === 'guardian' ? selectedContext.value.id : undefined,
         sourceChatSessionId: sourceChatSessionId.value,
-        instrumentCode: selectedCode.value
+        instrumentCode: selectedCode.value,
+        // 连续量表流程：本次提交只落结果不生成方案，全部量表做完后由 finalize 统一生成。
+        // 后端仅在非熔断且有评估组可聚合时生效；无组时仍按单张直接出方案。
+        sessionId: assessmentSessionId.value,
+        deferPlan: true
       }
     })
+    // 安全熔断：保留 output 停留当前页展示转介指引，不进入连续流程。
+    if (res?.fuse) {
+      output.value = res
+      return
+    }
+    // 绿色兜底：状态良好无需方案，停留当前页展示结论。
+    if (res?.noPlanNeeded) {
+      output.value = res
+      return
+    }
+    output.value = null
     localStorage.removeItem(draftStorageKey.value)
     attemptId.value = undefined
     // 提交后量表状态会变（这张变 completed，被它的触发条件解锁的那张变 suggested）。
-    // 不刷新的话教师返回选择器看到的还是提交前的状态，得手动刷页面才对。
+    // 刷新后拿最新的建议清单，决定继续做下一张还是统一生成方案。
     await refreshRecommendation().catch(() => undefined)
-    // 报告与方案统一在方案详情页查看：提交成功后直接跳转，不再停留完成页。
-    if (output.value?.planId) {
-      await navigateTo(`/plans/${output.value.planId}`)
+
+    if (res?.deferred && res?.assessmentSessionId) {
+      assessmentSessionId.value = res.assessmentSessionId
+      if (import.meta.client) localStorage.setItem(`assessment-session:${moduleId}`, res.assessmentSessionId)
+      const next = instrumentOptions.value.find(item => item.status === 'suggested')
+      if (next) {
+        // 自动进入下一张建议量表；全部完成后才统一生成方案。
+        const finishedTitle = selectedOption.value?.title || definition.value?.title || ''
+        await selectInstrument(next.code)
+        started.value = true
+        toast.add({ title: `「${finishedTitle}」已完成`, description: `继续完成「${next.title}」，全部量表做完后统一生成方案。`, color: 'primary' })
+        return
+      }
+      await finalizeAndGo()
       return
     }
-    if (!output.value?.planId && !output.value?.fuse) {
-      submitError.value = '评估已保存，但方案生成失败。请稍后在方案列表中查看，或联系管理员。'
+    if (res?.planId) {
+      await navigateTo(`/plans/${res.planId}`)
+      return
     }
+    submitError.value = '评估已保存，但方案生成失败。请稍后在方案列表中查看，或联系管理员。'
   } catch (error: any) {
     submitError.value = error?.data?.message || error?.message || '提交失败，请检查网络后重试。'
   } finally {
@@ -332,8 +454,19 @@ async function submit() {
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl px-5 py-10">
-    <UButton to="/" variant="ghost" color="neutral" icon="i-lucide-arrow-left">返回工作台</UButton>
+  <div class="mx-auto max-w-6xl px-5 py-10">
+    <UButton to="/" variant="ghost" color="neutral" icon="i-lucide-arrow-left">返回我的助手</UButton>
+
+    <!-- 模块头：只展示当前模块的介绍，开始作答后收起给题目让位 -->
+    <header v-if="!started && !output" class="mt-4">
+      <div class="flex items-center gap-4">
+        <span class="grid size-12 shrink-0 place-items-center rounded-2xl" :class="moduleIconTone[meta.color]">
+          <UIcon :name="meta.icon" class="size-6" />
+        </span>
+        <h1 class="text-2xl font-semibold text-slate-800">{{ meta.title }} 评估</h1>
+      </div>
+      <p class="mt-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500">{{ meta.intro }}</p>
+    </header>
 
     <!-- definition 拉不到时下面三个主 section 全部不渲染，页面会只剩一个返回按钮。
          必须显式给出错误和重试入口，否则教师只会觉得「页面坏了」。 -->
@@ -366,67 +499,48 @@ async function submit() {
       </template>
     </UAlert>
 
-    <section v-if="definition && !started && !output" class="mt-6 grid gap-6 lg:grid-cols-[.42fr_.58fr]">
-      <aside class="panel h-fit p-6 sm:p-7">
-        <div class="grid size-12 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon :name="moduleMeta[moduleId].icon" class="size-6" /></div>
-        <p class="mt-5 text-sm font-semibold text-emerald-700">评估前说明</p>
-        <h1 class="mt-2 text-2xl font-semibold">{{ definition.title }}</h1>
-        <p class="mt-3 text-sm leading-6 text-slate-500">{{ definition.description }}</p>
-        <div class="mt-6 grid grid-cols-2 gap-3 text-sm">
-          <div class="rounded-xl bg-slate-50 p-3"><span class="block text-xs text-slate-400">预计用时</span><strong class="mt-1 block">约 {{ definition.estimatedMinutes }} 分钟</strong></div>
-          <div class="rounded-xl bg-slate-50 p-3"><span class="block text-xs text-slate-400">题目数量</span><strong class="mt-1 block">{{ definition.questions.length }} 题</strong></div>
-        </div>
-        <p class="mt-5 text-xs leading-5 text-slate-400">本评估用于教育工作场景梳理，不构成医学或心理诊断。结果仅供您制定支持行动。</p>
-      </aside>
+    <!-- 第一步：选量表。按角色分区（入口筛查 → 深度诊断 → 专项/情境），卡片本身即「去评估」按钮。
+         模块只有一张量表时 stage 初始就是 prepare，这一步整块不渲染。 -->
+    <section v-if="definition && stage === 'pick' && !started && !output" class="mt-5">
+      <p class="text-sm leading-6 text-slate-500">{{ pickerHint }}</p>
 
-      <div class="space-y-5">
-        <!--
-          量表选择器。模块下只有一张量表时不显示，保持原来的单量表体验。
-          推荐来自 AI（LLM 从可做量表里挑）或规则兜底，教师始终可以改选。
-        -->
-        <section v-if="hasMultipleInstruments" class="panel p-6 sm:p-7">
-          <div class="flex items-start gap-3">
-            <div class="grid size-9 shrink-0 place-items-center rounded-xl bg-violet-100 text-violet-700">
-              <UIcon name="i-lucide-list-checks" class="size-4" />
-            </div>
-            <div>
-              <h2 class="font-semibold">本次做哪张量表</h2>
-              <p class="mt-1 text-xs leading-5 text-slate-500">
-                这个模块有 {{ instrumentOptions.length }} 张量表。系统已按你的描述推荐了一张，你也可以自己改选。
-              </p>
-            </div>
-          </div>
+      <!-- AI 推荐 / 前置改推的理由。规则兜底时不展示，免得占版面说一句废话。 -->
+      <UAlert
+        v-if="showRecommendationNote"
+        class="mt-4"
+        :color="recommendation?.source === 'redirected' || recommendation?.source === 'ai_override' ? 'warning' : 'primary'"
+        variant="soft"
+        :title="recommendationTitle"
+        :description="recommendationDescription"
+      />
 
-          <UAlert
-            v-if="recommendation?.rationale"
-            class="mt-4"
-            :color="recommendation.source === 'redirected' || recommendation.source === 'ai_override' ? 'warning' : 'primary'"
-            variant="soft"
-            :title="recommendationTitle"
-            :description="recommendationDescription"
-          />
-
-          <div class="mt-4 space-y-5">
-            <div v-for="section in instrumentSections" :key="section.key">
-              <p v-if="section.label" class="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-400">
-                <span class="inline-block h-px w-4 bg-slate-200" />{{ section.label }}
-              </p>
-              <div class="space-y-3">
-                <button
-                  v-for="option in section.options"
-                  :key="option.code"
-                  type="button"
-                  :disabled="option.status === 'locked'"
-                  class="w-full rounded-xl border p-4 text-left transition"
-                  :class="option.status === 'locked'
-                    ? 'cursor-not-allowed border-slate-100 bg-slate-50 opacity-60'
-                    : option.code === selectedCode
-                      ? 'border-emerald-300 bg-emerald-50'
-                      : option.status === 'not_needed'
-                        ? 'border-slate-200 bg-white opacity-70 hover:border-emerald-200'
-                        : 'border-slate-200 bg-white hover:border-emerald-200'"
-                  @click="selectInstrument(option.code)"
-                >
+      <div class="mt-6 grid gap-x-8 gap-y-8" :class="instrumentSections.length > 1 ? 'md:grid-cols-2' : ''">
+        <div
+          v-for="(section, index) in instrumentSections"
+          :key="section.key"
+          :class="index % 2 === 1 ? 'md:border-l md:border-slate-100 md:pl-8' : ''"
+        >
+          <p v-if="section.label" class="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-400">
+            <span class="inline-block h-px w-4 bg-slate-200" />{{ section.label }}
+          </p>
+          <div class="space-y-4">
+            <button
+              v-for="option in section.options"
+              :key="option.code"
+              type="button"
+              :disabled="option.status === 'locked'"
+              class="w-full rounded-2xl border p-5 text-left transition"
+              :class="option.status === 'locked'
+                ? 'cursor-not-allowed border-slate-100 bg-slate-50 opacity-60'
+                : option.code === selectedCode
+                  ? 'border-emerald-300 bg-emerald-50/70 ring-1 ring-emerald-200'
+                  : option.status === 'not_needed'
+                    ? 'border-slate-200 bg-white opacity-70 hover:border-emerald-200'
+                    : 'border-slate-200 bg-white hover:border-emerald-200 hover:shadow-sm'"
+              @click="pickInstrument(option)"
+            >
+              <div class="flex items-start gap-4">
+                <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-2">
                     <span class="text-sm font-semibold text-slate-800">{{ option.title }}</span>
                     <UBadge v-if="option.isRequired" size="xs" color="primary" variant="soft">必做</UBadge>
@@ -452,12 +566,46 @@ async function submit() {
                   <p v-else-if="option.status === 'suggested' && option.triggerConditionNote" class="mt-2 text-xs font-medium text-amber-700">
                     {{ option.triggerConditionNote }} —— 已达到，建议做。
                   </p>
-                </button>
+                </div>
+                <!-- 卡片整体可点，这里只是行动召唤的样式，不能再嵌一个真按钮 -->
+                <span
+                  class="inline-flex shrink-0 items-center gap-1 self-center rounded-lg px-3.5 py-2 text-xs font-medium"
+                  :class="option.status === 'locked' ? 'bg-slate-200 text-slate-400' : 'bg-emerald-600 text-white'"
+                >
+                  {{ option.status === 'locked' ? '未解锁' : '去评估' }}
+                  <UIcon v-if="option.status !== 'locked'" name="i-lucide-arrow-right" class="size-3.5" />
+                </span>
               </div>
-            </div>
+            </button>
           </div>
-        </section>
+        </div>
+      </div>
+    </section>
 
+    <!-- 第二步：评估准备。选定量表后确认对象、续做草稿并开始作答。 -->
+    <section v-if="definition && stage === 'prepare' && !started && !output" class="mt-5 grid gap-6 md:grid-cols-[.4fr_.6fr]">
+      <aside class="panel h-fit p-6 sm:p-7">
+        <div class="grid size-12 place-items-center rounded-2xl" :class="moduleIconTone[meta.color]"><UIcon :name="meta.icon" class="size-6" /></div>
+        <p class="mt-5 text-sm font-semibold text-emerald-700">评估前说明</p>
+        <h2 class="mt-2 text-2xl font-semibold">{{ definition.title }}</h2>
+        <p class="mt-3 text-sm leading-6 text-slate-500">{{ definition.description }}</p>
+        <div class="mt-6 grid grid-cols-2 gap-3 text-sm">
+          <div class="rounded-xl bg-slate-50 p-3"><span class="block text-xs text-slate-400">预计用时</span><strong class="mt-1 block">约 {{ definition.estimatedMinutes }} 分钟</strong></div>
+          <div class="rounded-xl bg-slate-50 p-3"><span class="block text-xs text-slate-400">题目数量</span><strong class="mt-1 block">{{ definition.questions.length }} 题</strong></div>
+        </div>
+        <UButton
+          v-if="hasMultipleInstruments"
+          class="mt-5"
+          color="neutral"
+          variant="soft"
+          size="sm"
+          icon="i-lucide-list-checks"
+          @click="() => { stage = 'pick' }"
+        >换一张量表</UButton>
+        <p class="mt-5 text-xs leading-5 text-slate-400">本评估用于教育工作场景梳理，不构成医学或心理诊断。结果仅供您制定支持行动。</p>
+      </aside>
+
+      <div class="space-y-5">
         <section v-if="allowedContextTypes.length" class="panel p-6 sm:p-7">
           <div class="flex items-start gap-3"><div class="grid size-9 shrink-0 place-items-center rounded-xl bg-sky-100 text-sky-700"><UIcon name="i-lucide-link" class="size-4" /></div><div><h2 class="font-semibold">先选择本次评估对象</h2><p class="mt-1 text-xs leading-5 text-slate-500">关联后，报告和行动方案会回到对应档案，后续复盘更连贯。</p></div></div>
           <USelect v-model="selectedContextKey" :items="contextSelectItems" class="mt-4 w-full" />
@@ -484,9 +632,9 @@ async function submit() {
       </div>
     </section>
 
-    <div v-if="definition && started && !output" class="mt-6 grid gap-6 lg:grid-cols-[.36fr_.64fr]">
+    <div v-if="definition && started && !output && flowState !== 'finalizing'" class="mt-6 grid gap-6 md:grid-cols-[.36fr_.64fr]">
       <aside class="panel h-fit p-6">
-        <div class="grid size-12 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon :name="moduleMeta[moduleId].icon" class="size-6" /></div>
+        <div class="grid size-12 place-items-center rounded-2xl" :class="moduleIconTone[meta.color]"><UIcon :name="meta.icon" class="size-6" /></div>
         <h1 class="mt-5 text-2xl font-semibold">{{ definition.title }}</h1>
         <p class="mt-3 text-sm leading-6 text-slate-500">{{ definition.description }}</p>
         <div v-if="selectedContext" class="mt-5 rounded-xl bg-sky-50 p-3 text-xs text-sky-900"><UIcon name="i-lucide-link" class="mr-1 inline size-3.5" />本次关联：{{ selectedContext.label }}</div>
@@ -514,9 +662,35 @@ async function submit() {
       </section>
     </div>
 
+    <!-- 连续量表流程收尾：全部量表完成后统一生成方案，失败时可重试 -->
+    <section v-if="flowState === 'finalizing' && !output" class="panel mt-6 p-7 text-center">
+      <UIcon v-if="!finalizeError" name="i-lucide-loader-circle" class="mx-auto size-8 animate-spin text-emerald-600" />
+      <p v-if="!finalizeError" class="mt-3 text-sm text-slate-600">全部量表已完成，正在生成方案…</p>
+      <template v-else>
+        <UIcon name="i-lucide-triangle-alert" class="mx-auto size-8 text-red-500" />
+        <p class="mt-3 text-sm text-red-600">{{ finalizeError }}</p>
+        <div class="mt-5 flex flex-wrap justify-center gap-3">
+          <UButton icon="i-lucide-refresh-cw" @click="finalizeAndGo">重试生成方案</UButton>
+          <UButton to="/" color="neutral" variant="soft">返回工作台</UButton>
+        </div>
+      </template>
+    </section>
+
     <section v-if="output" class="report-page mt-6 space-y-6">
       <!-- 安全熔断：必须停留在当前页展示转介指引，不跳方案页 -->
       <div v-if="output.fuse" class="panel border-2 border-red-200 bg-red-50 p-7"><div class="flex gap-4"><UIcon name="i-lucide-siren" class="size-7 text-red-600" /><div><h1 class="text-xl font-semibold text-red-900">已启动安全转介</h1><p class="mt-2 text-sm text-red-800">{{ output.fuse.crisisGuide }}</p><p class="mt-3 text-xs text-red-600">事件编号：{{ output.fuse.eventId }}</p></div></div></div>
+      <!-- 绿色兜底：状态良好，无需生成方案 -->
+      <div v-else-if="output.noPlanNeeded" class="panel border-2 border-emerald-200 bg-emerald-50 p-7">
+        <div class="flex gap-4">
+          <UIcon name="i-lucide-circle-check" class="size-7 text-emerald-600" />
+          <div>
+            <h1 class="text-xl font-semibold text-emerald-900">状态良好，无需方案</h1>
+            <p class="mt-2 text-sm leading-6 text-emerald-800">
+              {{ output.levelName || '状态良好' }}：本次评估未发现需要重点干预的信号，暂时不需要生成行动方案。保持现有节奏即可，后续可随时重新评估。
+            </p>
+          </div>
+        </div>
+      </div>
       <!-- 非熔断：提交成功后自动跳转方案详情页，此提示仅作跳转前的过渡 -->
       <div v-else class="panel p-7 text-center text-sm text-slate-500">
         <p>评估完成，正在进入方案详情…</p>

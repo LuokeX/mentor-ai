@@ -6,17 +6,18 @@ import { requireUser } from '../../../../utils/auth'
 import { type DbClient, useDb, schema } from '../../../../utils/db'
 import { executeRules, evaluateWithFallback } from '../../../../domain/rules-executor'
 import { resolveAssessmentDefinition, resolveAttributionConfig, resolvePublishedModuleResource } from '../../../../domain/module-resources'
-import { moduleMeta } from '../../../../../shared/assessments'
 import { encryptSensitive, decryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
-import { createPlanActions, defaultReviewAt, mergePlanActionSnapshots, resolveToolsForPlan } from '../../../../domain/plan-actions'
-import { extractSourceResourceVersionIds, recordPlanOperationEvent } from '../../../../domain/plan-operations'
+import { resolveToolsForPlan } from '../../../../domain/plan-actions'
+import { recordPlanOperationEvent } from '../../../../domain/plan-operations'
+import { collectSessionSnapshots, generateOrMergeSessionPlan } from '../../../../domain/plan-session'
+import { isNoPlanNeeded } from '../../../../domain/no-plan-needed'
 import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
 import { generateAssessmentReport, redactPii } from '../../../../integrations/deepseek'
 import { findInvalidAnswers } from '../../../../domain/assessment-answers'
-import { buildAttributionKeywords, buildPlanTitle, truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
+import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
 import { mergeGroupResults } from '../../../../domain/plan-merge'
 import { createTemplateAssessmentReport } from '../../../../domain/reports'
 
@@ -29,12 +30,17 @@ const bodySchema = z.object({
   classId: z.string().uuid().optional(),
   guardianId: z.string().uuid().optional(),
   sourceChatSessionId: z.string().uuid().optional(),
-  instrumentCode: z.string().max(200).optional()
+  instrumentCode: z.string().max(200).optional(),
+  // 连续量表流程：显式指定评估组（前端持有首次提交返回的 assessmentSessionId），
+  // 无关联对象、无来源对话的评估也能连续做多张量表并入同一组。
+  sessionId: z.string().uuid().optional(),
+  // 连续量表流程：true 时本次提交只记录量表结果，不生成方案；
+  // 全部量表做完后由 finalize 用组内结果统一生成。
+  deferPlan: z.boolean().optional()
 })
 
-function mergeUnique(values: string[]): string[] {
-  return [...new Set(values.map(item => item?.trim()).filter((item): item is string => Boolean(item)))]
-}
+/** 无来源对话、无评估对象的评估组超过该时长未提交视为过期，不再续接。 */
+const STALE_SESSION_MS = 24 * 60 * 60 * 1000
 
 /** 评估组内按提交顺序的全部量表结果（供合并方案时重算）。 */
 async function collectGroupResults(db: DbClient, sessionId: string): Promise<RuleExecResult[]> {
@@ -218,6 +224,8 @@ export default defineEventHandler(async (event) => {
     const sourceType = body.sourceChatSessionId ? 'assistant_dialogue' : 'direct_assessment'
     const contextType = body.studentId ? 'student' : linkedClassId ? 'class' : body.guardianId ? 'guardian' : 'none'
     const contextId = body.studentId || linkedClassId || body.guardianId || null
+    let assessmentSessionId: string | null = null
+    let sequence = 0
     // 无关联对象的直接评估没有稳定的“同一问题”标识，每次提交必须新建组；
     // 否则教师今天和下周做的两个无关问题会被永久合并到同一方案。
     const shouldReuseSession = Boolean(body.sourceChatSessionId || contextId)
@@ -239,9 +247,28 @@ export default defineEventHandler(async (event) => {
           eq(schema.assessmentSessions.contextId, contextId),
           eq(schema.assessmentSessions.status, 'open')
         ) : undefined
-    let assessmentSessionId: string | null = null
-    let sequence = 0
-    if (shouldReuseSession && sessionGroupWhere) {
+    // 连续量表流程：仅「无来源对话、无评估对象」的评估没有稳定的自动定位标识，
+    // 此时前端显式指定评估组来衔接上一张量表；对话/对象场景仍按上下文自动定位，
+    // 避免新问题被并入旧评估组。组不存在或已过期（超过 24 小时未提交）时忽略
+    // 该参数并新建组，防止本地残留的旧组 id 把跨天的新问题误并入旧流程。
+    if (body.sessionId && !body.sourceChatSessionId && !contextId) {
+      const [session] = await client.select({ id: schema.assessmentSessions.id }).from(schema.assessmentSessions).where(and(
+        eq(schema.assessmentSessions.id, body.sessionId),
+        eq(schema.assessmentSessions.ownerUserId, user.id),
+        eq(schema.assessmentSessions.schoolId, schoolId),
+        eq(schema.assessmentSessions.module, module),
+        eq(schema.assessmentSessions.status, 'open')
+      )).limit(1).for('update')
+      if (session) {
+        const [{ lastSubmittedAt } = { lastSubmittedAt: null }] = await client
+          .select({ lastSubmittedAt: max(schema.assessmentAttempts.submittedAt) })
+          .from(schema.assessmentAttempts)
+          .innerJoin(schema.assessmentSessionAttempts, eq(schema.assessmentSessionAttempts.assessmentAttemptId, schema.assessmentAttempts.id))
+          .where(eq(schema.assessmentSessionAttempts.assessmentSessionId, session.id))
+        const stale = !lastSubmittedAt || Date.now() - lastSubmittedAt.getTime() > STALE_SESSION_MS
+        if (!stale) assessmentSessionId = session.id
+      }
+    } else if (shouldReuseSession && sessionGroupWhere) {
       // FOR UPDATE 锁住评估组行：同一组并发提交时串行化 sequence 分配，
       // 避免 max+1 得到相同序号后 onConflictDoNothing 静默丢关系。
       const [existing] = await client.select({ id: schema.assessmentSessions.id }).from(schema.assessmentSessions)
@@ -251,6 +278,9 @@ export default defineEventHandler(async (event) => {
         .for('update')
       assessmentSessionId = existing?.id || null
     }
+    // 连续量表流程：deferPlan 仅在非熔断且组可聚合时生效。
+    // 熔断必须立即走转介；无组时结果无法聚合，defer 没有意义，仍按单张直接出方案。
+    const deferPlan = Boolean(body.deferPlan) && !result.blocked && Boolean(assessmentSessionId)
     if (!assessmentSessionId) {
       const createQuery = client.insert(schema.assessmentSessions).values({
         schoolId: schoolId,
@@ -324,6 +354,7 @@ export default defineEventHandler(async (event) => {
     let planId: string | null = null
     let planUpdatedAt: Date | null = null
     let planReport: Record<string, unknown> | null = null
+    let noPlanNeeded = false
 
     if (result.blocked) {
       const referral = await createSafetyReferral(event, {
@@ -358,215 +389,51 @@ export default defineEventHandler(async (event) => {
         }).where(eq(schema.assessmentSessions.id, assessmentSessionId))
       }
     } else {
-      // result.tools 上面已经并入了 matchedTools，直接用即可，不要再拼一次
-      const planTools = mergedResult.tools
-      const nextReviewAt = defaultReviewAt()
-      const sourceResourceVersionIds = [
-        resolvedDefinition.versionId,
-        publishedAttribution?.versionId,
-        ...matchedTools.map(tool => tool.sourceVersionId)
-      ].filter((item): item is string => Boolean(item))
-      const matchedToolCodes = planTools
-        .map(tool => (tool as { code?: string }).code)
-        .filter((item): item is string => Boolean(item))
-
-      // 标题与快照：按来源生成并固化为 plan 列，列表/详情只投影快照，
-      // 避免旧方案随三库版本发布而「变标题、变归因」。
-      const attributionNames = mergedResult.attributions
-        .filter(attribution => attribution.strength !== 'reference')
-        .map(attribution => attribution.name)
-      const attributionDescriptions = mergedResult.attributions
-        .filter(attribution => attribution.strength !== 'reference')
-        .map(attribution => attribution.description || attribution.name)
-      const buildTitle = (names: string[], descriptions: string[]) => buildPlanTitle({
-        sourceType: sourceType as PlanSourceType,
-        moduleTitle: moduleMeta[module].title,
-        objectLabel,
-        questionSummary,
-        attributionNames: names,
-        attributionDescriptions: descriptions
-      })
-      const instrumentSnapshot = {
-        code: definition.code || definition.instrumentCode || '',
-        name: definition.title || definition.code || '',
-        version: definition.version,
-        sequence
-      }
-
-      // 合并规则：评估组内已有方案且处于未接受执行状态 → 追加并更新该方案；
-      // 否则（无方案或已进入执行态）新建方案。
-      let mergeTargetId: string | null = null
-      if (assessmentSessionId) {
-        const [linked] = await client.select({ planId: schema.planAssessmentAttempts.planId })
-          .from(schema.planAssessmentAttempts)
-          .innerJoin(schema.assessmentSessionAttempts, eq(schema.planAssessmentAttempts.assessmentAttemptId, schema.assessmentSessionAttempts.assessmentAttemptId))
-          .innerJoin(schema.plans, eq(schema.planAssessmentAttempts.planId, schema.plans.id))
-          .where(and(
-            eq(schema.assessmentSessionAttempts.assessmentSessionId, assessmentSessionId),
-            eq(schema.plans.module, module),
-            inArray(schema.plans.status, ['pending_acceptance', 'adjustment_needed'])
-          ))
-          .orderBy(desc(schema.plans.updatedAt))
-          .limit(1)
-        mergeTargetId = linked?.planId || null
-      }
-
-      if (mergeTargetId) {
-        await client.insert(schema.planAssessmentAttempts).values({
-          planId: mergeTargetId,
-          assessmentAttemptId: attempt.id,
-          sequence
-        }).onConflictDoNothing()
-        const [plan] = await client.select({
-          actions: schema.plans.actions,
-          instrumentSnapshots: schema.plans.instrumentSnapshots,
-          attributionKeywords: schema.plans.attributionKeywords,
-          sourceQuestionSummary: schema.plans.sourceQuestionSummary,
-          matchedToolCodes: schema.plans.matchedToolCodes,
-          sourceVersions: schema.plans.sourceVersions,
-          sourceResourceVersionIds: schema.plans.sourceResourceVersionIds
-        }).from(schema.plans).where(eq(schema.plans.id, mergeTargetId)).limit(1)
-        // 合并后的归因是全部量表的重算结果，标题/关键词随之重算。
-        const mergedNames = attributionNames
-        const keywords = buildAttributionKeywords(mergedNames)
-        const mergedTitle = buildTitle(mergedNames, attributionDescriptions)
-        const existingActions = plan?.actions || []
-        const mergedActions = mergePlanActionSnapshots(existingActions, mergedResult.actions)
-        const appendedActions = mergedActions.slice(existingActions.length)
-        const updatedAt = new Date()
-        planReport = {
-          ...(mergedReport as unknown as Record<string, unknown>),
-          planStructure: {
-            summary: mergedNarrative || mergedResult.reasons.join('；'),
-            assessment: { code: definition.code, version: definition.version },
-            attribution: {
-              level: mergedResult.level,
-              levelName: mergedResult.levelName,
-              severity: mergedResult.severity,
-              primary: mergedResult.primaryAttribution,
-              secondary: mergedResult.secondaryAttributions,
-              // 完整归因构成（含占比）留在方案快照里做溯源，前端只呈现强弱标签
-              items: mergedResult.attributions.map(attribution => ({
-                code: attribution.code,
-                name: attribution.name,
-                share: attribution.share,
-                strength: attribution.strength,
-                evidenceCodes: attribution.evidenceCodes
-              })),
-              reasons: mergedResult.reasons
-            },
-            tools: planTools.map(tool => tool.title),
-            review: { nextReviewAt: nextReviewAt.toISOString(), mode: 'periodic_with_ai_prompt' }
-          }
-        }
-        const [updatedPlan] = await client.update(schema.plans).set({
-          title: mergedTitle.title,
-          titleFull: mergedTitle.titleFull,
-          sourceQuestionSummary: plan?.sourceQuestionSummary || questionSummary || null,
-          attributionKeywords: keywords,
-          instrumentSnapshots: [...(plan?.instrumentSnapshots || []), { ...instrumentSnapshot, sequence }],
-          summaryEnc: encryptSensitive(mergedNarrative || mergedResult.reasons.join('；'), secret),
-          actions: mergedActions,
-          tools: planTools,
-          report: planReport,
-          matchedRuleIds: mergedResult.matchedRuleIds,
-          matchedToolCodes: mergeUnique([...(plan?.matchedToolCodes || []), ...matchedToolCodes]),
-          sourceVersions: mergeUnique([...(plan?.sourceVersions || []), ...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || []), ...result.matchedRuleIds]),
-          sourceResourceVersionIds: mergeUnique([...(plan?.sourceResourceVersionIds || []), ...(sourceResourceVersionIds.length ? sourceResourceVersionIds : extractSourceResourceVersionIds([...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || [])]))]),
-          // 方案内容已重算，复盘时间基于最后提交重新计算
-          nextReviewAt,
-          updatedAt
-        }).where(and(
-          eq(schema.plans.id, mergeTargetId),
-          eq(schema.plans.ownerUserId, user.id),
-          eq(schema.plans.schoolId, schoolId)
-        )).returning({ updatedAt: schema.plans.updatedAt })
-        planUpdatedAt = updatedPlan?.updatedAt || null
-        planId = mergeTargetId
-        // 只追加合并后新增的行动项；旧行动状态和 sequence 保持稳定。
-        await createPlanActions(event, {
-          planId: mergeTargetId, schoolId: schoolId, ownerUserId: user.id,
-          createdAt: now, actions: appendedActions
-        }, client)
-        await recordPlanOperationEvent(event, {
-          schoolId: schoolId,
+      // 快照取组内全部量表：历史提交即使曾被延后（deferPlan），新建方案也能一次写全；
+      // 合并分支按 code+sequence 去重，重复提交不会产生重复快照。
+      const instrumentSnapshots = assessmentSessionId
+        ? await collectSessionSnapshots(event, client, module, schoolId, assessmentSessionId)
+        : [{
+            code: definition.code || definition.instrumentCode || '',
+            name: definition.title || definition.code || '',
+            version: definition.version,
+            sequence
+          }]
+      // 连续量表流程：deferPlan 时本次提交只落量表结果，不生成方案；
+      // 全部量表做完后由 finalize 用组内结果统一生成，方案内容与提交时序解耦。
+      // 绿色兜底（状态良好、无归因/行动/工具）时跳过方案生成，直接告知无需方案。
+      if (!deferPlan) {
+        if (isNoPlanNeeded(mergedResult, module)) {
+          noPlanNeeded = true
+        } else {
+          const generated = await generateOrMergeSessionPlan({
+          event,
+          client,
+          schoolId,
           ownerUserId: user.id,
-          planId: mergeTargetId,
-          eventType: 'plan_merged',
-          metadata: { module, attemptId: attempt.id, sequence }
-        }, client)
-      } else {
-        const builtTitle = buildTitle(attributionNames, attributionDescriptions)
-        planReport = {
-          ...(mergedReport as unknown as Record<string, unknown>),
-          planStructure: {
-            summary: mergedNarrative || mergedResult.reasons.join('；'),
-            assessment: { code: definition.code, version: definition.version },
-            attribution: {
-              level: mergedResult.level,
-              levelName: mergedResult.levelName,
-              severity: mergedResult.severity,
-              primary: mergedResult.primaryAttribution,
-              secondary: mergedResult.secondaryAttributions,
-              // 完整归因构成（含占比）留在方案快照里做溯源，前端只呈现强弱标签
-              items: mergedResult.attributions.map(attribution => ({
-                code: attribution.code,
-                name: attribution.name,
-                share: attribution.share,
-                strength: attribution.strength,
-                evidenceCodes: attribution.evidenceCodes
-              })),
-              reasons: mergedResult.reasons
-            },
-            tools: planTools.map(tool => tool.title),
-            review: { nextReviewAt: nextReviewAt.toISOString(), mode: 'periodic_with_ai_prompt' }
-          }
-        }
-        const [plan] = await client.insert(schema.plans).values({
-          schoolId: schoolId, ownerUserId: user.id, module,
+          module,
+          assessmentSessionId,
+          mergedResult,
+          mergedReport,
+          mergedNarrative,
+          definitionResource: resolvedDefinition,
+          attributionConfig: publishedAttribution,
+          sourceType: sourceType as PlanSourceType,
+          sourceChatSessionId: body.sourceChatSessionId || null,
           studentId: body.studentId,
           classId: linkedClassId,
           guardianId: body.guardianId,
-          sourceChatSessionId: body.sourceChatSessionId,
-          sourceAssessmentAttemptId: attempt.id,
-          title: builtTitle.title,
-          titleFull: builtTitle.titleFull,
-          sourceType,
-          sourceQuestionSummary: questionSummary,
-          attributionKeywords: buildAttributionKeywords(attributionNames),
-          instrumentSnapshots: [instrumentSnapshot],
-          summaryEnc: encryptSensitive(mergedNarrative || mergedResult.reasons.join('；'), secret),
-          actions: mergedResult.actions,
-          tools: planTools,
-          report: planReport,
-          sourceVersions: [...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || [`fallback-attribution:${module}`]), ...result.matchedRuleIds],
-          status: 'pending_acceptance',
-          matchedRuleIds: mergedResult.matchedRuleIds,
-          matchedToolCodes,
-          sourceResourceVersionIds: sourceResourceVersionIds.length
-            ? sourceResourceVersionIds
-            : extractSourceResourceVersionIds([...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || [])]),
-          nextReviewAt
-        }).returning({ id: schema.plans.id, createdAt: schema.plans.createdAt, updatedAt: schema.plans.updatedAt })
-        planId = plan?.id || null
-        planUpdatedAt = plan?.updatedAt || null
-        if (plan) {
-          await client.insert(schema.planAssessmentAttempts).values({
-            planId: plan.id,
-            assessmentAttemptId: attempt.id,
-            sequence: 0
-          }).onConflictDoNothing()
-          await createPlanActions(event, {
-            planId: plan.id, schoolId: schoolId, ownerUserId: user.id,
-            createdAt: plan.createdAt, actions: result.actions
-          }, client)
-          await recordPlanOperationEvent(event, {
-            schoolId: schoolId,
-            ownerUserId: user.id,
-            planId: plan.id,
-            eventType: 'plan_generated',
-            metadata: { module, ruleCount: result.matchedRuleIds.length, toolCount: planTools.length }
-          }, client)
+          objectLabel,
+          questionSummary,
+          secret,
+          now,
+          sourceAttemptId: attempt.id,
+          instrumentSnapshots,
+          actions: mergedResult.actions
+        })
+          planId = generated.planId || null
+          planUpdatedAt = generated.planUpdatedAt
+          planReport = generated.planReport
         }
       }
     }
@@ -574,6 +441,10 @@ export default defineEventHandler(async (event) => {
       attemptId: attempt.id,
       planId,
       fuse,
+      noPlanNeeded,
+      levelName: noPlanNeeded ? mergedResult.levelName : undefined,
+      deferred: deferPlan,
+      assessmentSessionId,
       report: result.blocked ? null : mergedReport,
       result: finalPresentedResult,
       mergedResult,
@@ -629,11 +500,11 @@ export default defineEventHandler(async (event) => {
 
   await writeAudit(event, {
     schoolId: schoolId, actorId: user.id, action: 'assessment.submit', targetType: 'assessment', targetId: outcome.attemptId,
-    metadata: { module, level: result.level, blocked: result.blocked, ruleIds: result.matchedRuleIds, studentId: body.studentId, classId: linkedClassId, guardianId: body.guardianId, sourceChatSessionId: body.sourceChatSessionId }
+    metadata: { module, level: result.level, blocked: result.blocked, noPlanNeeded: outcome.noPlanNeeded, ruleIds: result.matchedRuleIds, studentId: body.studentId, classId: linkedClassId, guardianId: body.guardianId, sourceChatSessionId: body.sourceChatSessionId }
   })
   await trackProductEvent(event, {
     schoolId: schoolId, userId: user.id, eventName: 'assessment_completed',
-    targetType: 'assessment', targetId: outcome.attemptId, metadata: { module, blocked: result.blocked, planGenerated: Boolean(outcome.planId) }
+    targetType: 'assessment', targetId: outcome.attemptId, metadata: { module, blocked: result.blocked, noPlanNeeded: outcome.noPlanNeeded, planGenerated: Boolean(outcome.planId) }
   })
   if (outcome.planId) {
     await trackProductEvent(event, {
@@ -653,5 +524,15 @@ export default defineEventHandler(async (event) => {
     result,
     submittedAt: outcome.submittedAt
   })
-  return { attemptId: outcome.attemptId, planId: outcome.planId, result: outcome.result, report: outcome.report, fuse: outcome.fuse }
+  return {
+    attemptId: outcome.attemptId,
+    planId: outcome.planId,
+    noPlanNeeded: outcome.noPlanNeeded,
+    levelName: outcome.noPlanNeeded ? outcome.levelName : undefined,
+    deferred: outcome.deferred,
+    assessmentSessionId: outcome.assessmentSessionId,
+    result: outcome.result,
+    report: outcome.report,
+    fuse: outcome.fuse
+  }
 })
