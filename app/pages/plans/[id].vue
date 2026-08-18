@@ -466,7 +466,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
   <div class="mx-auto max-w-4xl px-5 py-10">
     <!-- 返回 -->
     <div class="mb-6 flex items-center justify-between gap-3 print:hidden">
-      <UButton to="/information/plans" color="neutral" variant="ghost" icon="i-lucide-arrow-left" size="sm">返回方案列表</UButton>
+      <UButton to="/plans" color="neutral" variant="ghost" icon="i-lucide-arrow-left" size="sm">返回方案列表</UButton>
       <UButton color="neutral" variant="soft" icon="i-lucide-file-down" size="sm" @click="exportPdf">下载 PDF</UButton>
     </div>
 
@@ -481,7 +481,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
     >
       <template #actions>
         <UButton size="xs" color="error" variant="soft" @click="() => refresh()">重试</UButton>
-        <UButton size="xs" color="neutral" variant="ghost" to="/information/plans">返回列表</UButton>
+        <UButton size="xs" color="neutral" variant="ghost" to="/plans">返回列表</UButton>
       </template>
     </UAlert>
 

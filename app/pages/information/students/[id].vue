@@ -212,13 +212,13 @@ async function createCommunication() {
               <div class="flex flex-wrap items-start gap-2"><span class="w-24 shrink-0 text-slate-500">效果评估</span>
                 <span class="text-slate-600">在方案页记录复评（效果评分与结论），随复评持续更新</span>
               </div>
-              <UButton :to="`/information/plans/${learningPlan.id}`" icon="i-lucide-file-text" size="sm" color="neutral" variant="soft">查看完整方案与复评记录</UButton>
+              <UButton :to="`/plans/${learningPlan.id}`" icon="i-lucide-file-text" size="sm" color="neutral" variant="soft">查看完整方案与复评记录</UButton>
             </div>
           </template>
         </div>
       </div>
     </section>
-    <section class="panel mt-6 p-6"><div class="flex items-center justify-between"><h2 class="text-xl font-semibold">相关方案记录</h2><UBadge color="neutral" variant="soft">{{ data?.plans?.length || 0 }} 个</UBadge></div><div class="mt-5 grid gap-4 md:grid-cols-2"><NuxtLink v-for="plan in data?.plans" :key="plan.id" :to="`/information/plans/${plan.id}`" class="block rounded-2xl border border-slate-100 p-4 transition hover:border-emerald-300 hover:bg-emerald-50/40"><div class="flex items-start justify-between gap-3"><div><strong>{{ plan.title }}</strong><p class="mt-1 text-xs text-slate-400">{{ plan.sourceLabel }} · {{ plan.riskLabel || moduleLabel(plan.module) }}</p></div><UBadge :color="planStatusColor(plan.status)" variant="soft">{{ planStatusLabel(plan.status) }}</UBadge></div><p class="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">{{ plan.summary }}</p></NuxtLink><p v-if="!data?.plans?.length" class="rounded-2xl bg-slate-50 p-6 text-center text-sm text-slate-400 md:col-span-2">暂无与该学生关联的方案</p></div></section>
+    <section class="panel mt-6 p-6"><div class="flex items-center justify-between"><h2 class="text-xl font-semibold">相关方案记录</h2><UBadge color="neutral" variant="soft">{{ data?.plans?.length || 0 }} 个</UBadge></div><div class="mt-5 grid gap-4 md:grid-cols-2"><NuxtLink v-for="plan in data?.plans" :key="plan.id" :to="`/plans/${plan.id}`" class="block rounded-2xl border border-slate-100 p-4 transition hover:border-emerald-300 hover:bg-emerald-50/40"><div class="flex items-start justify-between gap-3"><div><strong>{{ plan.title }}</strong><p class="mt-1 text-xs text-slate-400">{{ plan.sourceLabel }} · {{ plan.riskLabel || moduleLabel(plan.module) }}</p></div><UBadge :color="planStatusColor(plan.status)" variant="soft">{{ planStatusLabel(plan.status) }}</UBadge></div><p class="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">{{ plan.summary }}</p></NuxtLink><p v-if="!data?.plans?.length" class="rounded-2xl bg-slate-50 p-6 text-center text-sm text-slate-400 md:col-span-2">暂无与该学生关联的方案</p></div></section>
     </template>
   </div>
 </template>

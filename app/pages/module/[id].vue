@@ -364,7 +364,7 @@ async function submit() {
     await refreshRecommendation().catch(() => undefined)
     // 报告与方案统一在方案详情页查看：提交成功后直接跳转，不再停留完成页。
     if (output.value?.planId) {
-      await navigateTo(`/information/plans/${output.value.planId}`)
+      await navigateTo(`/plans/${output.value.planId}`)
       return
     }
     if (!output.value?.planId && !output.value?.fuse) {
@@ -602,7 +602,7 @@ async function submit() {
       <div v-else class="panel p-7 text-center text-sm text-slate-500">
         <p>评估完成，正在进入方案详情…</p>
       </div>
-      <div class="print-actions flex gap-3"><UButton to="/">返回工作台</UButton><UButton to="/information/plans" color="neutral" variant="soft">查看方案记录</UButton></div>
+      <div class="print-actions flex gap-3"><UButton to="/">返回工作台</UButton><UButton to="/plans" color="neutral" variant="soft">查看方案记录</UButton></div>
     </section>
   </div>
 </template>

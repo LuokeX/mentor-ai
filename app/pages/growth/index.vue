@@ -60,11 +60,6 @@ function topSteps(t: any): string[] {
       </div>
     </div>
 
-    <nav class="mt-6 flex gap-2 border-b border-slate-200 pb-3" aria-label="我的成长视图">
-      <UButton to="/growth" variant="soft" icon="i-lucide-chart-no-axes-combined">自我状态分析</UButton>
-      <UButton to="/notifications" color="neutral" variant="ghost" icon="i-lucide-notebook-tabs">工作日志</UButton>
-    </nav>
-
     <div v-if="pending && !data" class="mt-8 grid place-items-center py-20 text-slate-400">
       <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin" />
     </div>
@@ -210,7 +205,7 @@ function topSteps(t: any): string[] {
                   <UIcon name="i-lucide-wrench" class="size-3" />{{ t.title || t }}
                 </p>
               </div>
-              <NuxtLink v-if="data.growth?.currentPlan" :to="`/information/plans/${data.growth.currentPlan.id}`" class="mt-2 inline-block text-xs text-emerald-700 hover:underline">
+              <NuxtLink v-if="data.growth?.currentPlan" :to="`/plans/${data.growth.currentPlan.id}`" class="mt-2 inline-block text-xs text-emerald-700 hover:underline">
                 查看方案与执行记录 →
               </NuxtLink>
             </div>

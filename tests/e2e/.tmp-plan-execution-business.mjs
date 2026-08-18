@@ -41,7 +41,7 @@ try {
 
   await page.getByRole('button', { name: '提交并生成方案' }).click()
   // 提交后自动跳转到方案详情页（报告与方案统一在此查看）
-  await page.waitForURL(/\/information\/plans\/[0-9a-f-]{36}/, { timeout: 30_000 })
+  await page.waitForURL(/\/plans\/[0-9a-f-]{36}/, { timeout: 30_000 })
 
   await expect(page.getByRole('heading', { name: '方案执行' })).toBeVisible()
   await expect(page.getByText(/0\/\d+ 项完成/)).toBeVisible()

@@ -110,7 +110,7 @@ const actionEvents = computed<CenterEvent[]>(() => (workbench.value?.actions || 
   nextStep: item.overdue ? '该动作已逾期，建议先完成或进入方案调整后续安排。' : '按方案完成该动作，完成后在这里标记闭环。',
   time: item.dueAt,
   urgent: item.overdue,
-  to: `/information/plans/${item.planId}`,
+  to: `/plans/${item.planId}`,
   actionLabel: '标记完成',
   raw: item
 })))
@@ -125,7 +125,7 @@ const reviewEvents = computed<CenterEvent[]>(() => (workbench.value?.reviews || 
   nextStep: '进入方案页，填写效果评分、进展记录和下一步动作。',
   time: item.nextReviewAt,
   urgent: item.nextReviewAt ? new Date(item.nextReviewAt).getTime() < Date.now() : false,
-  to: `/information/plans/${item.id}`,
+  to: `/plans/${item.id}`,
   actionLabel: '去复盘',
   raw: item
 })))
@@ -225,7 +225,7 @@ function formatTime(value?: string | Date | null) {
 
 function notificationTargetUrl(item: any) {
   if (!item.targetId) return undefined
-  if (item.targetType === 'plan') return `/information/plans/${item.targetId}`
+  if (item.targetType === 'plan') return `/plans/${item.targetId}`
   if (item.targetType === 'student') return `/information/students/${item.targetId}`
   if (item.targetType === 'guardian') return `/information/guardians/${item.targetId}`
   if (item.targetType === 'referral') {

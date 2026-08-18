@@ -14,7 +14,7 @@ const mobileItems = computed(() => {
   if (user.value?.role === 'teacher') return [
     { label: '我的助手', icon: 'i-lucide-house', to: '/' },
     { label: '专项评估', icon: 'i-lucide-clipboard-list', to: '/#modules' },
-    { label: '我的方案', icon: 'i-lucide-file-text', to: '/information/plans' },
+    { label: '我的方案', icon: 'i-lucide-file-text', to: '/plans' },
     { label: '信息中心', icon: 'i-lucide-folder-open', to: '/information' },
     { label: '我的成长', icon: 'i-lucide-sprout', to: '/growth' }
   ]
@@ -29,9 +29,9 @@ const navClass = (active: boolean) => [
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
     : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700'
 ]
-const growthDetails = ref<HTMLDetailsElement | null>(null)
-const closeGrowthMenu = () => {
-  growthDetails.value?.removeAttribute('open')
+/** 点击下拉子项后关闭所在 details（专项评估/我的成长通用）。 */
+function closeDropdown(event: Event) {
+  (event.currentTarget as HTMLElement | null)?.closest('details')?.removeAttribute('open')
 }
 </script>
 
@@ -51,16 +51,16 @@ const closeGrowthMenu = () => {
           <details v-if="user.role === 'teacher'" class="relative">
             <summary :class="[...navClass(route.path.startsWith('/module')), 'cursor-pointer list-none select-none']"><UIcon name="i-lucide-clipboard-list" class="size-4" />专项评估<UIcon name="i-lucide-chevron-down" class="size-3.5 opacity-70" /></summary>
             <div class="absolute left-0 top-full z-30 mt-1.5 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-              <NuxtLink v-for="(item, id) in moduleMeta" :key="id" :to="`/module/${id}`" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800"><UIcon :name="item.icon" class="size-4 text-slate-400" />{{ item.title }}</NuxtLink>
+              <NuxtLink v-for="(item, id) in moduleMeta" :key="id" :to="`/module/${id}`" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon :name="item.icon" class="size-4 text-slate-400" />{{ item.title }}</NuxtLink>
             </div>
           </details>
-          <NuxtLink v-if="user.role === 'teacher'" to="/information/plans" :class="navClass(route.path.startsWith('/information/plans'))"><UIcon name="i-lucide-file-text" class="size-4" />我的方案</NuxtLink>
-          <NuxtLink v-if="user.role === 'teacher'" to="/information" :class="navClass(route.path.startsWith('/information') && !route.path.startsWith('/information/plans'))"><UIcon name="i-lucide-folder-open" class="size-4" />信息中心</NuxtLink>
+          <NuxtLink v-if="user.role === 'teacher'" to="/plans" :class="navClass(route.path.startsWith('/plans'))"><UIcon name="i-lucide-file-text" class="size-4" />我的方案</NuxtLink>
+          <NuxtLink v-if="user.role === 'teacher'" to="/information" :class="navClass(route.path.startsWith('/information'))"><UIcon name="i-lucide-folder-open" class="size-4" />信息中心</NuxtLink>
           <details v-if="user.role === 'teacher'" class="relative">
             <summary :class="[...navClass(route.path.startsWith('/growth') || route.path.startsWith('/notifications')), 'cursor-pointer list-none select-none']"><UIcon name="i-lucide-sprout" class="size-4" />我的成长<UIcon name="i-lucide-chevron-down" class="size-3.5 opacity-70" /></summary>
             <div class="absolute left-0 top-full z-30 mt-1.5 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-              <NuxtLink to="/growth" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800"><UIcon name="i-lucide-heart-pulse" class="size-4 text-slate-400" />自我状态分析</NuxtLink>
-              <NuxtLink to="/notifications" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800"><UIcon name="i-lucide-notebook-pen" class="size-4 text-slate-400" />工作日志</NuxtLink>
+              <NuxtLink to="/growth" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon name="i-lucide-heart-pulse" class="size-4 text-slate-400" />自我状态分析</NuxtLink>
+              <NuxtLink to="/notifications" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon name="i-lucide-notebook-pen" class="size-4 text-slate-400" />工作日志</NuxtLink>
             </div>
           </details>
           <UButton v-if="user.role === 'school_admin'" to="/school-admin" :variant="route.path.startsWith('/school-admin') ? 'soft' : 'ghost'" :color="route.path.startsWith('/school-admin') ? 'primary' : 'neutral'">学校管理</UButton>
@@ -86,13 +86,13 @@ const closeGrowthMenu = () => {
     <nav v-if="user" class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 px-[max(1rem,env(safe-area-inset-left))] pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
       <div class="mx-auto grid max-w-md" :class="user.role === 'teacher' ? 'grid-cols-5' : 'grid-cols-2'">
         <template v-for="item in mobileItems" :key="item.to">
-          <details v-if="item.to === '/growth'" ref="growthDetails" class="relative">
+          <details v-if="item.to === '/growth'" class="relative">
             <summary :class="['flex min-h-16 min-w-0 cursor-pointer list-none select-none flex-col items-center justify-center gap-1 px-0.5 text-[10px]', route.path.startsWith('/growth') || route.path.startsWith('/notifications') ? '!text-emerald-700' : 'text-slate-500']">
               <UIcon name="i-lucide-sprout" class="size-5" /><span class="max-w-full whitespace-nowrap">我的成长</span>
             </summary>
             <div class="absolute bottom-full right-0 z-[60] mb-2 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-              <NuxtLink to="/growth" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeGrowthMenu"><UIcon name="i-lucide-heart-pulse" class="size-4 text-slate-400" />自我状态分析</NuxtLink>
-              <NuxtLink to="/notifications" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeGrowthMenu"><UIcon name="i-lucide-notebook-pen" class="size-4 text-slate-400" />工作日志</NuxtLink>
+              <NuxtLink to="/growth" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon name="i-lucide-heart-pulse" class="size-4 text-slate-400" />自我状态分析</NuxtLink>
+              <NuxtLink to="/notifications" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon name="i-lucide-notebook-pen" class="size-4 text-slate-400" />工作日志</NuxtLink>
             </div>
           </details>
           <NuxtLink v-else :to="item.to" class="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-0.5 text-[10px] text-slate-500" active-class="!text-emerald-700">

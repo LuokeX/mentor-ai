@@ -148,7 +148,7 @@ const router = useRouter()
       :sort="sort"
       :order="order"
       @sort="onSortChange"
-      @row-click="(row: PlanRow) => router.push(`/information/plans/${row.id}`)"
+      @row-click="(row: PlanRow) => router.push(`/plans/${row.id}`)"
     >
       <template #title-data="{ row }">
         <UTooltip
@@ -157,11 +157,11 @@ const router = useRouter()
           class="block min-w-0"
           :popper="{ placement: 'top', strategy: 'fixed' }"
         >
-          <NuxtLink :to="`/information/plans/${row.id}`" class="block truncate font-medium text-emerald-700 hover:underline">
+          <NuxtLink :to="`/plans/${row.id}`" class="block truncate font-medium text-emerald-700 hover:underline">
             {{ row.title }}
           </NuxtLink>
         </UTooltip>
-        <NuxtLink v-else :to="`/information/plans/${row.id}`" class="block truncate font-medium text-emerald-700 hover:underline">
+        <NuxtLink v-else :to="`/plans/${row.id}`" class="block truncate font-medium text-emerald-700 hover:underline">
           {{ row.title }}
         </NuxtLink>
       </template>

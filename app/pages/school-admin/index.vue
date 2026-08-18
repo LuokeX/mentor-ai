@@ -148,7 +148,7 @@ const completionStatus = computed(() => {
             <p class="mt-0.5 text-xs text-red-500">{{ plan.teacherName }} · {{ plan.daysSinceUpdate }} 天未更新</p>
           </div>
           <NuxtLink
-            :to="`/information/plans/${plan.id}`"
+            :to="`/plans/${plan.id}`"
             class="ml-3 shrink-0 rounded-md bg-white px-3 py-1.5 text-xs font-medium text-red-600 shadow-sm ring-1 ring-red-200 transition-all hover:bg-red-600 hover:text-white hover:ring-red-600"
           >
             查看方案

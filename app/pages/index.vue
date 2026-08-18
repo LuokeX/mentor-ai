@@ -640,7 +640,7 @@ onUnmounted(() => {
         </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
 
-        <NuxtLink v-if="activePlans?.count" to="/information/plans" class="mx-4 mt-2 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm transition hover:bg-emerald-100 sm:mx-6"><UIcon name="i-lucide-clipboard-list" class="size-5 text-emerald-600" /><div class="flex-1"><strong class="text-emerald-800">您有 {{ activePlans.count }} 个进行中的方案</strong><p class="text-xs text-emerald-600">点击查看之前的方案及执行情况，避免重复规划</p></div><UIcon name="i-lucide-arrow-right" class="size-4 text-emerald-400" /></NuxtLink>
+        <NuxtLink v-if="activePlans?.count" to="/plans" class="mx-4 mt-2 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm transition hover:bg-emerald-100 sm:mx-6"><UIcon name="i-lucide-clipboard-list" class="size-5 text-emerald-600" /><div class="flex-1"><strong class="text-emerald-800">您有 {{ activePlans.count }} 个进行中的方案</strong><p class="text-xs text-emerald-600">点击查看之前的方案及执行情况，避免重复规划</p></div><UIcon name="i-lucide-arrow-right" class="size-4 text-emerald-400" /></NuxtLink>
 
         <div ref="messageViewport" class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/70 to-white px-4 py-6 sm:px-6" :class="{'opacity-60':loadingSession}">
           <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-7">
@@ -778,7 +778,7 @@ onUnmounted(() => {
             <NuxtLink to="/notifications?tab=action" class="text-xs font-medium text-emerald-600 transition hover:text-emerald-800">查看全部</NuxtLink>
           </div>
           <div class="mt-4 flex-1 space-y-2">
-            <NuxtLink v-for="action in today.actions.slice(0, 4)" :key="action.id" :to="`/information/plans/${action.planId}`" class="flex flex-col gap-1.5 rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-emerald-200 hover:bg-emerald-50/50">
+            <NuxtLink v-for="action in today.actions.slice(0, 4)" :key="action.id" :to="`/plans/${action.planId}`" class="flex flex-col gap-1.5 rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-emerald-200 hover:bg-emerald-50/50">
               <div class="flex items-center justify-between gap-2">
                 <span class="text-xs font-medium text-slate-500">{{ (moduleMeta as Record<string, { title: string }>)[action.planModule]?.title || '' }}</span>
                 <UBadge :color="action.overdue ? 'error' : 'neutral'" variant="soft" size="xs">{{ action.overdue ? '已逾期' : '今日' }}</UBadge>
@@ -799,7 +799,7 @@ onUnmounted(() => {
             </span>
           </div>
           <div class="mt-4 flex-1 space-y-2">
-            <NuxtLink v-for="review in today.reviews.slice(0, 4)" :key="review.id" :to="`/information/plans/${review.id}`" class="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-amber-200 hover:bg-amber-50/50">
+            <NuxtLink v-for="review in today.reviews.slice(0, 4)" :key="review.id" :to="`/plans/${review.id}`" class="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2.5 text-sm transition hover:border-amber-200 hover:bg-amber-50/50">
               <span class="min-w-0 truncate"><strong>{{ review.title }}</strong><small class="ml-1.5 text-slate-400">{{ (moduleMeta as Record<string, { title: string }>)[review.module]?.title || review.module }}</small></span>
               <UIcon name="i-lucide-chevron-right" class="size-4 shrink-0 text-slate-300" />
             </NuxtLink>
