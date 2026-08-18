@@ -320,7 +320,7 @@ async function handlePrimary(eventItem: CenterEvent) {
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div>
         <p class="text-sm font-semibold text-emerald-700">从提醒到处理闭环</p>
-        <h1 class="mt-2 text-3xl font-semibold">事件中心</h1>
+        <h1 class="mt-2 text-3xl font-semibold">工作日志</h1>
         <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-500">聚合通知、到期动作、复盘、草稿和档案移交；先处理高优先级事件，再回到方案或信息中心完成闭环。</p>
       </div>
       <div class="flex gap-2">
@@ -457,7 +457,7 @@ async function handlePrimary(eventItem: CenterEvent) {
 
             <div class="rounded-2xl bg-slate-50 p-4 text-xs leading-5 text-slate-500">
               <p class="font-semibold text-slate-700">闭环原则</p>
-              <p class="mt-1">事件中心只展示最小必要信息；具体正文、复盘和档案仍回到对应业务页面处理，避免在聚合页扩散敏感内容。</p>
+              <p class="mt-1">工作日志只展示最小必要信息；具体正文、复盘和档案仍回到对应业务页面处理，避免在聚合页扩散敏感内容。</p>
             </div>
           </div>
         </template>

@@ -728,7 +728,7 @@ onUnmounted(() => {
         </div>
         <NuxtLink to="/notifications" class="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 hover:shadow-md">
           <UIcon name="i-lucide-bell-ring" class="size-4" />
-          进入事件中心
+          进入工作日志
           <UIcon name="i-lucide-arrow-right" class="size-4" />
         </NuxtLink>
       </div>
