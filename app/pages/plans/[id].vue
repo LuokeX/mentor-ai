@@ -164,6 +164,11 @@ function actionStatusText(status: string) {
   return map[status] || status
 }
 
+/** 工具动作由工具库匹配生成，正文是完整结构化步骤；执行区只呈现工具名，正文留在建议区。 */
+function isToolAction(action: PlanAction) {
+  return action.title.startsWith('使用工具「')
+}
+
 const activeActions = computed<PlanAction[]>(() => {
   return data.value?.actions || []
 })
@@ -244,7 +249,6 @@ const supportGoal = computed(() => report.value?.supportGoal || {
   observableChange: report.value?.sevenDayFollowUp?.observationPoints?.[0] || '一周内能观察到行为、沟通或状态上的具体变化。',
   avoidGoal: '不要把目标设成一次性解决所有问题。'
 })
-const firstAction = computed(() => report.value?.firstAction || activeActions.value[0] || null)
 
 const recommendationGroups = computed<RecommendationGroup[]>(() => {
   const byAudience = new Map<RecommendationAudience, PlanAction[]>()
@@ -794,7 +798,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                 >
                   {{ action.title }}
                 </p>
-                <p class="mt-1 text-xs leading-5 text-slate-500">{{ action.detail }}</p>
+                <p v-if="!isToolAction(action)" class="mt-1 text-xs leading-5 text-slate-500">{{ action.detail }}</p>
                 <!-- 截止日期 -->
                 <p v-if="action.dueAt" class="mt-1 text-xs text-amber-600">
                   截止：{{ formatDate(action.dueAt) }}
@@ -1031,51 +1035,29 @@ useHead({ title: () => data.value?.title || '方案详情' })
         <h3 class="mt-1 text-lg font-semibold">{{ data.report.profile.title }}</h3>
         <p class="mt-3 text-sm leading-7 text-slate-600">{{ data.report.profile.summary }}</p>
 
-        <div class="mt-5 grid gap-3 md:grid-cols-3">
-          <div class="rounded-xl border border-emerald-100 bg-white p-4">
-            <p class="text-xs font-semibold text-emerald-700">归因构成</p>
-            <!-- 有完整归因构成时按强弱分组呈现，否则回退到旧的主/次归因文本 -->
-            <template v-if="attributions.length">
-              <div v-for="attribution in attributions" :key="attribution.name" class="mt-2 flex items-start gap-2">
-                <UBadge
-                  size="xs"
-                  :color="attribution.strength === 'primary' ? 'primary' : 'neutral'"
-                  :variant="attribution.strength === 'primary' ? 'solid' : 'soft'"
-                >
-                  {{ attributionStrengthLabel(attribution.strength) }}
-                </UBadge>
-                <p class="text-sm leading-5" :class="attribution.strength === 'primary' ? 'font-semibold text-slate-800' : 'text-slate-600'">
-                  {{ attribution.name }}
-                </p>
-              </div>
-            </template>
-            <template v-else>
-              <p class="mt-2 text-sm font-semibold text-slate-800">{{ planStructure?.attribution?.primary || data.report.profile.primaryConcern }}</p>
-              <p v-if="planStructure?.attribution?.secondary?.length" class="mt-2 text-xs leading-5 text-slate-500">
-                次归因：{{ planStructure.attribution.secondary.join('、') }}
+        <div class="mt-5 rounded-xl border border-emerald-100 bg-white p-4">
+          <p class="text-xs font-semibold text-emerald-700">归因构成</p>
+          <!-- 有完整归因构成时按强弱分组呈现，否则回退到旧的主/次归因文本 -->
+          <template v-if="attributions.length">
+            <div v-for="attribution in attributions" :key="attribution.name" class="mt-2 flex items-start gap-2">
+              <UBadge
+                size="xs"
+                :color="attribution.strength === 'primary' ? 'primary' : 'neutral'"
+                :variant="attribution.strength === 'primary' ? 'solid' : 'soft'"
+              >
+                {{ attributionStrengthLabel(attribution.strength) }}
+              </UBadge>
+              <p class="text-sm leading-5" :class="attribution.strength === 'primary' ? 'font-semibold text-slate-800' : 'text-slate-600'">
+                {{ attribution.name }}
               </p>
-            </template>
-          </div>
-          <div class="rounded-xl border border-sky-100 bg-white p-4">
-            <p class="text-xs font-semibold text-sky-700">本周支持目标</p>
-            <p class="mt-2 text-sm leading-6 text-slate-700">{{ supportGoal.weeklyGoal }}</p>
-          </div>
-          <div class="rounded-xl border border-amber-100 bg-white p-4">
-            <p class="text-xs font-semibold text-amber-700">今天第一步</p>
-            <p class="mt-2 text-sm font-semibold text-slate-800">{{ firstAction?.title || '完成一个最小行动' }}</p>
-            <p class="mt-1 text-xs leading-5 text-slate-500">{{ firstAction?.detail || '先记录当前事实和一个可执行动作。' }}</p>
-          </div>
-        </div>
-
-        <div class="mt-5 grid gap-3 md:grid-cols-2">
-          <div class="rounded-xl bg-white p-4">
-            <p class="text-sm font-semibold text-slate-700">可观察变化</p>
-            <p class="mt-2 text-xs leading-6 text-slate-600">{{ supportGoal.observableChange }}</p>
-          </div>
-          <div class="rounded-xl bg-white p-4">
-            <p class="text-sm font-semibold text-slate-700">暂不追求</p>
-            <p class="mt-2 text-xs leading-6 text-slate-600">{{ supportGoal.avoidGoal }}</p>
-          </div>
+            </div>
+          </template>
+          <template v-else>
+            <p class="mt-2 text-sm font-semibold text-slate-800">{{ planStructure?.attribution?.primary || data.report.profile.primaryConcern }}</p>
+            <p v-if="planStructure?.attribution?.secondary?.length" class="mt-2 text-xs leading-5 text-slate-500">
+              次归因：{{ planStructure.attribution.secondary.join('、') }}
+            </p>
+          </template>
         </div>
 
       </section>

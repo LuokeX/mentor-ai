@@ -13,7 +13,6 @@ const roleHome = computed(() => {
 const mobileItems = computed(() => {
   if (user.value?.role === 'teacher') return [
     { label: '我的助手', icon: 'i-lucide-house', to: '/' },
-    { label: '专项评估', icon: 'i-lucide-clipboard-list', to: '/#modules' },
     { label: '我的方案', icon: 'i-lucide-file-text', to: '/plans' },
     { label: '信息中心', icon: 'i-lucide-folder-open', to: '/information' },
     { label: '我的成长', icon: 'i-lucide-sprout', to: '/growth' }
@@ -29,9 +28,19 @@ const navClass = (active: boolean) => [
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
     : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700'
 ]
+/** 悬停展开：鼠标进入 details（含下拉面板）时打开。 */
+function openDropdown(event: Event) {
+  ;(event.currentTarget as HTMLElement | null)?.setAttribute('open', '')
+}
+
+/** 鼠标移开 details（含下拉面板）时关闭。 */
+function closeOnLeave(event: Event) {
+  ;(event.currentTarget as HTMLElement | null)?.removeAttribute('open')
+}
+
 /** 点击下拉子项后关闭所在 details（专项评估/我的成长通用）。 */
 function closeDropdown(event: Event) {
-  (event.currentTarget as HTMLElement | null)?.closest('details')?.removeAttribute('open')
+  ;(event.currentTarget as HTMLElement | null)?.closest('details')?.removeAttribute('open')
 }
 </script>
 
@@ -48,7 +57,7 @@ function closeDropdown(event: Event) {
         </NuxtLink>
         <nav class="hidden items-center gap-2 md:flex">
           <NuxtLink v-if="user.role === 'teacher'" to="/" :class="navClass(route.path === '/')"><UIcon name="i-lucide-house" class="size-4" />我的助手</NuxtLink>
-          <details v-if="user.role === 'teacher'" class="relative">
+          <details v-if="user.role === 'teacher'" class="relative after:absolute after:inset-x-0 after:top-full after:h-1.5 after:content-['']" @mouseenter="openDropdown" @mouseleave="closeOnLeave">
             <summary :class="[...navClass(route.path.startsWith('/module')), 'cursor-pointer list-none select-none']"><UIcon name="i-lucide-clipboard-list" class="size-4" />专项评估<UIcon name="i-lucide-chevron-down" class="size-3.5 opacity-70" /></summary>
             <div class="absolute left-0 top-full z-30 mt-1.5 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
               <NuxtLink v-for="(item, id) in moduleMeta" :key="id" :to="`/module/${id}`" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon :name="item.icon" class="size-4 text-slate-400" />{{ item.title }}</NuxtLink>
@@ -56,7 +65,7 @@ function closeDropdown(event: Event) {
           </details>
           <NuxtLink v-if="user.role === 'teacher'" to="/plans" :class="navClass(route.path.startsWith('/plans'))"><UIcon name="i-lucide-file-text" class="size-4" />我的方案</NuxtLink>
           <NuxtLink v-if="user.role === 'teacher'" to="/information" :class="navClass(route.path.startsWith('/information'))"><UIcon name="i-lucide-folder-open" class="size-4" />信息中心</NuxtLink>
-          <details v-if="user.role === 'teacher'" class="relative">
+          <details v-if="user.role === 'teacher'" class="relative after:absolute after:inset-x-0 after:top-full after:h-1.5 after:content-['']" @mouseenter="openDropdown" @mouseleave="closeOnLeave">
             <summary :class="[...navClass(route.path.startsWith('/growth') || route.path.startsWith('/notifications')), 'cursor-pointer list-none select-none']"><UIcon name="i-lucide-sprout" class="size-4" />我的成长<UIcon name="i-lucide-chevron-down" class="size-3.5 opacity-70" /></summary>
             <div class="absolute left-0 top-full z-30 mt-1.5 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
               <NuxtLink to="/growth" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon name="i-lucide-heart-pulse" class="size-4 text-slate-400" />自我状态分析</NuxtLink>

@@ -21,7 +21,7 @@ const feedback = computed(() => (data.value?.enabled && data.value?.url)
       rel="noopener noreferrer"
       color="primary"
       size="xl"
-      class="fixed right-4 top-1/2 z-40 -translate-y-1/2 shadow-xl print:hidden md:right-6"
+      class="fixed right-4 top-1/2 z-40 -translate-y-1/2 shadow-xl print:hidden md:right-6 xl:right-[max(3.5rem,calc((100vw_-_80rem)/4))] xl:translate-x-1/2"
       :aria-label="`打开${feedback.title}`"
     >
       <span class="flex flex-col items-center gap-2 py-2 pr-1 pl-1.5">
