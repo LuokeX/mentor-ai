@@ -60,15 +60,26 @@ test.describe('四角色核心路径', () => {
 
     // 提交后自动跳转到方案详情页（报告与方案统一在此查看，不再停留完成页）
     await expect(page).toHaveURL(/\/plans\/[0-9a-f-]{36}/, { timeout: 45_000 })
-    // 方案页按「行动方案建议」区块确认；全部接受后按钮变为「确认方案并开始执行」
+    // 方案页按「行动方案建议」区块确认；全部方案块逐条决策后按钮才变为「确认方案并开始执行」
     const recommendations = page.locator('section').filter({ has: page.getByRole('heading', { name: '行动方案建议' }) })
     await expect(recommendations).toBeVisible()
     const includeButtons = recommendations.getByRole('button', { name: '接受', exact: true })
-    // 点击后按钮先进入 loading 再随刷新消失，不能循环连点；点一次并等待计数变化
-    if (await includeButtons.count()) await includeButtons.first().click()
-    await expect(recommendations.getByText(/^已接受 1$/)).toBeVisible()
+    // 每个方案块都需要单独做纳入决策；点击后按钮先进入 loading 再随刷新消失，
+    // 循环点第一个「接受」并等待计数下降，直到没有待决策块。
+    let firstAccepted = true
+    while (await includeButtons.count()) {
+      const countBefore = await includeButtons.count()
+      await includeButtons.first().click()
+      if (firstAccepted) {
+        await expect(recommendations.getByText(/^已接受 1$/)).toBeVisible()
+        firstAccepted = false
+      }
+      await expect.poll(async () => recommendations.getByRole('button', { name: '接受', exact: true }).count(), {
+        timeout: 15_000
+      }).toBeLessThan(countBefore)
+    }
     await recommendations.getByRole('button', { name: '确认方案并开始执行' }).click()
-    // 页面同时存在「已接受 1」计数与方案块「已接受」徽标，取任意一个即可
+    // 页面同时存在「已接受 N」计数与方案块「已接受」徽标，取任意一个即可
     await expect(page.getByText('已接受').first()).toBeVisible()
 
     const executionSection = page.locator('section').filter({ hasText: '方案执行' })
@@ -95,20 +106,19 @@ test.describe('四角色核心路径', () => {
     await expect(page.getByText(/最近反馈：归因/)).toBeVisible()
   })
 
-  test('学校管理员邀请并激活教师账号', async ({ page }) => {
+  test('学校管理员直接添加并激活教师账号', async ({ page }) => {
     await login(page, '13900001004')
     await expect(page.getByRole('heading', { name: '学校管理后台' })).toBeVisible()
     const phone = `139${String(Date.now()).slice(-8)}`
+    // 管理员自定义初始密码：创建即激活，不再产生邀请链接
     const response = await page.request.post('/api/v1/school-admin/users', {
-      data: { name: '试点教师', phone, role: 'teacher' }
+      data: { name: '试点教师', phone, role: 'teacher', password: 'PilotTeacher@2026' }
     })
     expect(response.ok()).toBeTruthy()
-    const invitation = await response.json()
-    expect(invitation.activationToken).toBeTruthy()
-    const activation = await page.request.post('/api/v1/auth/activate', {
-      data: { token: invitation.activationToken, password: 'PilotTeacher@2026' }
-    })
-    expect(activation.ok()).toBeTruthy()
+    const created = await response.json()
+    expect(created.id).toBeTruthy()
+    expect(created.generatedPassword).toBeUndefined()
+    expect(created.activationToken).toBeUndefined()
     await page.getByRole('button', { name: '退出' }).click()
     await login(page, phone, { password: 'PilotTeacher@2026' })
     await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()
