@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { planAcceptanceSchema } from '../../../../../shared/reports'
 import { closeAssessmentSessionsForPlan } from '../../../../domain/assessment-sessions'
@@ -12,6 +12,7 @@ import { schema, useDb } from '../../../../utils/db'
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
+  const schoolId = user.schoolId
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = planAcceptanceSchema.parse(await readBody(event))
   const db = useDb(event)
@@ -21,16 +22,17 @@ export default defineEventHandler(async (event) => {
     id: schema.plans.id,
     schoolId: schema.plans.schoolId,
     ownerUserId: schema.plans.ownerUserId,
-    status: schema.plans.status
+    status: schema.plans.status,
+    acceptedAt: schema.plans.acceptedAt
   }).from(schema.plans).where(and(
     eq(schema.plans.id, id),
     eq(schema.plans.ownerUserId, user.id),
-    eq(schema.plans.schoolId, user.schoolId)
+    eq(schema.plans.schoolId, schoolId)
   )).limit(1)
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
 
   // 只有待确认/需调整状态可接受或拒绝：危机熔断冻结（escalated）后不能再接受。
-  if (!['pending_acceptance', 'adjustment_needed'].includes(plan.status)) {
+  if (!['pending_acceptance', 'adjustment_needed'].includes(plan.status) || plan.acceptedAt) {
     throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '当前状态不可接受或拒绝方案' })
   }
 
@@ -46,7 +48,9 @@ export default defineEventHandler(async (event) => {
     }).where(and(
       eq(schema.plans.id, id),
       eq(schema.plans.ownerUserId, user.id),
-      inArray(schema.plans.status, ['pending_acceptance', 'adjustment_needed'])
+      eq(schema.plans.schoolId, schoolId),
+      inArray(schema.plans.status, ['pending_acceptance', 'adjustment_needed']),
+      isNull(schema.plans.acceptedAt)
     )).returning({ id: schema.plans.id, status: schema.plans.status })
     if (!row) throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '当前状态不可接受或拒绝方案' })
 

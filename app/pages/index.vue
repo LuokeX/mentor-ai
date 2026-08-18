@@ -711,7 +711,7 @@ onUnmounted(() => {
 
         <form class="sticky bottom-0 border-t border-slate-100 bg-white px-4 py-3.5 sm:px-6" @submit.prevent="ask">
           <div class="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100">
-            <UTextarea v-model="input" :rows="2" :maxrows="5" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="请详细描述您的问题，包括：问题表现、涉及对象、发生频率、您的感受。系统将自动匹配关键词进行智能识别。" aria-label="向 AI 赋能助手提问" @keydown.enter.exact.prevent="ask" />
+            <UTextarea v-model="input" :rows="4" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="请详细描述您的问题，包括：问题表现、涉及对象、发生频率、您的感受。系统将自动匹配关键词进行智能识别。" aria-label="向 AI 赋能助手提问" @keydown.enter.exact.prevent="ask" />
             <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
           </div>
           <div class="mt-2 flex items-center justify-between px-1 text-[11px] text-slate-400"><span>Enter 发送 · Shift + Enter 换行</span><span>{{ input.length }}/4000</span></div>

@@ -40,6 +40,7 @@ const platformNav = [
   { label: '知识库', to: '/platform-admin/knowledge', icon: 'i-lucide-brain' },
   { label: '审计日志', to: '/platform-admin/audit', icon: 'i-lucide-list-checks' },
   { label: 'AI 管理中心', to: '/platform-admin/ai-center', icon: 'i-lucide-bot' },
+  { label: '调研反馈', to: '/platform-admin/survey-feedback', icon: 'i-lucide-clipboard-pen-line' },
 ]
 const contextualNav = computed(() => route.path.startsWith('/information')
   ? informationNav

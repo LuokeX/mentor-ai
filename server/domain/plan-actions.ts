@@ -1,9 +1,48 @@
 import type { H3Event } from 'h3'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, max } from 'drizzle-orm'
 import { schema, useDb, type DbClient } from '../utils/db'
 import type { ToolStructuredStep, ToolContraindicationRule, Severity } from '../../shared/contracts'
 
 type LegacyAction = { title: string, detail: string, status: string }
+
+type ReportActionSnapshot = {
+  firstAction?: { title?: unknown, detail?: unknown }
+  threeDayPlan?: Array<{ actions?: Array<{ title?: unknown, detail?: unknown }> }>
+}
+
+/**
+ * 老方案可能只有报告里的三日行动建议，没有 plans.actions 快照。
+ * 详情页首次读取时把已有报告快照转成跟踪动作，不重新调用模型，也不覆盖已存在的动作。
+ */
+export function derivePlanActionSnapshots(existing: LegacyAction[], report: unknown): LegacyAction[] {
+  if (existing.length) return existing
+  if (!report || typeof report !== 'object') return []
+
+  const snapshot = report as ReportActionSnapshot
+  const suggestions = (snapshot.threeDayPlan || []).flatMap(day => day.actions || [])
+  const derived = suggestions.flatMap(action => {
+    const title = String(action.title || '').trim()
+    const detail = String(action.detail || '').trim()
+    return title && detail ? [{ title, detail, status: 'pending' }] : []
+  })
+  if (derived.length) return mergePlanActionSnapshots([], derived).slice(0, 20)
+
+  const title = String(snapshot.firstAction?.title || '').trim()
+  const detail = String(snapshot.firstAction?.detail || '').trim()
+  return title && detail ? [{ title, detail, status: 'pending' }] : []
+}
+
+export function mergePlanActionSnapshots(existing: LegacyAction[], incoming: LegacyAction[]) {
+  const seen = new Set(existing.map(action => `${action.title.trim()}\u0000${action.detail.trim()}`))
+  const merged = [...existing]
+  for (const action of incoming) {
+    const key = `${action.title.trim()}\u0000${action.detail.trim()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push({ ...action, status: action.status || 'pending' })
+  }
+  return merged
+}
 
 export function defaultActionDueAt(createdAt: Date, sequence: number) {
   const due = new Date(createdAt)
@@ -17,6 +56,10 @@ export function defaultReviewAt(createdAt = new Date()) {
   return review
 }
 
+export function nextPlanActionSequence(maxSequence: number | null | undefined) {
+  return Number(maxSequence ?? -1) + 1
+}
+
 /** 懒迁移旧 JSON 动作；保留 plans.actions 和报告快照作为历史证据。 */
 export async function ensurePlanActions(event: H3Event, planId: string, ownerUserId: string) {
   const db = useDb(event)
@@ -28,7 +71,7 @@ export async function ensurePlanActions(event: H3Event, planId: string, ownerUse
   const [plan] = await db.select().from(schema.plans)
     .where(and(eq(schema.plans.id, planId), eq(schema.plans.ownerUserId, ownerUserId))).limit(1)
   if (!plan) return []
-  const legacy = (plan.actions || []) as LegacyAction[]
+  const legacy = derivePlanActionSnapshots((plan.actions || []) as LegacyAction[], plan.report)
   if (!legacy.length) return []
   return db.insert(schema.planActions).values(legacy.map((action, sequence) => ({
     schoolId: plan.schoolId,
@@ -52,15 +95,19 @@ export async function createPlanActions(event: H3Event, input: {
 }, db: DbClient = useDb(event)) {
   const createdAt = input.createdAt || new Date()
   if (!input.actions.length) return []
-  return db.insert(schema.planActions).values(input.actions.map((action, sequence) => ({
+  const [{ maxSequence } = { maxSequence: -1 }] = await db.select({
+    maxSequence: max(schema.planActions.sequence)
+  }).from(schema.planActions).where(eq(schema.planActions.planId, input.planId))
+  const startSequence = nextPlanActionSequence(maxSequence)
+  return db.insert(schema.planActions).values(input.actions.map((action, index) => ({
     schoolId: input.schoolId,
     planId: input.planId,
     ownerUserId: input.ownerUserId,
-    sequence,
+    sequence: startSequence + index,
     title: action.title,
     detail: action.detail,
     status: action.status || 'pending',
-    dueAt: defaultActionDueAt(createdAt, sequence)
+    dueAt: defaultActionDueAt(createdAt, startSequence + index)
   }))).returning()
 }
 

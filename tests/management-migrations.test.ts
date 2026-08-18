@@ -20,4 +20,20 @@ describe('management migration safety', () => {
     expect(sql).toContain('ALTER TABLE "department_members" ADD COLUMN IF NOT EXISTS "status"')
     expect(sql).toContain('("department_id","user_id","status")')
   })
+
+  it('protects open assessment groups from first-submit races', () => {
+    const sql = readFileSync(new URL('../drizzle/0036_assessment_session_guards.sql', import.meta.url), 'utf8')
+    expect(sql).toContain('assessment_sessions_open_chat_uidx')
+    expect(sql).toContain('assessment_sessions_open_context_uidx')
+    expect(sql).toContain('source_chat_session_id IS NOT NULL')
+    expect(sql).toContain('context_id IS NOT NULL')
+  })
+
+  it('corrects snapshot names using source, school, then global scope', () => {
+    const sql = readFileSync(new URL('../drizzle/0038_correct_instrument_snapshot_names.sql', import.meta.url), 'utf8')
+    expect(sql).toContain('p.source_resource_version_ids ? version.id::text')
+    expect(sql).toContain('library.school_id = p.school_id')
+    expect(sql).toContain('library.school_id IS NULL')
+    expect(sql).toContain('ORDER BY candidate.scope_priority')
+  })
 })

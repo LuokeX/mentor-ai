@@ -1,15 +1,15 @@
 import { z } from 'zod'
-import { and, asc, desc, eq, inArray, isNull, max, ne } from 'drizzle-orm'
-import type { RuleExecResult } from '../../../../../shared/contracts'
+import { and, asc, desc, eq, inArray, max, ne } from 'drizzle-orm'
+import type { OutputTemplateEntry, RuleExecResult } from '../../../../../shared/contracts'
 import { moduleIdSchema } from '../../../../../shared/contracts'
 import { requireUser } from '../../../../utils/auth'
 import { type DbClient, useDb, schema } from '../../../../utils/db'
 import { executeRules, evaluateWithFallback } from '../../../../domain/rules-executor'
-import { resolveAssessmentDefinition, resolveAttributionConfig } from '../../../../domain/module-resources'
+import { resolveAssessmentDefinition, resolveAttributionConfig, resolvePublishedModuleResource } from '../../../../domain/module-resources'
 import { moduleMeta } from '../../../../../shared/assessments'
 import { encryptSensitive, decryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
-import { createPlanActions, defaultReviewAt, resolveToolsForPlan } from '../../../../domain/plan-actions'
+import { createPlanActions, defaultReviewAt, mergePlanActionSnapshots, resolveToolsForPlan } from '../../../../domain/plan-actions'
 import { extractSourceResourceVersionIds, recordPlanOperationEvent } from '../../../../domain/plan-operations'
 import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { trackProductEvent } from '../../../../domain/product-events'
@@ -18,6 +18,7 @@ import { generateAssessmentReport, redactPii } from '../../../../integrations/de
 import { findInvalidAnswers } from '../../../../domain/assessment-answers'
 import { buildAttributionKeywords, buildPlanTitle, truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
 import { mergeGroupResults } from '../../../../domain/plan-merge'
+import { createTemplateAssessmentReport } from '../../../../domain/reports'
 
 const bodySchema = z.object({
   attemptId: z.string().uuid().optional(),
@@ -151,15 +152,24 @@ export default defineEventHandler(async (event) => {
   })
   if (matchedTools.length) result.tools = [...result.tools, ...matchedTools]
 
-  const report = result.blocked ? null : await generateAssessmentReport(event, {
-    schoolId: schoolId,
-    ownerUserId: user.id,
-    module,
-    result,
-    definition
-  })
-  const narrative = report?.profile.summary || result.reasons.join('；')
-  const presentedResult = { ...result, narrative: result.blocked ? null : narrative, report }
+  const outputTemplateResource = result.blocked
+    ? null
+    : await resolvePublishedModuleResource<{ templates?: OutputTemplateEntry[] }>(event, {
+        module,
+        libraryType: 'output_template',
+        schoolId
+      }).catch(() => null)
+  const outputTemplates = Array.isArray(outputTemplateResource?.payload?.templates)
+    ? outputTemplateResource.payload.templates
+    : []
+
+  // 事务先保存确定性结果占位；组内结果确定后在事务外生成一次模型报告，
+  // 避免网络调用长期占用数据库事务和组行锁。
+  const presentedResult = {
+    ...result,
+    narrative: result.blocked ? null : result.reasons.join('；'),
+    report: null
+  }
 
   // AI 来源的提问首句（教师本人可见的摘要，截 80 字；URL 不携带正文）。
   // 解密后必须先脱敏再落库：教师提问可能包含学生姓名、电话等 PII。
@@ -208,6 +218,9 @@ export default defineEventHandler(async (event) => {
     const sourceType = body.sourceChatSessionId ? 'assistant_dialogue' : 'direct_assessment'
     const contextType = body.studentId ? 'student' : linkedClassId ? 'class' : body.guardianId ? 'guardian' : 'none'
     const contextId = body.studentId || linkedClassId || body.guardianId || null
+    // 无关联对象的直接评估没有稳定的“同一问题”标识，每次提交必须新建组；
+    // 否则教师今天和下周做的两个无关问题会被永久合并到同一方案。
+    const shouldReuseSession = Boolean(body.sourceChatSessionId || contextId)
     const sessionGroupWhere = body.sourceChatSessionId
       ? and(
           eq(schema.assessmentSessions.ownerUserId, user.id),
@@ -217,18 +230,18 @@ export default defineEventHandler(async (event) => {
           eq(schema.assessmentSessions.sourceChatSessionId, body.sourceChatSessionId),
           eq(schema.assessmentSessions.status, 'open')
         )
-      : and(
+      : contextId ? and(
           eq(schema.assessmentSessions.ownerUserId, user.id),
           eq(schema.assessmentSessions.schoolId, schoolId),
           eq(schema.assessmentSessions.module, module),
           eq(schema.assessmentSessions.sourceType, 'direct_assessment'),
           eq(schema.assessmentSessions.contextType, contextType),
-          contextId ? eq(schema.assessmentSessions.contextId, contextId) : isNull(schema.assessmentSessions.contextId),
+          eq(schema.assessmentSessions.contextId, contextId),
           eq(schema.assessmentSessions.status, 'open')
-        )
+        ) : undefined
     let assessmentSessionId: string | null = null
     let sequence = 0
-    {
+    if (shouldReuseSession && sessionGroupWhere) {
       // FOR UPDATE 锁住评估组行：同一组并发提交时串行化 sequence 分配，
       // 避免 max+1 得到相同序号后 onConflictDoNothing 静默丢关系。
       const [existing] = await client.select({ id: schema.assessmentSessions.id }).from(schema.assessmentSessions)
@@ -239,7 +252,7 @@ export default defineEventHandler(async (event) => {
       assessmentSessionId = existing?.id || null
     }
     if (!assessmentSessionId) {
-      const [created] = await client.insert(schema.assessmentSessions).values({
+      const createQuery = client.insert(schema.assessmentSessions).values({
         schoolId: schoolId,
         ownerUserId: user.id,
         module,
@@ -248,8 +261,22 @@ export default defineEventHandler(async (event) => {
         contextType,
         contextId,
         status: 'open'
-      }).returning({ id: schema.assessmentSessions.id })
+      })
+      // 对话/对象组受局部唯一索引保护。并发首提时后到事务忽略冲突，
+      // 随后重新锁定先到事务创建的开放组。
+      const [created] = shouldReuseSession
+        ? await createQuery.onConflictDoNothing().returning({ id: schema.assessmentSessions.id })
+        : await createQuery.returning({ id: schema.assessmentSessions.id })
       assessmentSessionId = created?.id || null
+      if (!assessmentSessionId && sessionGroupWhere) {
+        const [concurrent] = await client.select({ id: schema.assessmentSessions.id })
+          .from(schema.assessmentSessions)
+          .where(sessionGroupWhere)
+          .orderBy(desc(schema.assessmentSessions.createdAt))
+          .limit(1)
+          .for('update')
+        assessmentSessionId = concurrent?.id || null
+      }
     }
     if (assessmentSessionId) {
       const [{ maxSeq } = { maxSeq: -1 }] = await client
@@ -270,18 +297,33 @@ export default defineEventHandler(async (event) => {
       : [result]
     // 合并全部量表结果（含本次）：归因、严重度、工具、行动项、维度均重新汇总。
     const mergedResult = mergeGroupResults(groupResults) ?? result
-    // 合并报告基于合并后的结果重新生成：多量表方案不再只反映第一张量表。
-    const mergedReport = result.blocked ? null : await generateAssessmentReport(event, {
-      schoolId: schoolId,
-      ownerUserId: user.id,
+    // 事务内只生成确定性报告；模型增强在事务提交后执行并以 updatedAt 防止覆盖
+    // 并发补充评估刚写入的更新版本。
+    const mergedReport = result.blocked ? null : createTemplateAssessmentReport({
       module,
       result: mergedResult,
-      definition
+      definition,
+      outputTemplates
     })
     const mergedNarrative = result.blocked ? null : (mergedReport?.profile.summary || mergedResult.reasons.join('；'))
+    const finalPresentedResult = {
+      ...result,
+      narrative: result.blocked ? null : mergedNarrative,
+      report: mergedReport
+    }
+    await client.update(schema.assessmentAttempts).set({
+      result: finalPresentedResult as unknown as Record<string, unknown>,
+      updatedAt: new Date()
+    }).where(and(
+      eq(schema.assessmentAttempts.id, attempt.id),
+      eq(schema.assessmentAttempts.ownerUserId, user.id),
+      eq(schema.assessmentAttempts.schoolId, schoolId)
+    ))
 
     let fuse: { eventId: string, referralId: string, crisisGuide: string } | null = null
     let planId: string | null = null
+    let planUpdatedAt: Date | null = null
+    let planReport: Record<string, unknown> | null = null
 
     if (result.blocked) {
       const referral = await createSafetyReferral(event, {
@@ -376,6 +418,7 @@ export default defineEventHandler(async (event) => {
           sequence
         }).onConflictDoNothing()
         const [plan] = await client.select({
+          actions: schema.plans.actions,
           instrumentSnapshots: schema.plans.instrumentSnapshots,
           attributionKeywords: schema.plans.attributionKeywords,
           sourceQuestionSummary: schema.plans.sourceQuestionSummary,
@@ -387,53 +430,63 @@ export default defineEventHandler(async (event) => {
         const mergedNames = attributionNames
         const keywords = buildAttributionKeywords(mergedNames)
         const mergedTitle = buildTitle(mergedNames, attributionDescriptions)
-        await client.update(schema.plans).set({
+        const existingActions = plan?.actions || []
+        const mergedActions = mergePlanActionSnapshots(existingActions, mergedResult.actions)
+        const appendedActions = mergedActions.slice(existingActions.length)
+        const updatedAt = new Date()
+        planReport = {
+          ...(mergedReport as unknown as Record<string, unknown>),
+          planStructure: {
+            summary: mergedNarrative || mergedResult.reasons.join('；'),
+            assessment: { code: definition.code, version: definition.version },
+            attribution: {
+              level: mergedResult.level,
+              levelName: mergedResult.levelName,
+              severity: mergedResult.severity,
+              primary: mergedResult.primaryAttribution,
+              secondary: mergedResult.secondaryAttributions,
+              // 完整归因构成（含占比）留在方案快照里做溯源，前端只呈现强弱标签
+              items: mergedResult.attributions.map(attribution => ({
+                code: attribution.code,
+                name: attribution.name,
+                share: attribution.share,
+                strength: attribution.strength,
+                evidenceCodes: attribution.evidenceCodes
+              })),
+              reasons: mergedResult.reasons
+            },
+            tools: planTools.map(tool => tool.title),
+            review: { nextReviewAt: nextReviewAt.toISOString(), mode: 'periodic_with_ai_prompt' }
+          }
+        }
+        const [updatedPlan] = await client.update(schema.plans).set({
           title: mergedTitle.title,
           titleFull: mergedTitle.titleFull,
           sourceQuestionSummary: plan?.sourceQuestionSummary || questionSummary || null,
           attributionKeywords: keywords,
           instrumentSnapshots: [...(plan?.instrumentSnapshots || []), { ...instrumentSnapshot, sequence }],
           summaryEnc: encryptSensitive(mergedNarrative || mergedResult.reasons.join('；'), secret),
-          actions: mergedResult.actions,
+          actions: mergedActions,
           tools: planTools,
-          report: {
-            ...(mergedReport as unknown as Record<string, unknown>),
-            planStructure: {
-              summary: mergedNarrative || mergedResult.reasons.join('；'),
-              assessment: { code: definition.code, version: definition.version },
-              attribution: {
-                level: mergedResult.level,
-                levelName: mergedResult.levelName,
-                severity: mergedResult.severity,
-                primary: mergedResult.primaryAttribution,
-                secondary: mergedResult.secondaryAttributions,
-                // 完整归因构成（含占比）留在方案快照里做溯源，前端只呈现强弱标签
-                items: mergedResult.attributions.map(attribution => ({
-                  code: attribution.code,
-                  name: attribution.name,
-                  share: attribution.share,
-                  strength: attribution.strength,
-                  evidenceCodes: attribution.evidenceCodes
-                })),
-                reasons: mergedResult.reasons
-              },
-              tools: planTools.map(tool => tool.title),
-              review: { nextReviewAt: nextReviewAt.toISOString(), mode: 'periodic_with_ai_prompt' }
-            }
-          },
+          report: planReport,
           matchedRuleIds: mergedResult.matchedRuleIds,
           matchedToolCodes: mergeUnique([...(plan?.matchedToolCodes || []), ...matchedToolCodes]),
           sourceVersions: mergeUnique([...(plan?.sourceVersions || []), ...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || []), ...result.matchedRuleIds]),
           sourceResourceVersionIds: mergeUnique([...(plan?.sourceResourceVersionIds || []), ...(sourceResourceVersionIds.length ? sourceResourceVersionIds : extractSourceResourceVersionIds([...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || [])]))]),
           // 方案内容已重算，复盘时间基于最后提交重新计算
           nextReviewAt,
-          updatedAt: new Date()
-        }).where(eq(schema.plans.id, mergeTargetId))
+          updatedAt
+        }).where(and(
+          eq(schema.plans.id, mergeTargetId),
+          eq(schema.plans.ownerUserId, user.id),
+          eq(schema.plans.schoolId, schoolId)
+        )).returning({ updatedAt: schema.plans.updatedAt })
+        planUpdatedAt = updatedPlan?.updatedAt || null
         planId = mergeTargetId
-        // 只追加本次量表的行动项：此前量表的行动项已在方案生成时写入。
+        // 只追加合并后新增的行动项；旧行动状态和 sequence 保持稳定。
         await createPlanActions(event, {
           planId: mergeTargetId, schoolId: schoolId, ownerUserId: user.id,
-          createdAt: now, actions: result.actions
+          createdAt: now, actions: appendedActions
         }, client)
         await recordPlanOperationEvent(event, {
           schoolId: schoolId,
@@ -444,6 +497,31 @@ export default defineEventHandler(async (event) => {
         }, client)
       } else {
         const builtTitle = buildTitle(attributionNames, attributionDescriptions)
+        planReport = {
+          ...(mergedReport as unknown as Record<string, unknown>),
+          planStructure: {
+            summary: mergedNarrative || mergedResult.reasons.join('；'),
+            assessment: { code: definition.code, version: definition.version },
+            attribution: {
+              level: mergedResult.level,
+              levelName: mergedResult.levelName,
+              severity: mergedResult.severity,
+              primary: mergedResult.primaryAttribution,
+              secondary: mergedResult.secondaryAttributions,
+              // 完整归因构成（含占比）留在方案快照里做溯源，前端只呈现强弱标签
+              items: mergedResult.attributions.map(attribution => ({
+                code: attribution.code,
+                name: attribution.name,
+                share: attribution.share,
+                strength: attribution.strength,
+                evidenceCodes: attribution.evidenceCodes
+              })),
+              reasons: mergedResult.reasons
+            },
+            tools: planTools.map(tool => tool.title),
+            review: { nextReviewAt: nextReviewAt.toISOString(), mode: 'periodic_with_ai_prompt' }
+          }
+        }
         const [plan] = await client.insert(schema.plans).values({
           schoolId: schoolId, ownerUserId: user.id, module,
           studentId: body.studentId,
@@ -460,31 +538,7 @@ export default defineEventHandler(async (event) => {
           summaryEnc: encryptSensitive(mergedNarrative || mergedResult.reasons.join('；'), secret),
           actions: mergedResult.actions,
           tools: planTools,
-          report: {
-            ...(mergedReport as unknown as Record<string, unknown>),
-            planStructure: {
-              summary: mergedNarrative || mergedResult.reasons.join('；'),
-              assessment: { code: definition.code, version: definition.version },
-              attribution: {
-                level: mergedResult.level,
-                levelName: mergedResult.levelName,
-                severity: mergedResult.severity,
-                primary: mergedResult.primaryAttribution,
-                secondary: mergedResult.secondaryAttributions,
-                // 完整归因构成（含占比）留在方案快照里做溯源，前端只呈现强弱标签
-                items: mergedResult.attributions.map(attribution => ({
-                  code: attribution.code,
-                  name: attribution.name,
-                  share: attribution.share,
-                  strength: attribution.strength,
-                  evidenceCodes: attribution.evidenceCodes
-                })),
-                reasons: mergedResult.reasons
-              },
-              tools: planTools.map(tool => tool.title),
-              review: { nextReviewAt: nextReviewAt.toISOString(), mode: 'periodic_with_ai_prompt' }
-            }
-          },
+          report: planReport,
           sourceVersions: [...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || [`fallback-attribution:${module}`]), ...result.matchedRuleIds],
           status: 'pending_acceptance',
           matchedRuleIds: mergedResult.matchedRuleIds,
@@ -493,8 +547,9 @@ export default defineEventHandler(async (event) => {
             ? sourceResourceVersionIds
             : extractSourceResourceVersionIds([...resolvedDefinition.sourceVersions, ...(publishedAttribution?.sourceVersions || [])]),
           nextReviewAt
-        }).returning({ id: schema.plans.id, createdAt: schema.plans.createdAt })
+        }).returning({ id: schema.plans.id, createdAt: schema.plans.createdAt, updatedAt: schema.plans.updatedAt })
         planId = plan?.id || null
+        planUpdatedAt = plan?.updatedAt || null
         if (plan) {
           await client.insert(schema.planAssessmentAttempts).values({
             planId: plan.id,
@@ -515,8 +570,62 @@ export default defineEventHandler(async (event) => {
         }
       }
     }
-    return { attemptId: attempt.id, planId, fuse, report: result.blocked ? null : mergedReport, submittedAt: now }
+    return {
+      attemptId: attempt.id,
+      planId,
+      fuse,
+      report: result.blocked ? null : mergedReport,
+      result: finalPresentedResult,
+      mergedResult,
+      planReport,
+      planUpdatedAt,
+      submittedAt: now
+    }
   })
+
+  // 模型调用不持有数据库事务。若等待期间同组又补交了量表，plan.updatedAt
+  // 会变化，本次增强报告只回写当前评估，不覆盖更新后的合并方案。
+  if (!result.blocked) {
+    const enhancedReport = await generateAssessmentReport(event, {
+      schoolId,
+      ownerUserId: user.id,
+      module,
+      result: outcome.mergedResult,
+      definition
+    })
+    const enhancedNarrative = enhancedReport.profile.summary || outcome.mergedResult.reasons.join('；')
+    outcome.report = enhancedReport
+    outcome.result = {
+      ...result,
+      narrative: enhancedNarrative,
+      report: enhancedReport
+    }
+    await db.transaction(async (tx) => {
+      await tx.update(schema.assessmentAttempts).set({
+        result: outcome.result as unknown as Record<string, unknown>,
+        updatedAt: new Date()
+      }).where(and(
+        eq(schema.assessmentAttempts.id, outcome.attemptId),
+        eq(schema.assessmentAttempts.ownerUserId, user.id),
+        eq(schema.assessmentAttempts.schoolId, schoolId)
+      ))
+      if (outcome.planId && outcome.planUpdatedAt && outcome.planReport) {
+        await tx.update(schema.plans).set({
+          summaryEnc: encryptSensitive(enhancedNarrative, secret),
+          report: {
+            ...(enhancedReport as unknown as Record<string, unknown>),
+            planStructure: outcome.planReport.planStructure
+          },
+          updatedAt: new Date()
+        }).where(and(
+          eq(schema.plans.id, outcome.planId),
+          eq(schema.plans.ownerUserId, user.id),
+          eq(schema.plans.schoolId, schoolId),
+          eq(schema.plans.updatedAt, outcome.planUpdatedAt)
+        ))
+      }
+    })
+  }
 
   await writeAudit(event, {
     schoolId: schoolId, actorId: user.id, action: 'assessment.submit', targetType: 'assessment', targetId: outcome.attemptId,
@@ -544,5 +653,5 @@ export default defineEventHandler(async (event) => {
     result,
     submittedAt: outcome.submittedAt
   })
-  return { attemptId: outcome.attemptId, planId: outcome.planId, result: presentedResult, report: outcome.report, fuse: outcome.fuse }
+  return { attemptId: outcome.attemptId, planId: outcome.planId, result: outcome.result, report: outcome.report, fuse: outcome.fuse }
 })

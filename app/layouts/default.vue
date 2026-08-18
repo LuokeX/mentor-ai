@@ -72,10 +72,11 @@ const navClass = (active: boolean) => [
     <footer v-if="user" class="mx-auto max-w-7xl px-5 pb-6 pt-2 print:block">
       <p class="text-center text-xs text-slate-400">AI 辅助建议，需人工专业判断</p>
     </footer>
+    <SurveyFeedbackButton v-if="user" />
     <nav v-if="user" class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 px-[max(1rem,env(safe-area-inset-left))] pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
-      <div class="mx-auto flex max-w-md justify-around">
-        <NuxtLink v-for="item in mobileItems" :key="item.to" :to="item.to" class="flex min-h-16 min-w-20 flex-col items-center justify-center gap-1 text-xs text-slate-500" active-class="!text-emerald-700">
-          <UIcon :name="item.icon" class="size-5" /><span>{{ item.label }}</span>
+      <div class="mx-auto grid max-w-md" :class="user.role === 'teacher' ? 'grid-cols-5' : 'grid-cols-2'">
+        <NuxtLink v-for="item in mobileItems" :key="item.to" :to="item.to" class="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-0.5 text-[10px] text-slate-500" active-class="!text-emerald-700">
+          <UIcon :name="item.icon" class="size-5" /><span class="max-w-full whitespace-nowrap">{{ item.label }}</span>
         </NuxtLink>
       </div>
     </nav>

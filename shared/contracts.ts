@@ -859,3 +859,10 @@ export const aiRuntimeSettingsPatchSchema = z.object({
   embeddingModel: z.string().trim().max(80).nullable().optional(),
   embeddingEnabled: z.boolean().nullable().optional()
 })
+
+/** 调研反馈入口配置更新（平台后台）：url 为 null = 清空并隐藏按钮。 */
+export const surveyFeedbackSettingsPatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  title: z.string().trim().min(1).max(40).optional(),
+  url: z.string().trim().url().max(500).nullable().optional()
+})

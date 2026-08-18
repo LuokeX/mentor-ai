@@ -6,12 +6,13 @@ import { writeAudit } from '../../../../utils/audit'
 import { encryptSensitive } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 import { ensurePlanActions } from '../../../../domain/plan-actions'
-import { recordPlanOperationEvent } from '../../../../domain/plan-operations'
+import { canUpdatePlanActions, recordPlanOperationEvent } from '../../../../domain/plan-operations'
 import { trackProductEvent } from '../../../../domain/product-events'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
+  const schoolId = user.schoolId
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = z.object({
     actionId: z.string().uuid().optional(),
@@ -39,18 +40,20 @@ export default defineEventHandler(async (event) => {
     schoolId: schema.plans.schoolId,
     ownerUserId: schema.plans.ownerUserId,
     actions: schema.plans.actions,
-    status: schema.plans.status
+    status: schema.plans.status,
+    acceptedAt: schema.plans.acceptedAt,
+    updatedAt: schema.plans.updatedAt
   })
     .from(schema.plans)
     .where(and(
       eq(schema.plans.id, id),
       eq(schema.plans.ownerUserId, user.id),
-      eq(schema.plans.schoolId, user.schoolId)
+      eq(schema.plans.schoolId, schoolId)
     ))
     .limit(1)
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
-  if (['completed', 'closed', 'archived'].includes(plan.status)) {
-    throw createError({ statusCode: 422, message: '已关闭方案不能继续更新动作' })
+  if (!canUpdatePlanActions(plan)) {
+    throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '请先接受方案，再开始执行行动' })
   }
 
   const persisted = await ensurePlanActions(event, plan.id, user.id)
@@ -80,10 +83,19 @@ export default defineEventHandler(async (event) => {
     }).where(and(eq(schema.planActions.id, action.id), eq(schema.planActions.ownerUserId, user.id)))
     const legacy = (plan.actions as Array<{ title: string; detail: string; status: string }>) || []
     if (legacy[action.sequence]) legacy[action.sequence] = { ...legacy[action.sequence]!, status: body.status }
-    await tx.update(schema.plans).set({ actions: legacy as any, status: nextPlanStatus, updatedAt: now }).where(eq(schema.plans.id, plan.id))
+    const [updatedPlan] = await tx.update(schema.plans).set({ actions: legacy as any, status: nextPlanStatus, updatedAt: now }).where(and(
+      eq(schema.plans.id, plan.id),
+      eq(schema.plans.ownerUserId, user.id),
+      eq(schema.plans.schoolId, schoolId),
+      eq(schema.plans.status, plan.status),
+      eq(schema.plans.updatedAt, plan.updatedAt)
+    )).returning({ id: schema.plans.id })
+    if (!updatedPlan) {
+      throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '方案状态已变化，请刷新后重试' })
+    }
   })
   await writeAudit(event, {
-    schoolId: user.schoolId,
+    schoolId,
     actorId: user.id,
     action: 'plan.action.update',
     targetType: 'plan',
@@ -91,11 +103,11 @@ export default defineEventHandler(async (event) => {
     metadata: { actionId: action.id, status: body.status, blockReason: body.blockReason }
   })
   await trackProductEvent(event, {
-    schoolId: user.schoolId, userId: user.id, eventName: 'plan_action_updated',
+    schoolId, userId: user.id, eventName: 'plan_action_updated',
     targetType: 'plan_action', targetId: action.id, metadata: { status: body.status, blockReason: body.blockReason || null, hasExecutionNote: Boolean(body.executionNote) }
   })
   await recordPlanOperationEvent(event, {
-    schoolId: user.schoolId,
+    schoolId,
     ownerUserId: user.id,
     planId: plan.id,
     actionId: action.id,

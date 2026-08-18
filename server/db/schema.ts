@@ -12,6 +12,7 @@ import {
   uuid,
   varchar
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 
 const vector1024 = customType<{ data: number[], driverData: string }>({
   dataType: () => 'vector(1024)',
@@ -459,7 +460,13 @@ export const assessmentSessions = pgTable('assessment_sessions', {
   ...timestamps
 }, table => [
   index('assessment_sessions_owner_module_idx').on(table.ownerUserId, table.module),
-  index('assessment_sessions_source_chat_idx').on(table.sourceChatSessionId)
+  index('assessment_sessions_source_chat_idx').on(table.sourceChatSessionId),
+  uniqueIndex('assessment_sessions_open_chat_uidx')
+    .on(table.schoolId, table.ownerUserId, table.module, table.sourceChatSessionId)
+    .where(sql`${table.status} = 'open' AND ${table.sourceType} = 'assistant_dialogue' AND ${table.sourceChatSessionId} IS NOT NULL`),
+  uniqueIndex('assessment_sessions_open_context_uidx')
+    .on(table.schoolId, table.ownerUserId, table.module, table.contextType, table.contextId)
+    .where(sql`${table.status} = 'open' AND ${table.sourceType} = 'direct_assessment' AND ${table.contextId} IS NOT NULL`)
 ])
 
 /** 评估组内的量表提交记录，sequence 保证展示顺序稳定（先提交在前）。 */
@@ -580,6 +587,26 @@ export const planActions = pgTable('plan_actions', {
 }, table => [
   uniqueIndex('plan_actions_plan_sequence_uidx').on(table.planId, table.sequence),
   index('plan_actions_owner_due_idx').on(table.ownerUserId, table.status, table.dueAt)
+])
+
+export const planActionEvidence = pgTable('plan_action_evidence', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id),
+  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'restrict' }),
+  actionId: uuid('action_id').notNull().references(() => planActions.id, { onDelete: 'restrict' }),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  kind: varchar('kind', { length: 20 }).notNull(),
+  filename: varchar('filename', { length: 180 }).notNull(),
+  mimeType: varchar('mime_type', { length: 80 }).notNull(),
+  byteSize: integer('byte_size').notNull(),
+  checksum: varchar('checksum', { length: 64 }).notNull(),
+  contentEnc: text('content_enc'),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  index('plan_action_evidence_action_idx').on(table.actionId, table.status, table.createdAt),
+  index('plan_action_evidence_owner_idx').on(table.ownerUserId, table.createdAt)
 ])
 
 export const planReviews = pgTable('plan_reviews', {
@@ -1032,6 +1059,16 @@ export const aiRuntimeSettings = pgTable('ai_runtime_settings', {
   timeoutMs: integer('timeout_ms'),
   embeddingModel: varchar('embedding_model', { length: 80 }),
   embeddingEnabled: boolean('embedding_enabled'),
+  updatedBy: uuid('updated_by').references(() => users.id),
+  ...timestamps
+})
+
+/** 调研反馈入口配置（平台后台）。单行记录，控制全局布局中的反馈悬浮按钮显示。 */
+export const surveyFeedbackSettings = pgTable('survey_feedback_settings', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  enabled: boolean('enabled').default(true).notNull(),
+  title: varchar('title', { length: 40 }).default('调研反馈').notNull(),
+  url: text('url'),
   updatedBy: uuid('updated_by').references(() => users.id),
   ...timestamps
 })

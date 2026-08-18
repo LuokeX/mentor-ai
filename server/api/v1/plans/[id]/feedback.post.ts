@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { planFeedbackCreateSchema } from '../../../../../shared/reports'
-import { recordPlanOperationEvent } from '../../../../domain/plan-operations'
+import { canReviewPlan, recordPlanOperationEvent } from '../../../../domain/plan-operations'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
@@ -21,12 +21,21 @@ export default defineEventHandler(async (event) => {
     module: schema.plans.module,
     matchedRuleIds: schema.plans.matchedRuleIds,
     matchedToolCodes: schema.plans.matchedToolCodes,
-    sourceResourceVersionIds: schema.plans.sourceResourceVersionIds
+    sourceResourceVersionIds: schema.plans.sourceResourceVersionIds,
+    status: schema.plans.status,
+    acceptedAt: schema.plans.acceptedAt
   })
     .from(schema.plans)
-    .where(and(eq(schema.plans.id, id), eq(schema.plans.ownerUserId, user.id)))
+    .where(and(
+      eq(schema.plans.id, id),
+      eq(schema.plans.ownerUserId, user.id),
+      eq(schema.plans.schoolId, user.schoolId)
+    ))
     .limit(1)
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
+  if (!canReviewPlan(plan)) {
+    throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '请先接受并执行方案，再提交质量反馈' })
+  }
   if (body.actionId) {
     const [action] = await db.select({ id: schema.planActions.id }).from(schema.planActions).where(and(
       eq(schema.planActions.id, body.actionId),

@@ -8,6 +8,9 @@ type PlanAction = {
   startedAt?: string | null; blockedAt?: string | null; blockReason?: string | null;
   blockNote?: string | null; evidenceType?: string | null; evidenceSummary?: string | null;
   teacherConfidence?: number | null;
+  evidenceFiles?: Array<{
+    id: string; kind: string; filename: string; mimeType: string; byteSize: number; createdAt: string;
+  }>;
 }
 
 const route = useRoute()
@@ -15,13 +18,19 @@ const id = String(route.params.id)
 const { data, error: loadError, refresh } = await useFetch<any>(`/api/v1/plans/${id}`)
 const pending = ref(false)
 const actionPendingId = ref<string | null>(null)
-const sourceExpanded = ref(false)
+const sourceExpanded = ref(true)
 const expandedActionId = ref<string | null>(null)
 const acceptancePending = ref(false)
+const addActionOpen = ref(false)
+const addActionPending = ref(false)
+const execEvidenceFiles = ref<File[]>([])
+const evidencePending = ref(false)
+const toast = useToast()
 
 const acceptanceForm = reactive({
   reason: ''
 })
+const addActionForm = reactive({ title: '', detail: '', dueAt: '' })
 
 // 执行反馈表单状态
 const execForm = reactive({
@@ -42,11 +51,11 @@ const reviewForm = reactive({
   completedActionIds: [] as string[],
 })
 const feedbackForm = reactive({
-  attributionAccuracy: 4,
-  toolUsability: 4,
-  scriptNaturalness: 4,
+  attributionAccuracy: 3,
+  toolUsability: 3,
+  scriptNaturalness: 3,
   actionDifficulty: 3,
-  reviewUsefulness: 4,
+  reviewUsefulness: 3,
   tags: [] as string[],
   note: '',
 })
@@ -141,6 +150,17 @@ const activeActions = computed<PlanAction[]>(() => {
 const completedActionCount = computed(() =>
   activeActions.value.filter(a => a.status === 'completed').length
 )
+const needsAcceptance = computed(() => data.value?.status === 'pending_acceptance'
+  || (data.value?.status === 'adjustment_needed' && !data.value?.acceptedAt))
+const canExecute = computed(() => ['accepted', 'in_progress', 'review_due'].includes(data.value?.status)
+  || (data.value?.status === 'adjustment_needed' && Boolean(data.value?.acceptedAt)))
+const canReview = computed(() => canExecute.value
+  || (data.value?.status === 'escalated' && Boolean(data.value?.acceptedAt)))
+const showReviewForm = computed(() => canReview.value && (
+  data.value?.status === 'review_due'
+  || Boolean(data.value?.reviews?.length)
+  || activeActions.value.some(action => ['in_progress', 'completed', 'blocked', 'skipped'].includes(action.status))
+))
 const report = computed(() => data.value?.report || {})
 const planStructure = computed(() => report.value?.planStructure || {})
 /** 归因构成。优先取报告里的，旧方案快照没有时回退到 planStructure.attribution.items。 */
@@ -209,6 +229,7 @@ function toggleExpand(actionId: string) {
     execForm.evidenceType = 'none'
     execForm.evidenceSummary = ''
     execForm.teacherConfidence = 3
+    execEvidenceFiles.value = []
   } else {
     expandedActionId.value = null
   }
@@ -246,15 +267,88 @@ async function updateActionStatus(actionId: string, status: string, extra: Recor
   }
 }
 
+async function createAction() {
+  if (!data.value) return
+  addActionPending.value = true
+  try {
+    await $fetch(`/api/v1/plans/${data.value.id}/actions`, {
+      method: 'POST',
+      body: {
+        title: addActionForm.title.trim(),
+        detail: addActionForm.detail.trim(),
+        dueAt: addActionForm.dueAt ? new Date(addActionForm.dueAt).toISOString() : undefined
+      }
+    })
+    Object.assign(addActionForm, { title: '', detail: '', dueAt: '' })
+    addActionOpen.value = false
+    await refresh()
+  } finally {
+    addActionPending.value = false
+  }
+}
+
+function fileToBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('文件读取失败'))
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '')
+    reader.readAsDataURL(file)
+  })
+}
+
+function onEvidenceFiles(event: Event) {
+  const input = event.target as HTMLInputElement
+  const selected = [...(input.files || [])]
+  const accepted = selected.filter(file => {
+    const max = file.type.startsWith('image/') ? 5 * 1024 * 1024 : 15 * 1024 * 1024
+    return ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm'].includes(file.type) && file.size <= max
+  }).slice(0, 5)
+  if (accepted.length !== selected.length) {
+    toast.add({ title: '部分文件未加入', description: '支持 JPG、PNG、WebP（5 MB）和 MP4、WebM（15 MB），每次最多 5 个。', color: 'warning' })
+  }
+  execEvidenceFiles.value = accepted
+}
+
+async function uploadEvidence(actionId: string) {
+  while (execEvidenceFiles.value.length) {
+    const file = execEvidenceFiles.value[0]!
+    await $fetch(`/api/v1/plans/${data.value!.id}/actions/${actionId}/evidence`, {
+      method: 'POST',
+      body: { filename: file.name, mimeType: file.type, contentBase64: await fileToBase64(file) }
+    })
+    execEvidenceFiles.value = execEvidenceFiles.value.slice(1)
+  }
+}
+
+function evidenceUrl(actionId: string, evidenceId: string) {
+  return `/api/v1/plans/${data.value!.id}/actions/${actionId}/evidence/${evidenceId}`
+}
+
+async function deleteEvidence(actionId: string, evidenceId: string) {
+  if (!window.confirm('确定删除这份执行证据吗？删除后文件内容不可恢复。')) return
+  await $fetch(evidenceUrl(actionId, evidenceId), { method: 'DELETE' })
+  await refresh()
+}
+
 // 提交执行反馈并标记完成
 async function submitExecution(actionId: string) {
-  await updateActionStatus(actionId, 'completed', {
-    executedAt: execForm.executedAt ? new Date(execForm.executedAt).toISOString() : undefined,
-    executionNote: execForm.executionNote.trim() || undefined,
-    evidenceType: execForm.evidenceType,
-    evidenceSummary: execForm.evidenceSummary.trim() || undefined,
-    teacherConfidence: Number(execForm.teacherConfidence)
-  })
+  evidencePending.value = true
+  try {
+    const hasVideoEvidence = execEvidenceFiles.value.some(file => file.type.startsWith('video/'))
+    if (execEvidenceFiles.value.length) await uploadEvidence(actionId)
+    await updateActionStatus(actionId, 'completed', {
+      executedAt: execForm.executedAt ? new Date(execForm.executedAt).toISOString() : undefined,
+      executionNote: execForm.executionNote.trim() || undefined,
+      evidenceType: hasVideoEvidence ? 'artifact' : execForm.evidenceType,
+      evidenceSummary: execForm.evidenceSummary.trim() || undefined,
+      teacherConfidence: Number(execForm.teacherConfidence)
+    })
+  } catch (error: any) {
+    await refresh()
+    toast.add({ title: '执行记录未完整保存', description: error?.data?.message || error?.message || '请稍后重试', color: 'error' })
+  } finally {
+    evidencePending.value = false
+  }
 }
 
 async function submitBlocked(actionId: string) {
@@ -288,6 +382,18 @@ function formatDate(dateStr: string | null) {
 function formatInputDate(dateStr: string) {
   if (!dateStr) return ''
   return dateStr.slice(0, 16) // YYYY-MM-DDTHH:mm
+}
+
+function scoreOutOfFive(value: unknown) {
+  const score = Number(value)
+  return Number.isInteger(score) && score >= 1 && score <= 5 ? score : '-'
+}
+
+function exportPdf() {
+  const previousTitle = document.title
+  document.title = `${data.value?.title || '方案报告'}.pdf`
+  window.print()
+  window.setTimeout(() => { document.title = previousTitle }, 500)
 }
 
 async function createReview() {
@@ -331,11 +437,11 @@ async function submitFeedback() {
       },
     })
     Object.assign(feedbackForm, {
-      attributionAccuracy: 4,
-      toolUsability: 4,
-      scriptNaturalness: 4,
+      attributionAccuracy: 3,
+      toolUsability: 3,
+      scriptNaturalness: 3,
       actionDifficulty: 3,
-      reviewUsefulness: 4,
+      reviewUsefulness: 3,
       tags: [],
       note: '',
     })
@@ -359,10 +465,9 @@ useHead({ title: () => data.value?.title || '方案详情' })
 <template>
   <div class="mx-auto max-w-4xl px-5 py-10">
     <!-- 返回 -->
-    <div class="mb-6">
-      <UButton to="/information/plans" color="neutral" variant="ghost" icon="i-lucide-arrow-left" size="sm">
-        返回方案列表
-      </UButton>
+    <div class="mb-6 flex items-center justify-between gap-3 print:hidden">
+      <UButton to="/information/plans" color="neutral" variant="ghost" icon="i-lucide-arrow-left" size="sm">返回方案列表</UButton>
+      <UButton color="neutral" variant="soft" icon="i-lucide-file-down" size="sm" @click="exportPdf">下载 PDF</UButton>
     </div>
 
     <!-- 失败态。之前这里没有分支，拉取失败时 data 恒为 null，页面会永远转圈。 -->
@@ -391,9 +496,9 @@ useHead({ title: () => data.value?.title || '方案详情' })
       </div>
     </div>
 
-    <div v-else class="space-y-6">
+    <div v-else class="flex flex-col gap-6">
       <!-- ══════════ 1. 头部 ══════════ -->
-      <section class="rounded-2xl border border-slate-200 bg-white p-6">
+      <section class="order-1 rounded-2xl border border-slate-200 bg-white p-6">
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div class="min-w-0 flex-1">
             <h1 class="text-xl font-semibold text-slate-900">{{ data.title }}</h1>
@@ -427,8 +532,8 @@ useHead({ title: () => data.value?.title || '方案详情' })
       </section>
 
       <section
-        v-if="['pending_acceptance', 'adjustment_needed'].includes(data.status)"
-        class="rounded-2xl border border-amber-200 bg-amber-50 p-5"
+        v-if="needsAcceptance"
+        class="order-2 rounded-2xl border border-amber-200 bg-amber-50 p-5"
       >
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -453,7 +558,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
       <!-- ══════════ 2. 来源对话卡片（仅 AI 来源展示） ══════════ -->
       <section
         v-if="data.sourceConversation"
-        class="rounded-2xl border border-slate-200 bg-white p-5"
+        class="order-3 rounded-2xl border border-slate-200 bg-white p-5"
       >
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex items-center gap-2">
@@ -481,7 +586,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
       <!-- ══════════ 3. 来源评估卡片（多量表按提交顺序） ══════════ -->
       <section
         v-if="data.assessments?.length"
-        class="rounded-2xl border border-slate-200 bg-white"
+        class="order-4 rounded-2xl border border-slate-200 bg-white"
       >
         <button
           class="flex w-full items-center justify-between p-5 text-left font-semibold text-slate-800"
@@ -489,7 +594,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
         >
           <span class="flex items-center gap-2">
             <UIcon name="i-lucide-clipboard-check" class="size-4 text-emerald-600" />
-            来源评估（{{ data.assessments.length }} 份）
+            测评量表（{{ data.assessments.length }} 份，按测试顺序）
           </span>
           <UIcon
             :name="sourceExpanded ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
@@ -516,7 +621,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
             <div>
               <span class="text-slate-400">结果</span>
               <p class="mt-1 font-medium">
-                {{ assessment.result?.risk?.label || assessment.result?.profile?.title || '-' }}
+                {{ assessment.result?.levelName || assessment.result?.report?.risk?.label || assessment.result?.report?.profile?.title || '-' }}
               </p>
             </div>
             <div>
@@ -534,21 +639,23 @@ useHead({ title: () => data.value?.title || '方案详情' })
       <!-- ══════════ 4. 方案执行表单（跟踪动作 + 反馈） ══════════
            待确认/需调整时只展示报告与接受决策，接受后才进入执行态。 -->
       <section
-        v-if="!['pending_acceptance', 'adjustment_needed'].includes(data.status)"
-        class="rounded-2xl border border-slate-200 bg-white p-5"
+        v-if="canExecute"
+        class="order-7 rounded-2xl border border-slate-200 bg-white p-5"
       >
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-3">
           <h3 class="flex items-center gap-2 font-semibold text-slate-800">
             <UIcon name="i-lucide-list-checks" class="size-4 text-indigo-600" />
             方案执行
           </h3>
-          <span class="text-xs text-slate-400">
-            {{ completedActionCount }}/{{ activeActions.length }} 项完成
-          </span>
+          <div class="flex items-center gap-2">
+            <span v-if="activeActions.length" class="text-xs text-slate-400">{{ completedActionCount }}/{{ activeActions.length }} 项完成</span>
+            <span v-else class="text-xs text-slate-400">尚未添加行动</span>
+            <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="addActionOpen = true">新增行动</UButton>
+          </div>
         </div>
 
         <div v-if="!activeActions.length" class="mt-4 rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-400">
-          暂无跟踪动作
+          当前方案尚未生成跟踪动作，可点击“新增行动”补充一项可执行、可复盘的行动。
         </div>
 
         <div class="mt-4 space-y-2">
@@ -637,7 +744,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                     <p class="mt-0.5 font-medium text-slate-700">{{ actionStatusText(action.status) }}</p>
                   </div>
                   <div v-if="action.executedAt">
-                    <span class="text-xs text-slate-400">执行时间</span>
+                    <span class="text-xs text-slate-400">行动日期</span>
                     <p class="mt-0.5 font-medium text-slate-700">{{ formatDate(action.executedAt) }}</p>
                   </div>
                   <div v-if="action.blockReason">
@@ -649,12 +756,33 @@ useHead({ title: () => data.value?.title || '方案详情' })
                     <p class="mt-0.5 leading-6 text-slate-700">{{ action.blockNote }}</p>
                   </div>
                   <div v-if="action.executionNote">
-                    <span class="text-xs text-slate-400">执行结果</span>
+                    <span class="text-xs text-slate-400">行动结果</span>
                     <p class="mt-0.5 leading-6 text-slate-700">{{ action.executionNote }}</p>
                   </div>
                   <div v-if="action.evidenceSummary">
                     <span class="text-xs text-slate-400">证据摘要</span>
                     <p class="mt-0.5 leading-6 text-slate-700">{{ action.evidenceSummary }}</p>
+                  </div>
+                  <div v-if="action.evidenceFiles?.length">
+                    <span class="text-xs text-slate-400">图片/视频证据</span>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <div v-for="file in action.evidenceFiles" :key="file.id" class="flex max-w-full items-center gap-1 rounded-lg border border-slate-200 bg-white p-1">
+                        <UButton
+                          :to="evidenceUrl(action.id, file.id)"
+                          target="_blank"
+                          color="neutral"
+                          variant="ghost"
+                          size="xs"
+                          :icon="file.kind === 'video' ? 'i-lucide-video' : 'i-lucide-image'"
+                          class="min-w-0 max-w-64"
+                        >
+                          <span class="truncate">{{ file.filename }}</span>
+                        </UButton>
+                        <UTooltip text="删除证据">
+                          <UButton icon="i-lucide-trash-2" color="error" variant="ghost" size="xs" square aria-label="删除证据" @click="deleteEvidence(action.id, file.id)" />
+                        </UTooltip>
+                      </div>
+                    </div>
                   </div>
                   <div v-if="action.status === 'completed' && !action.executionNote">
                     <p class="text-xs text-amber-600">
@@ -668,7 +796,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
               <!-- 未完成动作 → 反馈表单 -->
               <template v-else>
                 <div class="grid gap-4 md:grid-cols-2">
-                  <UFormField label="执行日期">
+                  <UFormField label="行动日期">
                     <UInput
                       v-model="execForm.executedAt"
                       type="datetime-local"
@@ -677,7 +805,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                   </UFormField>
                   <div />
                 </div>
-                <UFormField class="mt-3" label="执行结果">
+                <UFormField class="mt-3" label="行动结果">
                   <UTextarea
                     v-model="execForm.executionNote"
                     :rows="2"
@@ -685,7 +813,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                     placeholder="这次行动的具体执行情况和结果（如观察到的变化、遇到的困难等）"
                   />
                 </UFormField>
-                <div class="mt-3 grid gap-3 md:grid-cols-3">
+                <div class="mt-3 grid gap-3 md:grid-cols-2">
                   <UFormField label="证据类型">
                     <USelect
                       v-model="execForm.evidenceType"
@@ -701,11 +829,42 @@ useHead({ title: () => data.value?.title || '方案详情' })
                   <UFormField label="把握度">
                     <USelect v-model="execForm.teacherConfidence" :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v} / 5`, value: v }))" class="w-full" />
                   </UFormField>
-                  <div class="flex items-end">
-                    <UButton color="primary" variant="soft" block :loading="actionPendingId === action.id" @click="updateActionStatus(action.id, 'in_progress')">
-                      标记进行中
-                    </UButton>
+                </div>
+                <div v-if="action.evidenceFiles?.length" class="mt-3">
+                  <span class="text-xs text-slate-500">已上传证据</span>
+                  <div class="mt-2 flex flex-wrap gap-2">
+                    <div v-for="file in action.evidenceFiles" :key="file.id" class="flex max-w-full items-center gap-1 rounded-lg border border-slate-200 bg-white p-1">
+                      <UButton
+                        :to="evidenceUrl(action.id, file.id)"
+                        target="_blank"
+                        color="neutral"
+                        variant="ghost"
+                        size="xs"
+                        :icon="file.kind === 'video' ? 'i-lucide-video' : 'i-lucide-image'"
+                        class="min-w-0 max-w-64"
+                      >
+                        <span class="truncate">{{ file.filename }}</span>
+                      </UButton>
+                      <UTooltip text="删除证据">
+                        <UButton icon="i-lucide-trash-2" color="error" variant="ghost" size="xs" square aria-label="删除证据" @click="deleteEvidence(action.id, file.id)" />
+                      </UTooltip>
+                    </div>
                   </div>
+                </div>
+                <UFormField class="mt-3" label="图片或视频证据">
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/jpeg,image/png,image/webp,video/mp4,video/webm"
+                    class="block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-emerald-50 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-emerald-700"
+                    @change="onEvidenceFiles"
+                  >
+                  <template #hint>图片不超过 5 MB，视频不超过 15 MB；最多选择 5 个。</template>
+                </UFormField>
+                <div v-if="execEvidenceFiles.length" class="mt-2 flex flex-wrap gap-1.5">
+                  <UBadge v-for="file in execEvidenceFiles" :key="`${file.name}-${file.size}`" color="neutral" variant="soft">
+                    {{ file.name }} · {{ (file.size / 1024 / 1024).toFixed(1) }} MB
+                  </UBadge>
                 </div>
                 <UFormField class="mt-3" label="证据摘要">
                   <UInput v-model="execForm.evidenceSummary" class="w-full" placeholder="例如：已完成一次观察记录；不要填写完整敏感正文" />
@@ -747,7 +906,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                   <UButton
                     color="success"
                     size="sm"
-                    :loading="actionPendingId === action.id"
+                    :loading="actionPendingId === action.id || evidencePending"
                     @click="submitExecution(action.id)"
                   >
                     保存并标记完成
@@ -760,8 +919,8 @@ useHead({ title: () => data.value?.title || '方案详情' })
       </section>
 
       <!-- ══════════ 4. 专业方案工作单 ══════════ -->
-      <section v-if="data.report?.profile" class="rounded-2xl bg-slate-50 p-6">
-        <p class="text-xs font-semibold text-emerald-700">专业方案工作单</p>
+      <section v-if="data.report?.profile" class="order-5 rounded-2xl bg-slate-50 p-6">
+        <p class="text-xs font-semibold text-emerald-700">问题画像</p>
         <h3 class="mt-1 text-lg font-semibold">{{ data.report.profile.title }}</h3>
         <p class="mt-3 text-sm leading-7 text-slate-600">{{ data.report.profile.summary }}</p>
 
@@ -812,22 +971,10 @@ useHead({ title: () => data.value?.title || '方案详情' })
           </div>
         </div>
 
-        <div v-if="data.report.evidence?.length" class="mt-5">
-          <h4 class="text-sm font-semibold text-slate-700">归因依据</h4>
-          <div class="mt-3 grid gap-3 md:grid-cols-2">
-            <div
-              v-for="item in data.report.evidence"
-              :key="item.title + item.detail"
-              class="rounded-xl bg-white p-3"
-            >
-              <p class="text-sm font-semibold">{{ item.title }}</p>
-              <p class="mt-1 text-xs leading-5 text-slate-500">{{ item.detail }}</p>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="data.report.threeDayPlan?.length" class="mt-5">
-          <h4 class="text-sm font-semibold text-slate-700">3 天行动方案</h4>
+        <div v-if="data.report.threeDayPlan?.length" class="mt-7">
+          <h4 class="text-base font-semibold text-slate-800">行动方案建议</h4>
+          <p class="mt-1 text-xs text-slate-500">根据本次测评结果生成，执行前请结合实际情况人工确认。</p>
+          <h5 class="mt-4 text-sm font-semibold text-slate-700">3 天行动方案</h5>
           <div class="mt-3 grid gap-3 md:grid-cols-3">
             <div
               v-for="day in data.report.threeDayPlan"
@@ -856,11 +1003,11 @@ useHead({ title: () => data.value?.title || '方案详情' })
               <!-- V2: 结构化步骤 (优先) -->
               <div v-if="tool._hasStructuredSteps && tool._structuredSteps" class="mt-3 space-y-3">
                 <p class="text-xs font-medium text-slate-500">操作步骤</p>
-                <div v-for="step in tool._structuredSteps" :key="step.seq" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                  <div class="flex items-center gap-2">
-                    <span class="flex size-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">{{ step.seq }}</span>
-                    <strong class="text-xs text-slate-800">{{ step.title }}</strong>
-                    <span v-if="step.estimatedTime" class="text-xs text-slate-400">{{ step.estimatedTime }}</span>
+                <div v-for="(step, stepIndex) in tool._structuredSteps" :key="`${tool.title}-${stepIndex}`" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                  <div class="flex items-start gap-2">
+                    <span class="flex size-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">{{ Number(stepIndex) + 1 }}</span>
+                    <strong class="min-w-0 flex-1 break-words text-xs leading-5 text-slate-800">{{ step.title }}</strong>
+                    <span v-if="step.estimatedTime" class="shrink-0 text-xs text-slate-400">{{ step.estimatedTime }}</span>
                   </div>
                   <p class="mt-1.5 text-xs leading-5 text-slate-600">{{ step.description }}</p>
                   <div v-if="step.keyTip" class="mt-2 rounded bg-amber-50 p-2 text-xs leading-5 text-amber-800">
@@ -905,10 +1052,10 @@ useHead({ title: () => data.value?.title || '方案详情' })
       </section>
 
       <!-- AI 合规声明（《生成式人工智能服务管理暂行办法》） -->
-      <p class="mt-3 text-center text-xs text-slate-400">AI 辅助建议，需人工专业判断</p>
+      <p class="order-6 mt-3 text-center text-xs text-slate-400">AI 辅助建议，需人工专业判断</p>
 
       <!-- ══════════ 5. 复盘时间线 ══════════ -->
-      <section class="rounded-2xl border border-slate-200 bg-white p-5">
+      <section v-if="canReview && data.reviews?.length" class="order-8 rounded-2xl border border-slate-200 bg-white p-5">
         <h3 class="flex items-center gap-2 font-semibold text-slate-800">
           <UIcon name="i-lucide-clock" class="size-4 text-slate-600" />
           复盘时间线
@@ -921,7 +1068,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
             class="rounded-xl border border-slate-100 p-4"
           >
             <div class="flex justify-between gap-3">
-              <strong class="text-sm">效果 {{ review.effectScore }}/5</strong>
+              <strong class="text-sm">效果 {{ scoreOutOfFive(review.effectScore) }}/5</strong>
               <span class="text-xs text-slate-400">
                 {{ new Date(review.reviewAt).toLocaleString('zh-CN') }}
               </span>
@@ -929,17 +1076,11 @@ useHead({ title: () => data.value?.title || '方案详情' })
             <p class="mt-2 text-sm leading-6 text-slate-600">{{ review.progressNote }}</p>
             <p class="mt-2 text-xs text-emerald-700">下一步：{{ review.nextAction }}</p>
           </div>
-          <p
-            v-if="!data.reviews?.length"
-            class="rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-400"
-          >
-            还没有复盘记录，在下方新增。
-          </p>
         </div>
       </section>
 
       <!-- ══════════ 6. 新增复盘 ══════════ -->
-      <section class="rounded-2xl border border-slate-200 bg-white p-5">
+      <section v-if="showReviewForm" class="order-9 rounded-2xl border border-slate-200 bg-white p-5 print:hidden">
         <h3 class="flex items-center gap-2 font-semibold text-slate-800">
           <UIcon name="i-lucide-plus-circle" class="size-4 text-emerald-600" />
           新增复盘
@@ -1009,17 +1150,16 @@ useHead({ title: () => data.value?.title || '方案详情' })
       </section>
 
       <!-- ══════════ 7. 方案质量反馈 ══════════ -->
-      <section class="rounded-2xl border border-slate-200 bg-white p-5">
-        <div class="flex flex-wrap items-center justify-between gap-3">
+      <section v-if="canReview" class="order-10 rounded-2xl border border-slate-200 bg-white p-5 print:hidden">
+        <div class="flex flex-wrap items-center gap-3">
           <h3 class="flex items-center gap-2 font-semibold text-slate-800">
             <UIcon name="i-lucide-message-square-check" class="size-4 text-sky-600" />
             方案质量反馈
           </h3>
-          <UBadge color="neutral" variant="soft">{{ data.feedback?.length || 0 }} 次反馈</UBadge>
         </div>
 
         <div v-if="data.feedback?.length" class="mt-4 rounded-xl bg-sky-50 p-3 text-xs leading-5 text-sky-900">
-          最近反馈：归因 {{ data.feedback[0].attributionAccuracy }}/5 · 工具 {{ data.feedback[0].toolUsability }}/5 · 复盘 {{ data.feedback[0].reviewUsefulness }}/5
+          最近反馈：归因 {{ scoreOutOfFive(data.feedback[0].attributionAccuracy) }}/5 · 工具 {{ scoreOutOfFive(data.feedback[0].toolUsability) }}/5 · 复盘 {{ scoreOutOfFive(data.feedback[0].reviewUsefulness) }}/5
         </div>
 
         <div class="mt-4 grid gap-3 md:grid-cols-5">
@@ -1063,4 +1203,24 @@ useHead({ title: () => data.value?.title || '方案详情' })
       </section>
     </div>
   </div>
+
+  <UModal v-model:open="addActionOpen" title="新增行动" description="补充一项可执行、可复盘的方案行动。">
+    <template #body>
+      <form class="space-y-4" @submit.prevent="createAction">
+        <UFormField label="行动名称" required>
+          <UInput v-model="addActionForm.title" class="w-full" maxlength="80" placeholder="例如：完成一次课间观察" />
+        </UFormField>
+        <UFormField label="行动说明" required>
+          <UTextarea v-model="addActionForm.detail" class="w-full" :rows="4" maxlength="500" placeholder="写清楚对象、步骤和可观察结果" />
+        </UFormField>
+        <UFormField label="计划完成时间">
+          <UInput v-model="addActionForm.dueAt" class="w-full" type="datetime-local" />
+        </UFormField>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="ghost" type="button" @click="addActionOpen = false">取消</UButton>
+          <UButton type="submit" :loading="addActionPending" :disabled="addActionForm.title.trim().length < 2 || addActionForm.detail.trim().length < 4">保存行动</UButton>
+        </div>
+      </form>
+    </template>
+  </UModal>
 </template>

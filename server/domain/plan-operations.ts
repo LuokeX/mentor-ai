@@ -8,6 +8,7 @@ export type PlanOperationEventType =
   | 'plan_merged'
   | 'plan_acceptance_updated'
   | 'plan_action_updated'
+  | 'plan_action_added'
   | 'plan_action_blocked'
   | 'plan_review_completed'
   | 'plan_feedback_submitted'
@@ -44,6 +45,37 @@ export function planStatusAfterReview(input: {
   if (input.decision === 'need_collaboration') return 'escalated'
   if (input.decision === 'adjust_actions' || input.effectScore <= 2) return 'adjustment_needed'
   return 'in_progress'
+}
+
+type PlanOperationState = {
+  status: string
+  acceptedAt?: Date | string | null
+}
+
+/** 只有接受后的方案才能执行行动；旧版已进入执行态的方案继续兼容。 */
+export function canUpdatePlanActions(plan: PlanOperationState) {
+  if (['accepted', 'in_progress', 'review_due'].includes(plan.status)) return true
+  return plan.status === 'adjustment_needed' && Boolean(plan.acceptedAt)
+}
+
+/** 复盘可处理执行中、待复盘、已接受调整或已升级的方案。 */
+export function canReviewPlan(plan: PlanOperationState) {
+  if (['accepted', 'in_progress', 'review_due'].includes(plan.status)) return true
+  return ['adjustment_needed', 'escalated'].includes(plan.status) && Boolean(plan.acceptedAt)
+}
+
+const PLAN_STATUS_TRANSITIONS: Record<string, string[]> = {
+  accepted: ['in_progress', 'closed'],
+  in_progress: ['completed', 'closed'],
+  review_due: ['in_progress', 'completed', 'closed'],
+  adjustment_needed: ['in_progress', 'closed'],
+  escalated: ['closed']
+}
+
+export function canTransitionPlanStatus(plan: PlanOperationState, nextStatus: string) {
+  if (!PLAN_STATUS_TRANSITIONS[plan.status]?.includes(nextStatus)) return false
+  if (plan.status === 'adjustment_needed' && !plan.acceptedAt) return false
+  return true
 }
 
 export function extractSourceResourceVersionIds(sourceVersions: string[] = []) {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { extractSourceResourceVersionIds, planStatusAfterReview } from '../server/domain/plan-operations'
+import {
+  canReviewPlan,
+  canTransitionPlanStatus,
+  canUpdatePlanActions,
+  extractSourceResourceVersionIds,
+  planStatusAfterReview
+} from '../server/domain/plan-operations'
 
 describe('plan operation domain', () => {
   it('moves low score reviews into adjustment', () => {
@@ -19,5 +25,20 @@ describe('plan operation domain', () => {
       'module-resource:home_school:assessment:global:1.0.0',
       'hs-high'
     ])).toEqual(['module-resource:home_school:assessment:global:1.0.0'])
+  })
+
+  it('requires acceptance before action execution or review', () => {
+    expect(canUpdatePlanActions({ status: 'pending_acceptance', acceptedAt: null })).toBe(false)
+    expect(canReviewPlan({ status: 'pending_acceptance', acceptedAt: null })).toBe(false)
+    expect(canUpdatePlanActions({ status: 'adjustment_needed', acceptedAt: null })).toBe(false)
+    expect(canReviewPlan({ status: 'adjustment_needed', acceptedAt: new Date() })).toBe(true)
+    expect(canUpdatePlanActions({ status: 'accepted', acceptedAt: new Date() })).toBe(true)
+  })
+
+  it('rejects generic status bypasses from pending acceptance', () => {
+    expect(canTransitionPlanStatus({ status: 'pending_acceptance' }, 'in_progress')).toBe(false)
+    expect(canTransitionPlanStatus({ status: 'pending_acceptance' }, 'completed')).toBe(false)
+    expect(canTransitionPlanStatus({ status: 'accepted', acceptedAt: new Date() }, 'in_progress')).toBe(true)
+    expect(canTransitionPlanStatus({ status: 'in_progress' }, 'completed')).toBe(true)
   })
 })

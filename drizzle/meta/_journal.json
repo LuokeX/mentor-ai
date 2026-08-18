@@ -253,6 +253,34 @@
       "when": 1786962000000,
       "tag": "0035_fix_instrument_snapshot_names",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786977000000,
+      "tag": "0036_assessment_session_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786977600000,
+      "tag": "0037_plan_action_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786978200000,
+      "tag": "0038_correct_instrument_snapshot_names",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1787015371358,
+      "tag": "0039_rare_sprite",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
@@ -110,6 +110,25 @@ export default defineEventHandler(async (event) => {
       .limit(10)
   ])
   const actions = await ensurePlanActions(event, plan.id, user.id)
+  const evidenceRows = actions.length ? await db.select({
+    id: schema.planActionEvidence.id,
+    actionId: schema.planActionEvidence.actionId,
+    kind: schema.planActionEvidence.kind,
+    filename: schema.planActionEvidence.filename,
+    mimeType: schema.planActionEvidence.mimeType,
+    byteSize: schema.planActionEvidence.byteSize,
+    createdAt: schema.planActionEvidence.createdAt
+  }).from(schema.planActionEvidence).where(and(
+    inArray(schema.planActionEvidence.actionId, actions.map(action => action.id)),
+    eq(schema.planActionEvidence.planId, plan.id),
+    eq(schema.planActionEvidence.ownerUserId, user.id),
+    eq(schema.planActionEvidence.schoolId, user.schoolId),
+    eq(schema.planActionEvidence.status, 'active')
+  )).orderBy(asc(schema.planActionEvidence.createdAt)) : []
+  const evidenceByAction = new Map<string, typeof evidenceRows>()
+  for (const file of evidenceRows) {
+    evidenceByAction.set(file.actionId, [...(evidenceByAction.get(file.actionId) || []), file])
+  }
   const { summaryEnc, acceptanceReasonEnc, ...publicPlan } = plan
 
   return {
@@ -124,7 +143,8 @@ export default defineEventHandler(async (event) => {
     actions: actions.map(({ blockNoteEnc, evidenceSummaryEnc, ...action }) => ({
       ...action,
       blockNote: blockNoteEnc ? decryptSensitive(blockNoteEnc, secret) : null,
-      evidenceSummary: evidenceSummaryEnc ? decryptSensitive(evidenceSummaryEnc, secret) : null
+      evidenceSummary: evidenceSummaryEnc ? decryptSensitive(evidenceSummaryEnc, secret) : null,
+      evidenceFiles: evidenceByAction.get(action.id) || []
     })),
     reviews,
     feedback: feedback.map(({ noteEnc, ...item }) => ({
