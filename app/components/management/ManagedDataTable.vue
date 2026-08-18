@@ -68,6 +68,27 @@ function onSelect(_event: Event, row: TableRow<T>) {
       <template
         v-for="column in columns"
         :key="column.key"
+        #[`${column.key}-header`]="header"
+      >
+        <button
+          v-if="column.sortable"
+          type="button"
+          class="group inline-flex cursor-pointer items-center gap-1.5 transition hover:text-gray-900"
+          :aria-label="`按${column.label}排序`"
+          @click="emit('sort', column.key)"
+        >
+          {{ column.label }}
+          <UIcon
+            :name="sort === column.key ? (order === 'asc' ? 'i-lucide-arrow-up' : 'i-lucide-arrow-down') : 'i-lucide-arrow-up-down'"
+            class="size-3.5 shrink-0"
+            :class="sort === column.key ? 'text-primary-500' : 'opacity-40 group-hover:opacity-70'"
+          />
+        </button>
+        <span v-else>{{ column.label }}</span>
+      </template>
+      <template
+        v-for="column in columns"
+        :key="column.key"
         #[`${column.key}-cell`]="scope"
       >
         <slot

@@ -55,11 +55,11 @@ watch([reviewFrom, reviewTo], () => {
 })
 
 const columns = [
-  { key: 'title', label: '方案标题', sortable: true },
-  { key: 'module', label: '模块' },
-  { key: 'status', label: '状态' },
-  { key: 'nextReviewAt', label: '复盘日期', sortable: true },
-  { key: 'updatedAt', label: '最近更新', sortable: true },
+  { key: 'title', label: '方案标题', sortable: true, class: 'w-80 max-w-80 min-w-0' },
+  { key: 'module', label: '模块', class: 'w-44 max-w-44 min-w-0' },
+  { key: 'status', label: '状态', class: 'w-28 max-w-28' },
+  { key: 'nextReviewAt', label: '复盘日期', sortable: true, class: 'w-32 max-w-32' },
+  { key: 'updatedAt', label: '最近更新', sortable: true, class: 'w-32 max-w-32' },
 ]
 
 const statusOptions = [
@@ -121,25 +121,28 @@ const router = useRouter()
       </UButton>
     </div>
 
-    <!-- 复盘日期范围 -->
-    <div class="mb-4 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-      <UIcon name="i-lucide-calendar-range" class="size-4 text-slate-400" />
-      <span class="shrink-0 text-slate-500">复盘日期</span>
-      <UInput v-model="reviewFrom" type="date" class="w-40" aria-label="复盘开始日期" />
-      <span class="text-slate-400">至</span>
-      <UInput v-model="reviewTo" type="date" class="w-40" aria-label="复盘结束日期" />
+    <!-- 复盘日期 + 工具栏同一行（窄屏自动换行） -->
+    <div class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-3">
+      <div class="min-w-0 flex-1">
+        <TableToolbar
+          :search-value="q"
+          :status-filter="statusFilter"
+          :status-options="statusOptions"
+          search-placeholder="搜索方案标题..."
+          :loading="loading"
+          @search="onSearch"
+          @update:status-filter="onStatusChange"
+          @refresh="refresh"
+        />
+      </div>
+      <div class="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+        <UIcon name="i-lucide-calendar-range" class="size-4 text-slate-400" />
+        <span class="shrink-0 text-slate-500">复盘日期</span>
+        <UInput v-model="reviewFrom" type="date" class="w-40" aria-label="复盘开始日期" />
+        <span class="text-slate-400">至</span>
+        <UInput v-model="reviewTo" type="date" class="w-40" aria-label="复盘结束日期" />
+      </div>
     </div>
-
-    <TableToolbar
-      :search-value="q"
-      :status-filter="statusFilter"
-      :status-options="statusOptions"
-      search-placeholder="搜索方案标题..."
-      :loading="loading"
-      @search="onSearch"
-      @update:status-filter="onStatusChange"
-      @refresh="refresh"
-    />
 
     <ManagedDataTable
       :columns="columns"
