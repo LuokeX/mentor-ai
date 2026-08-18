@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { moduleIdSchema } from '#shared/contracts'
-import { INSTRUMENT_ROLE_LABELS, type InstrumentRole, type LibraryType } from '#shared/contracts'
+import { INSTRUMENT_ROLE_LABELS, type InstrumentRole } from '#shared/contracts'
 import { moduleMeta, type AssessmentDefinition } from '#shared/assessments'
 
 interface ContextOption {
@@ -10,39 +10,7 @@ interface ContextOption {
   description?: string
 }
 
-interface ModuleResourceOverview {
-  assessment: {
-    title: string
-    code: string
-    version: string
-    questionCount: number
-    sourceVersions: string[]
-  }
-  tools: {
-    tools: Array<{
-      title?: string
-      scenario?: string
-      steps?: string[]
-      doNot?: string[]
-      sourceRefs?: string[]
-      version?: string
-    }>
-    sourceVersions: string[]
-  }
-  libraries: Array<{
-    id: string
-    libraryType: LibraryType
-    name: string
-    description?: string | null
-    scope: 'global' | 'school'
-    versionId: string
-    version: string
-    publishedAt?: string | null
-  }>
-}
-
-interface InstrumentOption {
-  code: string
+interface InstrumentOption {  code: string
   title: string
   shortName: string | null
   description: string
@@ -169,7 +137,6 @@ function instrumentLockReason(option: InstrumentOption) {
   }
   return ''
 }
-const { data: resourceOverview, error: resourceError } = await useFetch<ModuleResourceOverview>(`/api/v1/module-resources/${moduleId}`)
 
 /** 重试整页数据。definition 拉不到时页面没有任何可操作内容，必须给一个出口。 */
 const retrying = ref(false)
@@ -225,25 +192,10 @@ const selectedContext = computed(() => {
   const [type, id] = selectedContextKey.value.split(':')
   return moduleContextOptions.value.find(item => item.type === type && item.id === id) || null
 })
-const dimensions = computed(() => [...new Set(definition.value?.questions.map(item => item.dimension) || [])])
 const question = computed(() => definition.value?.questions[current.value])
 const answeredCount = computed(() => Object.keys(answers).length)
 const hasDraft = computed(() => Boolean(attemptId.value || answeredCount.value))
 const progress = computed(() => definition.value ? Math.round(answeredCount.value / definition.value.questions.length * 100) : 0)
-const visibleTools = computed(() => resourceOverview.value?.tools.tools.slice(0, 3) || [])
-const resourceLibraries = computed(() => resourceOverview.value?.libraries || [])
-
-const libraryTypeLabels: Record<LibraryType, string> = {
-  assessment: '评估库',
-  attribution: '归因库',
-  tool: '工具库',
-  output_template: '输出模板库',
-  keyword_route: '关键词路由库'
-}
-
-function libraryTypeLabel(type: LibraryType) {
-  return libraryTypeLabels[type] || type
-}
 
 function firstUnansweredIndex() {
   if (!definition.value) return 0
@@ -428,39 +380,6 @@ async function submit() {
       </aside>
 
       <div class="space-y-5">
-        <section class="panel p-6 sm:p-7">
-          <h2 class="text-lg font-semibold">它会帮你看什么</h2>
-          <div class="mt-4 flex flex-wrap gap-2"><UBadge v-for="item in dimensions" :key="item" color="neutral" variant="soft">{{ item }}</UBadge></div>
-          <div class="mt-5 rounded-2xl bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
-            完成后会生成确定性评估报告、3 天行动方案和 7 天复盘节点；到期动作会进入“今日待办”。
-          </div>
-        </section>
-
-        <section class="panel p-6 sm:p-7">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 class="text-lg font-semibold">模块资源中心</h2>
-              <p class="mt-1 text-xs leading-5 text-slate-500">当前量表、归因和工具都会优先使用校本发布版本；没有校本版本时自动回到平台基线。</p>
-            </div>
-            <UBadge v-if="resourceOverview?.assessment" color="primary" variant="soft">评估 {{ resourceOverview.assessment.version }}</UBadge>
-          </div>
-          <div v-if="resourceLibraries.length" class="mt-4 flex flex-wrap gap-2">
-            <UBadge v-for="library in resourceLibraries" :key="library.versionId" color="neutral" variant="soft">
-              {{ libraryTypeLabel(library.libraryType) }} · {{ library.scope === 'school' ? '校本' : '平台' }} v{{ library.version }}
-            </UBadge>
-          </div>
-          <div v-if="visibleTools.length" class="mt-5 grid gap-3 md:grid-cols-3">
-            <article v-for="tool in visibleTools" :key="tool.title || tool.scenario" class="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-              <p class="text-sm font-semibold">{{ tool.title || '工具卡' }}</p>
-              <p class="mt-2 line-clamp-3 text-xs leading-5 text-slate-500">{{ tool.scenario || tool.steps?.[0] || '已发布工具可在本模块场景中调用。' }}</p>
-            </article>
-          </div>
-          <UAlert v-else-if="resourceLibraries.length" class="mt-4" color="info" variant="soft" title="资源已发布" description="本模块已有量表或归因资源；工具卡发布后会在这里直接展示。" />
-          <!-- 拉取失败和「确实没发布」是两回事，不能都说成「暂未发布模块资源」 -->
-          <UAlert v-else-if="resourceError" class="mt-4" color="warning" variant="soft" title="模块资源加载失败" description="这不代表资源未发布，只是这次没取到。评估仍可正常进行。" />
-          <UAlert v-else class="mt-4" color="warning" variant="soft" title="暂未发布模块资源" description="系统会暂时使用内置评估基线；归因和工具匹配不会让 AI 自由编造。" />
-        </section>
-
         <!--
           量表选择器。模块下只有一张量表时不显示，保持原来的单量表体验。
           推荐来自 AI（LLM 从可做量表里挑）或规则兜底，教师始终可以改选。

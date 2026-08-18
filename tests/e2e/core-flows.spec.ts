@@ -35,7 +35,6 @@ test.describe('四角色核心路径', () => {
     await login(page, '13900001001')
     await page.goto('/module/self_growth')
     await expect(page.getByRole('heading', { name: '班主任状态五问' })).toBeVisible()
-    await expect(page.getByText('完成后会生成确定性评估报告、3 天行动方案和 7 天复盘节点；到期动作会进入“今日待办”。')).toBeVisible()
 
     const start = page.getByRole('button', { name: /^(开始完整评估|重新开始)$/ })
     await expect(start).toBeVisible()
