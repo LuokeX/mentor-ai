@@ -126,41 +126,6 @@ function moduleRiskDescription(module: ModuleId, result: ReportResult) {
   return descriptions[module]
 }
 
-function moduleThreeDayPlan(module: ModuleId, result: ReportResult, weak: string, strong: string): AssessmentReport['threeDayPlan'] {
-  const action = (index: number, fallbackTitle: string, fallbackDetail: string) => ({
-    title: result.actions[index]?.title || fallbackTitle,
-    detail: result.actions[index]?.detail || fallbackDetail
-  })
-  const plans: Record<ModuleId, AssessmentReport['threeDayPlan']> = {
-    self_growth: [
-      { day: 1, title: '止损与补能', actions: [action(0, '完成一次三分钟补能', '暂停处理非紧急事务，先恢复身体节奏并记录最消耗的一件事。')] },
-      { day: 2, title: '边界拆分', actions: [action(1, '拆解可控事项', '把当前压力拆成可控制、可影响、暂时不可控三类，只推进一项可控动作。')] },
-      { day: 3, title: '建立支持点', actions: [{ title: '找一个同伴复盘', detail: `围绕"${weak}"说清事实、感受和需要的支持，不独自承接全部问题。` }] }
-    ],
-    class_system: [
-      { day: 1, title: '定位薄弱系统', actions: [action(0, `聚焦"${weak}"系统`, '选一个最影响秩序或学习的具体节点，写清目标状态和观察标准。')] },
-      { day: 2, title: '补一个班级机制', actions: [action(2, '补齐一项日常 SOP', '明确学生责任人、执行步骤、异常处理和复盘时间。')] },
-      { day: 3, title: '班级微复盘', actions: [action(1, '召开十分钟班级微复盘', `借助"${strong}"中的积极经验，让学生说出一个保留动作和一个调整动作。`)] }
-    ],
-    home_school: [
-      { day: 1, title: '稳住情绪与事实', actions: [action(0, '先确认情绪与事实', '不在情绪高点解释责任，先记录家长诉求、事实依据和待核实点。')] },
-      { day: 2, title: '设计沟通容器', actions: [{ title: '选择沟通方式', detail: `围绕"${weak}"决定用文字、电话还是线下面谈，并提前设置沟通时间和边界。` }] },
-      { day: 3, title: '形成下一步约定', actions: [action(1, '提出一个可确认的下一步', '把双方要做的事、反馈时间和升级条件写清楚，避免无限来回解释。')] }
-    ],
-    student_case: [
-      { day: 1, title: '结构化观察', actions: [action(0, '完成一周结构化观察', `先围绕"${strong}"记录发生前、行为本身和行为后的结果。`)] },
-      { day: 2, title: '低压力接触', actions: [action(1, '与学生进行一次低压力谈话', '从可观察事实开始，不贴标签，询问学生感受、需要和愿意尝试的小支持。')] },
-      { day: 3, title: '决定支持层级', actions: [{ title: '整理协同材料', detail: '根据等级整理时间线、已尝试措施和效果，决定教师支持、年级协同或专业会商。' }] }
-    ],
-    learning_problem: [
-      { day: 1, title: '三层定位', actions: [action(0, '完成一周学习行为观察', `围绕"${strong}"记录学生在课堂参与、作业完成和测验中的表现模式。`)] },
-      { day: 2, title: '教学支架调整', actions: [action(1, '试用一项教学支架', `针对"${strong}"中的具体卡点，从示范、提示、提问、同伴互助中选择一项支架并记录效果。`)] },
-      { day: 3, title: '制定干预计划', actions: [{ title: '确定接下来两周的支持重点', detail: '根据三层诊断结果，聚焦一个可改善的维度，设定目标、支架策略和效果检查节点。' }] }
-    ]
-  }
-  return plans[module]
-}
-
 function moduleSevenDayFollowUp(module: ModuleId, weak: string, strong: string): AssessmentReport['sevenDayFollowUp'] {
   return {
     self_growth: {
@@ -189,15 +154,6 @@ function moduleSevenDayFollowUp(module: ModuleId, weak: string, strong: string):
       escalationSignals: ['学习困难持续加重且常规支架无效', '学生出现明显厌学、拒学或躯体化表现', '出现自伤、暴力或重大创伤等安全信号']
     }
   }[module]
-}
-
-function splitToolContent(content: string) {
-  return content
-    .split(/\n|[;；。]/)
-    .map(item => item.trim())
-    // 过滤单字符残段：模板报告的 steps 有最短 2 字符校验，短标点行会整单 500
-    .filter(item => item.length >= 2)
-    .slice(0, 6)
 }
 
 function moduleSupportGoal(module: ModuleId, result: ReportResult, weak: string, strong: string): NonNullable<AssessmentReport['supportGoal']> {
@@ -236,41 +192,6 @@ function moduleSupportGoal(module: ModuleId, result: ReportResult, weak: string,
     }
   }
   return base
-}
-
-function moduleEscalationConditions(module: ModuleId): string[] {
-  return {
-    self_growth: ['连续多日无法恢复精力或明显影响睡眠饮食', '出现无助、自伤或安全风险表达', '教师已无法独立维持基本工作功能'],
-    class_system: ['班级秩序持续失控且常规流程无效', '冲突或违规频率明显上升', '需要任课教师、年级组共同统一机制'],
-    home_school: ['出现威胁、公开抹黑或恶意维权升级', '家长拒绝基本沟通边界', '沟通已影响学生安全或学校秩序'],
-    student_case: ['学生表现持续加重或扩展到更多场景', '常规教师支持连续无效', '出现自伤、暴力、虐待、失联等安全信号'],
-    learning_problem: ['学习困难持续加重且常规支架无效', '出现明显厌学、拒学或躯体化表现', '伴随自伤、暴力或重大创伤等安全信号']
-  }[module]
-}
-
-function moduleSuccessCriteria(module: ModuleId, weak: string, strong: string): string[] {
-  return {
-    self_growth: ['至少完成 1 个补能或边界动作', `"${weak}"相关消耗有所下降`, '能明确下一步需要谁提供支持'],
-    class_system: [`"${weak}"对应的班级节点更可预期`, '学生能复述一个规则或流程', '班级微复盘形成一个保留动作和一个调整动作'],
-    home_school: ['形成事实、诉求、边界三项记录', '双方确认一个下一步动作和反馈时间', '沟通没有继续升级到公开冲突'],
-    student_case: [`"${strong}"表现的频率或强度有记录`, '至少完成一次低压力谈话或结构化观察', '明确继续教师支持还是升级协同'],
-    learning_problem: [`"${strong}"层面的具体卡点被描述清楚`, '至少试用一项教学支架', '能根据效果决定保留、调整或升级支持']
-  }[module]
-}
-
-function toolPrescriptions(result: ReportResult): NonNullable<AssessmentReport['toolPrescriptions']> {
-  return result.tools.slice(0, 6).map(tool => {
-    const steps = splitToolContent(tool.content)
-    return {
-      title: tool.title,
-      applicableWhen: `适用于当前"${result.primaryAttribution}"相关场景。`,
-      steps: steps.length ? steps : [tool.content],
-      script: tool.content.includes('：') ? tool.content.slice(0, 500) : undefined,
-      prohibitions: [],
-      outputArtifact: '执行记录或沟通/观察纪要',
-      estimatedTime: '本周内完成一次并记录结果'
-    }
-  })
 }
 
 function selectOutputTemplate(
@@ -373,7 +294,6 @@ export function createTemplateAssessmentReport(input: {
       { title: '主要短板/重点', detail: `当前重点维度：${weak}；相对优势维度：${strong}。` },
       { title: '规则版本', detail: `${definition.code}@${definition.version}；命中规则：${result.matchedRuleIds.join('、')}`.slice(0, 400) }
     ],
-    threeDayPlan: moduleThreeDayPlan(input.module, result, weak, strong),
     sevenDayFollowUp: moduleSevenDayFollowUp(input.module, weak, strong),
     scripts: moduleScript(input.module, result),
     supportGoal: moduleSupportGoal(input.module, result, weak, strong),
@@ -381,9 +301,6 @@ export function createTemplateAssessmentReport(input: {
       title: result.actions[0]?.title || (input.module === 'home_school' ? '先完成事实记录' : '先完成一个最小行动'),
       detail: result.actions[0]?.detail || `围绕"${result.primaryAttribution}"选择一项今天能完成的观察或沟通动作。`
     },
-    toolPrescriptions: toolPrescriptions(result),
-    escalationConditions: moduleEscalationConditions(input.module),
-    successCriteria: moduleSuccessCriteria(input.module, weak, strong),
     printMeta: {
       module: input.module,
       moduleTitle: moduleMeta[input.module].title,
@@ -404,13 +321,6 @@ export function createTemplateAssessmentReport(input: {
       title: '建议行动',
       detail: fitReportText(renderOutputTemplate(actionTemplate.content, result, weak, strong), 300)
     }
-  }
-  const cautionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'caution')
-  if (cautionTemplate) {
-    report.escalationConditions = [
-      fitReportText(renderOutputTemplate(cautionTemplate.content, result, weak, strong), 200),
-      ...(report.escalationConditions || [])
-    ].slice(0, 6)
   }
   const reviewTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'review')
   if (reviewTemplate) {

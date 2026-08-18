@@ -12,11 +12,10 @@ type LegacyAction = {
 
 type ReportActionSnapshot = {
   firstAction?: { title?: unknown, detail?: unknown }
-  threeDayPlan?: Array<{ actions?: Array<{ title?: unknown, detail?: unknown }> }>
 }
 
 /**
- * 老方案可能只有报告里的三日行动建议，没有 plans.actions 快照。
+ * 老方案可能只有报告里的首个行动建议，没有 plans.actions 快照。
  * 详情页首次读取时把已有报告快照转成跟踪动作，不重新调用模型，也不覆盖已存在的动作。
  */
 export function derivePlanActionSnapshots(existing: LegacyAction[], report: unknown): LegacyAction[] {
@@ -24,14 +23,6 @@ export function derivePlanActionSnapshots(existing: LegacyAction[], report: unkn
   if (!report || typeof report !== 'object') return []
 
   const snapshot = report as ReportActionSnapshot
-  const suggestions = (snapshot.threeDayPlan || []).flatMap(day => day.actions || [])
-  const derived = suggestions.flatMap(action => {
-    const title = String(action.title || '').trim()
-    const detail = String(action.detail || '').trim()
-    return title && detail ? [{ title, detail, status: 'pending' }] : []
-  })
-  if (derived.length) return mergePlanActionSnapshots([], derived).slice(0, 20)
-
   const title = String(snapshot.firstAction?.title || '').trim()
   const detail = String(snapshot.firstAction?.detail || '').trim()
   return title && detail ? [{ title, detail, status: 'pending' }] : []

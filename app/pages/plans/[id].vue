@@ -236,10 +236,8 @@ function recommendationImplementation(group: RecommendationGroup) {
     .join('\n')
 }
 
-function recommendationGroupOutcome(group: RecommendationGroup) {
-  if (!successCriteria.value.length) return supportGoal.value.observableChange
-  const outcomes = group.actions.map(action => successCriteria.value[action.sequence % successCriteria.value.length])
-  return [...new Set(outcomes)].filter(Boolean).join('；')
+function recommendationGroupOutcome() {
+  return supportGoal.value.observableChange
 }
 const supportGoal = computed(() => report.value?.supportGoal || {
   weeklyGoal: planStructure.value?.summary || data.value?.summary || '围绕当前问题先完成一个可观察、可复盘的小目标。',
@@ -247,40 +245,6 @@ const supportGoal = computed(() => report.value?.supportGoal || {
   avoidGoal: '不要把目标设成一次性解决所有问题。'
 })
 const firstAction = computed(() => report.value?.firstAction || activeActions.value[0] || null)
-// 用 length 判断而不是直接 ||：空数组也是 truthy，回退分支会永远进不去，
-// 老方案（报告里没有 toolPrescriptions）的工具处方就整块消失了。
-const toolPrescriptions = computed(() => report.value?.toolPrescriptions?.length
-  ? report.value.toolPrescriptions
-  : (data.value?.tools || []).map((tool: any) => {
-  // V2: 优先使用 structuredSteps，fallback 到 content 文本拆分
-  const hasStructuredSteps = tool.structuredSteps && tool.structuredSteps.length > 0
-  return {
-  title: tool.title,
-  applicableWhen: planStructure.value?.attribution?.primary ? `适用于“${planStructure.value.attribution.primary}”相关场景。` : '适用于当前方案对应场景。',
-  steps: hasStructuredSteps ? [] : String(tool.content || '').split(/\n|[;；。]/).map((item: string) => item.trim()).filter(Boolean).slice(0, 6),
-  script: tool.scriptTemplate || tool.script || '',
-  prohibitions: tool.prohibitions || [],
-  outputArtifact: tool.outputArtifact || '执行记录或沟通/观察纪要',
-  estimatedTime: tool.estimatedTime || tool.timePerSession || '本周内完成一次并记录结果',
-  // V2: 结构化步骤详情
-  _hasStructuredSteps: hasStructuredSteps,
-  _structuredSteps: hasStructuredSteps ? tool.structuredSteps.map((s: any) => {
-    return {
-      seq: s.seq,
-      title: s.title,
-      description: s.description,
-      estimatedTime: s.estimatedTime || '',
-      materials: s.materials || '',
-      keyTip: s.keyTip || '',
-      scriptTemplate: s.scriptTemplate || '',
-      successCriteria: s.successCriteria || '',
-      commonIssues: s.commonIssues || ''
-    }
-  }) : null
-}
-}))
-const escalationConditions = computed(() => report.value?.escalationConditions || report.value?.sevenDayFollowUp?.escalationSignals || [])
-const successCriteria = computed(() => report.value?.successCriteria || report.value?.sevenDayFollowUp?.observationPoints || [])
 
 const recommendationGroups = computed<RecommendationGroup[]>(() => {
   const byAudience = new Map<RecommendationAudience, PlanAction[]>()
@@ -1114,83 +1078,6 @@ useHead({ title: () => data.value?.title || '方案详情' })
           </div>
         </div>
 
-        <div v-if="data.report.threeDayPlan?.length" class="mt-7">
-          <h4 class="text-base font-semibold text-slate-800">3 天行动节奏</h4>
-          <p class="mt-1 text-xs text-slate-500">用于理解建议的先后顺序，具体行动请在下方逐条确认。</p>
-          <div class="mt-3 grid gap-3 md:grid-cols-3">
-            <div
-              v-for="day in data.report.threeDayPlan"
-              :key="day.day"
-              class="rounded-xl border border-emerald-100 bg-white p-4"
-            >
-              <p class="text-sm font-semibold">第 {{ day.day }} 天 · {{ day.title }}</p>
-              <p
-                v-for="action in day.actions"
-                :key="action.title"
-                class="mt-2 text-xs leading-5 text-slate-600"
-              >
-                {{ action.title }}：{{ action.detail }}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="toolPrescriptions.length" class="mt-5">
-          <h4 class="text-sm font-semibold text-slate-700">工具处方</h4>
-          <div class="mt-3 grid gap-3 md:grid-cols-2">
-            <div v-for="tool in toolPrescriptions" :key="tool.title" class="rounded-xl border border-amber-100 bg-white p-4">
-              <p class="text-sm font-semibold text-slate-800">{{ tool.title }}</p>
-              <p class="mt-2 text-xs leading-5 text-amber-700">{{ tool.applicableWhen }}</p>
-
-              <!-- V2: 结构化步骤 (优先) -->
-              <div v-if="tool._hasStructuredSteps && tool._structuredSteps" class="mt-3 space-y-3">
-                <p class="text-xs font-medium text-slate-500">操作步骤</p>
-                <div v-for="(step, stepIndex) in tool._structuredSteps" :key="`${tool.title}-${stepIndex}`" class="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                  <div class="flex items-start gap-2">
-                    <span class="flex size-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">{{ Number(stepIndex) + 1 }}</span>
-                    <strong class="min-w-0 flex-1 break-words text-xs leading-5 text-slate-800">{{ step.title }}</strong>
-                    <span v-if="step.estimatedTime" class="shrink-0 text-xs text-slate-400">{{ step.estimatedTime }}</span>
-                  </div>
-                  <p class="mt-1.5 text-xs leading-5 text-slate-600">{{ step.description }}</p>
-                  <div v-if="step.keyTip" class="mt-2 rounded bg-amber-50 p-2 text-xs leading-5 text-amber-800">
-                    <span class="font-medium">关键提示：</span>{{ step.keyTip }}
-                  </div>
-                  <p v-if="step.successCriteria" class="mt-1.5 text-xs text-emerald-700">
-                    <span class="font-medium">成功标准：</span>{{ step.successCriteria }}
-                  </p>
-                  <div v-if="step.materials" class="mt-1.5 text-xs text-slate-400">材料：{{ step.materials }}</div>
-                </div>
-              </div>
-
-              <!-- V1: 传统步骤列表 (fallback) -->
-              <ol v-else-if="tool.steps.length" class="mt-3 space-y-1 text-xs leading-5 text-slate-600">
-                <li v-for="(step, index) in tool.steps" :key="index">{{ Number(index) + 1 }}. {{ step }}</li>
-              </ol>
-
-              <p v-if="tool.script" class="mt-3 rounded-lg bg-emerald-50 p-2 text-xs leading-5 text-emerald-900">话术：{{ tool.script }}</p>
-              <p v-if="tool.outputArtifact" class="mt-2 text-xs text-slate-500">输出物：{{ tool.outputArtifact }}</p>
-              <p v-if="tool.estimatedTime" class="mt-1 text-xs text-slate-500">建议耗时：{{ tool.estimatedTime }}</p>
-              <div v-if="tool.prohibitions?.length" class="mt-3 rounded-lg bg-red-50 p-2 text-xs leading-5 text-red-800">
-                禁忌：{{ Array.isArray(tool.prohibitions) ? tool.prohibitions.join('；') : tool.prohibitions }}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="mt-5 grid gap-3 md:grid-cols-2">
-          <div v-if="successCriteria.length" class="rounded-xl bg-white p-4">
-            <p class="text-sm font-semibold text-slate-700">成功标准</p>
-            <ul class="mt-2 space-y-1 text-xs leading-5 text-slate-600">
-              <li v-for="item in successCriteria" :key="item">· {{ item }}</li>
-            </ul>
-          </div>
-          <div v-if="escalationConditions.length" class="rounded-xl border border-red-100 bg-red-50/60 p-4">
-            <p class="text-sm font-semibold text-red-800">升级条件</p>
-            <ul class="mt-2 space-y-1 text-xs leading-5 text-red-800">
-              <li v-for="item in escalationConditions" :key="item">· {{ item }}</li>
-            </ul>
-          </div>
-        </div>
       </section>
 
       <!-- ══════════ 5. 行动方案建议（按方案块确认） ══════════ -->
@@ -1250,7 +1137,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
               <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-b md:border-r md:border-slate-100">时间周期</dt>
               <dd class="px-4 py-3 text-slate-700 md:border-b md:border-slate-100">{{ recommendationGroupPeriod(group) }}</dd>
               <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-r md:border-slate-100">达成效果</dt>
-              <dd class="px-4 py-3 leading-6 text-slate-700">{{ recommendationGroupOutcome(group) }}</dd>
+              <dd class="px-4 py-3 leading-6 text-slate-700">{{ recommendationGroupOutcome() }}</dd>
             </dl>
 
             <div v-if="group.decision === 'rejected'" class="border-t border-slate-100 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">

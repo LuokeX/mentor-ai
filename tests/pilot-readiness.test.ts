@@ -46,22 +46,16 @@ describe('校内试用核心不变量', () => {
 
   it('旧方案没有行动快照时从报告建议派生跟踪动作', () => {
     expect(derivePlanActionSnapshots([], {
-      firstAction: { title: '不会优先使用', detail: '三日行动存在时不用这个兜底' },
-      threeDayPlan: [
-        { day: 1, actions: [{ title: '完成一次观察', detail: '记录事实和变化。' }] },
-        { day: 2, actions: [{ title: '完成一次观察', detail: '记录事实和变化。' }] },
-        { day: 3, actions: [{ title: '与同伴复盘', detail: '确认下一步支持。' }] }
-      ]
+      firstAction: { title: '完成一次观察', detail: '记录事实和变化。' }
     })).toEqual([
-      { title: '完成一次观察', detail: '记录事实和变化。', status: 'pending' },
-      { title: '与同伴复盘', detail: '确认下一步支持。', status: 'pending' }
+      { title: '完成一次观察', detail: '记录事实和变化。', status: 'pending' }
     ])
   })
 
   it('报告建议不会覆盖已有跟踪动作', () => {
     const existing = [{ title: '教师自定义行动', detail: '保留人工调整。', status: 'in_progress' }]
     expect(derivePlanActionSnapshots(existing, {
-      threeDayPlan: [{ actions: [{ title: '报告建议', detail: '不应覆盖。' }] }]
+      firstAction: { title: '报告建议', detail: '不应覆盖。' }
     })).toBe(existing)
   })
 

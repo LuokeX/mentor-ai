@@ -1,11 +1,6 @@
 import { z } from 'zod'
 import { moduleIdSchema, severitySchema } from './contracts'
 
-export const reportActionSchema = z.object({
-  title: z.string().trim().min(2).max(80),
-  detail: z.string().trim().min(4).max(300)
-})
-
 export const planStatusSchema = z.enum([
   'pending_acceptance',
   'accepted',
@@ -101,11 +96,6 @@ export const assessmentReportSchema = z.object({
     title: z.string().trim().min(2).max(100),
     detail: z.string().trim().min(4).max(400)
   })).min(1).max(8),
-  threeDayPlan: z.array(z.object({
-    day: z.number().int().min(1).max(3),
-    title: z.string().trim().min(2).max(80),
-    actions: z.array(reportActionSchema).min(1).max(3)
-  })).length(3),
   sevenDayFollowUp: z.object({
     observationPoints: z.array(z.string().trim().min(2).max(160)).min(1).max(5),
     reviewQuestions: z.array(z.string().trim().min(2).max(160)).min(1).max(5),
@@ -124,19 +114,8 @@ export const assessmentReportSchema = z.object({
     title: z.string().trim().min(2).max(80),
     detail: z.string().trim().min(4).max(300)
   }).optional(),
-  toolPrescriptions: z.array(z.object({
-    title: z.string().trim().min(2).max(120),
-    applicableWhen: z.string().trim().min(4).max(300),
-    steps: z.array(z.string().trim().min(2).max(300)).min(1).max(8),
-    script: z.string().trim().max(500).optional(),
-    prohibitions: z.array(z.string().trim().min(2).max(240)).default([]),
-    outputArtifact: z.string().trim().max(160).optional(),
-    estimatedTime: z.string().trim().max(80).optional()
-  })).max(6).optional(),
-  /** 工具导读：tool 类型输出模板的渲染结果，置于工具处方列表前。无匹配工具时不生成。 */
+  /** 工具导读：tool 类型输出模板的渲染结果，置于工具卡列表前。无匹配工具时不生成。 */
   toolIntro: z.string().trim().min(4).max(400).optional(),
-  escalationConditions: z.array(z.string().trim().min(2).max(200)).max(6).optional(),
-  successCriteria: z.array(z.string().trim().min(2).max(200)).max(6).optional(),
   printMeta: z.object({
     module: moduleIdSchema,
     moduleTitle: z.string().trim().min(2).max(80),

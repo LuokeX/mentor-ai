@@ -16,27 +16,12 @@ describe('assessment reports', () => {
       const report = createTemplateAssessmentReport({ module, result, generatedAt: new Date('2026-07-14T00:00:00.000Z') })
       expect(assessmentReportSchema.safeParse(report).success).toBe(true)
       expect(report.risk.level).toBe(result.level)
-      expect(report.threeDayPlan).toHaveLength(3)
       expect(report.sevenDayFollowUp.escalationSignals.length).toBeGreaterThan(0)
       expect(report.scripts.length).toBeGreaterThan(0)
       expect(report.supportGoal?.weeklyGoal).toBeTruthy()
       expect(report.firstAction?.title).toBeTruthy()
-      expect(report.toolPrescriptions?.length).toBeGreaterThan(0)
-      expect(report.escalationConditions?.length).toBeGreaterThan(0)
-      expect(report.successCriteria?.length).toBeGreaterThan(0)
       expect(report.printMeta.source).toBe('template')
     }
-  })
-
-  it('drops single-character tool step fragments instead of failing schema validation', () => {
-    const result = evaluateAssessment('self_growth', answers('self_growth', 3))
-    result.tools = [
-      { title: '单字符残段工具', content: '第一步：先深呼吸。\n。\n；第二步：记录状态。' },
-      { title: '正常工具', content: '正常步骤一。正常步骤二。' }
-    ]
-    const report = createTemplateAssessmentReport({ module: 'self_growth', result })
-    expect(assessmentReportSchema.safeParse(report).success).toBe(true)
-    expect(report.toolPrescriptions?.[0]?.steps.some(step => step.length < 2)).toBe(false)
   })
 
   it('uses module-specific report language and follow-up plans', () => {
@@ -45,7 +30,6 @@ describe('assessment reports', () => {
       return createTemplateAssessmentReport({ module, result })
     })
     expect(new Set(reports.map(report => report.profile.title)).size).toBe(4)
-    expect(new Set(reports.map(report => report.threeDayPlan.map(day => day.title).join('|'))).size).toBe(4)
     expect(new Set(reports.map(report => report.sevenDayFollowUp.observationPoints.join('|'))).size).toBe(4)
     expect(reports.find(report => report.printMeta.module === 'home_school')?.profile.summary).toContain('家校沟通')
     expect(reports.find(report => report.printMeta.module === 'student_case')?.profile.summary).toContain('学生')

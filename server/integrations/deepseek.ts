@@ -982,7 +982,6 @@ export async function generateAssessmentReport(event: H3Event, input: {
       report.risk.description = deterministic.risk.description
       if (deterministic.supportGoal) report.supportGoal = deterministic.supportGoal
       report.firstAction = deterministic.firstAction
-      report.escalationConditions = deterministic.escalationConditions
       report.sevenDayFollowUp.reviewQuestions = deterministic.sevenDayFollowUp.reviewQuestions
       if (deterministic.attributionNarrative) report.attributionNarrative = deterministic.attributionNarrative
       if (deterministic.toolIntro) report.toolIntro = deterministic.toolIntro

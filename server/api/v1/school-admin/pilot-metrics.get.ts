@@ -76,9 +76,7 @@ export default defineEventHandler(async (event) => {
     db.select({
       total: sql<number>`count(*)::int`,
       withSupportGoal: sql<number>`count(*) filter (where ${schema.plans.report} ? 'supportGoal')::int`,
-      withFirstAction: sql<number>`count(*) filter (where ${schema.plans.report} ? 'firstAction')::int`,
-      withToolPrescriptions: sql<number>`count(*) filter (where jsonb_array_length(coalesce(${schema.plans.report}->'toolPrescriptions', '[]'::jsonb)) > 0)::int`,
-      withSuccessCriteria: sql<number>`count(*) filter (where jsonb_array_length(coalesce(${schema.plans.report}->'successCriteria', '[]'::jsonb)) > 0)::int`
+      withFirstAction: sql<number>`count(*) filter (where ${schema.plans.report} ? 'firstAction')::int`
     }).from(schema.plans).where(and(eq(schema.plans.schoolId, admin.schoolId), gte(schema.plans.createdAt, weekAgo))),
     db.select({
       module: schema.moduleResourceLibraries.module,
@@ -119,12 +117,10 @@ export default defineEventHandler(async (event) => {
   const report = reportCompleteness[0] || {
     total: 0,
     withSupportGoal: 0,
-    withFirstAction: 0,
-    withToolPrescriptions: 0,
-    withSuccessCriteria: 0
+    withFirstAction: 0
   }
-  const reportChecks = report.total * 4
-  const reportReady = report.withSupportGoal + report.withFirstAction + report.withToolPrescriptions + report.withSuccessCriteria
+  const reportChecks = report.total * 2
+  const reportReady = report.withSupportGoal + report.withFirstAction
   const resourceCoverage = buildResourceCoverage(resourceRows)
   const assistantTotal = answers.total + failures.total
   const assistantFailureRate = assistantTotal ? failures.total / assistantTotal : 0
