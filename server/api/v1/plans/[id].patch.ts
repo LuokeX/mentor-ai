@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { closeAssessmentSessionsForPlan } from '../../../domain/assessment-sessions'
 import { canReviewPlan, canTransitionPlanStatus } from '../../../domain/plan-operations'
@@ -46,7 +46,9 @@ export default defineEventHandler(async (event) => {
       eq(schema.plans.ownerUserId, user.id),
       eq(schema.plans.schoolId, schoolId),
       eq(schema.plans.status, plan.status),
-      eq(schema.plans.updatedAt, plan.updatedAt)
+      // updated_at 由 now() 写入时带微秒尾数，JS Date 只有毫秒精度，
+      // 直接等值比较会恒失败（乐观锁误报冲突），两侧统一按毫秒截断。
+      sql`date_trunc('milliseconds', ${schema.plans.updatedAt}) = ${plan.updatedAt}::timestamptz`
     )).returning({ id: schema.plans.id })
     if (!row) throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '方案状态已变化，请刷新后重试' })
     // 方案进入执行态（或关闭）后，评估组使命结束：再次评估应开新组、建新方案。

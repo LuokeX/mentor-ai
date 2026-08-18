@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { planActionDecisionUpdateSchema } from '../../../../../../../shared/reports'
 import { recordPlanOperationEvent } from '../../../../../../domain/plan-operations'
 import { trackProductEvent } from '../../../../../../domain/product-events'
@@ -82,7 +82,9 @@ export default defineEventHandler(async (event) => {
       eq(schema.plans.schoolId, schoolId),
       inArray(schema.plans.status, ['pending_acceptance', 'adjustment_needed']),
       isNull(schema.plans.acceptedAt),
-      eq(schema.plans.updatedAt, plan.updatedAt)
+      // updated_at 由 now() 写入时带微秒尾数，JS Date 只有毫秒精度，
+      // 直接等值比较会恒失败（乐观锁误报冲突），两侧统一按毫秒截断。
+      sql`date_trunc('milliseconds', ${schema.plans.updatedAt}) = ${plan.updatedAt}::timestamptz`
     )).returning({ id: schema.plans.id })
     if (!updatedPlan) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '方案已变化，请刷新后重试' })
 

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { planActionBlockReasonSchema, planActionStatusSchema } from '../../../../../shared/reports'
 import { requireUser } from '../../../../utils/auth'
@@ -91,7 +91,9 @@ export default defineEventHandler(async (event) => {
       eq(schema.plans.ownerUserId, user.id),
       eq(schema.plans.schoolId, schoolId),
       eq(schema.plans.status, plan.status),
-      eq(schema.plans.updatedAt, plan.updatedAt)
+      // updated_at 由 now() 写入时带微秒尾数，JS Date 只有毫秒精度，
+      // 直接等值比较会恒失败（乐观锁误报冲突），两侧统一按毫秒截断。
+      sql`date_trunc('milliseconds', ${schema.plans.updatedAt}) = ${plan.updatedAt}::timestamptz`
     )).returning({ id: schema.plans.id })
     if (!updatedPlan) {
       throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '方案状态已变化，请刷新后重试' })
