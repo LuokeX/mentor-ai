@@ -1,15 +1,23 @@
 <script setup lang="ts">
+import QRCode from 'qrcode'
 definePageMeta({ layout: false })
 const config = useRuntimeConfig()
 const showDemoLogin = config.public.showDemoLogin
 const showSsoLogin = config.public.showSsoLogin
-const form = reactive({ phone: showDemoLogin ? '13900001001' : '', password: showDemoLogin ? 'Mentor@2026' : '', otp: '', recoveryCode: '' })
+const form = reactive({ phone: showDemoLogin ? '13900001001' : '', password: showDemoLogin ? 'Mentor@2026' : '' })
 const pending = ref(false)
 const hydrated = ref(false)
 const errorMessage = ref('')
-const needOtp = ref(false)
-const useRecoveryCode = ref(false)
 const ssoError = ref(false)
+
+// 心理专员首次登录 TOTP 绑定（账号由管理员直接创建、尚未绑定身份验证器）
+const mfaStep = ref<'none' | 'bind' | 'recovery'>('none')
+const mfaSetup = ref<{ token: string; otpauthUri: string } | null>(null)
+const qrDataUrl = ref('')
+const otp = ref('')
+const recoveryCodes = ref<string[]>([])
+const mfaError = ref('')
+const mfaPending = ref(false)
 
 const demoAccounts = [
   { label: '李老师（教师）', value: '13900001001' },
@@ -34,30 +42,60 @@ function ssoLogin() {
   window.location.href = '/api/v1/auth/sso/authorize'
 }
 
-
 async function login() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const result = await $fetch<{ role: string }>('/api/v1/auth/login', {
+    const result = await $fetch<{ role?: string; needsMfa?: boolean; token?: string; otpauthUri?: string }>('/api/v1/auth/login', {
       method: 'POST',
-      body: {
-        phone: form.phone,
-        password: form.password,
-        ...(useRecoveryCode.value && form.recoveryCode.trim() ? { recoveryCode: form.recoveryCode.trim().toUpperCase() } : {}),
-        ...(!useRecoveryCode.value && form.otp.trim() ? { otp: form.otp.trim() } : {})
-      }
+      body: { phone: form.phone, password: form.password }
     })
+    if (result.needsMfa && result.token && result.otpauthUri) {
+      mfaSetup.value = { token: result.token, otpauthUri: result.otpauthUri }
+      qrDataUrl.value = await QRCode.toDataURL(result.otpauthUri, { width: 220, margin: 2 })
+      mfaStep.value = 'bind'
+      mfaError.value = ''
+      return
+    }
     const { refresh } = useAuth()
     await refresh()
     const homes: Record<string, string> = { teacher: '/', psychologist: '/specialist', school_admin: '/school-admin', platform_admin: '/platform-admin' }
-    await navigateTo(homes[result.role] || '/')
+    await navigateTo(homes[result.role || ''] || '/')
   } catch (error: any) {
-    if (error?.statusCode === 428 || error?.data?.data?.code === 'MFA_REQUIRED') needOtp.value = true
     errorMessage.value = error?.data?.message || error?.data?.statusMessage || error?.message || '登录失败'
   } finally {
     pending.value = false
   }
+}
+
+async function confirmMfa() {
+  if (!mfaSetup.value) return
+  mfaPending.value = true
+  mfaError.value = ''
+  try {
+    const result = await $fetch<{ recoveryCodes: string[] }>('/api/v1/auth/activate-mfa', {
+      method: 'POST',
+      body: { token: mfaSetup.value.token, otp: otp.value.trim() }
+    })
+    recoveryCodes.value = result.recoveryCodes
+    mfaStep.value = 'recovery'
+  } catch (error: any) {
+    mfaError.value = error?.data?.message || '动态验证码校验失败'
+  } finally {
+    mfaPending.value = false
+  }
+}
+
+async function finishMfa() {
+  // activate-mfa 只完成绑定不创建会话：回到登录流程重新登录
+  mfaStep.value = 'none'
+  otp.value = ''
+  await login()
+}
+
+async function copyRecoveryCodes() {
+  if (!import.meta.client) return
+  await navigator.clipboard.writeText(recoveryCodes.value.join('\n'))
 }
 </script>
 
@@ -93,9 +131,6 @@ async function login() {
           </UFormField>
           <UFormField label="手机号"><UInput v-model="form.phone" size="xl" icon="i-lucide-smartphone" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>
           <UFormField label="密码"><UInput v-model="form.password" type="password" size="xl" icon="i-lucide-lock-keyhole" class="w-full" /></UFormField>
-          <UFormField v-if="needOtp && !useRecoveryCode" label="心理专员动态验证码" help="请输入身份验证器中的 6 位验证码"><UInput v-model="form.otp" inputmode="numeric" maxlength="6" size="xl" icon="i-lucide-shield-check" class="w-full" /></UFormField>
-          <UFormField v-if="needOtp && useRecoveryCode" label="一次性恢复码" help="恢复码使用后立即失效"><UInput v-model="form.recoveryCode" maxlength="13" size="xl" icon="i-lucide-key-round" class="w-full" placeholder="XXXXXX-XXXXXX" /></UFormField>
-          <button v-if="needOtp" type="button" class="text-sm text-emerald-700 hover:underline" @click="useRecoveryCode = !useRecoveryCode">{{ useRecoveryCode ? '使用动态验证码' : '无法使用验证器？改用恢复码' }}</button>
           <UAlert v-if="errorMessage" color="error" variant="soft" :description="errorMessage" />
           <button type="submit" class="w-full rounded-lg bg-[var(--ui-primary)] px-6 py-3.5 text-lg font-medium text-white disabled:opacity-50" :disabled="!hydrated">安全登录</button>
           <div v-if="showSsoLogin" class="space-y-4 pt-1">
@@ -107,6 +142,28 @@ async function login() {
           </div>
         </form>
         <p class="mt-5 text-center text-sm text-slate-500">收到学校邀请？<NuxtLink class="font-medium text-emerald-700 hover:underline" to="/activate">激活账号</NuxtLink></p>
+
+        <div v-if="mfaStep === 'bind'" class="mt-6 space-y-4 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-5">
+          <div>
+            <h3 class="text-sm font-semibold text-emerald-900">首次登录 · 绑定身份验证器</h3>
+            <p class="mt-1 text-xs leading-5 text-emerald-700">该心理专员账号由学校直接创建，需先绑定动态验证码。使用身份验证器扫描二维码，再输入当前 6 位验证码。</p>
+          </div>
+          <img :src="qrDataUrl" alt="TOTP 二维码" class="mx-auto size-52 rounded-xl border border-slate-100 bg-white p-2" />
+          <UFormField label="动态验证码"><UInput v-model="otp" inputmode="numeric" maxlength="6" size="xl" icon="i-lucide-shield-check" class="w-full" /></UFormField>
+          <UAlert v-if="mfaError" color="error" variant="soft" :description="mfaError" />
+          <button type="button" class="w-full rounded-lg bg-[var(--ui-primary)] px-6 py-3 text-lg font-medium text-white disabled:opacity-50" :disabled="mfaPending" @click="confirmMfa">{{ mfaPending ? '绑定中…' : '确认绑定并登录' }}</button>
+        </div>
+        <div v-else-if="mfaStep === 'recovery'" class="mt-6 space-y-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-5">
+          <p class="text-sm font-semibold text-amber-900">请立即保存恢复码</p>
+          <p class="text-xs leading-5 text-amber-700">每个恢复码只能使用一次，离开本页后平台无法再次展示。请存放在安全位置，不要发送给管理员。</p>
+          <div class="grid grid-cols-2 gap-2 rounded-xl bg-white p-3 font-mono text-xs">
+            <code v-for="code in recoveryCodes" :key="code">{{ code }}</code>
+          </div>
+          <button type="button" class="w-full flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" @click="copyRecoveryCodes">
+            <UIcon name="i-lucide-copy" class="size-4" />复制恢复码
+          </button>
+          <button type="button" class="w-full rounded-lg bg-[var(--ui-primary)] px-6 py-3 text-lg font-medium text-white" @click="finishMfa">我已安全保存，进入平台</button>
+        </div>
         <div v-if="showDemoLogin" class="mt-8 rounded-2xl bg-slate-100/80 p-4 text-xs leading-6 text-slate-500">
           演示账号：13900001001（李老师）、13900001004（学校管理员）、13900001005（平台管理员）；统一密码 Mentor@2026。
         </div>
