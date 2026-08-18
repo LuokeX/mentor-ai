@@ -20,11 +20,11 @@ const feedback = computed(() => (data.value?.enabled && data.value?.url)
       target="_blank"
       rel="noopener noreferrer"
       icon="i-lucide-clipboard-pen-line"
+      :label="feedback.title"
       color="primary"
-      size="lg"
-      square
+      size="xl"
+      class="fixed bottom-20 left-1/2 z-40 -translate-x-1/2 shadow-xl print:hidden md:bottom-6 md:h-14 md:px-8 md:text-base"
       :aria-label="`打开${feedback.title}`"
-      class="fixed bottom-20 right-4 z-40 shadow-lg md:bottom-6 md:right-6 print:hidden"
     />
   </UTooltip>
 </template>
