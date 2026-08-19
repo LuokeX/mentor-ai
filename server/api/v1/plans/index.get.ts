@@ -8,7 +8,7 @@
  * summary 是加密字段，这里不解密：列表只需要标题、模块、状态和时间，
  * 详情页才需要正文。少解一次密就少一次明文出现在响应里。
  */
-import { and, asc, count, desc, eq, gte, ilike, inArray, lte } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gte, ilike, inArray, lte, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { moduleIdSchema } from '../../../../shared/contracts'
 import { requireUser } from '../../../utils/auth'
@@ -58,7 +58,9 @@ export default defineEventHandler(async (event) => {
   // 方案归属同时受教师与学校约束：教师发生学校迁移后不能读到旧学校方案
   const filters = [
     eq(schema.plans.ownerUserId, user.id),
-    eq(schema.plans.schoolId, user.schoolId)
+    eq(schema.plans.schoolId, user.schoolId),
+    // 管理员归档/弃用的方案对教师不可见（列表与详情一致）
+    ne(schema.plans.status, 'archived')
   ]
   if (query.status === 'active') filters.push(inArray(schema.plans.status, ACTIVE_STATUSES))
   else if (query.status) filters.push(eq(schema.plans.status, query.status))

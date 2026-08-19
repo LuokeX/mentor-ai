@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
@@ -16,7 +16,9 @@ export default defineEventHandler(async (event) => {
   const [plan] = await db.select().from(schema.plans).where(and(
     eq(schema.plans.id, id),
     eq(schema.plans.ownerUserId, user.id),
-    eq(schema.plans.schoolId, user.schoolId)
+    eq(schema.plans.schoolId, user.schoolId),
+    // 管理员归档/弃用的方案对教师不可见
+    ne(schema.plans.status, 'archived')
   )).limit(1)
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
 
@@ -85,7 +87,8 @@ export default defineEventHandler(async (event) => {
         .from(schema.chatMessages)
         .where(and(
           eq(schema.chatMessages.sessionId, session.id),
-          eq(schema.chatMessages.role, 'user')
+          eq(schema.chatMessages.role, 'user'),
+          isNull(schema.chatMessages.deletedAt)
         ))
         .orderBy(asc(schema.chatMessages.createdAt))
         .limit(1)
