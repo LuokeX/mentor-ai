@@ -1,4 +1,5 @@
 import { usePool } from '../utils/db'
+import { shanghaiTomorrowUtc } from '../domain/shanghai-time'
 
 export default defineNitroPlugin(() => {
   const config = useRuntimeConfig()
@@ -34,6 +35,11 @@ export default defineNitroPlugin(() => {
 
   async function scanOperationalReminders(): Promise<number> {
     let inserted = 0
+    // 到期边界按上海日界（明天 00:00），与工作台待执行/待复盘口径一致。
+    // 执行态方案集合与 workbench 一致：accepted（已接受未推进）、in_progress、
+    // review_due、adjustment_needed、escalated 均会产生到期提醒。
+    const tomorrow = shanghaiTomorrowUtc()
+    const ACTIVE_PLAN_STATUSES = ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated']
     // 普通业务提醒只进入负责教师个人通知中心，绝不进入短信 Outbox。
     const actionResult = await pool.query(`
       INSERT INTO notifications (school_id, user_id, type, title, body, target_type, target_id, deduplication_key)
@@ -44,10 +50,10 @@ export default defineNitroPlugin(() => {
       JOIN plans p ON p.id = pa.plan_id
       WHERE pa.status IN ('pending', 'in_progress')
         AND pa.decision = 'included'
-        AND pa.due_at IS NOT NULL AND pa.due_at < CURRENT_DATE + INTERVAL '1 day'
-        AND p.status = 'in_progress'
+        AND pa.due_at IS NOT NULL AND pa.due_at < $1
+        AND p.status = ANY($2)
       ON CONFLICT (deduplication_key) DO NOTHING
-    `)
+    `, [tomorrow, ACTIVE_PLAN_STATUSES])
     inserted += actionResult.rowCount || 0
     const reviewResult = await pool.query(`
       INSERT INTO notifications (school_id, user_id, type, title, body, target_type, target_id, deduplication_key)
@@ -55,9 +61,9 @@ export default defineNitroPlugin(() => {
              '有一份方案已到复盘时间，请记录效果和下一步。',
              'plan', p.id, 'plan-review:' || p.id::text || ':' || CURRENT_DATE::text
       FROM plans p
-      WHERE p.status = 'in_progress' AND p.next_review_at IS NOT NULL AND p.next_review_at < CURRENT_DATE + INTERVAL '1 day'
+      WHERE p.status = ANY($1) AND p.next_review_at IS NOT NULL AND p.next_review_at < $2
       ON CONFLICT (deduplication_key) DO NOTHING
-    `)
+    `, [ACTIVE_PLAN_STATUSES, tomorrow])
     inserted += reviewResult.rowCount || 0
 
     // 超过 15 分钟仍未确认，升级短信只包含事件编号和登录提示。

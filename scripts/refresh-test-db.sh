@@ -28,6 +28,16 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
+# 停 app 避免恢复期间活跃连接阻塞 DROP SCHEMA
+docker compose -f docker-compose.test.yml stop app >/dev/null 2>&1 || true
+
+# 清空 public schema：--clean 备份的 DROP 顺序无法处理交叉外键，
+# 在已有数据的测试库上直接恢复必然失败（如 users 被多表依赖）。
+echo "清空测试库 public schema..."
+docker compose -f docker-compose.test.yml exec -T postgres psql -U "${POSTGRES_USER:-mentor_admin}" -d mentor_ai -v ON_ERROR_STOP=1 \
+  -c "DROP SCHEMA public CASCADE" -c "CREATE SCHEMA public" \
+  -c "GRANT USAGE ON SCHEMA public TO ${APP_DB_USER:-mentor_app}" >/dev/null
+
 echo "恢复 $BACKUP_FILE 到测试库..."
-gzip -dc "$BACKUP_FILE" | docker compose -f docker-compose.test.yml exec -T postgres psql -U "${POSTGRES_USER:-mentor_admin}" -d mentor_ai
+gzip -dc "$BACKUP_FILE" | docker compose -f docker-compose.test.yml exec -T postgres psql -U "${POSTGRES_USER:-mentor_admin}" -d mentor_ai -v ON_ERROR_STOP=1
 echo "测试库已刷新为正式库副本（$(basename "$BACKUP_FILE")）"

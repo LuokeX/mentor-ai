@@ -10,10 +10,12 @@
 # 恢复进来，再启动本环境演练迁移与功能。
 #
 # 注意：测试环境包含正式数据的完整副本（真实人员与业务内容），
-# 仅允许本机回环访问，禁止开放端口、禁止将数据外传或截图外发。
+# 默认仅允许本机回环访问；经授权开放局域网（0.0.0.0）时仅限校内网络，
+# 仍禁止将数据外传或截图外发。
 name: mentor-ai-test
 
 x-app-environment: &app-environment
+  TZ: Asia/Shanghai
   DATABASE_URL: postgres://${APP_DB_USER:-mentor_app}:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@postgres:5432/mentor_ai
   NUXT_DATABASE_URL: postgres://${APP_DB_USER:-mentor_app}:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@postgres:5432/mentor_ai
   SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
@@ -27,8 +29,8 @@ x-app-environment: &app-environment
   NUXT_DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
   DEEPSEEK_ROUTER_MODEL: ${DEEPSEEK_ROUTER_MODEL:-deepseek-v4-flash}
   NUXT_DEEPSEEK_ROUTER_MODEL: ${DEEPSEEK_ROUTER_MODEL:-deepseek-v4-flash}
-  DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-pro}
-  NUXT_DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-pro}
+  DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-flash}
+  NUXT_DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-flash}
   DEEPSEEK_AGREEMENT_VERSION: ${DEEPSEEK_AGREEMENT_VERSION:-}
   NUXT_DEEPSEEK_AGREEMENT_VERSION: ${DEEPSEEK_AGREEMENT_VERSION:-}
   NUXT_DEEPSEEK_TIMEOUT_MS: ${DEEPSEEK_TIMEOUT_MS:-8000}
@@ -54,6 +56,7 @@ services:
     image: pgvector/pgvector:0.8.5-pg18-trixie
     restart: unless-stopped
     environment:
+      TZ: Asia/Shanghai
       POSTGRES_USER: ${POSTGRES_USER:-mentor_admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: mentor_ai
@@ -93,7 +96,7 @@ services:
     expose:
       - "3300"
     ports:
-      - "127.0.0.1:3400:3300"
+      - "0.0.0.0:3400:3300"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3300/health/ready"]
       interval: 10s

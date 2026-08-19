@@ -976,8 +976,8 @@ export async function generateAssessmentReport(event: H3Event, input: {
         temperature: 0.35
       }),
       // 评估报告是全场最长输出（完整报告 JSON），全局 DEEPSEEK_TIMEOUT_MS（如 30000）
-      // 对 deepseek-v4-pro 偏短，实测多次 30s 超时；DB 显式配置优先，其余情况不低于 60s。
-      signal: AbortSignal.timeout(rt.timeoutMs || Math.max(Number(config.deepseekTimeoutMs) || 0, 60000))
+      // 对生成模型偏短，实测多次 60s 超时；DB 显式配置优先，其余情况不低于 360s。
+      signal: AbortSignal.timeout(rt.timeoutMs || Math.max(Number(config.deepseekTimeoutMs) || 0, 360000))
     })
     if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
     const json = await response.json() as {

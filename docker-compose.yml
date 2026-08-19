@@ -1,6 +1,7 @@
 name: mentor-ai
 
 x-app-environment: &app-environment
+  TZ: Asia/Shanghai
   DATABASE_URL: postgres://${APP_DB_USER:-mentor_app}:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-mentor_ai}
   NUXT_DATABASE_URL: postgres://${APP_DB_USER:-mentor_app}:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-mentor_ai}
   SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
@@ -14,8 +15,8 @@ x-app-environment: &app-environment
   NUXT_DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
   DEEPSEEK_ROUTER_MODEL: ${DEEPSEEK_ROUTER_MODEL:-deepseek-v4-flash}
   NUXT_DEEPSEEK_ROUTER_MODEL: ${DEEPSEEK_ROUTER_MODEL:-deepseek-v4-flash}
-  DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-pro}
-  NUXT_DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-pro}
+  DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-flash}
+  NUXT_DEEPSEEK_GENERATOR_MODEL: ${DEEPSEEK_GENERATOR_MODEL:-deepseek-v4-flash}
   DEEPSEEK_AGREEMENT_VERSION: ${DEEPSEEK_AGREEMENT_VERSION:-}
   NUXT_DEEPSEEK_AGREEMENT_VERSION: ${DEEPSEEK_AGREEMENT_VERSION:-}
   NUXT_DEEPSEEK_TIMEOUT_MS: ${DEEPSEEK_TIMEOUT_MS:-30000}
@@ -48,6 +49,7 @@ services:
     image: pgvector/pgvector:0.8.5-pg18-trixie
     restart: unless-stopped
     environment:
+      TZ: Asia/Shanghai
       POSTGRES_USER: ${POSTGRES_USER:-mentor_admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-mentor_ai}

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { ensurePlanActions } from '../../../domain/plan-actions'
 import { schema, useDb } from '../../../utils/db'
@@ -7,7 +7,6 @@ export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const db = useDb(event)
-  const tomorrow = new Date(); tomorrow.setHours(24, 0, 0, 0)
   const plans = await db.select({ id: schema.plans.id }).from(schema.plans).where(and(
     eq(schema.plans.ownerUserId, user.id), inArray(schema.plans.status, ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated'])
   )).limit(100)
@@ -21,15 +20,13 @@ export default defineEventHandler(async (event) => {
       .innerJoin(schema.plans, eq(schema.planActions.planId, schema.plans.id)).where(and(
         eq(schema.planActions.ownerUserId, user.id),
         eq(schema.planActions.decision, 'included'),
-        inArray(schema.planActions.status, ['pending', 'in_progress']),
-        lte(schema.planActions.dueAt, tomorrow)
-      )).orderBy(schema.planActions.dueAt).limit(20),
+        inArray(schema.planActions.status, ['pending', 'in_progress'])
+      )).orderBy(schema.planActions.dueAt).limit(50),
     db.select({ id: schema.plans.id, module: schema.plans.module, title: schema.plans.title, nextReviewAt: schema.plans.nextReviewAt })
       .from(schema.plans).where(and(
         eq(schema.plans.ownerUserId, user.id),
-        inArray(schema.plans.status, ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated']),
-        lte(schema.plans.nextReviewAt, tomorrow)
-      )).orderBy(schema.plans.nextReviewAt).limit(10),
+        inArray(schema.plans.status, ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated'])
+      )).orderBy(schema.plans.nextReviewAt).limit(20),
     db.select().from(schema.recordAssignments).where(eq(schema.recordAssignments.toUserId, user.id))
       .orderBy(desc(schema.recordAssignments.createdAt)).limit(10),
     db.select().from(schema.notifications).where(eq(schema.notifications.userId, user.id))
