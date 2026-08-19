@@ -1101,7 +1101,12 @@ async function routeWithPublishedKeywords(event: H3Event, text: string, schoolId
   })
 }
 
-export async function routeWithDeepSeek(event: H3Event, text: string, schoolId?: string | null): Promise<RouteDecision> {
+export async function routeWithDeepSeek(
+  event: H3Event,
+  text: string,
+  schoolId?: string | null,
+  history?: Array<{ role: 'user' | 'assistant', content: string }>
+): Promise<RouteDecision> {
   const publishedRoute = await routeWithPublishedKeywords(event, text, schoolId)
   if (publishedRoute) return publishedRoute
   const config = useRuntimeConfig(event)
@@ -1110,8 +1115,14 @@ export async function routeWithDeepSeek(event: H3Event, text: string, schoolId?:
   const rt = await getAiRuntimeConfig(event)
   const routerModel = rt.routerModel || config.deepseekRouterModel
   const prompt = await renderPrompt(event, 'module_router', { userText: redacted })
-  const messages: Array<{ role: 'system' | 'user', content: string }> = []
+  const messages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
+  // 回放本会话（及跨会话实体记忆）最近消息，让分诊基于完整对话而非单条输入
+  if (history?.length) {
+    messages.push(
+      ...history.slice(-8).map(item => ({ role: item.role, content: redactPii(item.content).slice(0, 2500) }))
+    )
+  }
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
 
   for (let attempt = 0; attempt < 2; attempt++) {

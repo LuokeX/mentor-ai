@@ -340,7 +340,8 @@ export default defineEventHandler(async (event) => {
         }
 
         // ---- 分诊流程：AI 只推荐模块，不生成工具、方案或知识库引用 ----
-        const route = await routeWithDeepSeek(event, body.message, user.schoolId!)
+        // 回放本会话历史 + 跨会话实体记忆，避免澄清完成后的新消息在模型侧失去上下文
+        const route = await routeWithDeepSeek(event, body.message, user.schoolId!, [...entityMemory, ...history])
         const triageMode = governance.effectiveMode === 'local' || !useRuntimeConfig(event).deepseekApiKey ? 'local_fallback' : 'deepseek'
 
         // 知识库检索：基于用户消息 + 路由确定的模块检索相关文档
