@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
     db.select({ count: sql<number>`count(*)::int` }).from(schema.chatSessions)
       .where(and(eq(schema.chatSessions.ownerUserId, user.id), ne(schema.chatSessions.contextType, 'none'))),
     db.select({ count: sql<number>`count(*)::int` }).from(schema.chatMessages)
-      .where(and(eq(schema.chatMessages.ownerUserId, user.id), eq(schema.chatMessages.role, 'user'))),
+      .where(and(eq(schema.chatMessages.ownerUserId, user.id), eq(schema.chatMessages.role, 'user'), isNull(schema.chatMessages.deletedAt))),
     db.select({ count: sql<number>`count(*)::int` }).from(schema.assessmentAttempts)
       .where(and(eq(schema.assessmentAttempts.ownerUserId, user.id), eq(schema.assessmentAttempts.status, 'submitted'))),
     db.select({ count: sql<number>`count(*)::int` }).from(schema.plans).where(eq(schema.plans.ownerUserId, user.id)),

@@ -1,5 +1,5 @@
 import type { H3Event } from 'h3'
-import { and, desc, eq, inArray, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm'
 import type { AuthUser } from '../../app/composables/useAuth'
 import { decryptSensitive } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
@@ -310,7 +310,9 @@ export async function fetchEntityMemory(
     .from(schema.chatMessages)
     .where(and(
       inArray(schema.chatMessages.sessionId, sessionIds),
-      eq(schema.chatMessages.ownerUserId, user.id)
+      eq(schema.chatMessages.ownerUserId, user.id),
+      // 管理员软删的消息不进入实体记忆
+      isNull(schema.chatMessages.deletedAt)
     ))
     .orderBy(desc(schema.chatMessages.createdAt))
     .limit(limit)

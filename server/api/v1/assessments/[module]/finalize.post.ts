@@ -4,7 +4,7 @@
 // 不生成方案；全部量表做完后由本接口聚合组内结果，生成/合并一个方案。
 // 方案内容只由组内已提交量表的确定性结果决定，与提交次数、提交时序无关。
 import { z } from 'zod'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 import type { OutputTemplateEntry, RuleExecResult } from '../../../../../shared/contracts'
 import { moduleIdSchema } from '../../../../../shared/contracts'
 import { requireUser } from '../../../../utils/auth'
@@ -120,7 +120,8 @@ export default defineEventHandler(async (event) => {
       const [firstUser] = await tx.select({ contentEnc: schema.chatMessages.contentEnc }).from(schema.chatMessages)
         .where(and(
           eq(schema.chatMessages.sessionId, session.sourceChatSessionId),
-          eq(schema.chatMessages.role, 'user')
+          eq(schema.chatMessages.role, 'user'),
+          isNull(schema.chatMessages.deletedAt)
         ))
         .orderBy(asc(schema.chatMessages.createdAt))
         .limit(1)

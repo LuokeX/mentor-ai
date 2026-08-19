@@ -13,7 +13,7 @@ import { trackProductEvent } from '../../../domain/product-events'
 import { embedModuleResourceQuery } from '../../../integrations/ollama'
 import { searchKnowledgeChunks } from '../../../domain/module-resource-knowledge-search'
 import { sendStream } from 'h3'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, isNull } from 'drizzle-orm'
 import { moduleMeta } from '../../../../shared/assessments'
 import type { ModuleId } from '../../../../shared/contracts'
 
@@ -94,7 +94,12 @@ export default defineEventHandler(async (event) => {
   }
   const previousMessages = await db.select({ role: schema.chatMessages.role, contentEnc: schema.chatMessages.contentEnc })
     .from(schema.chatMessages)
-    .where(and(eq(schema.chatMessages.sessionId, sessionId), eq(schema.chatMessages.ownerUserId, user.id)))
+    .where(and(
+      eq(schema.chatMessages.sessionId, sessionId),
+      eq(schema.chatMessages.ownerUserId, user.id),
+      // 管理员软删的消息不进入 AI 回放上下文
+      isNull(schema.chatMessages.deletedAt)
+    ))
     .orderBy(desc(schema.chatMessages.createdAt))
     .limit(8)
   const history = previousMessages.reverse().flatMap(item => {

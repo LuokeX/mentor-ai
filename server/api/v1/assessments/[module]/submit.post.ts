@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { and, asc, desc, eq, inArray, max, ne } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, max, ne } from 'drizzle-orm'
 import type { OutputTemplateEntry, RuleExecResult } from '../../../../../shared/contracts'
 import { moduleIdSchema } from '../../../../../shared/contracts'
 import { requireUser } from '../../../../utils/auth'
@@ -184,7 +184,8 @@ export default defineEventHandler(async (event) => {
     const [firstUser] = await db.select({ contentEnc: schema.chatMessages.contentEnc }).from(schema.chatMessages)
       .where(and(
         eq(schema.chatMessages.sessionId, body.sourceChatSessionId),
-        eq(schema.chatMessages.role, 'user')
+        eq(schema.chatMessages.role, 'user'),
+        isNull(schema.chatMessages.deletedAt)
       ))
       .orderBy(asc(schema.chatMessages.createdAt))
       .limit(1)

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireUser } from '../../../../../../../utils/auth'
 import { schema, useDb } from '../../../../../../../utils/db'
@@ -19,7 +19,8 @@ export default defineEventHandler(async (event) => {
   }).parse(await readBody(event))
   const db = useDb(event)
   const [message] = await db.select().from(schema.chatMessages).where(and(
-    eq(schema.chatMessages.id, messageId), eq(schema.chatMessages.ownerUserId, user.id), eq(schema.chatMessages.role, 'assistant')
+    eq(schema.chatMessages.id, messageId), eq(schema.chatMessages.ownerUserId, user.id), eq(schema.chatMessages.role, 'assistant'),
+    isNull(schema.chatMessages.deletedAt)
   )).limit(1)
   if (!message) throw createError({ statusCode: 404, message: '回答不存在' })
   const metadata = (message.metadata || {}) as Record<string, unknown>

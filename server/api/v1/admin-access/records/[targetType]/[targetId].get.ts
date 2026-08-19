@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { targetTypeSchema } from '../../../../../../shared/contracts'
 import { requireUser } from '../../../../../utils/auth'
@@ -39,7 +39,10 @@ export default defineEventHandler(async (event) => {
     fields = ['answers', 'result', 'module', 'submittedAt']
   } else if (targetType === 'conversation') {
     const session = (await db.select().from(schema.chatSessions).where(eq(schema.chatSessions.id, targetId)).limit(1))[0]
-    const messages = await db.select().from(schema.chatMessages).where(eq(schema.chatMessages.sessionId, targetId)).orderBy(schema.chatMessages.createdAt)
+    const messages = await db.select().from(schema.chatMessages).where(and(
+      eq(schema.chatMessages.sessionId, targetId),
+      isNull(schema.chatMessages.deletedAt)
+    )).orderBy(schema.chatMessages.createdAt)
     record = { session, messages: messages.map(row => ({ role: row.role, content: decryptSensitive(row.contentEnc, secret), metadata: row.metadata, createdAt: row.createdAt })) }
     fields = ['session', 'messages']
   } else if (targetType === 'student_case') {

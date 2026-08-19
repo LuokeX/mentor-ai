@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
@@ -26,7 +26,10 @@ export default defineEventHandler(async (event) => {
     ? await db.select().from(schema.planReviews).where(inArray(schema.planReviews.planId, planIds)).orderBy(desc(schema.planReviews.reviewAt))
     : []
   const conversationIds = new Set(conversations.map(item => item.id))
-  const messages = (await db.select().from(schema.chatMessages).where(eq(schema.chatMessages.ownerUserId, user.id)).orderBy(schema.chatMessages.createdAt))
+  const messages = (await db.select().from(schema.chatMessages).where(and(
+    eq(schema.chatMessages.ownerUserId, user.id),
+    isNull(schema.chatMessages.deletedAt)
+  )).orderBy(schema.chatMessages.createdAt))
     .filter(item => conversationIds.has(item.sessionId))
     .map(item => ({ id: item.id, sessionId: item.sessionId, role: item.role, content: decryptSensitive(item.contentEnc, secret), metadata: item.metadata, createdAt: item.createdAt }))
   const payload = {
