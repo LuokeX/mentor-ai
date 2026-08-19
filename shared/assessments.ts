@@ -151,26 +151,55 @@ export const assessmentDefinitions: Record<ModuleId, AssessmentDefinition> = {
   learning_problem: learningProblem
 }
 
-export const moduleMeta: Record<ModuleId, { title: string, short: string, color: string, icon: string, intro: string }> = {
+/**
+ * 方案行动计划的分组：按「谁执行」划分，而不是「内容关于谁」。
+ * teacher=教师本人 / student=学生本人 / guardian=家长 / school=学校相关人员协同。
+ */
+export type PlanAudience = 'teacher' | 'student' | 'guardian' | 'school'
+
+/**
+ * 各模块方案允许出现的计划分组（业务情景白名单）。
+ * 行动项分组判定先落在白名单内，白名单之外的判定一律回落到教师行动，
+ * 避免「内容里提到学生/家长」的教师工具被误分到学生计划/家长配合。
+ */
+export const MODULE_PLAN_AUDIENCES: Record<ModuleId, PlanAudience[]> = {
+  // 教师自我成长：工具全部由教师本人执行，仅教研组/制度通道需要学校协同
+  self_growth: ['teacher', 'school'],
+  // 班级系统建设：教师主导，班委/公约/团建需学生参与，德育处协同；不涉及家长执行
+  class_system: ['teacher', 'student', 'school'],
+  // 家校沟通：教师话术 + 家长配合 + 学校家校共育；学生本人不参与执行
+  home_school: ['teacher', 'guardian', 'school'],
+  // 学生个案：四类执行者都可能出现
+  student_case: ['teacher', 'student', 'guardian', 'school'],
+  // 学习问题：教师干预 + 学生学习行为 + 家庭支持 + 学校帮扶
+  learning_problem: ['teacher', 'student', 'guardian', 'school']
+}
+
+export const moduleMeta: Record<ModuleId, { title: string, short: string, color: string, icon: string, intro: string, planAudiences: PlanAudience[] }> = {
   self_growth: {
     title: '自我成长赋能', short: '看见状态，补充力量', color: 'emerald', icon: 'i-lucide-heart-handshake',
-    intro: '本模块量表聚焦解决教师职业压力、教学心理困惑等问题。开展状态评估并输出归因依据分析，为教师提供心理调适关怀建议，同时面向教师、家长、学校提供关键问题解决行动方案。'
+    intro: '本模块量表聚焦解决教师职业压力、教学心理困惑等问题。开展状态评估并输出归因依据分析，为教师提供心理调适关怀建议，配套教师行动计划与学校协同支持方案。',
+    planAudiences: MODULE_PLAN_AUDIENCES.self_growth
   },
   class_system: {
     title: '班级系统建设', short: '定位短板，建设班级', color: 'sky', icon: 'i-lucide-school',
-    intro: '本模块量表聚焦解决班级管理问题。开展状态评估并输出归因依据分析，输出教师班级管理行动策略，提供学生群体引导及学校德育班风建设方案。'
+    intro: '本模块量表聚焦解决班级管理问题。开展状态评估并输出归因依据分析，输出教师班级管理行动策略，提供学生群体引导及学校德育班风建设方案。',
+    planAudiences: MODULE_PLAN_AUDIENCES.class_system
   },
   home_school: {
     title: '家校沟通合作', short: '理解关系，准备沟通', color: 'amber', icon: 'i-lucide-messages-square',
-    intro: '本模块量表聚焦解决家校矛盾、家庭教育协同困境等问题。开展状态评估并输出归因依据分析，给到教师实操沟通行动话术，输出家庭相处指引及学校家校共育落地建议。'
+    intro: '本模块量表聚焦解决家校矛盾、家庭教育协同困境等问题。开展状态评估并输出归因依据分析，给到教师实操沟通行动话术，输出家庭相处指引及学校家校共育落地建议。',
+    planAudiences: MODULE_PLAN_AUDIENCES.home_school
   },
   student_case: {
     title: '学生个体问题', short: '快速编码，分级支持', color: 'violet', icon: 'i-lucide-user-round-search',
-    intro: '本模块量表聚焦解决学生情绪困扰、行为偏差、人际适应困难等个案问题。开展状态评估并输出归因依据分析，给到教师个案干预行动方法，配套学生疏导建议与学校个案预警干预参考。'
+    intro: '本模块量表聚焦解决学生情绪困扰、行为偏差、人际适应困难等个案问题。开展状态评估并输出归因依据分析，给到教师个案干预行动方法，配套学生疏导、家长协同与学校个案预警干预参考。',
+    planAudiences: MODULE_PLAN_AUDIENCES.student_case
   },
   learning_problem: {
     title: '学生学习问题', short: '三层诊断，精准支持', color: 'rose', icon: 'i-lucide-brain',
-    intro: '本模块量表聚焦解决厌学、注意力不足、考试焦虑等学习心理类问题。开展状态评估并输出归因依据分析，提供教师课堂干预行动策略，配套学生心态调节及学校学业心理帮扶方案。'
+    intro: '本模块量表聚焦解决厌学、注意力不足、考试焦虑等学习心理类问题。开展状态评估并输出归因依据分析，提供教师课堂干预行动策略，配套学生心态调节、家庭支持及学校学业心理帮扶方案。',
+    planAudiences: MODULE_PLAN_AUDIENCES.learning_problem
   }
 }
 

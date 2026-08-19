@@ -1,11 +1,13 @@
 import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm'
 import { z } from 'zod'
+import type { ModuleId } from '../../../../shared/contracts'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
 import { ensurePlanActions } from '../../../domain/plan-actions'
 import { truncateByChars } from '../../../domain/plan-titles'
 import { redactPii } from '../../../integrations/deepseek'
+import { listInstrumentOptions } from '../../../domain/assessment-instruments'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -132,6 +134,32 @@ export default defineEventHandler(async (event) => {
   for (const file of evidenceRows) {
     evidenceByAction.set(file.actionId, [...(evidenceByAction.get(file.actionId) || []), file])
   }
+
+  // 深度诊断建议（待办行动）：该模块存在「业务触发条件已满足（suggested）、
+  // 尚未完成、且未关联进本方案」的量表时返回。教师完成该量表后状态变为
+  // completed，本建议自动消失——「未完成持续显示、已完成不再显示」由状态动态决定，
+  // 不写入方案快照，因此历史方案同样生效。
+  let nextInstrumentSuggestion: { code: string, title: string, note: string | null } | null = null
+  try {
+    const options = await listInstrumentOptions(event, plan.module as ModuleId, { id: user.id, schoolId: user.schoolId })
+    const linkedCodes = new Set(assessmentRows.map(row => row.code))
+    const candidate = options.find(option =>
+      option.status === 'suggested'
+      && !linkedCodes.has(option.code)
+      // 红线检查量表由系统在高危阈值命中时触发，不通过方案待办向教师提示
+      && option.role !== 'red_line'
+    )
+    if (candidate) {
+      nextInstrumentSuggestion = {
+        code: candidate.code,
+        title: candidate.title,
+        note: candidate.triggerConditionNote || candidate.description || null
+      }
+    }
+  } catch {
+    // 建议计算失败不阻断方案查看
+  }
+
   const { summaryEnc, acceptanceReasonEnc, ...publicPlan } = plan
 
   return {
@@ -143,6 +171,7 @@ export default defineEventHandler(async (event) => {
     sourceAssessment,
     assessments,
     sourceConversation,
+    nextInstrumentSuggestion,
     actions: actions.map(({ blockNoteEnc, evidenceSummaryEnc, decisionNoteEnc, ...action }) => ({
       ...action,
       blockNote: blockNoteEnc ? decryptSensitive(blockNoteEnc, secret) : null,

@@ -22,6 +22,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "backfill:plan-titles": "tsx scripts/backfill-plan-titles.ts",
+    "backfill:plan-attributions": "tsx scripts/backfill-plan-attributions.ts",
     "backfill:chat-titles": "tsx scripts/backfill-chat-titles.ts",
     "backfill:tool-action-steps": "tsx scripts/backfill-tool-action-steps.ts",
     "resources:reindex": "tsx scripts/reindex-module-resource-embeddings.ts",

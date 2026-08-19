@@ -194,20 +194,51 @@ const showReviewForm = computed(() => canReview.value && (
 const report = computed(() => data.value?.report || {})
 const planStructure = computed(() => report.value?.planStructure || {})
 /** 归因构成。优先取报告里的，旧方案快照没有时回退到 planStructure.attribution.items。 */
-const attributions = computed<Array<{ name: string, strength: 'primary' | 'secondary' | 'reference' }>>(() =>
+const attributions = computed<Array<{ name: string, strength: 'primary' | 'secondary' | 'reference', description?: string, reasons?: string[] }>>(() =>
   report.value?.attributions?.length ? report.value.attributions : (planStructure.value?.attribution?.items || [])
+)
+/** 深度诊断建议（待办行动）：由服务端按该模块量表触发条件动态计算，完成对应量表后自动消失。 */
+const nextInstrumentSuggestion = computed<{ code: string, title: string, note: string | null } | null>(() =>
+  data.value?.nextInstrumentSuggestion || null
 )
 /** 只呈现强弱分组，不呈现占比小数——占比是规则匹配强度，不是测量精度。 */
 function attributionStrengthLabel(strength: 'primary' | 'secondary' | 'reference') {
   return { primary: '主要', secondary: '次要', reference: '参考' }[strength] || '参考'
 }
 
-function recommendationAudience(action: PlanAction): RecommendationAudience {
-  const text = `${action.title} ${action.detail}`
-  if (/学校|年级组|德育|心理专员|校方|校内协同|管理层/.test(text)) return 'school'
-  if (/家长|父母|家庭|家校|监护人/.test(text)) return 'guardian'
-  if (/学生|孩子|小组|同伴|班委|课堂|作业|学习/.test(text)) return 'student'
-  return 'teacher'
+/**
+ * 行动项分组：按「谁执行」划分，而不是「内容关于谁」。
+ * 工具名能直接点明执行对象的场景（家长会/学生自评/学校流程…）优先用标题信号；
+ * 标题无信号时看正文。家校模块正文几乎必提「家长」且多数是教师与家长的沟通对象，
+ * 只有「家长」后接执行性表述（签署/承诺/每日/定期/配合…）才判为家长配合。
+ * 最后用模块业务白名单过滤：白名单之外的判定一律回落教师行动。
+ */
+function recommendationAudience(action: PlanAction, module?: string): RecommendationAudience {
+  const title = action.title
+  const titleAudience: RecommendationAudience | null =
+    /学校|校方|德育|心理专员/.test(title) ? 'school'
+      : /家长|父母|亲子|家庭|家校|监护人/.test(title) ? 'guardian'
+        : /学生|孩子|同伴|班委|课堂|作业|学习/.test(title) ? 'student'
+          : null
+  let guess: RecommendationAudience
+  if (titleAudience) {
+    guess = titleAudience
+  } else {
+    const text = `${title} ${action.detail}`
+    if (module === 'home_school') {
+      if (/学校|年级组|德育|心理专员|校方|校内协同|管理层/.test(text)) guess = 'school'
+      else if (/家长(签署|承诺|每天|每日|每周|定期|需要|应该|应当|配合|完成|练习|反馈|填写|承担|打卡)/.test(text)) guess = 'guardian'
+      else guess = 'teacher'
+    } else {
+      if (/学校|年级组|德育|心理专员|校方|校内协同|管理层/.test(text)) guess = 'school'
+      else if (/家长|父母|家庭|家校|监护人/.test(text)) guess = 'guardian'
+      else if (/学生|孩子|小组|同伴|班委|课堂|作业|学习/.test(text)) guess = 'student'
+      else guess = 'teacher'
+    }
+  }
+  const allowed = (moduleMeta as Record<string, { planAudiences?: RecommendationAudience[] }>)[module || '']?.planAudiences
+  if (allowed && !allowed.includes(guess)) return 'teacher'
+  return guess
 }
 
 function recommendationMeta(audience: RecommendationAudience) {
@@ -262,7 +293,7 @@ const supportGoal = computed(() => report.value?.supportGoal || {
 const recommendationGroups = computed<RecommendationGroup[]>(() => {
   const byAudience = new Map<RecommendationAudience, PlanAction[]>()
   for (const action of activeActions.value) {
-    const audience = recommendationAudience(action)
+    const audience = recommendationAudience(action, data.value?.module)
     byAudience.set(audience, [...(byAudience.get(audience) || []), action])
   }
   const order: RecommendationAudience[] = ['student', 'guardian', 'school', 'teacher']
@@ -1057,9 +1088,15 @@ useHead({ title: () => data.value?.title || '方案详情' })
               >
                 {{ attributionStrengthLabel(attribution.strength) }}
               </UBadge>
-              <p class="text-sm leading-5" :class="attribution.strength === 'primary' ? 'font-semibold text-slate-800' : 'text-slate-600'">
-                {{ attribution.name }}
-              </p>
+              <div class="min-w-0">
+                <p class="text-sm leading-5" :class="attribution.strength === 'primary' ? 'font-semibold text-slate-800' : 'text-slate-600'">
+                  {{ attribution.name }}
+                </p>
+                <p v-if="attribution.description" class="mt-0.5 text-xs leading-5 text-slate-500">{{ attribution.description }}</p>
+                <p v-if="attribution.reasons?.length" class="mt-0.5 text-xs leading-5 text-slate-400">
+                  证据：{{ attribution.reasons.join('；') }}
+                </p>
+              </div>
             </div>
           </template>
           <template v-else>
@@ -1070,10 +1107,35 @@ useHead({ title: () => data.value?.title || '方案详情' })
           </template>
         </div>
 
+        <!-- 深度诊断建议（待办行动）：基于本次测量结果提示更深入诊断的可能性。
+             服务端按触发条件动态计算，完成对应量表后自动消失。 -->
+        <div v-if="nextInstrumentSuggestion" class="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="text-xs font-semibold text-amber-700">待办 · 建议深度诊断</p>
+              <p class="mt-1 text-sm font-medium text-slate-800">建议进一步完成「{{ nextInstrumentSuggestion.title }}」</p>
+              <p class="mt-1 text-xs leading-5 text-slate-600">
+                本建议基于本次测量结果生成；完成深度诊断后将获得更精确的归因判断，此待办会自动消除。
+              </p>
+              <p v-if="nextInstrumentSuggestion.note" class="mt-1 text-xs leading-5 text-slate-500">{{ nextInstrumentSuggestion.note }}</p>
+            </div>
+            <UButton size="sm" color="warning" icon="i-lucide-arrow-right" trailing :to="`/module/${data.module}`">去完成</UButton>
+          </div>
+        </div>
+
       </section>
 
       <!-- ══════════ 5. 行动方案建议（按方案块确认） ══════════ -->
       <section v-if="activeActions.length || needsAcceptance" class="order-6 rounded-2xl border border-slate-200 bg-white p-5">
+        <!-- 深度诊断待办（工具项形态）：基于本次测量结果的进一步诊断建议，完成对应量表后自动消失 -->
+        <div v-if="nextInstrumentSuggestion" class="mb-4 flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div class="min-w-0">
+            <p class="text-xs font-semibold text-amber-700">待办 · 建议深度诊断</p>
+            <p class="mt-1 text-sm font-medium text-slate-800">建议进一步完成「{{ nextInstrumentSuggestion.title }}」</p>
+            <p v-if="nextInstrumentSuggestion.note" class="mt-1 text-xs leading-5 text-slate-500">{{ nextInstrumentSuggestion.note }}</p>
+          </div>
+          <UButton size="sm" color="warning" icon="i-lucide-arrow-right" trailing :to="`/module/${data.module}`">去完成</UButton>
+        </div>
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 class="flex items-center gap-2 font-semibold text-slate-800">

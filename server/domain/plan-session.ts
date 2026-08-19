@@ -189,13 +189,17 @@ function buildPlanReport(args: {
         severity: mergedResult.severity,
         primary: mergedResult.primaryAttribution,
         secondary: mergedResult.secondaryAttributions,
-        // 完整归因构成（含占比）留在方案快照里做溯源，前端只呈现强弱标签
+        // 完整归因构成（含占比与描述）留在方案快照里做溯源，前端只呈现强弱标签
         items: mergedResult.attributions.map(attribution => ({
           code: attribution.code,
           name: attribution.name,
           share: attribution.share,
           strength: attribution.strength,
-          evidenceCodes: attribution.evidenceCodes
+          evidenceCodes: attribution.evidenceCodes,
+          // 归因项描述与命中的证据描述，供详情页归因构成完整展示；
+          // 历史方案快照缺这两项，由 backfill-plan-attributions 从三库回填
+          description: attribution.description || undefined,
+          reasons: attribution.reasons
         })),
         reasons: mergedResult.reasons
       },
