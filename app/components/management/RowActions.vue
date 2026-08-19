@@ -32,7 +32,7 @@ const emit = defineEmits<{
       <UButton icon="i-lucide-rotate-ccw" variant="ghost" size="sm" @click="emit('restore', rowId)" />
     </UTooltip>
     <UTooltip v-if="capabilities.includes('transfer')" text="移交">
-      <UButton icon="i-lucide-user-switch" variant="ghost" size="sm" @click="emit('transfer', rowId)" />
+      <UButton icon="i-lucide-arrow-left-right" variant="ghost" size="sm" @click="emit('transfer', rowId)" />
     </UTooltip>
     <UTooltip v-if="capabilities.includes('graduate')" text="设为毕业班">
       <UButton icon="i-lucide-graduation-cap" variant="ghost" size="sm" @click="emit('graduate', rowId)" />

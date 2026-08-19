@@ -171,6 +171,10 @@ async function commitBatchImport() {
 }
 
 async function versionAction(id: string, action: 'publish' | 'retire' | 'rollback') {
+  const version = allVersions.value.find((v: any) => v.id === id)
+  const versionNo = version?.version || ''
+  const actionText = action === 'publish' ? '发布' : action === 'retire' ? '停用' : '回滚'
+  if (!confirm(`确定${actionText}版本 ${versionNo} 吗？`)) return
   pending.value = true
   blockedIssues.value = []
   try {

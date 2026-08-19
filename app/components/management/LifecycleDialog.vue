@@ -1,12 +1,16 @@
 <script setup lang="ts">
-const props = defineProps<{
+// 所有归档/恢复/毕业等生命周期操作后端均强制事由 ≥10 字，默认必须填写；
+// 仅个别删除确认（如删除未激活邀请）后端不要求事由，由调用处显式传 :reason-required="false"
+const props = withDefaults(defineProps<{
   open: boolean
   action: string
   targetName?: string
   confirmLabel?: string
   loading?: boolean
   reasonRequired?: boolean
-}>()
+}>(), {
+  reasonRequired: true,
+})
 const emit = defineEmits<{
   close: []
   confirm: [reason: string, toUserId?: string]

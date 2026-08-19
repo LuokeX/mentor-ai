@@ -338,6 +338,7 @@ async function copyGeneratedPassword() {
       action="删除未激活邀请"
       :target-name="deleteTarget?.name"
       confirm-label="确认删除"
+      :reason-required="false"
       :loading="saving"
       @close="deleteTarget = null"
       @confirm="deleteInvitation"

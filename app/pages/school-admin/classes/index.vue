@@ -116,6 +116,13 @@ async function saveClass() {
   // 能量场阶段三态：未操作不发送；显式“改回按评估结果”清除修正；选择具体阶段写入修正
   if (form.energyStage === '__clear__') body.overrides = { energyStage: '' }
   else if (form.energyStage !== '__auto__') body.overrides = { energyStage: form.energyStage }
+  // 创建路径：schoolAdminClassCreateSchema 中 section/location/schoolYear 仅 optional（不接受 null），
+  // 空值不发送，否则 ZodError 500；PATCH 路径 schema 允许 null（清空语义），保持不变
+  if (!editing.value) {
+    for (const key of ['departmentId', 'section', 'location', 'schoolYear'] as const) {
+      if (body[key] === null) delete body[key]
+    }
+  }
   try {
     if (editing.value) {
       await $fetch(`/api/v1/school-admin/classes/${editing.value.id}`, {

@@ -145,6 +145,7 @@ const router = useRouter()
     </div>
 
     <ManagedDataTable
+      v-if="loading || rows.length"
       :columns="columns"
       :rows="rows"
       :loading="loading"
