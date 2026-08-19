@@ -19,6 +19,11 @@ const recoveryCodes = ref<string[]>([])
 const mfaError = ref('')
 const mfaPending = ref(false)
 
+// 已绑定 TOTP 的心理专员登录：密码校验通过后需动态验证码或恢复码（服务端 401 提示触发本区显示）
+const totpChallenge = ref(false)
+const loginOtp = ref('')
+const loginRecoveryCode = ref('')
+
 const demoAccounts = [
   { label: '李老师（教师）', value: '13900001001' },
   { label: '张老师（教师）', value: '13900001002' },
@@ -48,7 +53,12 @@ async function login() {
   try {
     const result = await $fetch<{ role?: string; needsMfa?: boolean; token?: string; otpauthUri?: string }>('/api/v1/auth/login', {
       method: 'POST',
-      body: { phone: form.phone, password: form.password }
+      body: {
+        phone: form.phone,
+        password: form.password,
+        ...(loginOtp.value.trim() ? { otp: loginOtp.value.trim() } : {}),
+        ...(loginRecoveryCode.value.trim() ? { recoveryCode: loginRecoveryCode.value.trim() } : {})
+      }
     })
     if (result.needsMfa && result.token && result.otpauthUri) {
       mfaSetup.value = { token: result.token, otpauthUri: result.otpauthUri }
@@ -62,7 +72,12 @@ async function login() {
     const homes: Record<string, string> = { teacher: '/', psychologist: '/specialist', school_admin: '/school-admin', platform_admin: '/platform-admin' }
     await navigateTo(homes[result.role || ''] || '/')
   } catch (error: any) {
-    errorMessage.value = error?.data?.message || error?.data?.statusMessage || error?.message || '登录失败'
+    const message = error?.data?.message || error?.data?.statusMessage || error?.message || '登录失败'
+    errorMessage.value = message
+    // 服务端对已绑定 TOTP 的心理专员返回：请提供动态验证码或恢复码 / 动态验证码错误 / 恢复码无效
+    if (/验证码|恢复码/.test(message)) {
+      totpChallenge.value = true
+    }
   } finally {
     pending.value = false
   }
@@ -132,7 +147,16 @@ async function copyRecoveryCodes() {
           <UFormField label="手机号"><UInput v-model="form.phone" size="xl" icon="i-lucide-smartphone" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>
           <UFormField label="密码"><UInput v-model="form.password" type="password" size="xl" icon="i-lucide-lock-keyhole" class="w-full" /></UFormField>
           <UAlert v-if="errorMessage" color="error" variant="soft" :description="errorMessage" />
-          <button type="submit" class="w-full rounded-lg bg-[var(--ui-primary)] px-6 py-3.5 text-lg font-medium text-white disabled:opacity-50" :disabled="!hydrated">安全登录</button>
+          <div v-if="totpChallenge" class="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+            <p class="text-xs leading-5 text-slate-600">该心理专员账号已绑定动态验证码，请输入身份验证器中的 6 位动态验证码；或输入恢复码（格式 XXXXXX-XXXXXX）完成登录。</p>
+            <UFormField label="动态验证码">
+              <UInput v-model="loginOtp" inputmode="numeric" maxlength="6" size="xl" icon="i-lucide-shield-check" class="w-full" placeholder="6 位动态验证码" />
+            </UFormField>
+            <UFormField label="恢复码（选填）">
+              <UInput v-model="loginRecoveryCode" size="xl" icon="i-lucide-key-round" class="w-full" placeholder="XXXXXX-XXXXXX" />
+            </UFormField>
+          </div>
+          <button type="submit" class="w-full rounded-lg bg-[var(--ui-primary)] px-6 py-3.5 text-lg font-medium text-white disabled:opacity-50" :disabled="!hydrated">{{ totpChallenge ? '验证并登录' : '安全登录' }}</button>
           <div v-if="showSsoLogin" class="space-y-4 pt-1">
             <div class="flex items-center gap-3 text-xs text-slate-400"><span class="h-px flex-1 bg-slate-200" /><span>或使用统一身份</span><span class="h-px flex-1 bg-slate-200" /></div>
             <button type="button" class="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-6 py-3 text-base font-medium text-slate-700 transition hover:border-emerald-600 hover:text-emerald-700" @click="ssoLogin">
