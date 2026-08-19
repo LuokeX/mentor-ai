@@ -13,16 +13,31 @@
 
 ## 发布与回滚
 
-发布前先备份数据库，然后构建镜像并运行迁移：
+发布流程固定为「版本标签 → 备份 → 构建 → 部署 → 验证」五步。**每次正式发布必须先由发布人确认版本号（`vX.Y.Z`），且 git 标签与 docker 镜像标签必须一致**；部署完成后记录：migration、备份文件及校验和、健康检查与冒烟结果。
 
 ```bash
+# 1) 打 git 标签并推送（版本号由发布人确认，禁止代理自行决定）
+git tag -a vX.Y.Z -m "正式部署：<本次变更摘要>"
+git push origin vX.Y.Z
+
+# 2) 发布前备份数据库
 ./scripts/backup.sh
-docker compose --profile tls build
-docker compose --profile tls up -d
-docker compose ps
+
+# 3) 构建镜像（一次只跑一个 build，禁止并发 build 互相排队阻塞）
+docker compose build app
+
+# 4) docker 镜像打与 git 相同的版本标签
+docker tag mentor-ai-app:latest mentor-ai-app:vX.Y.Z
+docker tag mentor-ai-migrate:latest mentor-ai-migrate:vX.Y.Z
+
+# 5) 部署并验证
+docker compose up -d
+docker compose ps          # app 状态 healthy
+curl -fsS http://localhost:3300/health/ready
+# 冒烟：四角色登录 + /auth/me
 ```
 
-应用回滚使用上一个经过验证的镜像标签重新部署。数据库迁移默认只做向前兼容变更；若必须回退数据库，先停止 App（含内置通知消费者），再在隔离数据库验证目标备份，最后使用恢复脚本。不要在未验证备份时直接删除卷。
+应用回滚使用上一个经过验证的**版本镜像标签**（`mentor-ai-app:v<上一版本>`）重新部署，不依赖 `latest`。数据库迁移默认只做向前兼容变更；若必须回退数据库，先停止 App（含内置通知消费者），再在隔离数据库验证目标备份，最后使用恢复脚本。不要在未验证备份时直接删除卷。
 
 正式环境禁止执行 `pnpm db:seed`、`pnpm env:init`、`pnpm dev` 和 `docker compose down -v`。每次发布必须记录 migration、备份文件及校验和、健康检查与冒烟结果。
 
