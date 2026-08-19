@@ -37,10 +37,12 @@ DEEPSEEK_API_KEY=实际密钥
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_ROUTER_MODEL=deepseek-v4-flash
 DEEPSEEK_GENERATOR_MODEL=deepseek-v4-pro
-DEEPSEEK_TIMEOUT_MS=8000
+DEEPSEEK_TIMEOUT_MS=30000
 ```
 
 DeepSeek 用于语义风险辅助、分诊路由和必要表达润色。没有密钥、超时或响应校验失败时，系统自动使用本地分诊与安全降级。
+
+超时说明：`DEEPSEEK_TIMEOUT_MS` 是全局默认（建议 30000）。评估报告润色是最长输出（完整报告 JSON），走专用逻辑：AI 运行时配置显式设置优先，否则不低于 60000ms，不受全局短超时影响。
 
 Embedding 只服务模块资源文档分块，不再服务旧知识库：
 

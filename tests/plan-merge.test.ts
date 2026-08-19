@@ -8,7 +8,7 @@ import {
   severityRank,
   worseSeverity,
 } from '../server/domain/plan-merge'
-import { toToolActions } from '../server/domain/plan-actions'
+import { toToolActions, renderToolContent } from '../server/domain/plan-actions'
 
 const attribution = (overrides: Partial<AttributionOutcome>): AttributionOutcome => ({
   code: 'AT_A',
@@ -181,5 +181,45 @@ describe('toToolActions', () => {
       { title: '工具B', content: '正文B' },
     ])
     expect(actions.map(action => action.title)).toEqual(['使用工具「工具A」', '使用工具「工具B」'])
+  })
+})
+
+describe('renderToolContent', () => {
+  it('结构化步骤：说明与标题相同时省略冒号重复，只保留步骤名，步骤间单换行', () => {
+    const content = renderToolContent({
+      structuredSteps: [
+        { seq: 1, title: '分开冷静', description: '分开冷静' },
+        { seq: 2, title: '各自陈述', description: '各自陈述' },
+      ],
+    })
+    expect(content).toBe('1. 分开冷静\n2. 各自陈述')
+  })
+
+  it('结构化步骤：说明不同或缺失时，有说明带冒号、无说明不带冒号', () => {
+    const content = renderToolContent({
+      structuredSteps: [
+        { seq: 1, title: '分开冷静', description: '学生与冲突双方分开，各自冷静' },
+        { seq: 2, title: '跟进复盘', description: '' },
+      ],
+    })
+    expect(content).toBe('1. 分开冷静: 学生与冲突双方分开，各自冷静\n2. 跟进复盘')
+  })
+
+  it('结构化步骤：提示/话术/达标子行仍按缩进保留', () => {
+    const content = renderToolContent({
+      structuredSteps: [
+        { seq: 1, title: '分开冷静', description: '分开冷静', keyTip: '不在情绪峰值时谈' },
+      ],
+    })
+    expect(content).toBe('1. 分开冷静\n   提示：不在情绪峰值时谈')
+  })
+
+  it('无结构化步骤时回退到自由文本 steps 与话术/禁止事项', () => {
+    const content = renderToolContent({
+      steps: ['分开冷静', '各自陈述'],
+      scripts: '先不讨论谁对谁错',
+      prohibitions: '欺凌事件不适用',
+    })
+    expect(content).toBe('分开冷静\n各自陈述\n\n关键话术：\n先不讨论谁对谁错\n\n禁止事项：\n欺凌事件不适用')
   })
 })

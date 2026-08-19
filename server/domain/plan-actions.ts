@@ -242,13 +242,15 @@ export function renderToolContent(tool: Record<string, unknown>): string {
   if (structuredSteps.length > 0) {
     const sorted = [...structuredSteps].sort((a, b) => a.seq - b.seq)
     const stepLines = sorted.map((s, idx) => {
-      const parts = [`${idx + 1}. ${s.title}: ${s.description}`]
+      // 步骤说明与标题重复（导入数据常见）时省略冒号部分，避免「1. 分开冷静: 分开冷静」式重复
+      const hasDetail = Boolean(s.description?.trim()) && s.description !== s.title
+      const parts = [hasDetail ? `${idx + 1}. ${s.title}: ${s.description}` : `${idx + 1}. ${s.title}`]
       if (s.keyTip) parts.push(`   提示：${s.keyTip}`)
       if (s.scriptTemplate) parts.push(`   话术：${s.scriptTemplate}`)
       if (s.successCriteria) parts.push(`   达标：${s.successCriteria}`)
       return parts.join('\n')
     })
-    let content = stepLines.join('\n\n')
+    let content = stepLines.join('\n')
     const warnContras = contraRules.filter(rule => rule.type === 'warn')
     if (warnContras.length > 0) {
       content += '\n\n⚠ 注意事项：\n' + warnContras.map(rule => `- ${rule.description}`).join('\n')

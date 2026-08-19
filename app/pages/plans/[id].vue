@@ -164,7 +164,7 @@ function actionStatusText(status: string) {
   return map[status] || status
 }
 
-/** 工具动作由工具库匹配生成，正文是完整结构化步骤；执行区只呈现工具名，正文留在建议区。 */
+/** 工具动作由工具库匹配生成，正文是完整结构化步骤；建议区标题独占一行展开步骤，执行区同样展示正文。 */
 function isToolAction(action: PlanAction) {
   return action.title.startsWith('使用工具「')
 }
@@ -233,12 +233,21 @@ function recommendationGroupPeriod(group: RecommendationGroup) {
   return `${days}天（${start.toLocaleDateString('zh-CN')} ～ ${end.toLocaleDateString('zh-CN')}）`
 }
 
+/** 方案块内动作标题用中文序号，与工具步骤的阿拉伯序号区分层级 */
+const CN_ORDINALS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
+
 function recommendationImplementation(group: RecommendationGroup) {
   return group.actions
-    .map((action, index) => group.actions.length > 1
-      ? `${index + 1}. ${action.title}：${action.detail}`
-      : action.detail)
-    .join('\n')
+    .map((action, index) => {
+      const numbered = group.actions.length > 1
+      const ordinal = CN_ORDINALS[index] || String(index + 1)
+      const head = numbered ? `${ordinal}、${action.title}` : action.title
+      if (!action.detail) return head
+      // 工具动作的正文是结构化步骤（自带序号），标题独占一行，步骤换行展开
+      if (isToolAction(action)) return `${head}\n${action.detail}`
+      return numbered ? `${head}：${action.detail}` : action.detail
+    })
+    .join('\n\n')
 }
 
 function recommendationGroupOutcome() {
@@ -798,7 +807,8 @@ useHead({ title: () => data.value?.title || '方案详情' })
                 >
                   {{ action.title }}
                 </p>
-                <p v-if="!isToolAction(action)" class="mt-1 text-xs leading-5 text-slate-500">{{ action.detail }}</p>
+                <!-- 工具动作与普通动作一致展示正文（结构化步骤），与建议区排版同步 -->
+                <p v-if="action.detail" class="mt-1 whitespace-pre-line text-xs leading-5 text-slate-500">{{ action.detail }}</p>
                 <!-- 截止日期 -->
                 <p v-if="action.dueAt" class="mt-1 text-xs text-amber-600">
                   截止：{{ formatDate(action.dueAt) }}
