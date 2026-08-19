@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { createRecoveryCodes, invitationExpiresAt } from '../server/domain/invitations'
+import { invitationExpiresAt } from '../server/domain/invitations'
 import { defaultActionDueAt, defaultReviewAt, derivePlanActionSnapshots, mergePlanActionSnapshots, nextPlanActionSequence } from '../server/domain/plan-actions'
 import { governBusinessContext } from '../server/domain/ai-governance'
 import { parseImportFile } from '../server/domain/school-imports'
@@ -9,13 +9,6 @@ describe('校内试用核心不变量', () => {
   it('邀请有效期固定为 72 小时', () => {
     const now = new Date('2026-07-17T00:00:00.000Z')
     expect(invitationExpiresAt(now).getTime() - now.getTime()).toBe(72 * 60 * 60 * 1000)
-  })
-
-  it('恢复码为一次性可分发格式且互不重复', () => {
-    const codes = createRecoveryCodes()
-    expect(codes).toHaveLength(8)
-    expect(new Set(codes).size).toBe(8)
-    expect(codes.every(code => /^[A-F0-9]{6}-[A-F0-9]{6}$/.test(code))).toBe(true)
   })
 
   it('新方案默认三天动作与七天复盘节点', () => {

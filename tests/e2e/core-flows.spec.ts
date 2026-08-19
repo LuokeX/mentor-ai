@@ -1,9 +1,8 @@
 import { expect, test } from '@playwright/test'
-import * as OTPAuth from 'otpauth'
 
-async function login(page: import('@playwright/test').Page, phone: string, options: { password?: string, otp?: string } = {}) {
+async function login(page: import('@playwright/test').Page, phone: string, options: { password?: string } = {}) {
   const response = await page.request.post('/api/v1/auth/login', {
-    data: { phone, password: options.password || 'Mentor@2026', ...(options.otp ? { otp: options.otp } : {}) }
+    data: { phone, password: options.password || 'Mentor@2026' }
   })
   expect(response.ok()).toBeTruthy()
   const result = await response.json()
@@ -249,12 +248,8 @@ test.describe('四角色核心路径', () => {
     expect(archivedClassList.rows.find(item => item.id === createdClass.id)?._capabilities).toEqual(expect.arrayContaining(['view', 'restore']))
   })
 
-  test('心理专员 MFA 登录并查看 SLA 工作台', async ({ page }) => {
-    const totp = new OTPAuth.TOTP({
-      issuer: '教师赋能智能平台', label: '王心理专员', algorithm: 'SHA1', digits: 6, period: 30,
-      secret: OTPAuth.Secret.fromBase32('JBSWY3DPEHPK3PXP')
-    })
-    await login(page, '13900001003', { otp: totp.generate() })
+  test('心理专员登录并查看 SLA 工作台', async ({ page }) => {
+    await login(page, '13900001003')
     await expect(page.getByRole('heading', { name: '心理专员工作台' })).toBeVisible()
     await expect(page.getByText('最小必要转介空间')).toBeVisible()
   })

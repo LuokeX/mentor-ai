@@ -206,7 +206,7 @@ docker compose exec app node -e "fetch('http://127.0.0.1:3300/health/ready').the
 docker compose logs --tail=100 app nginx
 ```
 
-最后通过校内域名验证 HTTPS、登录、四角色权限、心理专员 TOTP、DeepSeek 降级和真实短信。正式环境禁止执行 `pnpm db:seed`。
+最后通过校内域名验证 HTTPS、登录、四角色权限、DeepSeek 降级和真实短信。正式环境禁止执行 `pnpm db:seed`。
 
 ## 7. 正式环境版本更新
 

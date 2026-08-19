@@ -150,9 +150,8 @@ export default defineEventHandler(async (event) => {
         ))
     }
 
-    // 13. 撤销登录会话和恢复码
+    // 13. 撤销登录会话
     await tx.delete(schema.sessions).where(eq(schema.sessions.userId, id))
-    await tx.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, id))
 
     // 14. 将账号设为 disabled
     const [disabled] = await tx.update(schema.users).set({

@@ -3,7 +3,6 @@
  * 用法：node scripts/demo-rest-capture.mjs
  */
 import { chromium } from '@playwright/test'
-import * as OTPAuth from 'otpauth'
 
 const BASE = 'http://localhost:3300'
 const OUT = 'docs/demo-assets'
@@ -15,21 +14,11 @@ async function shot(page, name) {
   console.log(`[ok] ${name}.png`)
 }
 
-async function login(page, phone, withOtp = false) {
+async function login(page, phone) {
   await page.goto(`${BASE}/login`)
   await page.getByLabel('手机号').fill(phone)
   await page.getByLabel('密码').fill(PASSWORD)
   await page.getByRole('button', { name: '安全登录' }).click()
-  if (withOtp) {
-    await page.getByLabel('心理专员动态验证码').waitFor({ timeout: 15000 })
-    const totp = new OTPAuth.TOTP({
-      issuer: '教师赋能智能平台', label: phone,
-      algorithm: 'SHA1', digits: 6, period: 30,
-      secret: OTPAuth.Secret.fromBase32('JBSWY3DPEHPK3PXP')
-    })
-    await page.getByLabel('心理专员动态验证码').fill(totp.generate())
-    await page.getByRole('button', { name: '安全登录' }).click()
-  }
 }
 
 const browser = await chromium.launch()

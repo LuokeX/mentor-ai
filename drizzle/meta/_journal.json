@@ -302,6 +302,13 @@
       "when": 1787060127202,
       "tag": "0042_redundant_ted_forrester",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1787103530225,
+      "tag": "0043_public_rafael_vega",
+      "breakpoints": true
     }
   ]
 }

@@ -27,15 +27,7 @@ export const reasonCategorySchema = z.enum([
 
 export const loginRequestSchema = z.object({
   phone: z.string().trim().regex(/^1[3-9]\d{9}$/),
-  password: z.string().min(8).max(200),
-  otp: z.preprocess(
-    value => typeof value === 'string' && value.trim() === '' ? undefined : value,
-    z.string().regex(/^\d{6}$/).optional()
-  ),
-  recoveryCode: z.preprocess(
-    value => typeof value === 'string' && value.trim() === '' ? undefined : value,
-    z.string().trim().regex(/^[A-F0-9]{6}-[A-F0-9]{6}$/i).optional()
-  )
+  password: z.string().min(8).max(200)
 })
 
 export const adminAccessRequestSchema = z.object({

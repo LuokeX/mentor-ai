@@ -16,11 +16,14 @@ describe('instrument role parsing (③ 量表角色)', () => {
 })
 
 describe('shared API contracts', () => {
-  it('accepts an omitted or empty OTP for roles without MFA', () => {
+  it('accepts a phone and password login without MFA fields', () => {
     const base = { phone: '13800000001', password: 'Mentor@2026' }
     expect(loginRequestSchema.parse(base)).toEqual({ ...base, phone: '13800000001' })
-    expect(loginRequestSchema.parse({ ...base, otp: '' }).otp).toBeUndefined()
-    expect(loginRequestSchema.safeParse({ ...base, otp: '123' }).success).toBe(false)
+    // MFA 已移除：otp/recoveryCode 不再属于契约，会被剥离
+    const withOtp = loginRequestSchema.parse({ ...base, otp: '123456' })
+    expect('otp' in withOtp).toBe(false)
+    const withRecovery = loginRequestSchema.parse({ ...base, recoveryCode: 'ABCDEF-123456' })
+    expect('recoveryCode' in withRecovery).toBe(false)
   })
 
   it('requires a specific and meaningful administrator access reason', () => {

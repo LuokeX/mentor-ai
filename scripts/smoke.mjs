@@ -1,5 +1,3 @@
-import * as OTPAuth from 'otpauth'
-
 const baseUrl = process.env.APP_BASE_URL || 'http://127.0.0.1:3100'
 
 function assert(condition, message) {
@@ -25,9 +23,9 @@ function client() {
   }
 }
 
-async function login(api, phone, otp) {
+async function login(api, phone) {
   const result = await api('/api/v1/auth/login', {
-    method: 'POST', body: { phone, password: 'Mentor@2026', ...(otp ? { otp } : {}) }
+    method: 'POST', body: { phone, password: 'Mentor@2026' }
   })
   assert(result.response.ok, `${phone} login failed: ${result.text}`)
 }
@@ -74,11 +72,7 @@ assert(teacherExport.response.ok && teacherExport.response.headers.get('content-
 const crisis = await teacher('/api/v1/chat/messages', { method: 'POST', body: { message: '学生刚刚说他不想活了，我需要帮助。' } })
 assert(crisis.response.ok && crisis.text.includes('event: fuse'), `crisis fuse failed: ${crisis.text}`)
 
-const totp = new OTPAuth.TOTP({
-  issuer: '教师赋能智能平台', label: '王心理专员', algorithm: 'SHA1', digits: 6, period: 30,
-  secret: OTPAuth.Secret.fromBase32('JBSWY3DPEHPK3PXP')
-})
-await login(psychologist, '13900001003', totp.generate())
+await login(psychologist, '13900001003')
 const referrals = await psychologist('/api/v1/specialist/referrals')
 assert(referrals.response.ok && referrals.data.length > 0, 'assigned psychologist did not receive referral')
 assert(!JSON.stringify(referrals.data).includes('passwordHash'), 'specialist package leaked account fields')

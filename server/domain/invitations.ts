@@ -47,7 +47,3 @@ export async function findValidInvitation(event: H3Event, token: string) {
   if (!invitation || invitation.expiresAt.getTime() <= Date.now()) return null
   return invitation
 }
-
-export function createRecoveryCodes(count = 8) {
-  return Array.from({ length: count }, () => `${randomBytes(3).toString('hex').toUpperCase()}-${randomBytes(3).toString('hex').toUpperCase()}`)
-}

@@ -46,7 +46,7 @@
 - TypeScript `strict: true` 且 `typeCheck: true`，运行 `pnpm typecheck`。
 - PostgreSQL 18 + pgvector 0.8.5，Drizzle ORM；数据库结构集中在 `server/db/schema.ts`（当前 51 张表）。
 - Zod 用于请求、模型输出和共享契约校验。
-- 敏感字段使用 AES-256-GCM 应用层加密；密码使用 Argon2id；心理专员登录使用 TOTP（`otpauth`）。
+- 敏感字段使用 AES-256-GCM 应用层加密；密码使用 Argon2id。
 - DeepSeek 用于受限的澄清分诊和语义辅助；Ollama `qwen3-embedding:0.6b` 生成 `vector(1024)` 向量，当前只用于 `module_resource_chunks`，且需要 `EMBEDDING_ENABLED=true`。
 - `xlsx@0.18.5` 用于三库模板解析（`scripts/import-business-data/xlsx-reader.ts` 与平台后台文件导入）。
 - Vitest 是单元测试框架（`tests/*.test.ts`）。Playwright E2E 已有真实用例：`tests/e2e/core-flows.spec.ts`，覆盖 `desktop-chromium` 和 `mobile-chromium` 两个 project，`webServer` 会以 `pnpm dev --port 3100` 拉起应用，因此需要可用数据库和种子数据。
@@ -225,9 +225,9 @@ export default defineEventHandler(async (event) => {
 
 ### 7.1 加密与最小披露
 
-- `nameEnc`、`phoneEnc`、`profileEnc`、`notesEnc`、`contentEnc`、`summaryEnc`、`descriptionEnc`、`totpSecretEnc`、`handlingNoteEnc` 等字段写入前使用 `encryptSensitive`，读取时使用 `decryptSensitive`。
+- `nameEnc`、`phoneEnc`、`profileEnc`、`notesEnc`、`contentEnc`、`summaryEnc`、`descriptionEnc`、`handlingNoteEnc` 等字段写入前使用 `encryptSensitive`，读取时使用 `decryptSensitive`。
 - 需要精确检索姓名时使用 `searchableHash`；不要额外保存明文搜索列。
-- API 响应不得泄露 `*Enc`、搜索哈希、密码哈希、TOTP secret 或会话 token。解密后构造明确的响应对象；手机号只在已授权且业务确有需要的教师详情中返回，其他场景用 `maskPhone` / `SENSITIVE_PLACEHOLDER` 脱敏。
+- API 响应不得泄露 `*Enc`、搜索哈希、密码哈希或会话 token。解密后构造明确的响应对象；手机号只在已授权且业务确有需要的教师详情中返回，其他场景用 `maskPhone` / `SENSITIVE_PLACEHOLDER` 脱敏。
 - 日志、审计、模型调用记录、通知正文和测试快照遵循最小披露原则。
 - `.env`、证书、备份和真实业务数据不得提交。不要打印环境变量或密钥值。
 
@@ -357,6 +357,6 @@ pnpm scaffold:management  # 生成管理模块骨架 --area <area> --entity <ent
 
 1. **先向用户询问本次发布的版本号（`vX.Y.Z` 格式），得到确认前不得开始部署**，不得擅自沿用或选择版本号。
 2. **git 标签与 docker 镜像标签必须使用同一版本号**（`git tag vX.Y.Z` 与 `docker tag mentor-ai-app:latest mentor-ai-app:vX.Y.Z` 一致），两者缺一不可。
-3. 询问版本号的同时提醒核对上线配置项（短信网关非 mock、DeepSeek 连通性、危机配置真实值、演示账号清理、心理专员 TOTP 绑定），未就绪需用户明确放行。
+3. 询问版本号的同时提醒核对上线配置项（短信网关非 mock、DeepSeek 连通性、危机配置真实值、演示账号清理），未就绪需用户明确放行。
 4. 执行顺序与验证要求以 `docs/OPERATIONS.md`「发布与回滚」章节为准（版本标签 → 备份 → 构建 → 部署 → 验证）；回滚使用上一版本的镜像标签，不依赖 `latest`。
 5. 部署完成汇报：git tag、docker tag、备份文件、迁移结果、健康检查与冒烟结果。

@@ -8,7 +8,7 @@
 - 角色（`teacher`/`psychologist`/`school_admin`/`platform_admin`）与学校归属始终由本平台维护，不随 IdP 同步。
 - 不自动建号：未在本平台预置的账号一律拒绝登录并写入审计（`auth.sso.login` result=`denied`）。
 - 不做 RP-initiated logout：退出登录只清除本平台会话，不回跳 IdP 登出端点。
-- 心理专员登录后仍需在本平台完成 TOTP 激活与动态码校验（两因素归属本平台，不上收 IdP）。
+- 心理专员与本平台其他角色一致使用账号密码登录（两因素由统一身份平台负责，本平台不额外叠加验证码）。
 
 ## 身份平台侧前置条件
 
@@ -65,7 +65,7 @@ OIDC_REDIRECT_URI=http://localhost:3301/api/v1/auth/sso/callback
 
 - 成功：`auth.sso.login`（含 actor 与学校）。
 - 失败：`auth.sso.login` result=`denied`，metadata 记录 IdP issuer 与尝试登录的手机号。
-- 账密登录、TOTP、激活等原有审计不变。
+- 账密登录、激活等原有审计不变。
 
 ## 相关代码
 

@@ -59,7 +59,6 @@ export default defineEventHandler(async (event) => {
     // 清除关联数据（仅限无业务引用的邀请账号）
     await tx.delete(schema.sessions).where(eq(schema.sessions.userId, id))
     await tx.delete(schema.invitations).where(eq(schema.invitations.userId, id))
-    await tx.delete(schema.mfaRecoveryCodes).where(eq(schema.mfaRecoveryCodes.userId, id))
     await tx.delete(schema.departmentMembers).where(eq(schema.departmentMembers.userId, id))
     // 删除用户
     const [deleted] = await tx.delete(schema.users).where(and(

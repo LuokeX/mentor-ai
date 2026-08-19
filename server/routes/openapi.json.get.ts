@@ -41,9 +41,8 @@ export default defineEventHandler(() => ({
   paths: {
     '/health/live': { get: { security: [], summary: '进程存活检查', responses: { 200: { description: 'Live' } } } },
     '/health/ready': { get: { security: [], summary: '数据库就绪检查', responses: { 200: { description: 'Ready' }, 503: { description: 'Not ready' } } } },
-    '/api/v1/auth/login': { post: { security: [], summary: '账号密码登录；心理专员还需 TOTP 或一次性恢复码', responses: { 200: { description: 'Logged in' }, 428: { description: 'MFA required' } } } },
-    '/api/v1/auth/activate': { get: { security: [], summary: '校验 72 小时一次性激活码', responses: { 200: { description: 'Invitation valid' }, 410: { description: 'Expired' } } }, post: { security: [], summary: '设置密码；心理专员进入 MFA 绑定步骤', responses: { 200: { description: 'Activated or MFA setup URI' } } } },
-    '/api/v1/auth/activate-mfa': { post: { security: [], summary: '心理专员确认 TOTP 并一次性取得恢复码', responses: { 200: { description: 'Activated with recovery codes' } } } },
+    '/api/v1/auth/login': { post: { security: [], summary: '账号密码登录', responses: { 200: { description: 'Logged in' }, 401: { description: 'Invalid credentials' } } } },
+    '/api/v1/auth/activate': { get: { security: [], summary: '校验 72 小时一次性激活码', responses: { 200: { description: 'Invitation valid' }, 410: { description: 'Expired' } } }, post: { security: [], summary: '设置密码并激活账号', responses: { 200: { description: 'Activated' } } } },
     '/api/v1/chat/messages': { post: { summary: '安全检查、受控上下文和首页 AI 分诊（SSE）', responses: { 200: { description: 'SSE events: ack(dataGovernance), answer_start, answer_delta, answer, route, clarification_round, clarification_summary, fuse, done' }, 409: { description: 'Session context cannot be switched silently' } } } },
     '/api/v1/chat/context-options': { get: { summary: '取得当前教师可绑定到 AI 咨询的学生、班级和家长对象', responses: { 200: { description: 'Context options' } } } },
     '/api/v1/chat/status': { get: { summary: '取得 AI 分诊配置状态', responses: { 200: { description: 'Triage assistant status' } } } },

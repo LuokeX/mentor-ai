@@ -45,7 +45,6 @@ export const users = pgTable('users', {
   oidcSubject: varchar('oidc_subject', { length: 255 }),
   role: varchar('role', { length: 30 }).notNull(),
   status: varchar('status', { length: 20 }).default('active').notNull(),
-  totpSecretEnc: text('totp_secret_enc'),
   activatedAt: timestamp('activated_at', { withTimezone: true }),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   disabledAt: timestamp('disabled_at', { withTimezone: true }),
@@ -101,8 +100,6 @@ export const invitations = pgTable('invitations', {
   userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
   tokenHash: varchar('token_hash', { length: 64 }).notNull(),
   pendingPasswordHash: text('pending_password_hash'),
-  pendingTotpSecretEnc: text('pending_totp_secret_enc'),
-  pendingRecoveryCodeHashes: jsonb('pending_recovery_code_hashes').$type<string[]>(),
   invitedBy: uuid('invited_by').notNull().references(() => users.id),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   acceptedAt: timestamp('accepted_at', { withTimezone: true }),
@@ -111,14 +108,6 @@ export const invitations = pgTable('invitations', {
   uniqueIndex('invitations_token_hash_uidx').on(table.tokenHash),
   index('invitations_school_phone_idx').on(table.schoolId, table.phone)
 ])
-
-export const mfaRecoveryCodes = pgTable('mfa_recovery_codes', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  codeHash: varchar('code_hash', { length: 64 }).notNull(),
-  usedAt: timestamp('used_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
-}, table => [uniqueIndex('mfa_recovery_code_hash_uidx').on(table.codeHash), index('mfa_recovery_user_idx').on(table.userId)])
 
 export const schoolSettings = pgTable('school_settings', {
   schoolId: uuid('school_id').primaryKey().references(() => schools.id, { onDelete: 'cascade' }),

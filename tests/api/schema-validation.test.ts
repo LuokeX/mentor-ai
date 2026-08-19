@@ -35,14 +35,11 @@ describe('loginRequestSchema', () => {
     expect(result.phone).toBe('13800000001')
   })
 
-  it('accepts optional OTP code', () => {
-    const result = loginRequestSchema.parse({ phone: '13800000001', password: '12345678', otp: '123456' })
-    expect(result.otp).toBe('123456')
-  })
-
-  it('rejects empty OTP (treated as undefined)', () => {
-    const result = loginRequestSchema.parse({ phone: '13800000001', password: '12345678', otp: '' })
-    expect(result.otp).toBeUndefined()
+  it('strips removed MFA fields (otp/recoveryCode)', () => {
+    const withOtp = loginRequestSchema.parse({ phone: '13800000001', password: '12345678', otp: '123456' })
+    expect('otp' in withOtp).toBe(false)
+    const withRecovery = loginRequestSchema.parse({ phone: '13800000001', password: '12345678', recoveryCode: 'ABCDEF-123456' })
+    expect('recoveryCode' in withRecovery).toBe(false)
   })
 
   it('rejects short password', () => {
@@ -51,10 +48,6 @@ describe('loginRequestSchema', () => {
 
   it('rejects invalid phone', () => {
     expect(() => loginRequestSchema.parse({ phone: 'not-a-phone', password: '12345678' })).toThrow(ZodError)
-  })
-
-  it('rejects non-numeric OTP', () => {
-    expect(() => loginRequestSchema.parse({ phone: '13800000001', password: '12345678', otp: 'abcdef' })).toThrow(ZodError)
   })
 })
 

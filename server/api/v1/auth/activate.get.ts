@@ -9,8 +9,6 @@ export default defineEventHandler(async (event) => {
     name: invitation.name,
     phone: invitation.phone.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2'),
     role: invitation.role,
-    expiresAt: invitation.expiresAt,
-    needsMfa: invitation.role === 'psychologist',
-    mfaPrepared: Boolean(invitation.pendingTotpSecretEnc)
+    expiresAt: invitation.expiresAt
   }
 })

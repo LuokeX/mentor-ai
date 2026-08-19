@@ -30,7 +30,7 @@ if (!school) [school] = await db.insert(schools).values({ name: '六力学校（
 const accounts = [
   { phone: '13900001001', name: '李老师', role: 'teacher', schoolId: school.id },
   { phone: '13900001002', name: '张老师', role: 'teacher', schoolId: school.id },
-  { phone: '13900001003', name: '王心理专员', role: 'psychologist', schoolId: school.id, totpSecretEnc: encryptSensitive('JBSWY3DPEHPK3PXP', encryptionKey) },
+  { phone: '13900001003', name: '王心理专员', role: 'psychologist', schoolId: school.id },
   { phone: '13900001004', name: '学校管理员', role: 'school_admin', schoolId: school.id },
   { phone: '13900001005', name: '平台管理员', role: 'platform_admin', schoolId: null }
 ]
@@ -146,4 +146,4 @@ if (teacherLi && teacherZhang) {
 }
 
 await pool.end()
-process.stdout.write('Seed complete. Demo password: Mentor@2026. Psychologist TOTP secret: JBSWY3DPEHPK3PXP. 教师登录账号：13900001001（李老师）/ 13900001002（张老师）\n')
+process.stdout.write('Seed complete. Demo password: Mentor@2026. 教师登录账号：13900001001（李老师）/ 13900001002（张老师）\n')

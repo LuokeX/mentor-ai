@@ -4,7 +4,6 @@
  * 前置：dev server 运行在 3300，数据库已 seed
  */
 import { chromium } from '@playwright/test'
-import * as OTPAuth from 'otpauth'
 
 const BASE = 'http://localhost:3300'
 const OUT = 'docs/demo-assets'
@@ -16,21 +15,11 @@ async function shot(page, name) {
   console.log(`[ok] ${name}.png`)
 }
 
-async function login(page, phone, withOtp = false) {
+async function login(page, phone) {
   await page.goto(`${BASE}/login`)
   await page.getByLabel('手机号').fill(phone)
   await page.getByLabel('密码').fill(PASSWORD)
   await page.getByRole('button', { name: '安全登录' }).click()
-  if (withOtp) {
-    await page.getByLabel('心理专员动态验证码').waitFor({ timeout: 15000 })
-    const totp = new OTPAuth.TOTP({
-      issuer: '教师赋能智能平台', label: phone,
-      algorithm: 'SHA1', digits: 6, period: 30,
-      secret: OTPAuth.Secret.fromBase32('JBSWY3DPEHPK3PXP')
-    })
-    await page.getByLabel('心理专员动态验证码').fill(totp.generate())
-    await page.getByRole('button', { name: '安全登录' }).click()
-  }
 }
 
 async function logout(page) {
@@ -152,7 +141,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 // ============ 心理专员 ============
 {
   const page = await context.newPage()
-  await login(page, '13900001003', true)
+  await login(page, '13900001003')
   await page.waitForURL(/\/specialist/, { timeout: 20000 })
   await page.getByRole('heading', { name: '心理专员工作台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
