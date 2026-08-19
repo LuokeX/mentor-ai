@@ -2,7 +2,7 @@ import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
 import { requireSchoolManagement, countSql, offsetFrom } from '../../../../domain/school-management'
-import { resolveCapabilities } from '../../../../domain/capabilities'
+import { resolveCapabilities, resolvePageCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
 
@@ -82,7 +82,7 @@ export default defineEventHandler(async (event) => {
     return { ...row, _capabilities: capabilities }
   }))
 
-  const pageCapabilities: Capability[] = ['view', 'create', 'edit', 'archive', 'restore', 'transfer', 'graduate']
+  const pageCapabilities: Capability[] = await resolvePageCapabilities(user, 'class', event)
 
   return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: pageCapabilities } satisfies ManagedListResult<typeof rows[number]>
 })
