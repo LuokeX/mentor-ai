@@ -50,6 +50,12 @@ export default defineEventHandler(async (event) => {
   const guardianById = new Map([...linkedGuardians, ...guardianOptions].map(row => [row.id, row]))
   const profileText = decryptSensitive(student.profileEnc, secret)
   const profile = profileText ? JSON.parse(profileText) : {}
+  // 个体问题预警级别：只认 student_case 模块快照；learning_problem 等其他模块快照不覆盖 caseLevel（与列表口径一致）
+  const studentSnapshot = (student.studentSnapshot as {
+    module?: string
+    levelName?: string
+    attributions?: Array<{ code: string, name: string, rank: number } | string>
+  } | null) ?? null
   return {
     student: {
       ...student,
@@ -59,9 +65,11 @@ export default defineEventHandler(async (event) => {
       className: klass[0]?.name || null,
       classTeacherName,
       /** 个体问题预警级别（红色-紧急响应…紫色-待观察），来自 student_case 评估快照 */
-      caseLevelName: (student.studentSnapshot as any)?.levelName || student.caseLevel || null,
+      caseLevelName: studentSnapshot?.module === 'student_case'
+        ? (studentSnapshot.levelName || student.caseLevel || null)
+        : (student.caseLevel || null),
       /** 命中的五类十五型编码（按优先级排序），如 [{ code: 'A1', name: '注意力分散型' }] */
-      caseCodes: ((student.studentSnapshot as any)?.attributions || [])
+      caseCodes: (studentSnapshot?.attributions || [])
         .filter((a: any) => typeof a === 'string' || a.rank === 0 || a.rank === 1 || a.rank === 2)
         .map((a: any) => typeof a === 'string' ? ({ code: a, name: a }) : ({ code: a.code, name: a.name })),
       aiContext: { type: 'student', id: student.id, label: decryptSensitive(student.nameEnc, secret) },

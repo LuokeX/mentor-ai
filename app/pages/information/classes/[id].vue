@@ -28,12 +28,19 @@ const statuses = [
 ]
 const eventStatusLabel = (s: string) => s === 'open' ? '待处理' : s === 'resolved' ? '已解决' : s === 'closed' ? '已关闭' : s === 'archived' ? '已归档' : s
 
+/** UTC ISO 串 → 本地时间字符串，用于预填 datetime-local（否则浏览器按本地时区解析会偏移 8 小时） */
+function toLocalInput(iso: string) {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 function openCreate() {
   editingId.value = null
   Object.assign(form, {
     title: '', eventType: '班级建设', severity: '低',
     description: '', resolution: '', status: 'open',
-    occurredAt: new Date().toISOString().slice(0, 16),
+    occurredAt: toLocalInput(new Date().toISOString()),
   })
   formError.value = ''
   drawerOpen.value = true
@@ -48,7 +55,7 @@ function openEdit(row: any) {
     description: row.description || '',
     resolution: row.resolution || '',
     status: row.status,
-    occurredAt: row.occurredAt ? String(row.occurredAt).slice(0, 16) : '',
+    occurredAt: row.occurredAt ? toLocalInput(row.occurredAt) : '',
   })
   formError.value = ''
   drawerOpen.value = true
@@ -205,8 +212,10 @@ const dimensionLabel: Record<string, string> = {
 
       <!-- 事件抽屉 -->
       <USlideover :open="drawerOpen" @update:open="value => { if (!value) drawerOpen = false }">
-        <div class="p-5">
+        <template #header>
           <h3 class="text-lg font-semibold">{{ editingId ? '编辑班级事件' : '新增班级事件' }}</h3>
+        </template>
+        <template #body>
           <div class="mt-5 space-y-4">
             <UFormField label="事件标题 *"><UInput v-model="form.title" class="w-full" placeholder="如：本月德育主题班会 / 班级冲突事件" /></UFormField>
             <div class="grid gap-3 md:grid-cols-3">
@@ -220,7 +229,7 @@ const dimensionLabel: Record<string, string> = {
             <p v-if="formError" class="text-sm text-red-500">{{ formError }}</p>
             <button type="button" class="w-full rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="saving" @click="saveEvent">保存</button>
           </div>
-        </div>
+        </template>
       </USlideover>
     </template>
   </div>

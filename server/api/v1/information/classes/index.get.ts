@@ -11,7 +11,7 @@ import type { ManagedListResult, Capability } from '../../../../../shared/manage
 import { requireUser } from '../../../../utils/auth'
 import { useDb, schema } from '../../../../utils/db'
 import { countSql, offsetFrom } from '../../../../domain/school-management'
-import { resolveCapabilities } from '../../../../domain/capabilities'
+import { resolveCapabilities, resolvePageCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 
 const SORT_WHITELIST = createSortWhitelist('name', 'grade', 'studentCount', 'status', 'updatedAt', 'createdAt')
@@ -80,8 +80,15 @@ export default defineEventHandler(async (event) => {
     : []
   const weakestByClass = new Map<string, string | null>()
   for (const row of snapshotRows) {
-    const snapshot = row.snapshot as { primaryAttribution?: { name?: string } } | null
-    weakestByClass.set(row.classId, snapshot?.primaryAttribution?.name || null)
+    // 与详情页口径一致：优先取最低分维度 label，旧快照回退到核心归因（字符串直接使用）
+    const snapshot = row.snapshot as {
+      primaryAttribution?: string | { name?: string }
+      weakestDimension?: { code: string, label: string, score: number }
+    } | null
+    const weakestSystem = snapshot?.weakestDimension?.label
+      || (typeof snapshot?.primaryAttribution === 'string' ? snapshot.primaryAttribution : snapshot?.primaryAttribution?.name)
+      || null
+    weakestByClass.set(row.classId, weakestSystem)
   }
   // 男女比例：按班级统计学生性别，未分配到任何班级的学生不计入
   const genderStats = classIds.length
@@ -127,7 +134,7 @@ export default defineEventHandler(async (event) => {
     }
   }))
 
-  const pageCapabilities: Capability[] = ['view']
+  const pageCapabilities: Capability[] = await resolvePageCapabilities(user, 'class', event)
 
   return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: pageCapabilities } satisfies ManagedListResult<typeof result.rows[number]>
 })
