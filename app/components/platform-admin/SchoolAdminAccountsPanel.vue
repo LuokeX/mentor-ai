@@ -91,12 +91,17 @@ async function saveUser() {
     formError.value = '请填写有效的姓名和手机号'
     return
   }
+  if (form.password && form.password.length < 8) {
+    formError.value = '密码至少 8 位；编辑时留空表示不修改'
+    return
+  }
   saving.value = true
   formError.value = ''
   try {
     if (editing.value) {
       const body: Record<string, unknown> = { name: form.name, phone: form.phone }
       if (form.employeeNo) body.employeeNo = form.employeeNo
+      if (form.password) body.password = form.password
       if (form.status !== (editing.value.status === 'active' ? 'active' : 'disabled')) {
         body.status = form.status
         if (form.status === 'disabled' && form.disableReason) body.reason = form.disableReason
@@ -259,6 +264,9 @@ async function copyInitialPassword() {
           <UFormField label="手机号" required><UInput v-model="form.phone" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>
           <UFormField label="工号" hint="选填"><UInput v-model="form.employeeNo" class="w-full" /></UFormField>
           <UFormField v-if="!editing" label="初始密码" hint="留空将自动生成，仅展示一次">
+            <UInput v-model="form.password" type="password" autocomplete="new-password" class="w-full" />
+          </UFormField>
+          <UFormField v-else label="重置密码" hint="留空表示不修改；重置后该账号现有会话将失效">
             <UInput v-model="form.password" type="password" autocomplete="new-password" class="w-full" />
           </UFormField>
           <UFormField v-if="editing" label="账号状态">

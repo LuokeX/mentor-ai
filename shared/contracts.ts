@@ -454,6 +454,8 @@ export const platformAdminSchoolAdminUpdateSchema = z.object({
   phone: z.string().trim().regex(PHONE_PATTERN).optional(),
   status: z.enum(['active', 'disabled']).optional(),
   employeeNo: z.string().trim().max(80).nullable().optional(),
+  /** 重置密码：只接受新密码，不返回原密码；重置后该账号现有会话失效 */
+  password: z.string().min(8).max(200).optional(),
   /** 停用事由，可选 */
   reason: z.string().trim().max(500).optional()
 }).refine(value => Object.keys(value).length > 0)

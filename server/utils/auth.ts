@@ -1,10 +1,30 @@
 import { and, eq, gt } from 'drizzle-orm'
 import { createError, getCookie, getHeader, getRequestIP, setCookie, type H3Event } from 'h3'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomInt } from 'node:crypto'
 import { useDb, schema } from './db'
 import { hashToken } from './crypto'
 import type { AppRole, AuthUser } from '../../app/composables/useAuth'
 import { ROLE_LABELS } from './role-labels'
+
+/** 生成 16 位混合字符初始密码：保证包含大写、小写、数字、符号各至少一个，去除易混淆字符 */
+export function generateInitialPassword(length = 16) {
+  const pools = {
+    upper: 'ABCDEFGHJKLMNPQRSTUVWXYZ',
+    lower: 'abcdefghijkmnpqrstuvwxyz',
+    digits: '23456789',
+    symbols: '!@#$%^&*_-+=',
+  }
+  const all = Object.values(pools).join('')
+  const pick = (pool: string) => pool[randomInt(pool.length)]
+  const chars = Object.values(pools).map(pick)
+  while (chars.length < length) chars.push(pick(all))
+  // Fisher-Yates 洗牌
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1)
+    ;[chars[i], chars[j]] = [chars[j], chars[i]]
+  }
+  return chars.join('')
+}
 
 const COOKIE_NAME = 'mentor_session'
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000

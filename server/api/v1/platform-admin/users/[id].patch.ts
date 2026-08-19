@@ -1,3 +1,4 @@
+import argon2 from 'argon2'
 import { and, eq, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { platformAdminSchoolAdminUpdateSchema } from '../../../../../shared/contracts'
@@ -51,6 +52,7 @@ export default defineEventHandler(async (event) => {
   if (body.phone && body.phone !== target.phone) changedFields.push('phone')
   if (body.status) changedFields.push('status')
   if (body.employeeNo !== undefined && body.employeeNo !== target.employeeNo) changedFields.push('employeeNo')
+  if (body.password) changedFields.push('password')
 
   await db.transaction(async (tx) => {
     const setValues: Record<string, unknown> = { updatedAt: new Date() }
@@ -58,6 +60,11 @@ export default defineEventHandler(async (event) => {
     if (body.phone !== undefined) setValues.phone = body.phone
     if (body.status) setValues.status = body.status
     if (body.employeeNo !== undefined) setValues.employeeNo = body.employeeNo || null
+    // 重置密码：哈希新密码，并撤销该账号现有会话（新密码生效时旧会话必须失效）
+    if (body.password) {
+      setValues.passwordHash = await argon2.hash(body.password, { type: argon2.argon2id })
+      await tx.delete(schema.sessions).where(eq(schema.sessions.userId, target.id))
+    }
     // 停用：school_admin 无业务移交问题，直接停用并留痕
     if (body.status === 'disabled' && target.status !== 'disabled') {
       setValues.disabledAt = new Date()
