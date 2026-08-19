@@ -65,7 +65,7 @@ async function login() {
     </section>
     <section class="flex items-center justify-center p-6 sm:p-12">
       <div class="w-full max-w-md">
-        <div class="mb-8 lg:hidden"><span class="grid size-12 place-items-center rounded-2xl bg-emerald-800 text-white">六</span></div>
+        <div class="mb-8 lg:hidden"><div class="flex items-center gap-2"><span class="grid size-12 place-items-center rounded-2xl bg-emerald-800 text-white">六</span><span class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-wide text-emerald-700">v1.0.0</span></div></div>
         <p class="text-sm font-semibold text-emerald-700">欢迎回来</p>
         <h2 class="mt-2 text-3xl font-semibold">登录您的工作空间</h2>
         <p class="mt-2 text-sm text-slate-500">封闭试用环境 · 所有敏感操作均会留痕</p>

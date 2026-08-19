@@ -38,7 +38,7 @@ onMounted(() => { if (token.value) validateToken() })
 <template>
   <main class="grid min-h-[100dvh] place-items-center bg-[#f8faf6] p-5">
     <section class="panel w-full max-w-lg p-6 sm:p-9">
-      <div class="flex items-center gap-3"><span class="grid size-11 place-items-center rounded-2xl bg-emerald-800 text-white">六</span><div><h1 class="text-xl font-semibold">账号激活</h1><p class="text-sm text-slate-500">一次性链接有效期为 72 小时</p></div></div>
+      <div class="flex items-center gap-3"><span class="grid size-11 place-items-center rounded-2xl bg-emerald-800 text-white">六</span><div><div class="flex items-center gap-2"><h1 class="text-xl font-semibold">账号激活</h1><span class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-wide text-emerald-700">v1.0.0</span></div><p class="text-sm text-slate-500">一次性链接有效期为 72 小时</p></div></div>
 
       <div v-if="step === 'token'" class="mt-8 space-y-5">
         <UFormField label="激活码"><UInput v-model="token" size="xl" class="w-full" autocomplete="one-time-code" /></UFormField>
