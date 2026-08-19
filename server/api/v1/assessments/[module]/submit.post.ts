@@ -278,9 +278,6 @@ export default defineEventHandler(async (event) => {
         .for('update')
       assessmentSessionId = existing?.id || null
     }
-    // 连续量表流程：deferPlan 仅在非熔断且组可聚合时生效。
-    // 熔断必须立即走转介；无组时结果无法聚合，defer 没有意义，仍按单张直接出方案。
-    const deferPlan = Boolean(body.deferPlan) && !result.blocked && Boolean(assessmentSessionId)
     if (!assessmentSessionId) {
       const createQuery = client.insert(schema.assessmentSessions).values({
         schoolId: schoolId,
@@ -308,6 +305,10 @@ export default defineEventHandler(async (event) => {
         assessmentSessionId = concurrent?.id || null
       }
     }
+    // 连续量表流程：评估组已先行创建，只要非熔断且请求了 deferPlan，本次提交一律只落
+    // 量表结果、不生成方案；由前端刷新推荐后续做下一张，或全部做完后调用 finalize
+    // 用组内结果统一生成方案。熔断必须立即走转介并关闭组，deferPlan 不生效。
+    const deferPlan = Boolean(body.deferPlan) && !result.blocked && Boolean(assessmentSessionId)
     if (assessmentSessionId) {
       const [{ maxSeq } = { maxSeq: -1 }] = await client
         .select({ maxSeq: max(schema.assessmentSessionAttempts.sequence) })

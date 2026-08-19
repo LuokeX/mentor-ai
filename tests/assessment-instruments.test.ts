@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildInstrumentOptions, filterTeacherVisibleInstruments } from '../server/domain/assessment-instruments'
+import { buildInstrumentOptions, fallbackInstrument, filterTeacherVisibleInstruments, resolveReachableInstrument } from '../server/domain/assessment-instruments'
 import type { AssessmentDefinition } from '../shared/assessments'
 
 const instrument = (code: string, over: Partial<AssessmentDefinition> = {}): AssessmentDefinition => ({
@@ -87,5 +87,111 @@ describe('instrument roles on teacher-facing options', () => {
     expect(finished.find(option => option.code === 'HS_DEEP')?.status).toBe('completed')
     // 连续流程的收尾判定：没有任何 suggested 剩余时即可统一生成方案
     expect(finished.some(option => option.status === 'suggested')).toBe(false)
+  })
+})
+
+describe('instrument gating（前置/互斥锁定与完成状态优先级）', () => {
+  const screening = { submittedAt: new Date(), level: 'B', levelName: null, severity: 'medium', dimensions: {}, answers: { q1: 4 } }
+  const done = (answers: Record<string, number> = { q1: 2 }) => ({
+    submittedAt: new Date(), level: 'C', levelName: null, severity: 'high', dimensions: {}, answers
+  })
+
+  it('前置量表未完成 → locked，且门禁优先于触发条件（不降级为 not_needed）', () => {
+    const library = [
+      instrument('HS_SCREEN', { instrumentRole: 'screening', isRequired: true }),
+      instrument('HS_DEEP', {
+        instrumentRole: 'deep_dive',
+        prerequisiteCodes: ['HS_SCREEN'],
+        triggerCondition: '量表[HS_SCREEN].均分 >= 3'
+      })
+    ]
+    const options = buildInstrumentOptions(library, new Map())
+    const deep = options.find(option => option.code === 'HS_DEEP')
+    expect(deep?.status).toBe('locked')
+    expect(deep?.missingPrerequisites.map(ref => ref.code)).toEqual(['HS_SCREEN'])
+    // 已锁定时触发条件根本不求值：条件未满足也不应显示为 not_needed，求值错误也不该出现
+    expect(deep?.triggerError).toBeNull()
+  })
+
+  it('前置完成后解锁为 suggested，resolveReachableInstrument 把锁定的推荐指回前置量表', () => {
+    const library = [
+      instrument('HS_SCREEN', { instrumentRole: 'screening', isRequired: true }),
+      instrument('HS_DEEP', {
+        instrumentRole: 'deep_dive',
+        prerequisiteCodes: ['HS_SCREEN'],
+        triggerCondition: '量表[HS_SCREEN].均分 >= 3'
+      })
+    ]
+    // 前置未完成：推荐 HS_DEEP 时被重定向到 HS_SCREEN
+    const lockedOptions = buildInstrumentOptions(library, new Map())
+    const redirected = resolveReachableInstrument(lockedOptions, 'HS_DEEP')
+    expect(redirected?.instrument.code).toBe('HS_SCREEN')
+    expect(redirected?.redirectedFrom?.code).toBe('HS_DEEP')
+    // 前置已完成且触发条件满足：不再重定向
+    const unlocked = buildInstrumentOptions(library, new Map([['HS_SCREEN', screening]]))
+    expect(unlocked.find(option => option.code === 'HS_DEEP')?.status).toBe('suggested')
+    expect(resolveReachableInstrument(unlocked, 'HS_DEEP')?.redirectedFrom).toBeNull()
+  })
+
+  it('已完成互斥量表 → locked，且互斥优先于触发条件', () => {
+    const library = [
+      instrument('HS_QUICK', { instrumentRole: 'screening', isRequired: true }),
+      instrument('HS_FULL', { instrumentRole: 'deep_dive', exclusiveCodes: ['HS_QUICK'] }),
+      // 触发条件本应命中（已完成），但互斥门禁仍然锁住
+      instrument('HS_EXTRA', {
+        instrumentRole: 'special',
+        exclusiveCodes: ['HS_QUICK'],
+        triggerCondition: '量表[HS_QUICK].已完成 == 1'
+      })
+    ]
+    const options = buildInstrumentOptions(library, new Map([['HS_QUICK', screening]]))
+    expect(options.find(option => option.code === 'HS_FULL')?.status).toBe('locked')
+    expect(options.find(option => option.code === 'HS_FULL')?.blockingExclusives.map(ref => ref.code)).toEqual(['HS_QUICK'])
+    expect(options.find(option => option.code === 'HS_EXTRA')?.status).toBe('locked')
+  })
+
+  it('无触发条件、无门禁的量表状态为 available，随时可做', () => {
+    const options = buildInstrumentOptions([instrument('HS_FREE', {})], new Map())
+    expect(options[0]?.status).toBe('available')
+  })
+
+  it('已提交 → completed，不再被触发条件降级（条件未命中也保持 completed）', () => {
+    // 筛查结果弱（均分 1 < 3，条件未命中），但 HS_DEEP 已提交：
+    // 状态必须保持 completed，不能回到 not_needed/suggested，否则前端会重复建议续做
+    const library = [
+      instrument('HS_SCREEN', { instrumentRole: 'screening', isRequired: true }),
+      instrument('HS_DEEP', { instrumentRole: 'deep_dive', triggerCondition: '量表[HS_SCREEN].均分 >= 3' })
+    ]
+    const finished = buildInstrumentOptions(library, new Map([
+      ['HS_SCREEN', { submittedAt: new Date(), level: 'A', levelName: null, severity: 'low', dimensions: {}, answers: { q1: 1 } }],
+      ['HS_DEEP', done()]
+    ]))
+    expect(finished.find(option => option.code === 'HS_DEEP')?.status).toBe('completed')
+    expect(finished.some(option => option.status === 'suggested')).toBe(false)
+  })
+})
+
+describe('连续量表流程的续做衔接（fallbackInstrument 推荐下一张）', () => {
+  const library = [
+    instrument('HS_SCREEN', { instrumentRole: 'screening', isRequired: true }),
+    instrument('HS_DEEP', { instrumentRole: 'deep_dive', triggerCondition: '量表[HS_SCREEN].均分 >= 3' })
+  ]
+
+  it('筛查提交且触发条件命中后，续做推荐落到深度量表', () => {
+    const strong = buildInstrumentOptions(library, new Map([['HS_SCREEN', {
+      submittedAt: new Date(), level: 'B', levelName: null, severity: 'medium',
+      dimensions: {}, answers: { q1: 4 }
+    }]]))
+    expect(strong.find(option => option.code === 'HS_DEEP')?.status).toBe('suggested')
+    expect(fallbackInstrument(strong)?.code).toBe('HS_DEEP')
+  })
+
+  it('触发条件未命中时，兜底推荐不会挑深度量表（教师可手动做）', () => {
+    const weak = buildInstrumentOptions(library, new Map([['HS_SCREEN', {
+      submittedAt: new Date(), level: 'A', levelName: null, severity: 'low',
+      dimensions: {}, answers: { q1: 1 }
+    }]]))
+    expect(weak.find(option => option.code === 'HS_DEEP')?.status).toBe('not_needed')
+    expect(fallbackInstrument(weak)?.code).not.toBe('HS_DEEP')
   })
 })

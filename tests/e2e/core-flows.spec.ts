@@ -45,13 +45,17 @@ test.describe('四角色核心路径', () => {
     await expect(start).toBeVisible()
     await start.click()
 
+    // 作答 q1=1,q2=4,q3=3,q4=3,q5=1：q3/q4 为反向计分题（6-raw），折算后总分
+    // 1+4+3+3+1=12，低于 SG_S2「总分 >= 15」的触发条件，本次只做单张量表、
+    // 不进入连续量表流程（不会再自动切入下一张），提交后统一生成方案。
+    // 注意不能全选 3 分：绿色兜底作答会触发「状态良好，无需方案」分支（不生成方案）；
+    // 也不能全选 4 分（折算后总分 16 >= 15）——那会命中 SG_S2 的续做条件，
+    // 页面自动切入下一张量表，本用例就测不到「单量表 → 方案 → 执行」闭环了。
+    // q2=4 命中「角色边界」归因证据，保证有归因、必出方案。
+    const sg1Answers = [1, 4, 3, 3, 1]
     for (let questionIndex = 0; questionIndex < 5; questionIndex++) {
       await expect(page.getByText(`${questionIndex + 1} / 5`, { exact: true })).toBeVisible()
-      // 业务数据的量表题目选项文案随题型变化（频率型「4 经常」/信心型「4 比较有信心」），
-      // 统一点中数值为 4 的选项即可。注意不能全选 3 分：绿色兜底作答会触发
-      // 「状态良好，无需方案」分支（不生成方案），本用例需要方案闭环，必须选到
-      // 能命中归因证据的高分作答。
-      await page.getByRole('button', { name: /^4 / }).click()
+      await page.getByRole('button', { name: new RegExp(`^${sg1Answers[questionIndex]} `) }).click()
     }
     const submit = page.getByRole('button', { name: '提交并生成方案' })
     await expect(submit).toBeEnabled()
@@ -103,6 +107,61 @@ test.describe('四角色核心路径', () => {
     await page.getByRole('button', { name: '提交质量反馈' }).click()
     // 反馈提交后显示「最近反馈」摘要（旧版为「1 次反馈」计数）
     await expect(page.getByText(/最近反馈：归因/)).toBeVisible()
+  })
+
+  test('教师连续完成自我成长两张量表后统一生成方案', async ({ page }) => {
+    // 连续量表流程：SG_S1 提交后服务端返回 deferred + assessmentSessionId，
+    // 前端刷新推荐发现下一张 suggested 量表 SG_S2（HERO，触发条件：SG_S1 总分 >= 15）
+    // 就自动切入续做；没有下一张建议量表时自动调 finalize 统一生成方案并跳转方案页。
+    // 用张老师（13900001002）跑本用例，避免与李老师（13900001001）的主流程用例互相污染。
+    await login(page, '13900001002')
+    await page.goto('/module/self_growth')
+    await page.waitForFunction(() => !!document.querySelector('#__nuxt')?.__vue_app__)
+    await expect(page.getByRole('heading', { name: '自我成长赋能 评估' })).toBeVisible()
+    await page.getByRole('button', { name: /教师自我成长五问自评/ }).click()
+    const start = page.getByRole('button', { name: /^(开始完整评估|重新开始)$/ })
+    await expect(start).toBeVisible()
+    await start.click()
+
+    // SG_S1 作答 q1=3,q2=4,q3=3,q4=4,q5=5：q3/q4 反向计分（6-raw）后总分
+    // 3+4+3+2+5=17 >= 15，命中 SG_S2 的续做触发条件；同时 q1/q3 原始分均 < 4，
+    // 不会触发「疲惫与意义感同时高位」的危机红线（题[q1] >= 4 且 题[q3] >= 4）。
+    const sg1Answers = [3, 4, 3, 4, 5]
+    for (let questionIndex = 0; questionIndex < 5; questionIndex++) {
+      await expect(page.getByText(`${questionIndex + 1} / 5`, { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: new RegExp(`^${sg1Answers[questionIndex]} `) }).click()
+    }
+    const submit = page.getByRole('button', { name: '提交并生成方案' })
+    await expect(submit).toBeEnabled()
+    await submit.click()
+
+    // 关键断言：首次提交即返回 deferred，页面出现「继续完成…」续做提示并自动切入 SG_S2。
+    // 重复运行（SG_S2 已完成）时不会再有续做提示，直接走 finalize 生成方案，
+    // 此时由下面的 URL 断言兜底，保证用例可重复执行（desktop/mobile 双 project 都会跑）。
+    let continued = false
+    try {
+      await expect(page.getByText(/继续完成「HERO心理资本与依恋安全感评估」/)).toBeVisible({ timeout: 15_000 })
+      continued = true
+    } catch { /* 已做过 SG_S2 的重复运行：无续做提示，直接进入 finalize */ }
+    if (continued) {
+      // 已自动切入 SG_S2：出现 HERO 第一题与 1 / 20 进度
+      await expect(page.getByText('我对未来的职业发展有清晰的规划')).toBeVisible()
+      await expect(page.getByText('1 / 20', { exact: true })).toBeVisible()
+      // 完成 SG_S2（20 题全选「4 比较符合」）：HERO 四个三维维度之和均为 12（> 8），
+      // 不会触发 SG_S3「维度 <= 8」的建议条件，做完本张即进入 finalize。
+      for (let questionIndex = 0; questionIndex < 20; questionIndex++) {
+        await expect(page.getByText(`${questionIndex + 1} / 20`, { exact: true })).toBeVisible()
+        await page.getByRole('button', { name: /^4 / }).click()
+      }
+      const heroSubmit = page.getByRole('button', { name: '提交并生成方案' })
+      await expect(heroSubmit).toBeEnabled()
+      await heroSubmit.click()
+    }
+
+    // 全部建议量表完成后统一生成方案并跳转方案详情页（修复前的缺陷：
+    // 首次提交无评估组时 deferPlan 恒 false，直接出方案跳转，不会续做下一张）
+    await expect(page).toHaveURL(/\/plans\/[0-9a-f-]{36}/, { timeout: 45_000 })
+    await expect(page.locator('section').filter({ has: page.getByRole('heading', { name: '行动方案建议' }) })).toBeVisible()
   })
 
   test('学校管理员直接添加并激活教师账号', async ({ page }) => {
