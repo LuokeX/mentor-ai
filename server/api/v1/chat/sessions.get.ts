@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq, ne } from 'drizzle-orm'
 import { apiContext } from '../../../utils/handler'
 import { schema } from '../../../utils/db'
 
@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
     updatedAt: schema.chatSessions.updatedAt,
     createdAt: schema.chatSessions.createdAt
   }).from(schema.chatSessions)
-    .where(eq(schema.chatSessions.ownerUserId, user.id))
+    .where(and(eq(schema.chatSessions.ownerUserId, user.id), ne(schema.chatSessions.status, 'archived')))
     .orderBy(desc(schema.chatSessions.updatedAt))
     .limit(30)
 })

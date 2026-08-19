@@ -1,8 +1,9 @@
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq, ilike, or } from 'drizzle-orm'
 import { z } from 'zod'
 import { DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { Capability, ManagedListResult } from '../../../../../shared/management'
 import { countSql, offsetFrom } from '../../../../domain/school-management'
+import { resolvePageCapabilities } from '../../../../domain/capabilities'
 import { requireUser } from '../../../../utils/auth'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
@@ -10,12 +11,18 @@ import { schema, useDb } from '../../../../utils/db'
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().refine(value => [20, 50, 100].includes(value)).default(DEFAULT_PAGE_SIZE),
+  q: z.string().trim().max(120).optional(),
 })
 
 export default defineEventHandler(async (event) => {
-  await requireUser(event, ['platform_admin'])
+  const user = await requireUser(event, ['platform_admin'])
   const query = querySchema.parse(getQuery(event))
   const db = useDb(event)
+  const conditions = []
+  if (query.q) conditions.push(or(
+    ilike(schema.auditLogs.action, `%${query.q}%`),
+    ilike(schema.auditLogs.targetType, `%${query.q}%`),
+  )!)
   const result = await paginateResult({
     dataQuery: db.select({
       id: schema.auditLogs.id,
@@ -30,13 +37,16 @@ export default defineEventHandler(async (event) => {
     }).from(schema.auditLogs)
       .leftJoin(schema.schools, eq(schema.schools.id, schema.auditLogs.schoolId))
       .leftJoin(schema.users, eq(schema.users.id, schema.auditLogs.actorId))
+      .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(schema.auditLogs.createdAt))
       .limit(query.pageSize)
       .offset(offsetFrom(query.page, query.pageSize)),
-    countQuery: db.select({ value: countSql }).from(schema.auditLogs),
+    countQuery: db.select({ value: countSql }).from(schema.auditLogs)
+      .where(conditions.length ? and(...conditions) : undefined),
     page: query.page,
     pageSize: query.pageSize,
   })
   const rows = result.rows.map(row => ({ ...row, _capabilities: ['view'] as Capability[] }))
-  return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: ['view'] as Capability[] } satisfies ManagedListResult<(typeof rows)[number]>
+  const pageCapabilities: Capability[] = await resolvePageCapabilities(user, 'audit', event)
+  return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: pageCapabilities } satisfies ManagedListResult<(typeof rows)[number]>
 })

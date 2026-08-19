@@ -11,6 +11,7 @@ export default defineEventHandler(async (event) => {
     .where(and(eq(schema.chatSessions.id, id), eq(schema.chatSessions.ownerUserId, user.id), eq(schema.chatSessions.schoolId, user.schoolId!)))
     .limit(1)
   if (!session) throw createError({ statusCode: 404, message: '对话不存在' })
+  if (session.status === 'archived') throw createError({ statusCode: 409, message: '对话已归档' })
   const config = useRuntimeConfig(event)
   const messages = await db.select({
     id: schema.chatMessages.id,

@@ -8,7 +8,7 @@ import type { ManagedListResult, Capability } from '../../../../../shared/manage
 import { requireUser } from '../../../../utils/auth'
 import { useDb, schema } from '../../../../utils/db'
 import { countSql, offsetFrom } from '../../../../domain/school-management'
-import { resolveCapabilities } from '../../../../domain/capabilities'
+import { resolveCapabilities, resolvePageCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 
 const SORT_WHITELIST = createSortWhitelist('eventType', 'severity', 'occurredAt', 'status', 'updatedAt', 'createdAt')
@@ -70,5 +70,6 @@ export default defineEventHandler(async (event) => {
     ...row,
     _capabilities: await resolveCapabilities({ user, recordSchoolId: row.schoolId, recordOwnerUserId: row.ownerUserId, recordStatus: row.status, targetType: 'class_event', targetId: row.id }, event),
   })))
-  return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: ['view', 'create'] as Capability[] } satisfies ManagedListResult<(typeof rows)[number]>
+  const pageCapabilities: Capability[] = await resolvePageCapabilities(user, 'class_event', event)
+  return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: pageCapabilities } satisfies ManagedListResult<(typeof rows)[number]>
 })

@@ -4,7 +4,7 @@ import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../.
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
 import { departmentTypeSchema } from '../../../../../shared/contracts'
 import { requireSchoolManagement, countSql, offsetFrom } from '../../../../domain/school-management'
-import { resolveCapabilities } from '../../../../domain/capabilities'
+import { resolveCapabilities, resolvePageCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
 
@@ -86,7 +86,7 @@ export default defineEventHandler(async (event) => {
     return { ...row, _capabilities: capabilities }
   }))
 
-  const pageCapabilities: Capability[] = ['view', 'create', 'edit', 'archive', 'restore']
+  const pageCapabilities: Capability[] = await resolvePageCapabilities(user, 'department', event)
 
   return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: pageCapabilities } satisfies ManagedListResult<typeof rows[number]>
 })

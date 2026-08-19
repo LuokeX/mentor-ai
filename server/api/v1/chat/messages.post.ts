@@ -63,12 +63,14 @@ export default defineEventHandler(async (event) => {
   if (sessionId) {
     const [owned] = await db.select({
       id: schema.chatSessions.id,
+      status: schema.chatSessions.status,
       contextType: schema.chatSessions.contextType,
       contextId: schema.chatSessions.contextId,
       metadata: schema.chatSessions.metadata
     }).from(schema.chatSessions)
       .where(and(eq(schema.chatSessions.id, sessionId), eq(schema.chatSessions.ownerUserId, user.id))).limit(1)
     if (!owned) throw createError({ statusCode: 404, message: '对话不存在' })
+    if (owned.status === 'archived') throw createError({ statusCode: 409, message: '对话已归档' })
     const sessionContextType = owned.contextType === 'none' ? undefined : owned.contextType
     const requestedType = body.contextType
     const requestedId = body.contextId

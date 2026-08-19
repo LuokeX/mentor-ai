@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { Capability, ManagedListResult } from '../../../../../shared/management'
 import { countSql, offsetFrom } from '../../../../domain/school-management'
+import { resolvePageCapabilities } from '../../../../domain/capabilities'
 import { requireUser } from '../../../../utils/auth'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
@@ -39,5 +40,6 @@ export default defineEventHandler(async (event) => {
     pageSize: query.pageSize,
   })
   const rows = result.rows.map(row => ({ ...row, _capabilities: ['view'] as Capability[] }))
-  return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: ['view', 'create'] as Capability[] } satisfies ManagedListResult<(typeof rows)[number]>
+  const pageCapabilities: Capability[] = await resolvePageCapabilities(user, 'import', event)
+  return { rows, page: result.page, pageSize: result.pageSize, total: result.total, capabilities: pageCapabilities } satisfies ManagedListResult<(typeof rows)[number]>
 })

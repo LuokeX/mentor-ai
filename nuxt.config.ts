@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url'
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-01',
   devtools: { enabled: true },
@@ -12,7 +14,10 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
   nitro: {
     preset: 'node-server',
-    experimental: { tasks: true }
+    experimental: { tasks: true },
+    // 全局错误处理：ZodError → 400（精简 message，不泄露 stack），其余走内置默认处理器。
+    // 注意不能用 `~/` 前缀：Nuxt 4 中 nitro srcDir 是 app/，`~` 会解析到 app 目录。
+    errorHandler: fileURLToPath(new URL('./server/error-handler.ts', import.meta.url))
   },
   runtimeConfig: {
     databaseUrl: process.env.DATABASE_URL || 'postgres://mentor:mentor@localhost:5432/mentor_ai',
