@@ -161,6 +161,12 @@ export interface GenerateSessionPlanInput {
   instrumentSnapshots: SessionPlanSnapshotItem[]
   /** 组内全部行动项（新建时全部写入；合并时只追加差异） */
   actions: RuleExecResult['actions']
+  /**
+   * 深度诊断建议（待办行动项）：满足业务触发条件但尚未完成的量表。
+   * 生成方案时作为一条行动项写入「行动方案建议」，教师可纳入/拒绝/执行；
+   * 完成对应量表后由方案详情读取侧自动置为 completed。
+   */
+  nextInstrumentSuggestion?: { code: string, title: string, note: string | null } | null
 }
 
 export interface GenerateSessionPlanResult {
@@ -223,13 +229,25 @@ export async function generateOrMergeSessionPlan(
     mergedResult, mergedReport, mergedNarrative, definitionResource,
     attributionConfig, sourceType, sourceChatSessionId,
     studentId, classId, guardianId, objectLabel, questionSummary, secret, now,
-    sourceAttemptId, instrumentSnapshots, actions
+    sourceAttemptId, instrumentSnapshots, actions, nextInstrumentSuggestion
   } = input
   const definition = definitionResource.payload
 
   const planTools = mergedResult.tools
+  // 深度诊断建议作为真实行动项：进入「行动方案建议」参与确认/执行，
+  // 快照保留 kind/instrumentCode 供完成联动与「去完成」跳转识别。
+  const suggestionAction: Array<RuleExecResult['actions'][number] & { kind: 'instrument_suggestion', instrumentCode: string }> =
+    nextInstrumentSuggestion
+      ? [{
+          title: `建议完成深度诊断「${nextInstrumentSuggestion.title}」`,
+          detail: `基于本次测量结果，建议进一步完成深度诊断量表《${nextInstrumentSuggestion.title}》${nextInstrumentSuggestion.note ? `（${nextInstrumentSuggestion.note}）` : ''}，以获得更精确的归因判断。完成该量表后，本行动将自动标记完成。`,
+          status: 'pending',
+          kind: 'instrument_suggestion',
+          instrumentCode: nextInstrumentSuggestion.code
+        }]
+      : []
   // 工具正文并入行动项：方案建议里能直接看到结构化步骤内容。
-  const planActionsInput = [...actions, ...toToolActions(planTools)]
+  const planActionsInput = [...actions, ...toToolActions(planTools), ...suggestionAction]
   const nextReviewAt = defaultReviewAt()
   const sourceResourceVersionIds = [
     definitionResource.versionId,

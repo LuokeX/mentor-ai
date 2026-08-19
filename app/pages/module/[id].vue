@@ -76,29 +76,17 @@ const hasMultipleInstruments = computed(() => instrumentOptions.value.length > 1
 const selectedOption = computed(() => instrumentOptions.value.find(item => item.code === selectedCode.value) || null)
 
 /**
- * 按 ③b 的角色把量表分区：入口筛查 → 深度诊断 → 专项/情境 → 未标角色。
- * 任何一张量表都没标角色时保持平铺（存量库），不凭空造分区。
+ * 量表列表平铺展示（不按角色分区）：卡片按「建议做 → 必做 → 未锁定 → 原顺序」排序，
+ * 角色（入口筛查/深度诊断/专项情境）以徽章形式展示在卡片内部。
  * 红线检查量表已被服务端按「未命中高危阈值不展示」过滤，不会出现在这里。
  */
-const instrumentSections = computed(() => {
-  const options = instrumentOptions.value
-  if (!options.some(option => option.role)) return [{ key: 'all', label: '', options }]
-  const order: Array<InstrumentRole | null> = ['screening', 'deep_dive', 'situational', null]
-  return order
-    .map(role => ({
-      key: role || 'unassigned',
-      label: role ? INSTRUMENT_ROLE_LABELS[role] : '其他量表',
-      options: options.filter(option => option.role === role)
-    }))
-    .filter(section => section.options.length)
-})
+const hasRoleOptions = computed(() => instrumentOptions.value.some(option => option.role))
 
 /**
  * 评估前分两步：先选量表（pick），选定后进评估准备（prepare，选对象 / 续草稿 / 开始作答）。
  * 模块只有一张量表时没有可选项，直接进第二步，保持原来的单量表体验。
  */
 const stage = ref<'pick' | 'prepare'>(hasMultipleInstruments.value ? 'pick' : 'prepare')
-const hasRoleSections = computed(() => instrumentSections.value.some(section => section.label))
 const completedCount = computed(() => instrumentOptions.value.filter(option => option.status === 'completed').length)
 
 /**
@@ -110,7 +98,7 @@ const pickerHint = computed(() => {
   const total = instrumentOptions.value.length
   if (fromChat.value) return `模块有 ${total} 张量表，系统已按你的描述推荐了一张，你也可以自己改选。`
   if (completedCount.value) return `模块有 ${total} 张量表，已完成 ${completedCount.value} 张；可以继续做建议的量表，也可以重做已完成的量表。`
-  if (hasRoleSections.value) return '首次评估，建议优先选用入口筛查量表，逐个解锁深度诊断量表。'
+  if (hasRoleOptions.value) return '首次评估，建议优先选用入口筛查量表，逐个解锁深度诊断量表。'
   return `模块有 ${total} 张量表，选一张开始评估。`
 })
 
@@ -185,6 +173,17 @@ function instrumentLockReason(option: InstrumentOption) {
     return `与「${option.blockingExclusives.map(item => item.title).join('」「')}」互斥，本次不需要做`
   }
   return ''
+}
+
+/** 量表角色徽章配色：入口筛查 / 深度诊断 / 专项情境 */
+function roleBadgeColor(role: string): 'primary' | 'info' | 'secondary' | 'neutral' | 'error' {
+  const map: Record<string, 'primary' | 'info' | 'secondary' | 'neutral' | 'error'> = {
+    screening: 'primary',
+    deep_dive: 'info',
+    situational: 'secondary',
+    red_line: 'error'
+  }
+  return map[role] || 'neutral'
 }
 
 /** 重试整页数据。definition 拉不到时页面没有任何可操作内容，必须给一个出口。 */
@@ -555,71 +554,63 @@ async function submit() {
         :description="recommendationDescription"
       />
 
-      <div class="mt-6 grid gap-x-8 gap-y-8" :class="instrumentSections.length > 1 ? 'md:grid-cols-2' : ''">
-        <div
-          v-for="(section, index) in instrumentSections"
-          :key="section.key"
-          :class="index % 2 === 1 ? 'md:border-l md:border-slate-100 md:pl-8' : ''"
+      <div class="mt-6 grid gap-5 md:grid-cols-2">
+        <button
+          v-for="option in instrumentOptions"
+          :key="option.code"
+          type="button"
+          :disabled="option.status === 'locked'"
+          class="w-full rounded-2xl border p-5 text-left transition"
+          :class="option.status === 'locked'
+            ? 'cursor-not-allowed border-slate-100 bg-slate-50 opacity-60'
+            : option.code === selectedCode
+              ? 'border-emerald-300 bg-emerald-50/70 ring-1 ring-emerald-200'
+              : option.status === 'not_needed'
+                ? 'border-slate-200 bg-white opacity-70 hover:border-emerald-200'
+                : 'border-slate-200 bg-white hover:border-emerald-200 hover:shadow-sm'"
+          @click="pickInstrument(option)"
         >
-          <p v-if="section.label" class="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-400">
-            <span class="inline-block h-px w-4 bg-slate-200" />{{ section.label }}
-          </p>
-          <div class="space-y-4">
-            <button
-              v-for="option in section.options"
-              :key="option.code"
-              type="button"
-              :disabled="option.status === 'locked'"
-              class="w-full rounded-2xl border p-5 text-left transition"
-              :class="option.status === 'locked'
-                ? 'cursor-not-allowed border-slate-100 bg-slate-50 opacity-60'
-                : option.code === selectedCode
-                  ? 'border-emerald-300 bg-emerald-50/70 ring-1 ring-emerald-200'
-                  : option.status === 'not_needed'
-                    ? 'border-slate-200 bg-white opacity-70 hover:border-emerald-200'
-                    : 'border-slate-200 bg-white hover:border-emerald-200 hover:shadow-sm'"
-              @click="pickInstrument(option)"
-            >
-              <div class="flex items-start gap-4">
-                <div class="min-w-0 flex-1">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <span class="text-sm font-semibold text-slate-800">{{ option.title }}</span>
-                    <UBadge v-if="option.isRequired" size="xs" color="primary" variant="soft">必做</UBadge>
-                    <UBadge v-if="option.code === recommendation?.instrumentCode" size="xs" color="primary">推荐</UBadge>
-                    <UBadge v-if="option.status === 'completed'" size="xs" color="neutral" variant="soft">
-                      已完成{{ option.lastLevelName ? ` · ${option.lastLevelName}` : '' }}
-                    </UBadge>
-                    <UBadge v-if="option.status === 'suggested'" size="xs" color="warning" variant="soft">建议做</UBadge>
-                    <UBadge v-if="option.status === 'not_needed'" size="xs" color="neutral" variant="soft">当前不需要</UBadge>
-                    <UBadge v-if="option.status === 'locked'" size="xs" color="neutral" variant="soft">未解锁</UBadge>
-                  </div>
-                  <p class="mt-1.5 text-xs leading-5 text-slate-500">{{ option.description }}</p>
-                  <p class="mt-1.5 text-xs text-slate-400">
-                    {{ option.questionCount }} 题 · 约 {{ option.estimatedMinutes }} 分钟
-                    <span v-if="option.usageTiming"> · {{ option.usageTiming }}</span>
-                  </p>
-                  <p v-if="option.status === 'locked'" class="mt-2 text-xs font-medium text-amber-700">
-                    {{ instrumentLockReason(option) }}
-                  </p>
-                  <p v-else-if="option.status === 'not_needed'" class="mt-2 text-xs text-slate-500">
-                    {{ notNeededReason(option) }}仍可手动选择。
-                  </p>
-                  <p v-else-if="option.status === 'suggested' && option.triggerConditionNote" class="mt-2 text-xs font-medium text-amber-700">
-                    {{ option.triggerConditionNote }} —— 已达到，建议做。
-                  </p>
-                </div>
-                <!-- 卡片整体可点，这里只是行动召唤的样式，不能再嵌一个真按钮 -->
-                <span
-                  class="inline-flex shrink-0 items-center gap-1 self-center rounded-lg px-3.5 py-2 text-xs font-medium"
-                  :class="option.status === 'locked' ? 'bg-slate-200 text-slate-400' : 'bg-emerald-600 text-white'"
-                >
-                  {{ option.status === 'locked' ? '未解锁' : '去评估' }}
-                  <UIcon v-if="option.status !== 'locked'" name="i-lucide-arrow-right" class="size-3.5" />
-                </span>
+          <div class="flex items-start gap-4">
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-sm font-semibold text-slate-800">{{ option.title }}</span>
+                <UBadge v-if="option.role" size="xs" :color="roleBadgeColor(option.role)" variant="soft">
+                  {{ INSTRUMENT_ROLE_LABELS[option.role] || option.role }}
+                </UBadge>
+                <UBadge v-if="option.isRequired" size="xs" color="primary" variant="soft">必做</UBadge>
+                <UBadge v-if="option.code === recommendation?.instrumentCode" size="xs" color="primary">推荐</UBadge>
+                <UBadge v-if="option.status === 'completed'" size="xs" color="neutral" variant="soft">
+                  已完成{{ option.lastLevelName ? ` · ${option.lastLevelName}` : '' }}
+                </UBadge>
+                <UBadge v-if="option.status === 'suggested'" size="xs" color="warning" variant="soft">建议做</UBadge>
+                <UBadge v-if="option.status === 'not_needed'" size="xs" color="neutral" variant="soft">当前不需要</UBadge>
+                <UBadge v-if="option.status === 'locked'" size="xs" color="neutral" variant="soft">未解锁</UBadge>
               </div>
-            </button>
+              <p class="mt-1.5 text-xs leading-5 text-slate-500">{{ option.description }}</p>
+              <p class="mt-1.5 text-xs text-slate-400">
+                {{ option.questionCount }} 题 · 约 {{ option.estimatedMinutes }} 分钟
+                <span v-if="option.usageTiming"> · {{ option.usageTiming }}</span>
+              </p>
+              <p v-if="option.status === 'locked'" class="mt-2 text-xs font-medium text-amber-700">
+                {{ instrumentLockReason(option) }}
+              </p>
+              <p v-else-if="option.status === 'not_needed'" class="mt-2 text-xs text-slate-500">
+                {{ notNeededReason(option) }}仍可手动选择。
+              </p>
+              <p v-else-if="option.status === 'suggested' && option.triggerConditionNote" class="mt-2 text-xs font-medium text-amber-700">
+                {{ option.triggerConditionNote }} —— 已达到，建议做。
+              </p>
+            </div>
+            <!-- 卡片整体可点，这里只是行动召唤的样式，不能再嵌一个真按钮 -->
+            <span
+              class="inline-flex shrink-0 items-center gap-1 self-center rounded-lg px-3.5 py-2 text-xs font-medium"
+              :class="option.status === 'locked' ? 'bg-slate-200 text-slate-400' : 'bg-emerald-600 text-white'"
+            >
+              {{ option.status === 'locked' ? '未解锁' : '去评估' }}
+              <UIcon v-if="option.status !== 'locked'" name="i-lucide-arrow-right" class="size-3.5" />
+            </span>
           </div>
-        </div>
+        </button>
       </div>
     </section>
 
@@ -686,7 +677,7 @@ async function submit() {
       <section class="panel p-6 sm:p-9">
         <UAlert v-if="draftSaveError" class="mb-5" color="warning" variant="soft" title="草稿同步失败" :description="draftSaveError" />
         <UAlert v-if="submitError" class="mb-5" color="error" variant="soft" title="提交失败" :description="submitError" />
-        <div class="flex items-center justify-between"><UBadge color="neutral" variant="soft">{{ question?.dimension }}</UBadge><span class="text-sm text-slate-400">{{ current + 1 }} / {{ definition.questions.length }}</span></div>
+        <div class="flex items-center justify-between"><span class="text-sm text-slate-400">{{ current + 1 }} / {{ definition.questions.length }}</span></div>
         <h2 class="mt-8 min-h-24 text-2xl font-medium leading-10">{{ question?.text }}</h2>
         <p v-if="question?.help" class="mt-2 text-sm leading-6 text-slate-500">{{ question.help }}</p>
         <div class="mt-7 space-y-3">

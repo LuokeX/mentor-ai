@@ -135,13 +135,37 @@ export default defineEventHandler(async (event) => {
     evidenceByAction.set(file.actionId, [...(evidenceByAction.get(file.actionId) || []), file])
   }
 
-  // 深度诊断建议（待办行动）：该模块存在「业务触发条件已满足（suggested）、
-  // 尚未完成、且未关联进本方案」的量表时返回。教师完成该量表后状态变为
-  // completed，本建议自动消失——「未完成持续显示、已完成不再显示」由状态动态决定，
-  // 不写入方案快照，因此历史方案同样生效。
+  // 深度诊断建议：
+  // 1) 生成方案时写入的真实行动项（kind=instrument_suggestion）：教师完成对应量表后
+  //    惰性置为 completed——「完成即不再待办」由量表完成状态驱动；
+  // 2) 动态卡片（归因构成下方提醒）：满足触发条件但尚未完成的量表。
   let nextInstrumentSuggestion: { code: string, title: string, note: string | null } | null = null
+  const suggestionByActionTitle = new Map<string, { instrumentCode: string }>()
   try {
     const options = await listInstrumentOptions(event, plan.module as ModuleId, { id: user.id, schoolId: user.schoolId })
+    const snapshots = (plan.actions || []) as Array<Record<string, unknown>>
+    for (const snapshot of snapshots) {
+      if (snapshot.kind !== 'instrument_suggestion') continue
+      const title = String(snapshot.title || '')
+      const code = String(snapshot.instrumentCode || '')
+      if (!title || !code) continue
+      suggestionByActionTitle.set(title, { instrumentCode: code })
+      // 完成联动：对应量表已由该教师提交完成 → 惰性将行动项置为已完成
+      const done = options.some(option => option.code === code && option.status === 'completed')
+      if (!done) continue
+      const [row] = await db.select({ id: schema.planActions.id, status: schema.planActions.status })
+        .from(schema.planActions)
+        .where(and(
+          eq(schema.planActions.planId, id),
+          eq(schema.planActions.ownerUserId, user.id),
+          eq(schema.planActions.title, title)
+        ))
+        .limit(1)
+      if (row && row.status !== 'completed') {
+        await db.update(schema.planActions).set({ status: 'completed', completedAt: new Date() })
+          .where(eq(schema.planActions.id, row.id))
+      }
+    }
     const linkedCodes = new Set(assessmentRows.map(row => row.code))
     const candidate = options.find(option =>
       option.status === 'suggested'
@@ -177,7 +201,9 @@ export default defineEventHandler(async (event) => {
       blockNote: blockNoteEnc ? decryptSensitive(blockNoteEnc, secret) : null,
       evidenceSummary: evidenceSummaryEnc ? decryptSensitive(evidenceSummaryEnc, secret) : null,
       decisionNote: decisionNoteEnc ? decryptSensitive(decisionNoteEnc, secret) : null,
-      evidenceFiles: evidenceByAction.get(action.id) || []
+      evidenceFiles: evidenceByAction.get(action.id) || [],
+      // 深度诊断建议行动项：附带量表编码，前端渲染「去完成」跳转
+      suggestion: suggestionByActionTitle.get(action.title) || null
     })),
     reviews,
     feedback: feedback.map(({ noteEnc, ...item }) => ({

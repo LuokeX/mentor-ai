@@ -287,3 +287,35 @@ export function fallbackInstrument(options: InstrumentOption[]): InstrumentOptio
 export function filterTeacherVisibleInstruments(options: InstrumentOption[]): InstrumentOption[] {
   return options.filter(option => option.role !== 'red_line' || option.status === 'suggested')
 }
+
+/**
+ * 深度诊断建议（待办行动项）：找满足业务触发条件（suggested）但尚未完成、
+ * 且不属于本次方案来源量表的深度诊断量表。生成方案时作为一条行动项写入，
+ * 教师可纳入/拒绝/执行；完成对应量表后由方案详情读取侧自动置为 completed。
+ * 求值失败返回 null（建议不阻断方案生成）。
+ */
+export async function resolveNextInstrumentSuggestion(
+  event: H3Event,
+  module: ModuleId,
+  user: { id: string, schoolId?: string | null },
+  excludeCodes: Set<string>
+): Promise<{ code: string, title: string, note: string | null } | null> {
+  try {
+    const options = await listInstrumentOptions(event, module, user)
+    const candidate = options.find(option =>
+      option.status === 'suggested'
+      && !excludeCodes.has(option.code)
+      // 红线检查量表由系统在高危阈值命中时触发，不通过方案待办向教师提示
+      && option.role !== 'red_line'
+    )
+    return candidate
+      ? {
+          code: candidate.code,
+          title: candidate.title,
+          note: candidate.triggerConditionNote || candidate.description || null
+        }
+      : null
+  } catch {
+    return null
+  }
+}

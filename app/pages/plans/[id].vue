@@ -10,6 +10,8 @@ type PlanAction = {
   startedAt?: string | null; blockedAt?: string | null; blockReason?: string | null;
   blockNote?: string | null; evidenceType?: string | null; evidenceSummary?: string | null;
   teacherConfidence?: number | null;
+  /** 深度诊断建议行动项：附带建议完成的量表编码，渲染「去完成」跳转 */
+  suggestion?: { instrumentCode: string } | null;
   evidenceFiles?: Array<{
     id: string; kind: string; filename: string; mimeType: string; byteSize: number; createdAt: string;
   }>;
@@ -183,9 +185,10 @@ const completedActionCount = computed(() =>
 const needsAcceptance = computed(() => data.value?.status === 'pending_acceptance'
   || (data.value?.status === 'adjustment_needed' && !data.value?.acceptedAt))
 const canExecute = computed(() => ['accepted', 'in_progress', 'review_due'].includes(data.value?.status)
-  || (data.value?.status === 'adjustment_needed' && Boolean(data.value?.acceptedAt)))
-const canReview = computed(() => canExecute.value
-  || (data.value?.status === 'escalated' && Boolean(data.value?.acceptedAt)))
+  || (['adjustment_needed', 'escalated'].includes(data.value?.status) && Boolean(data.value?.acceptedAt)))
+const canReview = computed(() => canExecute.value)
+/** 需协同状态：行动项只读展示（服务端禁止更新行动），等待学校处理 */
+const planIsEscalated = computed(() => data.value?.status === 'escalated' && Boolean(data.value?.acceptedAt))
 const showReviewForm = computed(() => canReview.value && (
   data.value?.status === 'review_due'
   || Boolean(data.value?.reviews?.length)
@@ -320,6 +323,11 @@ const rejectedRecommendationCount = computed(() =>
 
 function rejectReasonLabel(reason?: string | null) {
   return rejectReasonOptions.find(item => item.value === reason)?.label || reason || '未填写'
+}
+
+/** 方案块内是否存在深度诊断建议行动项（供「去完成」跳转） */
+function groupSuggestion(group: RecommendationGroup) {
+  return group.actions.find(action => action.suggestion)?.suggestion || null
 }
 
 function recommendationRejectSummary(group: RecommendationGroup) {
@@ -801,9 +809,19 @@ useHead({ title: () => data.value?.title || '方案详情' })
           <div class="flex items-center gap-2">
             <span v-if="executableActions.length" class="text-xs text-slate-400">{{ completedActionCount }}/{{ executableActions.length }} 项完成</span>
             <span v-else class="text-xs text-slate-400">尚未添加行动</span>
-            <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="addActionOpen = true">新增行动</UButton>
+            <UButton icon="i-lucide-plus" size="xs" variant="soft" :disabled="planIsEscalated" @click="addActionOpen = true">新增行动</UButton>
           </div>
         </div>
+
+        <UAlert
+          v-if="planIsEscalated"
+          color="warning"
+          variant="soft"
+          icon="i-lucide-life-buoy"
+          title="方案已标记需协同"
+          description="部分行动受阻原因涉及风险升级或需要学校协同，方案已进入协同处理状态；处理完成前行动项只读，可在下方查看行动进展，或填写复盘反馈。"
+          class="mt-4"
+        />
 
         <div v-if="!executableActions.length" class="mt-4 rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-400">
           当前方案尚未生成跟踪动作，可点击“新增行动”补充一项可执行、可复盘的行动。
@@ -827,7 +845,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
             >
               <UCheckbox
                 :model-value="action.status === 'completed'"
-                :disabled="actionPendingId === action.id"
+                :disabled="actionPendingId === action.id || planIsEscalated"
                 @click.stop
                 @update:model-value="toggleAction(action.id, action.status)"
               />
@@ -943,6 +961,13 @@ useHead({ title: () => data.value?.title || '方案详情' })
                     </p>
                   </div>
                 </div>
+              </template>
+
+              <!-- 需协同：行动只读，不提供反馈表单 -->
+              <template v-else-if="planIsEscalated">
+                <p class="rounded-lg bg-white p-3 text-xs leading-5 text-slate-500">
+                  方案处于需协同状态，行动项暂不可操作；可等待学校处理结果，或在下方完成复盘。
+                </p>
               </template>
 
               <!-- 未完成动作 → 反馈表单 -->
@@ -1181,6 +1206,16 @@ useHead({ title: () => data.value?.title || '方案详情' })
               >
                 {{ group.decision === 'included' ? '已接受' : group.decision === 'rejected' ? '暂不接受' : group.decision === 'mixed' ? '部分已确认' : '待确认' }}
               </UBadge>
+              <UButton
+                v-if="groupSuggestion(group)"
+                size="xs"
+                color="warning"
+                icon="i-lucide-arrow-right"
+                trailing
+                :to="`/module/${data.module}`"
+              >
+                去完成
+              </UButton>
             </header>
 
             <dl class="divide-y divide-slate-100 text-sm md:grid md:grid-cols-[9rem_1fr] md:divide-y-0">

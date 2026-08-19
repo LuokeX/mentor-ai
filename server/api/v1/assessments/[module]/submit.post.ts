@@ -19,6 +19,7 @@ import { generateAssessmentReport, redactPii } from '../../../../integrations/de
 import { findInvalidAnswers } from '../../../../domain/assessment-answers'
 import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
 import { mergeGroupResults } from '../../../../domain/plan-merge'
+import { resolveNextInstrumentSuggestion } from '../../../../domain/assessment-instruments'
 import { createTemplateAssessmentReport } from '../../../../domain/reports'
 
 const bodySchema = z.object({
@@ -408,6 +409,10 @@ export default defineEventHandler(async (event) => {
         if (isNoPlanNeeded(mergedResult, module)) {
           noPlanNeeded = true
         } else {
+          // 深度诊断建议：满足触发条件但未完成的量表，作为待办行动项写入方案
+          const nextInstrumentSuggestion = await resolveNextInstrumentSuggestion(
+            event, module, { id: user.id, schoolId }, new Set([definition.code])
+          )
           const generated = await generateOrMergeSessionPlan({
           event,
           client,
@@ -431,7 +436,8 @@ export default defineEventHandler(async (event) => {
           now,
           sourceAttemptId: attempt.id,
           instrumentSnapshots,
-          actions: mergedResult.actions
+          actions: mergedResult.actions,
+          nextInstrumentSuggestion
         })
           planId = generated.planId || null
           planUpdatedAt = generated.planUpdatedAt

@@ -14,6 +14,7 @@ import { resolveAssessmentDefinition, resolveAttributionConfig, resolvePublished
 import { collectSessionAttempts, collectSessionSnapshots, generateOrMergeSessionPlan } from '../../../../domain/plan-session'
 import { isNoPlanNeeded } from '../../../../domain/no-plan-needed'
 import { mergeGroupResults } from '../../../../domain/plan-merge'
+import { resolveNextInstrumentSuggestion } from '../../../../domain/assessment-instruments'
 import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { createTemplateAssessmentReport } from '../../../../domain/reports'
 import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
@@ -131,6 +132,11 @@ export default defineEventHandler(async (event) => {
     }
     const objectLabel = await resolveObjectLabel(tx, secret, session.contextType, session.contextId)
 
+    // 深度诊断建议：满足触发条件但未完成的量表，作为待办行动项写入方案
+    const nextInstrumentSuggestion = await resolveNextInstrumentSuggestion(
+      event, module, { id: user.id, schoolId }, new Set(attempts.map(attempt => attempt.assessmentCode))
+    )
+
     const generated = await generateOrMergeSessionPlan({
       event,
       client: tx,
@@ -154,7 +160,8 @@ export default defineEventHandler(async (event) => {
       now: new Date(),
       sourceAttemptId: attempts[0]?.id || null,
       instrumentSnapshots,
-      actions: mergedResult.actions
+      actions: mergedResult.actions,
+      nextInstrumentSuggestion
     })
 
     return {
