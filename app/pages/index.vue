@@ -422,6 +422,21 @@ async function confirmModule(module: ModuleId) {
   })
 }
 
+/** 是否已尝试过自动恢复最近会话（防止与 watch 兜底重复触发） */
+const autoRestored = ref(false)
+
+async function autoRestoreLatestSession() {
+  if (autoRestored.value) return
+  autoRestored.value = true
+  const latest = sessions.value?.[0]
+  if (!latest?.id) return
+  try {
+    await loadSession(latest.id)
+  } catch {
+    // 会话不可恢复（如已被归档）时保持欢迎页，不影响其他初始化
+  }
+}
+
 onMounted(async () => {
   const query = useRoute().query
   // 会话深链：?sessionId=<uuid> 打开指定会话；归属由 /api/v1/chat/sessions/[id] 服务端校验，跨教师返回 404
@@ -435,12 +450,24 @@ onMounted(async () => {
     sessionStorage.removeItem('assistant-prefill')
   }
   if (deepLinkSessionId) {
+    autoRestored.value = true
     await loadSession(deepLinkSessionId)
-  } else if (type && id) selectedContextKey.value = `${type}:${id}`
-  else if (prefill?.contextKey) selectedContextKey.value = prefill.contextKey
-  else loadContextPreview()
+  } else if (type && id) {
+    autoRestored.value = true
+    selectedContextKey.value = `${type}:${id}`
+  } else if (prefill?.contextKey) {
+    autoRestored.value = true
+    selectedContextKey.value = prefill.contextKey
+  } else {
+    // 无深链/上下文/预填时自动恢复最近一次对话：刷新或隔一段时间回来仍能看到历史记录
+    await autoRestoreLatestSession()
+    if (!timeline.value.length) loadContextPreview()
+  }
   if (prefill?.prompt) input.value = prefill.prompt
 })
+
+// 客户端 useFetch 可能晚于 onMounted 完成，列表就绪后再兜底恢复一次
+watch(sessions, autoRestoreLatestSession, { once: true })
 </script>
 
 <template>
