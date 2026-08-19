@@ -52,6 +52,11 @@ export interface InstrumentOption {
   triggerCondition: string | null
   /** 触发条件说明，教师端展示 */
   triggerConditionNote: string | null
+  /**
+   * 触发条件存在且当前命中（含已完成的量表：命中时允许重做提示）。
+   * 无触发条件或未命中为 false；suggested 时恒为 true。
+   */
+  triggerHit: boolean
   /** 触发条件求值出错时的原因，供运营台排查；教师端不展示 */
   triggerError: string | null
   /** 未完成的前置量表。非空即被锁定。 */
@@ -177,12 +182,12 @@ export function buildInstrumentOptions(
 
     const locked = missingPrerequisites.length > 0 || blockingExclusives.length > 0
 
-    // 触发条件：只在未被锁定且尚未做过时才判定——已锁定时门禁优先，
-    // 已做过时状态就是 completed，再算「需不需要做」没有意义。
+    // 触发条件：未锁定时都求值（包括已完成——命中时允许重做提示，由 triggerHit 区分）。
+    // 已做过时状态固定为 completed，不能被降级回 not_needed/suggested；锁定时门禁优先，不求值。
     const triggerCondition = instrument.triggerCondition?.trim() || null
     let triggerMet = true
     let triggerError: string | null = null
-    if (triggerCondition && !locked && !done) {
+    if (triggerCondition && !locked) {
       const evaluated = evaluateTriggerCondition(triggerCondition, priors)
       triggerMet = evaluated.met
       triggerError = evaluated.error ?? null
@@ -211,6 +216,7 @@ export function buildInstrumentOptions(
       status,
       triggerCondition,
       triggerConditionNote: instrument.triggerConditionNote ?? null,
+      triggerHit: Boolean(triggerCondition) && triggerMet,
       triggerError,
       missingPrerequisites,
       blockingExclusives,
@@ -235,10 +241,30 @@ export function buildInstrumentOptions(
 export async function listInstrumentOptions(
   event: H3Event,
   module: ModuleId,
-  user: { id: string, schoolId?: string | null }
+  user: { id: string, schoolId?: string | null },
+  /**
+   * 提交前预演：把指定量表的本次作答视作其最新提交，仅用于状态与触发条件判定，不落库。
+   * 前端在答完最后一题时传入，让「下一张建议」基于本次答案而非历史快照。
+   */
+  overrideLatest?: { code: string, answers: Record<string, number> }
 ): Promise<InstrumentOption[]> {
   const instruments = await listAssessmentInstruments(event, module, user.schoolId)
   const latest = await loadLatestAttempts(event, module, user.id, instruments.map(item => item.code))
+  if (overrideLatest) {
+    // level/severity/dimensions 未知，置空：触发条件只引用 answers 现算的分数，
+    // 引用等级的表达式在预演时会因未知结果不命中（提交后由真实结果接管）。
+    const target = instruments.find(item => item.code === overrideLatest.code)
+    if (target && Object.keys(overrideLatest.answers).length === target.questions.length) {
+      latest.set(target.code, {
+        submittedAt: new Date(),
+        level: null,
+        levelName: null,
+        severity: null,
+        dimensions: {},
+        answers: overrideLatest.answers
+      })
+    }
+  }
   return buildInstrumentOptions(instruments, latest)
 }
 

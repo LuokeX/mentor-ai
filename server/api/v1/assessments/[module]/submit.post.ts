@@ -465,7 +465,9 @@ export default defineEventHandler(async (event) => {
   // 模型调用不持有数据库事务。若等待期间同组又补交了量表，plan.updatedAt
   // 会变化，本次增强报告只回写当前评估，不覆盖更新后的合并方案。
   // AI 失败（无密钥/超时/非法输出）只降级为确定性报告，不能让整个提交 500。
-  if (!result.blocked) {
+  // deferPlan 时跳过：方案由 finalize 用组内结果统一生成，增强报告在那里一并产出，
+  // 提前返回响应让教师立即切入下一张量表（DeepSeek 调用常达 1-2 分钟，不应阻塞连续作答）。
+  if (!result.blocked && !outcome.deferred) {
     const enhancedReport = await generateAssessmentReport(event, {
       schoolId,
       ownerUserId: user.id,

@@ -103,10 +103,12 @@ export async function recommendInstrument(
     text?: string
     user: { id: string, schoolId?: string | null }
     sessionId?: string | null
+    /** 提交前预演：本次作答覆盖该量表的历史提交后再算推荐与状态 */
+    overrideLatest?: { code: string, answers: Record<string, number> }
   }
 ): Promise<InstrumentRecommendation> {
   // 红线检查量表只对教师和 LLM 在「高危阈值已命中」时可见，详见该函数注释
-  const options = filterTeacherVisibleInstruments(await listInstrumentOptions(event, input.module, input.user))
+  const options = filterTeacherVisibleInstruments(await listInstrumentOptions(event, input.module, input.user, input.overrideLatest))
   if (!options.length) return fallbackResult(options, '')
 
   const selectable = options.filter(option => option.status !== 'locked')

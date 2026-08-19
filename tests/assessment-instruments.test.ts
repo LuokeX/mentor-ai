@@ -169,6 +169,34 @@ describe('instrument gating（前置/互斥锁定与完成状态优先级）', (
     expect(finished.find(option => option.code === 'HS_DEEP')?.status).toBe('completed')
     expect(finished.some(option => option.status === 'suggested')).toBe(false)
   })
+
+  it('已完成量表仍按触发条件标记 triggerHit（命中才可重做提示）', () => {
+    const library = [
+      instrument('HS_SCREEN', { instrumentRole: 'screening', isRequired: true }),
+      instrument('HS_DEEP', { instrumentRole: 'deep_dive', triggerCondition: '量表[HS_SCREEN].均分 >= 3' })
+    ]
+    // 触发条件命中 + 已完成：triggerHit 为 true，前端据此允许重做
+    const hit = buildInstrumentOptions(library, new Map([
+      ['HS_SCREEN', { submittedAt: new Date(), level: 'B', levelName: null, severity: 'medium', dimensions: {}, answers: { q1: 4 } }],
+      ['HS_DEEP', done()]
+    ]))
+    const deepHit = hit.find(option => option.code === 'HS_DEEP')
+    expect(deepHit?.status).toBe('completed')
+    expect(deepHit?.triggerHit).toBe(true)
+
+    // 触发条件未命中 + 已完成：triggerHit 为 false，不提示重做
+    const miss = buildInstrumentOptions(library, new Map([
+      ['HS_SCREEN', { submittedAt: new Date(), level: 'A', levelName: null, severity: 'low', dimensions: {}, answers: { q1: 1 } }],
+      ['HS_DEEP', done()]
+    ]))
+    const deepMiss = miss.find(option => option.code === 'HS_DEEP')
+    expect(deepMiss?.status).toBe('completed')
+    expect(deepMiss?.triggerHit).toBe(false)
+
+    // 无触发条件的量表：triggerHit 恒为 false（不属于「命中触发条件」）
+    const free = buildInstrumentOptions([instrument('HS_FREE', {})], new Map([['HS_FREE', done()]]))
+    expect(free[0]?.triggerHit).toBe(false)
+  })
 })
 
 describe('连续量表流程的续做衔接（fallbackInstrument 推荐下一张）', () => {

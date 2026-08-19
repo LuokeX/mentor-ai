@@ -11,7 +11,11 @@ import { recommendInstrument } from '../../../../domain/instrument-recommendatio
 
 const bodySchema = z.object({
   text: z.string().trim().max(2000).optional(),
-  sourceChatSessionId: z.string().uuid().optional()
+  sourceChatSessionId: z.string().uuid().optional(),
+  // 提交前预演：带本次作答时，服务端把该量表的最新提交视为这套答案再算推荐与状态，
+  // 供「提交前选择卡」基于本次答案判断下一张是否命中触发条件。
+  answers: z.record(z.string(), z.number().int()).optional(),
+  instrumentCode: z.string().max(200).optional()
 })
 
 export default defineEventHandler(async (event) => {
@@ -23,6 +27,9 @@ export default defineEventHandler(async (event) => {
     module,
     text: body.text,
     user,
-    sessionId: body.sourceChatSessionId ?? null
+    sessionId: body.sourceChatSessionId ?? null,
+    overrideLatest: body.answers && body.instrumentCode
+      ? { code: body.instrumentCode, answers: body.answers }
+      : undefined
   })
 })

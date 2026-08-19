@@ -273,7 +273,7 @@ export function createTemplateAssessmentReport(input: {
   const conclusionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'conclusion')
   const report: AssessmentReport = {
     profile,
-    attributions: attributions.map(attribution => ({
+    attributions: attributions.slice(0, 5).map(attribution => ({
       name: attribution.name,
       strength: attribution.strength,
       reasons: attribution.reasons.slice(0, 8)

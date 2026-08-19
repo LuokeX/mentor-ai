@@ -46,11 +46,11 @@ test.describe('四角色核心路径', () => {
     await start.click()
 
     // 作答 q1=1,q2=4,q3=3,q4=3,q5=1：q3/q4 为反向计分题（6-raw），折算后总分
-    // 1+4+3+3+1=12，低于 SG_S2「总分 >= 15」的触发条件，本次只做单张量表、
-    // 不进入连续量表流程（不会再自动切入下一张），提交后统一生成方案。
+    // 1+4+3+3+1=12，低于 SG_S2「总分 >= 15」的触发条件，提交前不会出现「可继续量表」
+    // 选择卡，本次只做单张量表、不进入连续量表流程，提交后统一生成方案。
     // 注意不能全选 3 分：绿色兜底作答会触发「状态良好，无需方案」分支（不生成方案）；
     // 也不能全选 4 分（折算后总分 16 >= 15）——那会命中 SG_S2 的续做条件，
-    // 页面自动切入下一张量表，本用例就测不到「单量表 → 方案 → 执行」闭环了。
+    // 提交前出现「先做这张量表」选择卡，本用例就测不到「单量表 → 方案 → 执行」闭环了。
     // q2=4 命中「角色边界」归因证据，保证有归因、必出方案。
     const sg1Answers = [1, 4, 3, 3, 1]
     for (let questionIndex = 0; questionIndex < 5; questionIndex++) {
@@ -133,30 +133,25 @@ test.describe('四角色核心路径', () => {
     }
     const submit = page.getByRole('button', { name: '提交并生成方案' })
     await expect(submit).toBeEnabled()
-    await submit.click()
-
-    // 关键断言：首次提交即返回 deferred，页面出现「继续完成…」续做提示并自动切入 SG_S2。
-    // 重复运行（SG_S2 已完成）时不会再有续做提示，直接走 finalize 生成方案，
-    // 此时由下面的 URL 断言兜底，保证用例可重复执行（desktop/mobile 双 project 都会跑）。
-    let continued = false
-    try {
-      await expect(page.getByText(/继续完成「HERO心理资本与依恋安全感评估」/)).toBeVisible({ timeout: 15_000 })
-      continued = true
-    } catch { /* 已做过 SG_S2 的重复运行：无续做提示，直接进入 finalize */ }
-    if (continued) {
-      // 已自动切入 SG_S2：出现 HERO 第一题与 1 / 20 进度
-      await expect(page.getByText('我对未来的职业发展有清晰的规划')).toBeVisible()
-      await expect(page.getByText('1 / 20', { exact: true })).toBeVisible()
-      // 完成 SG_S2（20 题全选「4 比较符合」）：HERO 四个三维维度之和均为 12（> 8），
-      // 不会触发 SG_S3「维度 <= 8」的建议条件，做完本张即进入 finalize。
-      for (let questionIndex = 0; questionIndex < 20; questionIndex++) {
-        await expect(page.getByText(`${questionIndex + 1} / 20`, { exact: true })).toBeVisible()
-        await page.getByRole('button', { name: /^4 / }).click()
-      }
-      const heroSubmit = page.getByRole('button', { name: '提交并生成方案' })
-      await expect(heroSubmit).toBeEnabled()
-      await heroSubmit.click()
+    // 关键断言：提交前最后一题页面出现「可继续量表」选择卡（SG_S2 建议做或已完成都可继续）。
+    // 点「先做这张量表」：先提交 SG_S1（deferred 建组），再自动切入 SG_S2。
+    // 张老师 SG_S1 折算总分恒为 17（>= 15），SG_S2 触发条件始终满足；重复运行时
+    // SG_S2 显示为「已完成，可重新评估」，同样可点按钮重做，保证用例可重复执行。
+    const continueNext = page.getByRole('button', { name: '先做这张量表' })
+    await expect(continueNext).toBeVisible({ timeout: 15_000 })
+    await continueNext.click()
+    // 已切入 SG_S2：出现 HERO 第一题与 1 / 20 进度
+    await expect(page.getByText('我对未来的职业发展有清晰的规划')).toBeVisible()
+    await expect(page.getByText('1 / 20', { exact: true })).toBeVisible()
+    // 完成 SG_S2（20 题全选「4 比较符合」）：HERO 四个三维维度之和均为 12（> 8），
+    // 不会触发 SG_S3「维度 <= 8」的建议条件，做完本张即进入 finalize。
+    for (let questionIndex = 0; questionIndex < 20; questionIndex++) {
+      await expect(page.getByText(`${questionIndex + 1} / 20`, { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: /^4 / }).click()
     }
+    const heroSubmit = page.getByRole('button', { name: '提交并生成方案' })
+    await expect(heroSubmit).toBeEnabled()
+    await heroSubmit.click()
 
     // 全部建议量表完成后统一生成方案并跳转方案详情页（修复前的缺陷：
     // 首次提交无评估组时 deferPlan 恒 false，直接出方案跳转，不会续做下一张）

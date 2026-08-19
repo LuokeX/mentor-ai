@@ -31,6 +31,8 @@ interface InstrumentOption {  code: string
   status: 'available' | 'suggested' | 'not_needed' | 'locked' | 'completed'
   triggerCondition: string | null
   triggerConditionNote: string | null
+  /** 触发条件存在且当前命中（含已完成的量表：命中时允许重做提示） */
+  triggerHit: boolean
   missingPrerequisites: Array<{ code: string, title: string }>
   blockingExclusives: Array<{ code: string, title: string }>
   lastSubmittedAt: string | null
@@ -58,13 +60,24 @@ const meta = moduleMeta[moduleId]
 /** 是否从 AI 对话分诊跳转进来（带会话 id 或教师原话）。两种入口的引导语完全不同。 */
 const fromChat = computed(() => Boolean(sourceChatSessionId.value || routedText.value))
 
+/** 推荐请求体改为响应式：答完最后一题时携带本次作答，服务端据此预演下一张建议 */
+const recommendBody = reactive<{
+  text: string | undefined
+  sourceChatSessionId: string | undefined
+  answers?: Record<string, number>
+  instrumentCode?: string
+}>({
+  text: routedText.value,
+  sourceChatSessionId: sourceChatSessionId.value
+})
+
 const {
   data: recommendation,
   error: recommendationError,
   refresh: refreshRecommendation
 } = await useFetch<InstrumentRecommendation>(
   `/api/v1/assessments/${moduleId}/recommend`,
-  { method: 'POST', body: { text: routedText.value, sourceChatSessionId: sourceChatSessionId.value } }
+  { method: 'POST', body: recommendBody }
 )
 
 // 优先用 URL 指定的量表；否则用推荐结果；再否则由后端取默认
@@ -119,7 +132,9 @@ async function selectInstrument(code: string) {
   if (code === selectedCode.value) return
   selectedCode.value = code
   submitted.value = false
-  pendingChoice.value = null
+  continueIntent.value = null
+  recommendBody.answers = undefined
+  recommendBody.instrumentCode = undefined
   for (const key of Object.keys(answers)) delete answers[key]
   current.value = 0
   started.value = false
@@ -207,8 +222,18 @@ const attemptId = ref<string>()
 const pending = ref(false)
 /** 已点击提交：答案锁定，不能再改选项、不能上下翻题（finalize 失败时也只能重试生成方案） */
 const submitted = ref(false)
-/** 提交后检测到可继续的深度诊断量表时置位，让教师选择「立即接着做 / 先查看方案」 */
-const pendingChoice = ref<InstrumentOption | null>(null)
+/** 提交前教师选择「先做这张量表」时记录目标量表；提交成功后直接切入，不再二次询问 */
+const continueIntent = ref<InstrumentOption | null>(null)
+/**
+ * 提交前可继续的量表：当前量表之外的「建议做」（触发条件命中的未完成量表）
+ * 或「已完成且触发条件命中」（可重做）。不展示可做但未命中触发条件的量表。
+ */
+const nextInstruments = computed(() =>
+  instrumentOptions.value.filter(option =>
+    option.code !== selectedCode.value
+    && (option.status === 'suggested' || (option.status === 'completed' && option.triggerHit))
+  )
+)
 /** 连续量表流程：全部建议量表完成后进入 finalize 生成方案 */
 const flowState = ref<'idle' | 'finalizing'>('idle')
 const finalizeError = ref('')
@@ -319,6 +344,21 @@ watch(selectedContextKey, (value) => {
   if (import.meta.client) localStorage.setItem(`assessment-context:${moduleId}`, value)
 })
 
+/**
+ * 提交前选择卡的预演：答完最后一题（进度 100%）时把本次作答带给推荐接口，
+ * 「下一张建议」基于本次答案的触发条件命中计算，而不是进入页面时的历史快照。
+ * 作答中、提交后不刷新（submitted 后答案锁定，无需再预演）。
+ */
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+watch([progress, answers], () => {
+  if (progress.value !== 100 || submitted.value) return
+  if (previewTimer) clearTimeout(previewTimer)
+  previewTimer = setTimeout(() => {
+    recommendBody.answers = { ...answers }
+    recommendBody.instrumentCode = selectedCode.value
+  }, 400)
+}, { deep: true })
+
 onMounted(async () => {
   const queryType = typeof route.query.contextType === 'string' ? route.query.contextType : ''
   const queryId = typeof route.query.contextId === 'string' ? route.query.contextId : ''
@@ -368,20 +408,21 @@ async function continueSuggestedInstrument() {
   started.value = true
 }
 
-/** 提交后的选择：立即接着做第二张（沿用同一评估组），答案锁定解除进入新量表作答。 */
-async function continueChosenInstrument() {
-  const next = pendingChoice.value
-  if (!next) return
-  pendingChoice.value = null
-  await selectInstrument(next.code)
-  started.value = true
+/** 提交前的选择：先做下一张量表（沿用同一评估组）。先提交当前量表，成功后切入新量表作答。 */
+async function continueWithNext(option: InstrumentOption) {
+  if (option.status === 'locked') return
+  continueIntent.value = option
+  await submit()
+}
+
+/** 量表选择卡上的状态说明：建议做 / 已完成可重做 */
+function nextStatusNote(option: InstrumentOption) {
+  if (option.status === 'suggested') return '建议做'
+  if (option.status === 'completed') return '已完成，可重新评估'
+  return '可做'
 }
 
 /** 提交后的选择：先查看方案——基于组内已有结果生成方案，深度诊断以方案待办形式呈现。 */
-async function skipChosenInstrument() {
-  pendingChoice.value = null
-  await finalizeAndGo()
-}
 
 /** 全部建议量表完成后，聚合评估组内结果统一生成方案并跳转方案详情页。失败时停留当前页可重试。 */
 async function finalizeAndGo() {
@@ -414,6 +455,9 @@ async function submit() {
   pending.value = true
   submitError.value = ''
   finalizeError.value = ''
+  // 点击「提交并生成方案」的瞬间锁定：请求往返期间不允许改选项、翻题，
+  // 否则会出现「屏幕上看到的答案」与「实际提交的答案」不一致。
+  submitted.value = true
   try {
     if (saveTimer) clearTimeout(saveTimer)
     if (saveInFlight) await saveInFlight
@@ -468,12 +512,14 @@ async function submit() {
       if (import.meta.client) localStorage.setItem(`assessment-session:${moduleId}`, res.assessmentSessionId)
       // 已提交：答案锁定，不可再改选项或翻题；若方案生成失败只能重试，不能修改作答。
       submitted.value = true
-      // 非强制延续：若有满足触发条件的深度诊断量表，交给教师选择「立即接着做 / 先查看方案」；
-      // 没有则直接基于组内已有结果生成方案（后续仍可在方案里以待办形式建议）。
+      // 提交前已由教师选择「先做这张」：先保存本次结果再切入目标量表；
+      // 未选择（直接提交并生成方案）则基于组内已有结果统一生成方案。
       await refreshRecommendation().catch(() => undefined)
-      const next = instrumentOptions.value.find(item => item.status === 'suggested')
-      if (next) {
-        pendingChoice.value = next
+      if (continueIntent.value) {
+        const next = continueIntent.value
+        continueIntent.value = null
+        await selectInstrument(next.code)
+        started.value = true
         return
       }
       await finalizeAndGo()
@@ -486,6 +532,8 @@ async function submit() {
     submitError.value = '评估已保存，但方案生成失败。请稍后在方案列表中查看，或联系管理员。'
   } catch (error: any) {
     submitError.value = error?.data?.message || error?.message || '提交失败，请检查网络后重试。'
+    // 提交失败：解锁以允许修正答案后重新提交；成功路径保持锁定。
+    submitted.value = false
   } finally {
     pending.value = false
   }
@@ -664,7 +712,7 @@ async function submit() {
       </div>
     </section>
 
-    <div v-if="definition && started && !output && flowState !== 'finalizing' && !pendingChoice" class="mt-6 grid gap-6 md:grid-cols-[.36fr_.64fr]">
+    <div v-if="definition && started && !output && flowState !== 'finalizing'" class="mt-6 grid gap-6 md:grid-cols-[.36fr_.64fr]">
       <aside class="panel h-fit p-6">
         <div class="grid size-12 place-items-center rounded-2xl" :class="moduleIconTone[meta.color]"><UIcon :name="meta.icon" class="size-6" /></div>
         <h1 class="mt-5 text-2xl font-semibold">{{ definition.title }}</h1>
@@ -685,6 +733,28 @@ async function submit() {
             <span class="grid size-8 shrink-0 place-items-center rounded-full border text-sm" :class="answers[question!.id] === option.value ? 'border-emerald-600 bg-emerald-700 text-white' : 'border-slate-200'">{{ option.value }}</span><span>{{ option.label }}</span>
           </button>
         </div>
+        <!-- 提交前的选择：还有可继续的量表时，由教师决定先做下一张还是直接生成方案 -->
+        <section
+          v-if="!submitted && current === definition.questions.length - 1 && nextInstruments.length"
+          class="mt-7 rounded-2xl border border-violet-200 bg-violet-50/70 p-5"
+        >
+          <div class="flex items-start gap-3">
+            <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-violet-100 text-violet-700"><UIcon name="i-lucide-microscope" class="size-4" /></span>
+            <div class="min-w-0 flex-1">
+              <h3 class="text-sm font-semibold text-slate-800">还有可以继续的量表</h3>
+              <p class="mt-1 text-xs leading-5 text-slate-500">继续完成下面的量表可以获得更精确的归因；选择后系统会先保存本次评估结果，再进入该量表。也可以直接提交并生成方案。</p>
+              <div class="mt-3 space-y-2">
+                <div v-for="option in nextInstruments" :key="option.code" class="flex items-center gap-3 rounded-xl border border-violet-100 bg-white p-3">
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate text-sm font-medium text-slate-800">{{ option.title }}</p>
+                    <p class="mt-0.5 text-xs text-slate-500">{{ nextStatusNote(option) }} · {{ option.questionCount }} 题 · 约 {{ option.estimatedMinutes }} 分钟</p>
+                  </div>
+                  <UButton size="xs" color="primary" variant="soft" icon="i-lucide-arrow-right" trailing @click="continueWithNext(option)">先做这张量表</UButton>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
         <div class="mt-8 flex items-center justify-between gap-3">
           <p v-if="submitted" class="text-xs text-slate-400">评估已提交，答案已锁定</p>
           <p v-else class="text-xs text-slate-400">可返回上一题修改，提交后答案锁定</p>
@@ -698,20 +768,6 @@ async function submit() {
         </div>
       </section>
     </div>
-
-    <!-- 提交后的选择：满足触发条件的深度诊断量表，由教师决定是否立即接着做 -->
-    <section v-if="pendingChoice && !output" class="panel mt-6 p-7 text-center">
-      <UIcon name="i-lucide-microscope" class="mx-auto size-8 text-violet-600" />
-      <h2 class="mt-3 text-lg font-semibold">检测到深度诊断量表</h2>
-      <p class="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">
-        基于本次测量结果，建议进一步完成「{{ pendingChoice.title }}」以获得更精确的归因判断。
-        <template v-if="pendingChoice.triggerConditionNote">（{{ pendingChoice.triggerConditionNote }}）</template>
-      </p>
-      <div class="mt-5 flex flex-wrap justify-center gap-3">
-        <UButton icon="i-lucide-arrow-right" trailing @click="continueChosenInstrument">立即接着做</UButton>
-        <UButton color="neutral" variant="soft" @click="skipChosenInstrument">先查看方案</UButton>
-      </div>
-    </section>
 
     <!-- 连续量表流程收尾：全部量表完成后统一生成方案，失败时可重试 -->
     <section v-if="flowState === 'finalizing' && !output" class="panel mt-6 p-7 text-center">
