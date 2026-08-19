@@ -349,6 +349,18 @@ async function loadDraft() {
   }
 }
 
+/** 绿色兜底结果页（submit/finalize 共用）：仍处于「建议做」状态、可继续完成的量表。 */
+const suggestedInstrument = computed(() => instrumentOptions.value.find(item => item.status === 'suggested') || null)
+
+/** 从「状态良好，无需方案」结果页直接进入下一张建议量表作答（沿用同一评估组续链）。 */
+async function continueSuggestedInstrument() {
+  const next = suggestedInstrument.value
+  if (!next) return
+  output.value = null
+  await selectInstrument(next.code)
+  started.value = true
+}
+
 /** 全部建议量表完成后，聚合评估组内结果统一生成方案并跳转方案详情页。失败时停留当前页可重试。 */
 async function finalizeAndGo() {
   if (!assessmentSessionId.value) return
@@ -414,6 +426,11 @@ async function submit() {
     }
     // 绿色兜底：状态良好无需方案，停留当前页展示结论。
     if (res?.noPlanNeeded) {
+      // submit 无条件建组：持久化评估组，供「继续完成建议量表」续接同一组
+      if (res.assessmentSessionId) {
+        assessmentSessionId.value = res.assessmentSessionId
+        if (import.meta.client) localStorage.setItem(`assessment-session:${moduleId}`, res.assessmentSessionId)
+      }
       output.value = res
       return
     }
@@ -688,6 +705,16 @@ async function submit() {
             <p class="mt-2 text-sm leading-6 text-emerald-800">
               {{ output.levelName || '状态良好' }}：本次评估未发现需要重点干预的信号，暂时不需要生成行动方案。保持现有节奏即可，后续可随时重新评估。
             </p>
+            <!-- 无方案但有建议量表（如筛查量表状态良好、深度诊断仍待做）：提供续链入口 -->
+            <UButton
+              v-if="suggestedInstrument"
+              class="mt-4"
+              icon="i-lucide-arrow-right"
+              trailing
+              @click="continueSuggestedInstrument"
+            >
+              继续完成建议量表「{{ suggestedInstrument.title }}」
+            </UButton>
           </div>
         </div>
       </div>

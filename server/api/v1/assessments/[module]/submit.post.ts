@@ -517,6 +517,8 @@ export default defineEventHandler(async (event) => {
   }
   // 业务状态快照回写：能量场阶段/个体支持等级/沟通风险等级/自我状态等级。
   // 评估是事实来源，这里把结果投影到档案标量与明细，管理后台列表直接可见。
+  // 用组内合并结果（mergeGroupResults）：单张量表时与单张 result 等价
+  // （归因首项即 primaryAttribution，见 mergeGroupResults/规则执行器口径）。
   await writeEntitySnapshot(event, {
     module,
     schoolId: schoolId,
@@ -524,7 +526,7 @@ export default defineEventHandler(async (event) => {
     studentId: body.studentId,
     classId: linkedClassId,
     guardianId: body.guardianId,
-    result,
+    result: outcome.mergedResult,
     submittedAt: outcome.submittedAt
   })
   return {

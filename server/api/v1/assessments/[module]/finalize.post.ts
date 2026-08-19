@@ -14,6 +14,7 @@ import { resolveAssessmentDefinition, resolveAttributionConfig, resolvePublished
 import { collectSessionAttempts, collectSessionSnapshots, generateOrMergeSessionPlan } from '../../../../domain/plan-session'
 import { isNoPlanNeeded } from '../../../../domain/no-plan-needed'
 import { mergeGroupResults } from '../../../../domain/plan-merge'
+import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { createTemplateAssessmentReport } from '../../../../domain/reports'
 import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
 import { generateAssessmentReport, redactPii } from '../../../../integrations/deepseek'
@@ -97,7 +98,9 @@ export default defineEventHandler(async (event) => {
         mergedResult,
         mergedReport: null,
         definition,
-        planUpdatedAtForWrite: null
+        planUpdatedAtForWrite: null,
+        contextType: session.contextType,
+        contextId: session.contextId
       }
     }
     const mergedReport = createTemplateAssessmentReport({
@@ -161,7 +164,9 @@ export default defineEventHandler(async (event) => {
       mergedResult,
       mergedReport,
       definition,
-      planUpdatedAtForWrite: generated.planUpdatedAt
+      planUpdatedAtForWrite: generated.planUpdatedAt,
+      contextType: session.contextType,
+      contextId: session.contextId
     }
   })
 
@@ -214,6 +219,20 @@ export default defineEventHandler(async (event) => {
       targetType: 'plan', targetId: outcome.planId || undefined, metadata: { module, source: 'finalize' }
     })
   }
+
+  // 业务状态快照回写：与 submit 一致，finalize 用组内合并结果投影档案标量
+  // （学生个体支持等级、学习问题等级、能量场阶段、沟通风险等级…）。
+  // noPlanNeeded 分支同样回写：submit 路径本就无条件写，finalize 对齐同一口径。
+  await writeEntitySnapshot(event, {
+    module,
+    schoolId,
+    ownerUserId: user.id,
+    studentId: outcome.contextType === 'student' ? (outcome.contextId ?? undefined) : undefined,
+    classId: outcome.contextType === 'class' ? (outcome.contextId ?? undefined) : undefined,
+    guardianId: outcome.contextType === 'guardian' ? (outcome.contextId ?? undefined) : undefined,
+    result: outcome.mergedResult,
+    submittedAt: new Date()
+  })
 
   return {
     planId: outcome.planId,

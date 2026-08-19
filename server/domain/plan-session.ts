@@ -84,6 +84,52 @@ export async function collectSessionSnapshots(
   }))
 }
 
+export interface PlanAssessmentAttemptRow {
+  planId: string
+  assessmentAttemptId: string
+  sequence: number
+}
+
+/**
+ * 构建「方案 ↔ 评估量表」关联行。
+ *
+ * - 组内量表按提交顺序映射为 (planId, attemptId, sequence)；
+ * - 同一 attempt 重复出现时只保留首次（幂等：同组重复合并不会产生重复行）；
+ * - 无组内量表时兜底挂来源 attempt（sequence=0，与 0034 回填形态一致）；
+ *   两个唯一约束（plan_id+sequence、assessment_attempt_id）由 onConflictDoNothing 兜底。
+ */
+export function buildPlanAssessmentAttemptRows(
+  planId: string,
+  attempts: SessionAttemptRow[],
+  sourceAttemptId: string | null
+): PlanAssessmentAttemptRow[] {
+  const seen = new Set<string>()
+  const rows: PlanAssessmentAttemptRow[] = []
+  for (const attempt of attempts) {
+    if (seen.has(attempt.id)) continue
+    seen.add(attempt.id)
+    rows.push({ planId, assessmentAttemptId: attempt.id, sequence: attempt.sequence })
+  }
+  if (!rows.length && sourceAttemptId) {
+    rows.push({ planId, assessmentAttemptId: sourceAttemptId, sequence: 0 })
+  }
+  return rows
+}
+
+/** 在事务内把评估组内全部量表（无组时兜底来源 attempt）关联到方案，两个唯一约束冲突时静默跳过。 */
+async function linkPlanAssessmentAttempts(
+  client: DbClient,
+  planId: string,
+  assessmentSessionId: string | null,
+  sourceAttemptId: string | null
+): Promise<void> {
+  const attempts = assessmentSessionId ? await collectSessionAttempts(client, assessmentSessionId) : []
+  const rows = buildPlanAssessmentAttemptRows(planId, attempts, sourceAttemptId)
+  if (rows.length) {
+    await client.insert(schema.planAssessmentAttempts).values(rows).onConflictDoNothing()
+  }
+}
+
 export interface GenerateSessionPlanInput {
   event: H3Event
   client: DbClient
@@ -284,6 +330,9 @@ export async function generateOrMergeSessionPlan(
       eventType: 'plan_merged',
       metadata: { module, sequence: instrumentSnapshots.map(item => item.sequence) }
     }, client)
+    // 关联组内全部量表到方案：合并后组内可能又追加了量表（复评/补评），
+    // 全量重写关系由两个唯一约束幂等去重，不会产生重复行。
+    await linkPlanAssessmentAttempts(client, mergeTargetId, assessmentSessionId, sourceAttemptId)
     return { planId: mergeTargetId, planUpdatedAt: updatedPlan?.updatedAt || null, planReport }
   }
 
@@ -331,6 +380,9 @@ export async function generateOrMergeSessionPlan(
       eventType: 'plan_generated',
       metadata: { module, ruleCount: mergedResult.matchedRuleIds.length, toolCount: planTools.length }
     }, client)
+    // 关联评估组内全部量表到方案；无组（单张评估）时兜底挂来源 attempt（sequence=0，
+    // 与 0034 回填形态一致），保证详情页「测评量表（N 份）」区块始终有数据。
+    await linkPlanAssessmentAttempts(client, plan.id, assessmentSessionId, sourceAttemptId)
   }
   return { planId: planId || '', planUpdatedAt: plan?.updatedAt || null, planReport }
 }
