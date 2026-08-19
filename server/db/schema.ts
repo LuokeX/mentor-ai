@@ -398,7 +398,9 @@ export const chatMessages = pgTable('chat_messages', {
   contentEnc: text('content_enc').notNull(),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: uuid('deleted_by').references(() => users.id)
 }, table => [index('chat_messages_session_idx').on(table.sessionId, table.createdAt)])
 
 export const routingDecisions = pgTable('routing_decisions', {
@@ -426,6 +428,9 @@ export const assessmentAttempts = pgTable('assessment_attempts', {
   result: jsonb('result').$type<Record<string, unknown>>(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   submittedAt: timestamp('submitted_at', { withTimezone: true }),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
+  archivedPreviousStatus: varchar('archived_previous_status', { length: 30 }),
   ...timestamps
 }, table => [index('assessment_owner_module_idx').on(table.ownerUserId, table.module)])
 
@@ -530,6 +535,9 @@ export const plans = pgTable('plans', {
   nextReviewAt: timestamp('next_review_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
   closedAt: timestamp('closed_at', { withTimezone: true }),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  archivedBy: uuid('archived_by').references(() => users.id),
+  archivedPreviousStatus: varchar('archived_previous_status', { length: 30 }),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   ...timestamps
 }, table => [

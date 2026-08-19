@@ -21,6 +21,9 @@ export const MANAGED_TARGET_TYPES = [
   'import',
   'plan_operation',
   'access_request',
+  'assessment',
+  'plan',
+  'conversation',
 ] as const
 export type ManagedTargetType = typeof MANAGED_TARGET_TYPES[number]
 

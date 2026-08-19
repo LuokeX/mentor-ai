@@ -1,7 +1,7 @@
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Pool } from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { eq, isNull } from 'drizzle-orm'
+import { eq, isNull, sql } from 'drizzle-orm'
 import { loadLocalEnv } from './load-env'
 import * as schema from '../server/db/schema'
 
@@ -48,5 +48,22 @@ for (const referral of legacyReferrals) {
     escalationDueAt: new Date(referral.createdAt.getTime() + 15 * 60_000)
   }).where(eq(schema.referrals.id, referral.id))
 }
+
+// 学校管理员评估/方案/AI 对话管理权限键回填（幂等）。
+// 0042 的角色 INSERT 使用 ON CONFLICT DO NOTHING，存量库不会自动获得这些键；
+// 键缺失时能力解析回退硬编码（功能可用），此处显式补齐保持数据驱动一致。
+const rolesToBackfill = await db.select({ code: schema.roles.code }).from(schema.roles)
+  .where(sql`"permissions" #>> '{records,assessment}' IS NULL AND "code" = 'school_admin'`)
+for (const role of rolesToBackfill) {
+  await db.update(schema.roles).set({
+    permissions: sql`jsonb_set(
+      jsonb_set(
+        jsonb_set("permissions", '{records,assessment}', '["view","edit","archive","delete","restore"]'::jsonb, true),
+        '{records,plan}', '["view","edit","archive","delete","restore"]'::jsonb, true),
+      '{records,conversation}', '["view","edit","archive","delete","restore"]'::jsonb, true)`,
+    updatedAt: new Date()
+  }).where(eq(schema.roles.code, role.code))
+}
+
 await pool.end()
 process.stdout.write('Database migrations completed\n')

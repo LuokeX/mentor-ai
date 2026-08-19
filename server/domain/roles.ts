@@ -78,6 +78,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, RolePermissions> = {
       import: ['view'],
       plan_operation: ['view'],
       access_request: ['view'],
+      assessment: ['view', 'edit', 'archive', 'delete', 'restore'],
+      plan: ['view', 'edit', 'archive', 'delete', 'restore'],
+      conversation: ['view', 'edit', 'archive', 'delete', 'restore'],
     }, ['view', 'edit']),
     pages: buildPages({
       audit: ['view'],

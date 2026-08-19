@@ -95,6 +95,16 @@ export function resolveCapabilitiesHardcoded(ctx: CapabilityContext): Capability
     }
     if (user.role === 'platform_admin' && targetType !== 'school') return caps
 
+    // 评估/方案/对话管理：非归档放行 edit/archive/delete，归档放行 restore
+    if (targetType === 'assessment' || targetType === 'plan' || targetType === 'conversation') {
+      if (recordStatus === 'archived') {
+        caps.push('restore')
+      } else {
+        caps.push('edit', 'archive', 'delete')
+      }
+      return caps
+    }
+
     caps.push('edit')
     if (recordStatus === 'archived') {
       caps.push('restore')
@@ -230,6 +240,13 @@ export function resolveCapabilitiesFromRoleData(ctx: CapabilityContext, perm: Ro
     if (user.role === 'platform_admin' && targetType !== 'school') {
       // 平台管理员跨校记录只读旁路
       return rec.filter(c => c === 'view')
+    }
+    // 评估/方案/对话管理：非归档放行 edit/archive/delete，归档放行 restore
+    if (targetType === 'assessment' || targetType === 'plan' || targetType === 'conversation') {
+      if (recordStatus === 'archived') {
+        return rec.filter(c => c === 'view' || c === 'restore')
+      }
+      return rec.filter(c => c === 'view' || c === 'edit' || c === 'archive' || c === 'delete')
     }
     // 生命周期状态门禁
     if (recordStatus === 'archived') {
