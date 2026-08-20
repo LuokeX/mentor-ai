@@ -96,24 +96,6 @@ export const assessmentReportSchema = z.object({
     title: z.string().trim().min(2).max(100),
     detail: z.string().trim().min(4).max(400)
   })).min(1).max(8),
-  sevenDayFollowUp: z.object({
-    observationPoints: z.array(z.string().trim().min(2).max(160)).min(1).max(5),
-    reviewQuestions: z.array(z.string().trim().min(2).max(160)).min(1).max(5),
-    escalationSignals: z.array(z.string().trim().min(2).max(180)).min(1).max(5)
-  }),
-  scripts: z.array(z.object({
-    scenario: z.string().trim().min(2).max(80),
-    text: z.string().trim().min(6).max(500)
-  })).min(1).max(5),
-  supportGoal: z.object({
-    weeklyGoal: z.string().trim().min(4).max(240),
-    observableChange: z.string().trim().min(4).max(240),
-    avoidGoal: z.string().trim().min(4).max(240)
-  }).optional(),
-  firstAction: z.object({
-    title: z.string().trim().min(2).max(80),
-    detail: z.string().trim().min(4).max(300)
-  }).optional(),
   /** 工具导读：tool 类型输出模板的渲染结果，置于工具卡列表前。无匹配工具时不生成。 */
   toolIntro: z.string().trim().min(4).max(400).optional(),
   printMeta: z.object({

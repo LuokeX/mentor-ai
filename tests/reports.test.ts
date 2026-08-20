@@ -16,10 +16,6 @@ describe('assessment reports', () => {
       const report = createTemplateAssessmentReport({ module, result, generatedAt: new Date('2026-07-14T00:00:00.000Z') })
       expect(assessmentReportSchema.safeParse(report).success).toBe(true)
       expect(report.risk.level).toBe(result.level)
-      expect(report.sevenDayFollowUp.escalationSignals.length).toBeGreaterThan(0)
-      expect(report.scripts.length).toBeGreaterThan(0)
-      expect(report.supportGoal?.weeklyGoal).toBeTruthy()
-      expect(report.firstAction?.title).toBeTruthy()
       expect(report.printMeta.source).toBe('template')
     }
   })
@@ -30,7 +26,7 @@ describe('assessment reports', () => {
       return createTemplateAssessmentReport({ module, result })
     })
     expect(new Set(reports.map(report => report.profile.title)).size).toBe(4)
-    expect(new Set(reports.map(report => report.sevenDayFollowUp.observationPoints.join('|'))).size).toBe(4)
+    expect(new Set(reports.map(report => report.risk.description)).size).toBe(4)
     expect(reports.find(report => report.printMeta.module === 'home_school')?.profile.summary).toContain('家校沟通')
     expect(reports.find(report => report.printMeta.module === 'student_case')?.profile.summary).toContain('学生')
   })
@@ -76,7 +72,8 @@ describe('assessment reports', () => {
     expect(report.profile.summary).not.toContain('${')
     expect(report.attributionNarrative).toBe('归因诊断：信任缺失（家校之间的信任基础已经受损），关键撬动点为先做一次只核对事实的沟通。')
     expect(report.toolIntro).toBe('推荐工具：三分钟冷静法（1) 停 2) 呼吸 3) 再开口）。')
-    expect(report.firstAction?.detail).toContain('心理专员')
+    // goal/action/review 类型模板已不再消费：报告不再生成 supportGoal/firstAction/复盘字段
+    expect(report.firstAction).toBeUndefined()
   })
 
   it('skips attribution/tool templates when there are no attributions or tools', () => {
@@ -91,16 +88,12 @@ describe('assessment reports', () => {
     expect(report.toolIntro).toBeUndefined()
   })
 
-  it('truncates oversized tool body injected into scripts instead of failing', () => {
+  it('truncates oversized tool body instead of failing report schema', () => {
     const base = evaluateAssessment('home_school', answers('home_school', 3))
     const longBody = `步骤 1：${'详细做法 '.repeat(80)}\n步骤 2：${'话术示例 '.repeat(80)}\n步骤 3：${'达标标准 '.repeat(80)}`
     expect(longBody.length).toBeGreaterThan(500)
     const result = { ...base, tools: [{ title: `超长工具名称${'甲'.repeat(90)}`, content: longBody }] }
     const report = createTemplateAssessmentReport({ module: 'home_school', result })
     expect(assessmentReportSchema.safeParse(report).success).toBe(true)
-    const toolScript = report.scripts[report.scripts.length - 1]
-    expect(toolScript!.scenario.length).toBeLessThanOrEqual(80)
-    expect(toolScript!.text.length).toBeLessThanOrEqual(500)
-    expect(toolScript!.text.length).toBeGreaterThan(6)
   })
 })

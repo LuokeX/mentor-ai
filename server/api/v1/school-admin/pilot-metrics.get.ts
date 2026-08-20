@@ -75,8 +75,8 @@ export default defineEventHandler(async (event) => {
     }).from(schema.planFeedback).where(and(eq(schema.planFeedback.schoolId, admin.schoolId), gte(schema.planFeedback.createdAt, weekAgo))),
     db.select({
       total: sql<number>`count(*)::int`,
-      withSupportGoal: sql<number>`count(*) filter (where ${schema.plans.report} ? 'supportGoal')::int`,
-      withFirstAction: sql<number>`count(*) filter (where ${schema.plans.report} ? 'firstAction')::int`
+      // 报告完整度指标随产品收敛：AI 深度报告生成率（确定性模板报告恒完整，不再单独统计字段）
+      withAiReport: sql<number>`count(*) filter (where ${schema.plans.report}->'printMeta'->>'source' = 'ai')::int`
     }).from(schema.plans).where(and(eq(schema.plans.schoolId, admin.schoolId), gte(schema.plans.createdAt, weekAgo))),
     db.select({
       module: schema.moduleResourceLibraries.module,
@@ -116,11 +116,9 @@ export default defineEventHandler(async (event) => {
   }
   const report = reportCompleteness[0] || {
     total: 0,
-    withSupportGoal: 0,
-    withFirstAction: 0
+    withAiReport: 0
   }
-  const reportChecks = report.total * 2
-  const reportReady = report.withSupportGoal + report.withFirstAction
+  const reportReady = report.withAiReport
   const resourceCoverage = buildResourceCoverage(resourceRows)
   const assistantTotal = answers.total + failures.total
   const assistantFailureRate = assistantTotal ? failures.total / assistantTotal : 0
@@ -137,7 +135,7 @@ export default defineEventHandler(async (event) => {
     planFeedbackCount: quality.total,
     attributionAccuracyAvg: normalizeAvg(quality.attributionAccuracy),
     toolUsabilityAvg: normalizeAvg(quality.toolUsability),
-    reportCompletenessRate: reportChecks ? reportReady / reportChecks : 0
+    reportCompletenessRate: report.total ? reportReady / report.total : 0
   })
   return {
     period: { days: 7, from: weekAgo.toISOString(), to: new Date().toISOString() },
@@ -162,7 +160,7 @@ export default defineEventHandler(async (event) => {
     },
     reportCompleteness: {
       ...report,
-      rate: reportChecks ? reportReady / reportChecks : 0
+      rate: report.total ? reportReady / report.total : 0
     },
     resourceQuality: resourceCoverage,
     acceptance

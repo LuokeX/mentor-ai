@@ -56,39 +56,6 @@ function strongestDimension(result: ReportResult) {
   return (name && name.length >= 2) ? name : '当前维度'
 }
 
-function moduleScript(module: ModuleId, result: ReportResult) {
-  const scripts: AssessmentReport['scripts'] = {
-    self_growth: [
-      { scenario: '向同事求助', text: '我最近在这个问题上消耗比较大，想请你帮我一起看一下事实和下一步，不需要马上给答案。' },
-      { scenario: '设置边界', text: '我理解这件事很重要。我会在核实后回复，目前先按约定步骤处理。' }
-    ],
-    class_system: [
-      { scenario: '班级微复盘', text: '今天我们只讨论一件事：哪个环节帮助大家更稳定，哪个环节明天需要调整。' },
-      { scenario: '明确规则', text: '这条规则不是为了限制大家，而是为了让学习和相处更可预期。我们先试行三天再复盘。' }
-    ],
-    home_school: [
-      { scenario: '先跟后带', text: '我能感受到您现在很担心。我们先把事实逐项核实，再一起决定下一步。' },
-      { scenario: '约定下一步', text: '我会在约定时间前整理已知情况，也请您补充孩子在家的观察，我们再对齐一个可执行动作。' }
-    ],
-    student_case: [
-      { scenario: '低压力谈话', text: '我注意到你最近有些变化，我想先了解你的感受。你可以只说一点点，不需要马上解释清楚。' },
-      { scenario: '协同沟通', text: '目前我们先基于观察事实协同支持，不做标签判断，重点是看哪些支持对学生有效。' }
-    ],
-    learning_problem: [
-      { scenario: '与学生谈学习困难', text: '我注意到你在[具体任务]上花了比平时更多的时间。能不能跟我聊聊你是怎么做的？我们一起找找哪里卡住了。' },
-      { scenario: '与家长沟通学习', text: '我们关注的不只是分数，而是孩子在学习过程中遇到了什么困难。请您也观察一下他在家做作业时的状态，我们一起看看哪些支持有效。' }
-    ]
-  }[module]
-  // 工具正文可能远超 500 字符（步骤+话术+达标拼接），scripts 是话术片段不是全文，
-  // 必须截断到 schema 上限，否则任何命中长工具的报告都会在提交时 500。
-  return result.tools.length
-    ? [...scripts, ...result.tools.slice(0, 1).map(tool => ({
-        scenario: fitReportText(tool.title, 80),
-        text: fitReportText(tool.content, 500)
-      }))]
-    : scripts
-}
-
 function moduleProfile(module: ModuleId, result: ReportResult, weak: string, strong: string) {
   const profiles: Record<ModuleId, AssessmentReport['profile']> = {
     self_growth: {
@@ -131,74 +98,6 @@ function moduleRiskDescription(module: ModuleId, result: ReportResult) {
     learning_problem: `规则判断为"${label}"。该等级用于安排学习支持强度，重点是从行为、认知和关系三个层面定位卡点，匹配教学支架、策略训练或系统干预。`
   }
   return descriptions[module]
-}
-
-function moduleSevenDayFollowUp(module: ModuleId, weak: string, strong: string): AssessmentReport['sevenDayFollowUp'] {
-  return {
-    self_growth: {
-      observationPoints: ['疲惫恢复速度是否改善', `"${weak}"相关压力是否下降`, '是否减少了非必要的即时回应'],
-      reviewQuestions: ['哪一个边界动作最有效？', '哪些任务仍在持续消耗？', '是否需要同伴、年级或校方支持？'],
-      escalationSignals: ['连续多日无法恢复精力', '出现明显无助或安全风险表达', '工作消耗已经影响睡眠、饮食或基本功能']
-    },
-    class_system: {
-      observationPoints: [`"${weak}"系统的具体节点是否更稳定`, '学生是否知道自己要做什么', `能否借助"${strong}"带动班级执行`],
-      reviewQuestions: ['哪个班级流程需要保留？', '哪个岗位或规则仍不清楚？', '是否需要班干部或任课教师共同调整？'],
-      escalationSignals: ['班级秩序持续失控', '冲突或违规频率明显上升', '单靠班主任无法维持基本运行']
-    },
-    home_school: {
-      observationPoints: ['家长回应是否从情绪转向事实', `"${weak}"是否出现缓和`, '双方是否按约定完成下一步'],
-      reviewQuestions: ['哪句话降低了对抗？', '哪些事实仍未核清？', '是否需要年级组或学校统一口径？'],
-      escalationSignals: ['威胁、公开抹黑或恶意维权升级', '家长拒绝基本沟通边界', '沟通影响学生安全或学校秩序']
-    },
-    student_case: {
-      observationPoints: [`"${strong}"表现的频率和强度是否变化`, '支持措施后学生功能是否改善', '诱因是否逐渐清晰'],
-      reviewQuestions: ['哪个场景最容易触发问题？', '哪种支持对学生有效？', '是否需要家校、年级或心理专员协同？'],
-      escalationSignals: ['表现持续加重或扩展到更多场景', '常规支持连续无效', '出现自伤、暴力、虐待等安全信号']
-    },
-    learning_problem: {
-      observationPoints: [`"${strong}"层面的表现是否出现改善迹象`, '教学支架调整后学生的参与度或正确率是否变化', '学习困难是否集中在特定学科或任务类型'],
-      reviewQuestions: ['哪一种支架或策略对学生的帮助最明显？', '学生的困难是属于"不会"还是"不愿"？', '是否需要家长、年级或学科教师协同？'],
-      escalationSignals: ['学习困难持续加重且常规支架无效', '学生出现明显厌学、拒学或躯体化表现', '出现自伤、暴力或重大创伤等安全信号']
-    }
-  }[module]
-}
-
-function moduleSupportGoal(module: ModuleId, result: ReportResult, weak: string, strong: string): NonNullable<AssessmentReport['supportGoal']> {
-  const base = {
-    self_growth: {
-      weeklyGoal: `围绕"${weak}"减少持续消耗，先恢复一个稳定支持点。`,
-      observableChange: '一周内能说出至少一个有效补能动作，并减少非必要即时回应。',
-      avoidGoal: '不要把目标设成马上解决所有压力源或独自承担全部问题。'
-    },
-    class_system: {
-      weeklyGoal: `把"${weak}"从模糊问题转成一个可重复执行的班级机制。`,
-      observableChange: '学生能说清一个流程或岗位要求，关键节点的混乱频率下降。',
-      avoidGoal: '不要期待一次班会或一次提醒就完成系统重建。'
-    },
-    home_school: {
-      weeklyGoal: `围绕"${weak}"稳住事实边界，并形成一次可确认的下一步沟通。`,
-      observableChange: '沟通从情绪拉扯转向事实核对、责任边界和行动约定。',
-      avoidGoal: '不要在情绪高点争辩责任，也不要承诺超出教师职责的事项。'
-    },
-    student_case: {
-      weeklyGoal: `围绕"${strong}"完成结构化观察，并确定支持层级。`,
-      observableChange: '能整理出场景、诱因、已尝试措施和学生反应的基本时间线。',
-      avoidGoal: '不要给学生贴诊断标签，也不要只凭单次事件下结论。'
-    },
-    learning_problem: {
-      weeklyGoal: `围绕"${strong}"定位一个具体学习卡点，并试用一项支架。`,
-      observableChange: '能观察到学生在参与、正确率、作业完成或学习情绪上的一点变化。',
-      avoidGoal: '不要简单追加练习量，也不要把所有学习困难都归因为态度问题。'
-    }
-  }[module]
-  if (result.blocked) {
-    return {
-      weeklyGoal: '优先完成安全确认和校内协同，不进入常规支持目标。',
-      observableChange: '相关责任人已确认收到风险信息，并形成线下处置记录。',
-      avoidGoal: '不要继续给出普通教育建议或让教师单独处置高风险信号。'
-    }
-  }
-  return base
 }
 
 function selectOutputTemplate(
@@ -301,13 +200,6 @@ export function createTemplateAssessmentReport(input: {
       { title: '主要短板/重点', detail: `当前重点维度：${weak}；相对优势维度：${strong}。` },
       { title: '规则版本', detail: `${definition.code}@${definition.version}；命中规则：${result.matchedRuleIds.join('、')}`.slice(0, 400) }
     ],
-    sevenDayFollowUp: moduleSevenDayFollowUp(input.module, weak, strong),
-    scripts: moduleScript(input.module, result),
-    supportGoal: moduleSupportGoal(input.module, result, weak, strong),
-    firstAction: {
-      title: result.actions[0]?.title || (input.module === 'home_school' ? '先完成事实记录' : '先完成一个最小行动'),
-      detail: result.actions[0]?.detail || `围绕"${result.primaryAttribution}"选择一项今天能完成的观察或沟通动作。`
-    },
     printMeta: {
       module: input.module,
       moduleTitle: moduleMeta[input.module].title,
@@ -317,24 +209,6 @@ export function createTemplateAssessmentReport(input: {
       source: 'template',
       disclaimer: nonDiagnosticNote
     }
-  }
-  const goalTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'goal')
-  if (goalTemplate && report.supportGoal) {
-    report.supportGoal.weeklyGoal = fitReportText(renderOutputTemplate(goalTemplate.content, result, weak, strong), 240)
-  }
-  const actionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'action')
-  if (actionTemplate) {
-    report.firstAction = {
-      title: '建议行动',
-      detail: fitReportText(renderOutputTemplate(actionTemplate.content, result, weak, strong), 300)
-    }
-  }
-  const reviewTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'review')
-  if (reviewTemplate) {
-    report.sevenDayFollowUp.reviewQuestions = [
-      fitReportText(renderOutputTemplate(reviewTemplate.content, result, weak, strong), 160),
-      ...report.sevenDayFollowUp.reviewQuestions
-    ].slice(0, 5)
   }
   // attribution/tool 类型：无归因命中或无匹配工具时跳过，避免占位符全空的残句进入报告
   const attributionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'attribution')

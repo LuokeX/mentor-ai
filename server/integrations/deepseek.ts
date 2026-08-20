@@ -992,9 +992,6 @@ export async function generateAssessmentReport(event: H3Event, input: {
       const deterministic = createTemplateAssessmentReport({ module: input.module, result: input.result, definition, outputTemplates })
       report.profile.summary = deterministic.profile.summary
       report.risk.description = deterministic.risk.description
-      if (deterministic.supportGoal) report.supportGoal = deterministic.supportGoal
-      report.firstAction = deterministic.firstAction
-      report.sevenDayFollowUp.reviewQuestions = deterministic.sevenDayFollowUp.reviewQuestions
       if (deterministic.attributionNarrative) report.attributionNarrative = deterministic.attributionNarrative
       if (deterministic.toolIntro) report.toolIntro = deterministic.toolIntro
     }
