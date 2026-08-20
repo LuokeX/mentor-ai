@@ -21,15 +21,19 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
 
   const conditions = []
-  // knowledge 文档 libraryId=null，按 metadata.module 过滤；三库文档按 libraries 表过滤
+  // knowledge 文档 libraryId=null，按 metadata 过滤；三库文档按 libraries 表过滤
   if (libraryType === 'knowledge') {
     conditions.push(isNull(schema.moduleResourceDocuments.libraryId))
-    if (module) {
-      conditions.push(sql`${schema.moduleResourceDocuments.metadata}->>'module' = ${module}`)
-    }
-  } else {
-    if (module) conditions.push(eq(schema.moduleResourceLibraries.module, module))
-    if (libraryType) conditions.push(eq(schema.moduleResourceLibraries.libraryType, libraryType))
+  } else if (libraryType) {
+    conditions.push(eq(schema.moduleResourceLibraries.libraryType, libraryType))
+  }
+  // module 过滤需同时覆盖两类：三库文档（libraries.module）与未关联库的知识文档（metadata.module）。
+  // 否则只选模块（类型=全部）时，libraryId=null 的知识文档会被 join 过滤漏掉。
+  if (module) {
+    conditions.push(or(
+      eq(schema.moduleResourceLibraries.module, module),
+      sql`${schema.moduleResourceDocuments.libraryId} IS NULL AND ${schema.moduleResourceDocuments.metadata}->>'module' = ${module}`
+    ))
   }
   if (status) conditions.push(eq(schema.moduleResourceDocuments.status, status))
   if (search) {
