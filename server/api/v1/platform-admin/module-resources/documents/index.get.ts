@@ -69,16 +69,32 @@ export default defineEventHandler(async (event) => {
     .leftJoin(schema.moduleResourceVersions, eq(schema.moduleResourceDocuments.versionId, schema.moduleResourceVersions.id))
     .where(conditions.length ? and(...conditions) : undefined)
 
-  const [countResult, rows] = await Promise.all([
+  const [countResult, statusCounts, rows] = await Promise.all([
     db.select({ count: schema.moduleResourceDocuments.id }).from(schema.moduleResourceDocuments)
       .leftJoin(schema.moduleResourceLibraries, eq(schema.moduleResourceDocuments.libraryId, schema.moduleResourceLibraries.id))
       .where(conditions.length ? and(...conditions) : undefined)
       .then(r => r.length),
+    // 全量向量状态统计（与列表同口径，但不受 embeddingStatus 过滤影响，保证四张卡片始终展示全量）
+    db.select({
+      status: sql<string>`${schema.moduleResourceDocuments.metadata}->>'embeddingStatus'`,
+      count: sql<number>`count(${schema.moduleResourceDocuments.id})`
+    }).from(schema.moduleResourceDocuments)
+      .leftJoin(schema.moduleResourceLibraries, eq(schema.moduleResourceDocuments.libraryId, schema.moduleResourceLibraries.id))
+      .where(conditions.length ? and(...conditions) : undefined)
+      .groupBy(sql`${schema.moduleResourceDocuments.metadata}->>'embeddingStatus'`),
     baseQuery
       .orderBy(desc(schema.moduleResourceDocuments.createdAt))
       .limit(limit)
       .offset(offset)
   ])
+
+  const stats = { ready: 0, pending: 0, disabled: 0, partial: 0, unknown: 0 }
+  for (const row of statusCounts) {
+    const key = (row.status || 'unknown') as keyof typeof stats
+    const count = Number(row.count) || 0
+    if (key in stats) stats[key] += count
+    else stats.unknown += count
+  }
 
   // 为每条文档补充 chunk 统计
   const documents = await Promise.all(rows.map(async (doc) => {
@@ -105,6 +121,7 @@ export default defineEventHandler(async (event) => {
     total: embeddingFilter ? filtered.length : countResult,
     offset,
     limit,
-    documents: filtered
+    documents: filtered,
+    stats
   }
 })

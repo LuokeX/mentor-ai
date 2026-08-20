@@ -394,19 +394,19 @@ function onFileChange(event: Event) {
         </div>
       </div>
 
-      <!-- 统计卡片 -->
+      <!-- 统计卡片：使用接口返回的全量向量状态统计（不随分页变化） -->
       <div class="grid gap-4 sm:grid-cols-4">
         <div class="rounded-lg bg-white p-4 text-sm shadow-sm">
           文档总数 <strong class="block text-3xl">{{ totalDocuments }}</strong>
         </div>
         <div class="rounded-lg bg-white p-4 text-sm shadow-sm">
-          已就绪 <strong class="block text-3xl text-green-600">{{ documents.filter((d: any) => d.embeddingStatus === 'ready').length }}</strong>
+          已就绪 <strong class="block text-3xl text-green-600">{{ documentData?.stats?.ready ?? 0 }}</strong>
         </div>
         <div class="rounded-lg bg-white p-4 text-sm shadow-sm">
-          待处理 <strong class="block text-3xl text-amber-600">{{ documents.filter((d: any) => d.embeddingStatus === 'pending').length }}</strong>
+          待处理 <strong class="block text-3xl text-amber-600">{{ documentData?.stats?.pending ?? 0 }}</strong>
         </div>
         <div class="rounded-lg bg-white p-4 text-sm shadow-sm">
-          未启用 <strong class="block text-3xl text-slate-400">{{ documents.filter((d: any) => d.embeddingStatus === 'disabled').length }}</strong>
+          未启用 <strong class="block text-3xl text-slate-400">{{ documentData?.stats?.disabled ?? 0 }}</strong>
         </div>
       </div>
 
