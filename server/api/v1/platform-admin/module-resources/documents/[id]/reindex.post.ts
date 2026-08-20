@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { embedModuleResourceChunks } from '../../../../../../integrations/ollama'
+import { embedModuleResourceChunks } from '../../../../../../integrations/embeddings'
 import { requireUser } from '../../../../../../utils/auth'
 import { writeAudit } from '../../../../../../utils/audit'
 import { schema, useDb } from '../../../../../../utils/db'
@@ -51,8 +51,8 @@ export default defineEventHandler(async (event) => {
         await tx.update(schema.moduleResourceChunks)
           .set({
             embedding: embeddings[i],
-            embeddingModel,
-            embeddedAt: new Date()
+            embeddingModel: embeddings[i] ? embeddingModel : null,
+            embeddedAt: embeddings[i] ? new Date() : null
           })
           .where(eq(schema.moduleResourceChunks.id, chunks[i]!.id))
       }
@@ -60,8 +60,8 @@ export default defineEventHandler(async (event) => {
         .set({
           metadata: {
             ...((document as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}),
-            embeddedChunkCount: embeddings.length,
-            embeddingStatus: 'ready',
+            embeddedChunkCount: embeddings.filter(Boolean).length,
+            embeddingStatus: embeddings.some(Boolean) ? 'ready' : 'pending',
             module: document.module,
             libraryType: document.libraryType
           } as Record<string, unknown>,

@@ -1,6 +1,7 @@
 import { Pool } from 'pg'
 import { loadLocalEnv } from './load-env'
-import { DEFAULT_EMBEDDING_MODEL, requestOllamaEmbeddings } from '../server/integrations/ollama'
+import { DEFAULT_EMBEDDING_MODEL } from '../server/integrations/ollama'
+import { requestProviderEmbeddings, type EmbeddingProvider } from '../server/integrations/embeddings'
 
 loadLocalEnv()
 
@@ -11,10 +12,15 @@ if (process.env.EMBEDDING_ENABLED !== 'true') {
   process.exit(0)
 }
 
+const provider = (process.env.EMBEDDING_PROVIDER === 'dashscope' ? 'dashscope' : 'ollama') as EmbeddingProvider
 const model = process.env.EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL
-const options = {
-  baseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+const config = {
+  provider,
   model,
+  baseUrl: provider === 'dashscope'
+    ? process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    : process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+  apiKey: process.env.DASHSCOPE_API_KEY || '',
   timeoutMs: Number(process.env.EMBEDDING_TIMEOUT_MS || 30_000)
 }
 const pool = new Pool({ connectionString: databaseUrl })
@@ -31,7 +37,7 @@ try {
     `, [model])
     if (!batch.rows.length) break
 
-    const embeddings = await requestOllamaEmbeddings(options, batch.rows.map(row => `${row.heading ? `${row.heading}\n` : ''}${row.content}`))
+    const embeddings = await requestProviderEmbeddings(config, batch.rows.map(row => `${row.heading ? `${row.heading}\n` : ''}${row.content}`))
     await pool.query('begin')
     try {
       for (let index = 0; index < batch.rows.length; index++) {

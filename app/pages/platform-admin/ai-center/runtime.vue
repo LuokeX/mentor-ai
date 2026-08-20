@@ -140,7 +140,7 @@ async function testConnection() {
           <UBadge v-if="data?.values.embeddingModel.override !== null" variant="soft" color="primary" size="xs">DB 覆盖</UBadge>
         </div>
         <p class="mt-0.5 text-xs text-gray-400">Ollama 嵌入模型名</p>
-        <UInput v-model="embeddingModel" class="mt-2 w-full" placeholder="如 qwen3-embedding:0.6b" />
+        <UInput v-model="embeddingModel" class="mt-2 w-full" placeholder="如 text-embedding-v4（百炼）/ qwen3-embedding:0.6b（ollama）" />
         <p class="mt-2 text-xs text-gray-400">环境变量默认：{{ data?.values.embeddingModel.env }}</p>
       </div>
 

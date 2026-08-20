@@ -31,7 +31,11 @@ export default defineNuxtConfig({
     deepseekAgreementVersion: process.env.DEEPSEEK_AGREEMENT_VERSION || '',
     deepseekTimeoutMs: Number(process.env.DEEPSEEK_TIMEOUT_MS || 30000),
     embeddingEnabled: process.env.EMBEDDING_ENABLED === 'true',
+    // ollama | dashscope：向量化供应商，切换后存量向量需全量重建（语义空间不兼容）
+    embeddingProvider: process.env.EMBEDDING_PROVIDER || 'ollama',
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+    dashscopeBaseUrl: process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    dashscopeApiKey: process.env.DASHSCOPE_API_KEY || '',
     embeddingModel: process.env.EMBEDDING_MODEL || 'qwen3-embedding:0.6b',
     embeddingTimeoutMs: Number(process.env.EMBEDDING_TIMEOUT_MS || 8000),
     smsProvider: process.env.SMS_PROVIDER || 'mock',

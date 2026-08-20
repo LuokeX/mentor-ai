@@ -10,7 +10,7 @@ import { composeClarificationSummaryHistory, topModuleFromScores } from '../../.
 import { buildChatTitle } from '../../../domain/chat-titles'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
 import { trackProductEvent } from '../../../domain/product-events'
-import { embedModuleResourceQuery } from '../../../integrations/ollama'
+import { embedModuleResourceQuery } from '../../../integrations/embeddings'
 import { searchKnowledgeChunks } from '../../../domain/module-resource-knowledge-search'
 import { sendStream } from 'h3'
 import { and, desc, eq, isNull } from 'drizzle-orm'

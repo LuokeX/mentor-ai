@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { moduleResourceDocumentImportSchema } from '../../../../../../shared/contracts'
 import type { ModuleId } from '../../../../../../shared/contracts'
 import { chunkModuleResourceDocument, checksumModuleResourceContent, normalizeModuleResourceContent } from '../../../../../domain/module-resource-documents'
-import { embedModuleResourceChunks } from '../../../../../integrations/ollama'
+import { embedModuleResourceChunks } from '../../../../../integrations/embeddings'
 import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
 import { schema, useDb } from '../../../../../utils/db'
@@ -56,7 +56,7 @@ export default defineEventHandler(async (event) => {
   const chunks = chunkModuleResourceDocument(content)
   if (!chunks.length) throw createError({ statusCode: 400, message: '文档没有可导入内容' })
 
-  let embeddings: number[][] | null = null
+  let embeddings: (number[] | null)[] | null = null
   let embeddingError: string | null = null
   try {
     embeddings = await embedModuleResourceChunks(event, chunks.map(chunk => `${chunk.heading ? `${chunk.heading}\n` : ''}${chunk.content}`))
@@ -80,8 +80,8 @@ export default defineEventHandler(async (event) => {
         metadata: {
           characterCount: content.length,
           chunkCount: chunks.length,
-          embeddedChunkCount: embeddings?.length || 0,
-          embeddingStatus: embeddings ? 'ready' : config.embeddingEnabled ? 'pending' : 'disabled',
+          embeddedChunkCount: embeddings?.filter(Boolean).length || 0,
+          embeddingStatus: embeddings?.some(Boolean) ? 'ready' : config.embeddingEnabled ? 'pending' : 'disabled',
           module: versionModule,
           libraryType: versionLibraryType,
           ...(embeddingError ? { embeddingError } : {})
@@ -95,8 +95,8 @@ export default defineEventHandler(async (event) => {
         documentId: created.id,
         ...chunk,
         embedding: embeddings?.[index],
-        embeddingModel: embeddings ? String(config.embeddingModel) : null,
-        embeddedAt: embeddings ? new Date() : null,
+        embeddingModel: embeddings?.[index] ? String(config.embeddingModel) : null,
+        embeddedAt: embeddings?.[index] ? new Date() : null,
         metadata: { module: versionModule, libraryType: versionLibraryType, documentTitle: body.title, sourceType: body.sourceType, tags: body.tags ?? [], sourceRef: body.sourceRef ?? null }
       })))
       return created

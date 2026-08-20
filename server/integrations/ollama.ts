@@ -1,4 +1,3 @@
-import type { H3Event } from 'h3'
 import { z } from 'zod'
 
 export const EMBEDDING_DIMENSIONS = 1024
@@ -27,27 +26,4 @@ export async function requestOllamaEmbeddings(options: OllamaEmbeddingOptions, i
   const parsed = embeddingResponseSchema.parse(await response.json())
   if (parsed.embeddings.length !== input.length) throw new Error('Ollama embedding count mismatch')
   return parsed.embeddings
-}
-
-function eventOptions(event: H3Event): OllamaEmbeddingOptions {
-  const config = useRuntimeConfig(event)
-  return {
-    baseUrl: String(config.ollamaBaseUrl),
-    model: String(config.embeddingModel || DEFAULT_EMBEDDING_MODEL),
-    timeoutMs: Number(config.embeddingTimeoutMs) || 8000
-  }
-}
-
-export async function embedModuleResourceChunks(event: H3Event, input: string[]) {
-  const config = useRuntimeConfig(event)
-  if (!config.embeddingEnabled) return null
-  return requestOllamaEmbeddings(eventOptions(event), input)
-}
-
-export async function embedModuleResourceQuery(event: H3Event, query: string) {
-  const config = useRuntimeConfig(event)
-  if (!config.embeddingEnabled) return null
-  const instruction = `Instruct: 检索与教师赋能业务模块资源最相关的片段\nQuery: ${query}`
-  const embeddings = await requestOllamaEmbeddings(eventOptions(event), [instruction])
-  return embeddings[0] || null
 }
