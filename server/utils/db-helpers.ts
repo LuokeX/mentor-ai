@@ -37,3 +37,15 @@ export async function findOwned<T extends PgTable>(
   if (!record) throw createError({ statusCode: 404, message })
   return record as T['$inferSelect']
 }
+
+/**
+ * 判断是否为唯一约束冲突（pg 23505）。
+ * drizzle 在事务内抛错时顶层 error.code 可能丢失，真实错误码在 error.cause 上，
+ * 统一按 code / cause.code / message 三处探测。
+ */
+export function isUniqueConstraintError(error: unknown): boolean {
+  const candidate = error as { code?: string; cause?: { code?: string }; message?: string }
+  return candidate?.code === '23505'
+    || candidate?.cause?.code === '23505'
+    || String(candidate?.message || '').includes('duplicate key')
+}

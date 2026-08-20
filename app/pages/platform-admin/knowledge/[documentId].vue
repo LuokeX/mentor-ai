@@ -64,6 +64,19 @@ function embeddingStatusLabel(status: string) {
     default: return status
   }
 }
+
+const libraryTypeLabels: Record<string, string> = {
+  assessment: '量表库',
+  attribution: '归因库',
+  tool: '工具库',
+  knowledge: '知识库',
+  output_template: '输出模板',
+  keyword_route: '关键词路由'
+}
+
+function libraryTypeLabel(type: string | null | undefined) {
+  return (type && libraryTypeLabels[type]) || '知识库'
+}
 </script>
 
 <template>
@@ -81,7 +94,7 @@ function embeddingStatusLabel(status: string) {
         <div class="flex items-start justify-between gap-4">
           <div>
             <h2 class="text-2xl font-semibold">{{ document.title }}</h2>
-            <p class="mt-2 text-sm text-slate-500">{{ document.libraryName }} · 知识库 · v{{ document.versionLabel }}</p>
+            <p class="mt-2 text-sm text-slate-500">{{ document.libraryName }} · {{ libraryTypeLabel(document.libraryType) }} · v{{ document.versionLabel }}</p>
           </div>
           <div class="flex gap-2">
             <UButton size="md" icon="i-lucide-zap" :loading="reindexPending" @click="reindexDocument">重建向量</UButton>
@@ -94,7 +107,7 @@ function embeddingStatusLabel(status: string) {
             模块 <strong class="block text-lg">{{ moduleLabel(document.module) }}</strong>
           </div>
           <div class="rounded-lg bg-slate-50 p-3 text-sm">
-            类型 <strong class="block text-lg">知识库</strong>
+            类型 <strong class="block text-lg">{{ libraryTypeLabel(document.libraryType) }}</strong>
           </div>
           <div class="rounded-lg bg-slate-50 p-3 text-sm">
             状态 <UBadge :color="document.status === 'ready' ? 'success' : 'neutral'" variant="soft" size="xs" class="mt-1">{{ resourceStatusLabel(document.status) }}</UBadge>
@@ -115,7 +128,7 @@ function embeddingStatusLabel(status: string) {
           <div>内容字符数：{{ document.contentCharCount?.toLocaleString() }}</div>
           <div>向量模型：{{ document.embeddingSummary?.model || '-' }}</div>
           <div>checksum：{{ document.checksum?.slice(0, 12) }}...</div>
-          <div>创建时间：{{ new Date(document.createdAt).toLocaleString('zh-CN') }}</div>
+          <div>创建时间：{{ formatDateTime(document.createdAt) }}</div>
         </div>
       </div>
 
@@ -149,7 +162,7 @@ function embeddingStatusLabel(status: string) {
               </div>
               <div class="shrink-0 space-y-1 text-right text-xs text-slate-400">
                 <div>Token 估算: {{ chunk.tokenEstimate }}</div>
-                <div v-if="chunk.embeddedAt">向量化时间: {{ new Date(chunk.embeddedAt).toLocaleString('zh-CN') }}</div>
+                <div v-if="chunk.embeddedAt">向量化时间: {{ formatDateTime(chunk.embeddedAt) }}</div>
                 <div v-if="chunk.embeddingModel">模型: {{ chunk.embeddingModel }}</div>
               </div>
             </div>

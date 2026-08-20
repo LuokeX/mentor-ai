@@ -1,11 +1,11 @@
 import { eq } from 'drizzle-orm'
 import { moduleResourceDocumentImportSchema } from '../../../../../../shared/contracts'
 import type { ModuleId } from '../../../../../../shared/contracts'
-import { chunkModuleResourceDocument, checksumModuleResourceContent, normalizeModuleResourceContent } from '../../../../../domain/module-resource-documents'
-import { embedModuleResourceChunks } from '../../../../../integrations/embeddings'
+import { chunkModuleResourceDocument, createDocumentWithChunks, normalizeModuleResourceContent } from '../../../../../domain/module-resource-documents'
 import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
-import { schema, useDb } from '../../../../../utils/db'
+import { useDb, schema } from '../../../../../utils/db'
+import { isUniqueConstraintError } from '../../../../../utils/db-helpers'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['platform_admin'])
@@ -56,62 +56,42 @@ export default defineEventHandler(async (event) => {
   const chunks = chunkModuleResourceDocument(content)
   if (!chunks.length) throw createError({ statusCode: 400, message: '文档没有可导入内容' })
 
-  let embeddings: (number[] | null)[] | null = null
-  let embeddingError: string | null = null
+  // normalize → chunk → embed → 事务写入 由共享函数统一处理（口径与原实现一致）
+  let result: Awaited<ReturnType<typeof createDocumentWithChunks>>
   try {
-    embeddings = await embedModuleResourceChunks(event, chunks.map(chunk => `${chunk.heading ? `${chunk.heading}\n` : ''}${chunk.content}`))
-  } catch (error) {
-    embeddingError = error instanceof Error ? error.message.slice(0, 160) : 'embedding_failed'
-  }
-  const config = useRuntimeConfig(event)
-
-  try {
-    const document = await db.transaction(async (tx) => {
-      const [created] = await tx.insert(schema.moduleResourceDocuments).values({
-        libraryId,
-        versionId,
-        title: body.title,
-        sourceType: body.sourceType,
-        originalFilename: body.originalFilename,
-        mimeType: body.mimeType,
-        checksum: checksumModuleResourceContent(content),
-        status: docStatus,
-        content,
-        metadata: {
-          characterCount: content.length,
-          chunkCount: chunks.length,
-          embeddedChunkCount: embeddings?.filter(Boolean).length || 0,
-          embeddingStatus: embeddings?.some(Boolean) ? 'ready' : config.embeddingEnabled ? 'pending' : 'disabled',
-          module: versionModule,
-          libraryType: versionLibraryType,
-          ...(embeddingError ? { embeddingError } : {})
-        },
-        createdBy: admin.id
-      }).returning()
-      if (!created) throw new Error('文档创建失败')
-      await tx.insert(schema.moduleResourceChunks).values(chunks.map((chunk, index) => ({
-        libraryId,
-        versionId,
-        documentId: created.id,
-        ...chunk,
-        embedding: embeddings?.[index],
-        embeddingModel: embeddings?.[index] ? String(config.embeddingModel) : null,
-        embeddedAt: embeddings?.[index] ? new Date() : null,
-        metadata: { module: versionModule, libraryType: versionLibraryType, documentTitle: body.title, sourceType: body.sourceType, tags: body.tags ?? [], sourceRef: body.sourceRef ?? null }
-      })))
-      return created
+    result = await createDocumentWithChunks(db, {
+      libraryId,
+      versionId,
+      title: body.title,
+      sourceType: body.sourceType,
+      content,
+      metadata: { module: versionModule, libraryType: versionLibraryType },
+      status: docStatus,
+      createdBy: admin.id,
+      event,
+      originalFilename: body.originalFilename ?? null,
+      mimeType: body.mimeType ?? null,
+      tags: body.tags ?? [],
+      sourceRef: body.sourceRef ?? null
     })
-    await writeAudit(event, {
-      actorId: admin.id,
-      schoolId,
-      action: 'platform_admin.module_resource_document.import',
-      targetType: 'module_resource_document',
-      targetId: document.id,
-      metadata: { versionId, libraryId, module: versionModule, libraryType: versionLibraryType, chunks: chunks.length, embeddedChunks: embeddings?.length || 0 }
-    })
-    return { ...document, chunkCount: chunks.length, embeddedChunkCount: embeddings?.length || 0, embeddingStatus: embeddings ? 'ready' : 'pending' }
   } catch (error: any) {
-    if (error?.code === '23505') throw createError({ statusCode: 409, message: '该资源版本中已经存在内容相同的文档' })
+    if (isUniqueConstraintError(error)) throw createError({ statusCode: 409, message: '该资源版本中已经存在内容相同的文档' })
     throw error
+  }
+
+  await writeAudit(event, {
+    actorId: admin.id,
+    schoolId,
+    action: 'platform_admin.module_resource_document.import',
+    targetType: 'module_resource_document',
+    targetId: result.id,
+    metadata: { versionId, libraryId, module: versionModule, libraryType: versionLibraryType, chunks: result.chunks, embeddedChunks: result.embedded }
+  })
+  return {
+    id: result.id,
+    title: body.title,
+    chunkCount: result.chunks,
+    embeddedChunkCount: result.embedded,
+    embeddingStatus: result.embedded ? 'ready' : 'pending'
   }
 })

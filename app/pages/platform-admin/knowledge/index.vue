@@ -18,11 +18,25 @@ const libraryTypeOptions = [
   { label: '全部类型', value: '__all__' },
   { label: '量表库', value: 'assessment' },
   { label: '归因库', value: 'attribution' },
-  { label: '工具库', value: 'tool' },
-  { label: '输出模板', value: 'output_template' },
-  { label: '关键词路由', value: 'keyword_route' },
-  { label: '知识库', value: 'knowledge' }
+  { label: '工具库', value: 'tool' }
 ]
+
+const libraryTypeLabels: Record<string, string> = {
+  assessment: '量表库',
+  attribution: '归因库',
+  tool: '工具库',
+  knowledge: '知识库',
+  output_template: '输出模板',
+  keyword_route: '关键词路由'
+}
+
+function libraryTypeLabel(type: string | null | undefined) {
+  return (type && libraryTypeLabels[type]) || '知识库'
+}
+
+const moduleLabelMap = Object.fromEntries(
+  moduleOptions.filter((m) => m.value !== '__all__').map((m) => [m.value, m.label])
+)
 
 const embeddingStatusOptions = [
   { label: '全部', value: '__all__' },
@@ -34,7 +48,7 @@ const embeddingStatusOptions = [
 
 const filters = reactive({
   module: '__all__',
-  libraryType: 'knowledge',
+  libraryType: '__all__',
   search: '',
   embeddingStatus: '__all__',
   status: '__all__'
@@ -218,6 +232,85 @@ async function commitBatchImport() {
   }
 }
 
+// 从三库导入
+const libraryImportOpen = ref(false)
+const selectedVersionIds = ref<string[]>([])
+const libraryImportPending = ref(false)
+const libraryImportResult = ref<any>(null)
+
+const libraryImportGroups = computed(() => {
+  const libraries: any[] = resourceData.value?.libraries || []
+  const versions: any[] = resourceData.value?.versions || []
+  const libById = new Map<string, any>(libraries.map((l) => [l.id, l]))
+  const groups = [
+    { key: 'assessment', label: '量表库' },
+    { key: 'attribution', label: '归因库' },
+    { key: 'tool', label: '工具库' }
+  ]
+  return groups
+    .map((g) => ({
+      ...g,
+      items: versions
+        .filter((v) => v.status === 'published')
+        .map((v) => ({ version: v, library: libById.get(v.libraryId) }))
+        .filter((x) => x.library && x.library.libraryType === g.key)
+        .map((x) => ({
+          versionId: x.version.id,
+          libraryName: x.library.name,
+          module: x.library.module,
+          version: x.version.version
+        }))
+    }))
+    .filter((g) => g.items.length > 0)
+})
+
+const allSelectableVersionIds = computed(() =>
+  libraryImportGroups.value.flatMap((g) => g.items.map((i) => i.versionId))
+)
+
+const libraryImportFailedDetails = computed(() =>
+  (libraryImportResult.value?.details || []).filter((d: any) => d.status === 'failed')
+)
+
+function toggleSelectAllVersions() {
+  if (
+    allSelectableVersionIds.value.length > 0
+    && selectedVersionIds.value.length === allSelectableVersionIds.value.length
+  ) {
+    selectedVersionIds.value = []
+  } else {
+    selectedVersionIds.value = [...allSelectableVersionIds.value]
+  }
+}
+
+function toggleVersionSelection(versionId: string, checked: boolean) {
+  selectedVersionIds.value = checked
+    ? [...new Set([...selectedVersionIds.value, versionId])]
+    : selectedVersionIds.value.filter((id) => id !== versionId)
+}
+
+async function commitLibraryImport() {
+  if (!selectedVersionIds.value.length) return
+  libraryImportPending.value = true
+  libraryImportResult.value = null
+  try {
+    libraryImportResult.value = await $fetch('/api/v1/platform-admin/module-resources/documents/import-from-versions', {
+      method: 'POST',
+      body: { versionIds: selectedVersionIds.value }
+    })
+    toast.add({
+      title: `导入完成：成功 ${libraryImportResult.value.imported} 个版本，跳过 ${libraryImportResult.value.skipped}，失败 ${libraryImportResult.value.failed}`,
+      color: 'success'
+    })
+    selectedVersionIds.value = []
+    await refreshDocuments()
+  } catch (error: any) {
+    toast.add({ title: error?.data?.message || '从三库导入失败', color: 'error' })
+  } finally {
+    libraryImportPending.value = false
+  }
+}
+
 // 导出
 const exportPending = ref(false)
 async function exportDocuments() {
@@ -237,7 +330,7 @@ async function exportDocuments() {
     const downloadUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = downloadUrl
-    a.download = `knowledge_export_${new Date().toISOString().slice(0, 10)}.xlsx`
+    a.download = `knowledge_export_${formatBeijingDateStamp()}.xlsx`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -292,6 +385,7 @@ function onFileChange(event: Event) {
           <UButton size="md" icon="i-lucide-plus" @click="() => { uploadOpen = true }">上传文档</UButton>
           <UButton color="neutral" variant="soft" size="md" icon="i-lucide-file-down" as="a" href="/templates/knowledge.xlsx" download external>下载模板</UButton>
           <UButton color="neutral" variant="soft" size="md" icon="i-lucide-upload-cloud" @click="() => { batchImportOpen = true }">批量导入</UButton>
+          <UButton color="neutral" variant="soft" size="md" icon="i-lucide-database" @click="() => { libraryImportOpen = true }">从三库导入</UButton>
           <UButton color="neutral" variant="soft" size="md" icon="i-lucide-download" @click="exportDocuments">导出</UButton>
           <UButton color="warning" variant="soft" size="md" icon="i-lucide-zap" :loading="batchReindexPending" @click="batchReindex">重建全部待处理向量</UButton>
         </div>
@@ -337,7 +431,7 @@ function onFileChange(event: Event) {
                 <p class="mt-0.5 text-xs text-slate-400">{{ doc.originalFilename || '-' }}</p>
               </td>
               <td class="pr-4 text-xs text-slate-500">{{ doc.libraryName || '-' }}</td>
-              <td class="pr-4"><UBadge color="neutral" variant="soft" size="xs">知识库</UBadge></td>
+              <td class="pr-4"><UBadge color="neutral" variant="soft" size="xs">{{ libraryTypeLabel(doc.libraryType) }}</UBadge></td>
               <td class="pr-4 text-xs text-slate-500">v{{ doc.versionLabel || '-' }}</td>
               <td class="pr-4">
                 <UBadge :color="embeddingStatusColor(doc.embeddingStatus)" variant="soft" size="xs">
@@ -345,7 +439,7 @@ function onFileChange(event: Event) {
                 </UBadge>
               </td>
               <td class="pr-4 text-xs text-slate-500">{{ doc.embeddedChunkCount ?? 0 }}/{{ doc.chunkCount ?? 0 }}</td>
-              <td class="pr-4 text-xs text-slate-400">{{ new Date(doc.createdAt).toLocaleString('zh-CN') }}</td>
+              <td class="pr-4 text-xs text-slate-400">{{ formatDateTime(doc.createdAt) }}</td>
               <td class="space-x-1 text-right">
                 <UButton size="sm" color="neutral" variant="soft" icon="i-lucide-eye" :to="`/platform-admin/knowledge/${doc.id}`">详情</UButton>
                 <UButton size="sm" color="error" variant="soft" icon="i-lucide-trash-2" @click="deleteDocument(doc.id)">删除</UButton>
@@ -468,6 +562,66 @@ function onFileChange(event: Event) {
               <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">导入文档 <strong class="block text-base text-slate-700">{{ batchImportResult.imported }}</strong></div>
               <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">总分块 <strong class="block text-base text-slate-700">{{ batchImportResult.totalChunks }}</strong></div>
               <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">已向量化 <strong class="block text-base text-indigo-600">{{ batchImportResult.embeddedChunks }}</strong></div>
+            </div>
+          </div>
+        </template>
+      </USlideover>
+
+      <!-- 从三库导入 Slideover -->
+      <USlideover v-model:open="libraryImportOpen" title="从三库导入知识库" description="选择已发布的量表库、归因库、工具库版本，导入为知识库文档并自动向量化。">
+        <template #body>
+          <div class="space-y-5">
+            <div v-if="!libraryImportGroups.length" class="rounded-lg border border-slate-100 bg-slate-50/60 p-6 text-center text-sm text-slate-400">
+              暂无已发布的三库版本可导入。
+            </div>
+
+            <template v-else>
+              <div class="flex items-center justify-between">
+                <span class="text-sm text-slate-500">已选 {{ selectedVersionIds.length }} / {{ allSelectableVersionIds.length }} 个版本</span>
+                <UButton size="xs" color="neutral" variant="soft" @click="toggleSelectAllVersions">
+                  {{ selectedVersionIds.length === allSelectableVersionIds.length ? '清空' : '全选' }}
+                </UButton>
+              </div>
+
+              <div v-for="group in libraryImportGroups" :key="group.key" class="space-y-2">
+                <h3 class="text-sm font-semibold text-slate-700">{{ group.label }}</h3>
+                <!-- UCheckbox 单独使用时 modelValue 是布尔值，数组模式需显式受控维护；UCheckboxGroup 的默认插槽不渲染条目，不可用 -->
+                <div v-for="item in group.items" :key="item.versionId" class="flex items-center gap-3 rounded-lg border border-slate-100 p-3">
+                  <UCheckbox
+                    :model-value="selectedVersionIds.includes(item.versionId)"
+                    @update:model-value="(checked: boolean | 'indeterminate') => toggleVersionSelection(item.versionId, checked === true)"
+                  />
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate text-sm font-medium text-slate-700">{{ item.libraryName }}</p>
+                    <p class="text-xs text-slate-400">{{ moduleLabelMap[item.module] || item.module }} · v{{ item.version }}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex gap-3">
+                <UButton color="primary" icon="i-lucide-upload-cloud" :disabled="!selectedVersionIds.length" :loading="libraryImportPending" @click="commitLibraryImport">确认导入</UButton>
+              </div>
+            </template>
+
+            <!-- 导入结果 -->
+            <div v-if="libraryImportResult" class="space-y-4 border-t border-slate-100 pt-6">
+              <div class="flex items-center gap-2">
+                <h3 class="text-sm font-semibold text-slate-700">导入结果</h3>
+                <UBadge color="success" variant="soft" size="xs">完成</UBadge>
+              </div>
+              <div class="flex divide-x divide-slate-100 rounded-lg bg-slate-50/70">
+                <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">导入 <strong class="block text-base text-slate-700">{{ libraryImportResult.imported }}</strong></div>
+                <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">跳过 <strong class="block text-base text-slate-700">{{ libraryImportResult.skipped }}</strong></div>
+                <div class="flex-1 px-3 py-2.5 text-center text-xs text-slate-500">失败 <strong class="block text-base text-red-600">{{ libraryImportResult.failed }}</strong></div>
+              </div>
+              <div v-if="libraryImportFailedDetails.length" class="rounded-lg border border-red-100 bg-red-50/60 p-3">
+                <p class="text-xs font-medium text-red-700">失败明细</p>
+                <ul class="mt-2 space-y-1.5">
+                  <li v-for="(d, i) in libraryImportFailedDetails" :key="i" class="text-xs text-red-600">
+                    <span class="font-medium">{{ d.title }}</span>：{{ d.error }}
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
         </template>
