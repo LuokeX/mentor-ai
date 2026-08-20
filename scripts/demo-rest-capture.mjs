@@ -27,7 +27,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 // ============ 10 学生详情（张老师）============
 try {
   const page = await context.newPage()
-  await login(page, '13900001002')
+  await login(page, '16688096890')
   await page.waitForURL(`${BASE}/`)
   console.log('step: student detail')
   const resp = await context.request.get(`${BASE}/api/v1/information/students?page=1&pageSize=20&q=${encodeURIComponent('王浩然')}`)
@@ -44,7 +44,7 @@ try {
 // ============ 11 危机熔断（李老师）============
 try {
   const page = await context.newPage()
-  await login(page, '13900001001')
+  await login(page, '16688096890')
   await page.waitForURL(`${BASE}/`)
   await page.getByRole('heading', { name: /今天遇到了什么/ }).waitFor({ timeout: 20000 })
   console.log('step: crisis fuse')
@@ -59,7 +59,7 @@ try {
 // ============ 12 心理专员 ============
 try {
   const page = await context.newPage()
-  await login(page, '13900001003')
+  await login(page, '13800000002')
   await page.waitForURL(/\/specialist/, { timeout: 20000 })
   await page.getByRole('heading', { name: '心理专员工作台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
@@ -70,7 +70,7 @@ try {
 // ============ 13/14 学校管理员 ============
 try {
   const page = await context.newPage()
-  await login(page, '13900001004')
+  await login(page, '13800000001')
   await page.waitForURL(/\/school-admin/, { timeout: 20000 })
   await page.getByRole('heading', { name: '学校管理后台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
@@ -86,7 +86,7 @@ try {
 // ============ 15/16/17 平台管理员 ============
 try {
   const page = await context.newPage()
-  await login(page, '13900001005')
+  await login(page, '13800000000')
   await page.waitForURL(/\/platform-admin/, { timeout: 20000 })
   await page.getByRole('heading', { name: '平台管理后台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)

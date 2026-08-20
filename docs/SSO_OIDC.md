@@ -47,7 +47,7 @@ IdP 用户信息按以下优先级匹配本地 `users` 表（见 `server/domain/
 无需真实身份平台即可走通完整流程：
 
 ```bash
-pnpm tsx scripts/mock-oidc-idp.ts --port 3400 --phone 13900001001
+pnpm tsx scripts/mock-oidc-idp.ts --port 3400 --phone 16688096890
 ```
 
 然后设置环境变量（四项指向 mock）：

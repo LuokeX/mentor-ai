@@ -22,7 +22,7 @@ test.describe('四角色核心路径', () => {
   test.describe.configure({ timeout: 90_000 })
 
   test('教师登录、移动导航与 AI 咨询', async ({ page }, testInfo) => {
-    await login(page, '13900001001')
+    await login(page, '16688096890')
     await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()
     if (testInfo.project.name === 'mobile-chromium') await expect(page.getByRole('link', { name: '我的方案', exact: true })).toBeVisible()
     await page.getByLabel('向 AI 赋能助手提问').fill('我想先梳理一下班级纪律反复的问题。')
@@ -31,7 +31,7 @@ test.describe('四角色核心路径', () => {
   })
 
   test('教师从模块说明进入评估、确认方案并完成执行闭环', async ({ page }) => {
-    await login(page, '13900001001')
+    await login(page, '16688096890')
     await page.goto('/module/self_growth')
     // SSR 首屏 HTML 立即可见，但 Vue 事件要等客户端 hydration 完成才绑定；
     // 不等就直接点卡片，点击会落在未绑定事件的 DOM 上而无效。
@@ -39,7 +39,8 @@ test.describe('四角色核心路径', () => {
     // 模块页为卡片式选量表（入口筛查 + 深度诊断），点五问自评卡片进入评估准备；
     // 已完成的量表可重新作答，不影响后续断言。
     await expect(page.getByRole('heading', { name: '自我成长赋能 评估' })).toBeVisible()
-    await page.getByRole('button', { name: /教师自我成长五问自评/ }).click()
+    // 锚定开头匹配：HERO 锁定卡片的解锁说明也含「教师自我成长五问自评」，必须排除
+    await page.getByRole('button', { name: /^教师自我成长五问自评/ }).click()
     // 等评估准备页出现（组件初始化完成）再开始作答，避免点击落在组件挂载前
     const start = page.getByRole('button', { name: /^(开始完整评估|重新开始)$/ })
     await expect(start).toBeVisible()
@@ -113,12 +114,13 @@ test.describe('四角色核心路径', () => {
     // 连续量表流程：SG_S1 提交后服务端返回 deferred + assessmentSessionId，
     // 前端刷新推荐发现下一张 suggested 量表 SG_S2（HERO，触发条件：SG_S1 总分 >= 15）
     // 就自动切入续做；没有下一张建议量表时自动调 finalize 统一生成方案并跳转方案页。
-    // 用张老师（13900001002）跑本用例，避免与李老师（13900001001）的主流程用例互相污染。
-    await login(page, '13900001002')
+    // 与主流程用例共用教师 16688096890（workers=1 串行执行，量表可重新作答，不互相污染）。
+    await login(page, '16688096890')
     await page.goto('/module/self_growth')
     await page.waitForFunction(() => !!document.querySelector('#__nuxt')?.__vue_app__)
     await expect(page.getByRole('heading', { name: '自我成长赋能 评估' })).toBeVisible()
-    await page.getByRole('button', { name: /教师自我成长五问自评/ }).click()
+    // 锚定开头匹配：HERO 锁定卡片的解锁说明也含「教师自我成长五问自评」，必须排除
+    await page.getByRole('button', { name: /^教师自我成长五问自评/ }).click()
     const start = page.getByRole('button', { name: /^(开始完整评估|重新开始)$/ })
     await expect(start).toBeVisible()
     await start.click()
@@ -135,7 +137,7 @@ test.describe('四角色核心路径', () => {
     await expect(submit).toBeEnabled()
     // 关键断言：提交前最后一题页面出现「可继续量表」选择卡（SG_S2 建议做或已完成都可继续）。
     // 点「先做这张量表」：先提交 SG_S1（deferred 建组），再自动切入 SG_S2。
-    // 张老师 SG_S1 折算总分恒为 17（>= 15），SG_S2 触发条件始终满足；重复运行时
+    // 该教师 SG_S1 折算总分恒为 17（>= 15），SG_S2 触发条件始终满足；重复运行时
     // SG_S2 显示为「已完成，可重新评估」，同样可点按钮重做，保证用例可重复执行。
     const continueNext = page.getByRole('button', { name: '先做这张量表' })
     await expect(continueNext).toBeVisible({ timeout: 15_000 })
@@ -160,7 +162,7 @@ test.describe('四角色核心路径', () => {
   })
 
   test('学校管理员直接添加并激活教师账号', async ({ page }) => {
-    await login(page, '13900001004')
+    await login(page, '13800000001')
     await expect(page.getByRole('heading', { name: '学校管理后台' })).toBeVisible()
     const phone = `139${String(Date.now()).slice(-8)}`
     // 管理员自定义初始密码：创建即激活，不再产生邀请链接
@@ -178,12 +180,12 @@ test.describe('四角色核心路径', () => {
   })
 
   test('统一管理表格 CRUD、并发控制、生命周期与负责人权限', async ({ page }, testInfo) => {
-    await login(page, '13900001004')
+    await login(page, '13800000001')
     const suffix = `${Date.now()}-${testInfo.project.name.replace(/\W+/g, '-')}`
     const teachersResponse = await page.request.get('/api/v1/school-admin/teachers?page=1&pageSize=100&status=active')
     expect(teachersResponse.ok()).toBeTruthy()
     const teachers = await teachersResponse.json() as { rows: Array<{ id: string, phone: string }> }
-    const teacher = teachers.rows.find(item => item.phone === '13900001001')
+    const teacher = teachers.rows.find(item => item.phone === '16688096890')
     expect(teacher).toBeTruthy()
 
     const className = `验收班级-${suffix}`
@@ -245,14 +247,14 @@ test.describe('四角色核心路径', () => {
     await expect(page.getByRole('table')).toBeVisible()
     await expect(page.getByText(className, { exact: true })).toBeVisible()
 
-    await login(page, '13900001001')
+    await login(page, '16688096890')
     await page.goto(`/information/students?q=${encodeURIComponent(studentName)}`)
     await expect(page.getByRole('heading', { name: '我负责的学生' })).toBeVisible()
     await expect(page.getByText(studentName, { exact: true })).toBeVisible()
     const forbidden = await page.request.get('/api/v1/school-admin/classes?page=1&pageSize=20')
     expect(forbidden.status()).toBe(403)
 
-    await login(page, '13900001004')
+    await login(page, '13800000001')
     const updatedClassName = `${className}-已更新`
     const updateClass = await page.request.patch(`/api/v1/school-admin/classes/${createdClass.id}?expectedUpdatedAt=${encodeURIComponent(createdClass.updatedAt)}`, {
       data: { name: updatedClassName },
@@ -303,13 +305,13 @@ test.describe('四角色核心路径', () => {
   })
 
   test('心理专员登录并查看 SLA 工作台', async ({ page }) => {
-    await login(page, '13900001003')
+    await login(page, '13800000002')
     await expect(page.getByRole('heading', { name: '心理专员工作台' })).toBeVisible()
     await expect(page.getByText('最小必要转介空间')).toBeVisible()
   })
 
   test('平台管理员权限入口', async ({ page }) => {
-    await login(page, '13900001005')
+    await login(page, '13800000000')
     await expect(page).toHaveURL(/\/platform-admin/)
     await expect(page.getByRole('heading', { name: '平台管理后台' })).toBeVisible()
     await page.goto('/platform-admin/resources')

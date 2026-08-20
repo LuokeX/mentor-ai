@@ -14,7 +14,7 @@ import { mkdirSync, rmSync } from 'node:fs'
 import { MODULES, OPTION_GROUPS } from './test-data/modules.mjs'
 
 const BASE_URL = 'http://localhost:3300'
-const ADMIN_PHONE = '13900001005'
+const ADMIN_PHONE = '13800000000'
 const ADMIN_PASSWORD = 'Mentor@2026'
 const BASE_DIR = 'business-libraries/test-data'
 // 版本号在 (library, version) 上有唯一约束，重复导入必须换号。

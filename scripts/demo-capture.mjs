@@ -37,7 +37,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
   await page.waitForTimeout(900)
   await shot(page, '01-login')
 
-  await login(page, '13900001002')
+  await login(page, '16688096890')
   await page.waitForURL(`${BASE}/`)
   await page.getByRole('heading', { name: /今天遇到了什么/ }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(2500) // 打字机问候动画
@@ -126,7 +126,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 
   // ============ 危机熔断 ============
   await logout(page)
-  await login(page, '13900001001')
+  await login(page, '16688096890')
   await page.waitForURL(`${BASE}/`)
   await page.getByRole('heading', { name: /今天遇到了什么/ }).waitFor({ timeout: 20000 })
   await page.getByRole('button', { name: '新对话' }).first().click().catch(() => {})
@@ -141,7 +141,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 // ============ 心理专员 ============
 {
   const page = await context.newPage()
-  await login(page, '13900001003')
+  await login(page, '13800000002')
   await page.waitForURL(/\/specialist/, { timeout: 20000 })
   await page.getByRole('heading', { name: '心理专员工作台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
@@ -152,7 +152,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 // ============ 学校管理员 ============
 {
   const page = await context.newPage()
-  await login(page, '13900001004')
+  await login(page, '13800000001')
   await page.waitForURL(/\/school-admin/, { timeout: 20000 })
   await page.getByRole('heading', { name: '学校管理后台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
@@ -168,7 +168,7 @@ const context = await browser.newContext({ viewport: { width: 1360, height: 900 
 // ============ 平台管理员 ============
 {
   const page = await context.newPage()
-  await login(page, '13900001005')
+  await login(page, '13800000000')
   await page.waitForURL(/\/platform-admin/, { timeout: 20000 })
   await page.getByRole('heading', { name: '平台管理后台' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(1500)
