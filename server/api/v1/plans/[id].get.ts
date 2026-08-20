@@ -24,6 +24,13 @@ export default defineEventHandler(async (event) => {
   )).limit(1)
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
 
+  // 后台 AI 增强兜底：进程崩溃会留下 pending 状态且无任务可收敛。
+  // 超过模型超时上限（360s）仍 pending 视为任务丢失，收敛为 failed（保留确定性报告）。
+  if (plan.aiReportStatus === 'pending' && Date.now() - plan.updatedAt.getTime() > 360_000) {
+    await db.update(schema.plans).set({ aiReportStatus: 'failed' }).where(eq(schema.plans.id, id))
+    plan.aiReportStatus = 'failed'
+  }
+
   const config = useRuntimeConfig(event)
   const secret = config.encryptionKey
 

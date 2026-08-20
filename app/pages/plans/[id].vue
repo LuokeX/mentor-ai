@@ -284,14 +284,11 @@ function recommendationImplementation(group: RecommendationGroup) {
     .join('\n\n')
 }
 
+// AI 报告已不再生成 supportGoal/七天复盘字段（教师方案页未展示，产品放弃），
+// 分组结果行改用固定文案，不再依赖报告字段。
 function recommendationGroupOutcome() {
-  return supportGoal.value.observableChange
+  return '一周内能观察到行为、沟通或状态上的具体变化。'
 }
-const supportGoal = computed(() => report.value?.supportGoal || {
-  weeklyGoal: planStructure.value?.summary || data.value?.summary || '围绕当前问题先完成一个可观察、可复盘的小目标。',
-  observableChange: report.value?.sevenDayFollowUp?.observationPoints?.[0] || '一周内能观察到行为、沟通或状态上的具体变化。',
-  avoidGoal: '不要把目标设成一次性解决所有问题。'
-})
 
 const recommendationGroups = computed<RecommendationGroup[]>(() => {
   const byAudience = new Map<RecommendationAudience, PlanAction[]>()
@@ -636,6 +633,43 @@ function toggleFeedbackTag(tag: string, checked: boolean | string) {
   }
 }
 
+/**
+ * AI 深度报告状态：提交接口已改为异步增强（后台生成），确定性方案先返回。
+ * pending 期间 5s 轮询方案详情，状态收敛为 done/failed 后自动停止；
+ * 后端对丢失的任务有 360s 兜底收敛，轮询不会无限持续。
+ */
+const aiReportStatus = computed(() => data.value?.aiReportStatus || 'done')
+const aiPending = computed(() => aiReportStatus.value === 'pending')
+const aiElapsed = ref(0)
+let aiPollTimer: ReturnType<typeof setInterval> | undefined
+let aiElapsedTimer: ReturnType<typeof setInterval> | undefined
+
+function stopAiPolling() {
+  if (aiPollTimer) clearInterval(aiPollTimer)
+  aiPollTimer = undefined
+  if (aiElapsedTimer) clearInterval(aiElapsedTimer)
+  aiElapsedTimer = undefined
+}
+
+// 轮询与计时只能在浏览器执行：SSR 阶段 setInterval 会被 Nuxt 拦截导致页面 500。
+let stopAiWatcher: (() => void) | undefined
+onMounted(() => {
+  stopAiWatcher = watch(aiPending, (pending) => {
+    if (pending) {
+      aiElapsed.value = 0
+      aiElapsedTimer = setInterval(() => aiElapsed.value++, 1000)
+      aiPollTimer = setInterval(() => { void refresh() }, 5000)
+    } else {
+      stopAiPolling()
+    }
+  }, { immediate: true })
+})
+
+onBeforeUnmount(() => {
+  stopAiWatcher?.()
+  stopAiPolling()
+})
+
 useHead({ title: () => data.value?.title || '方案详情' })
 </script>
 
@@ -674,6 +708,32 @@ useHead({ title: () => data.value?.title || '方案详情' })
     </div>
 
     <div v-else class="flex flex-col gap-6">
+      <!-- AI 深度报告状态条：确定性方案先返回，深度报告后台撰写中（提交接口已异步化） -->
+      <UAlert
+        v-if="aiPending"
+        color="primary"
+        variant="soft"
+        :icon="false"
+      >
+        <div class="flex items-center gap-3">
+          <UIcon name="i-lucide-loader-circle" class="size-5 shrink-0 animate-spin text-primary-500" />
+          <div class="min-w-0">
+            <p class="text-sm font-semibold text-primary-900">AI 正在撰写深度报告</p>
+            <p class="mt-0.5 text-xs leading-5 text-primary-700">
+              方案主体已生成，可先查看下方归因与行动项。深度报告通常需要 1-2 分钟，完成后自动更新（已等待 {{ aiElapsed }} 秒）。
+            </p>
+          </div>
+        </div>
+      </UAlert>
+      <UAlert
+        v-else-if="aiReportStatus === 'failed'"
+        color="warning"
+        variant="soft"
+        icon="i-lucide-circle-alert"
+        title="深度报告暂不可用"
+        description="当前展示标准报告，归因与行动项不受影响。"
+      />
+
       <!-- ══════════ 1. 头部 ══════════ -->
       <section class="order-1 rounded-2xl border border-slate-200 bg-white p-6">
         <div class="flex flex-wrap items-start justify-between gap-4">

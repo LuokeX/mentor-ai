@@ -18,8 +18,9 @@ import { resolveNextInstrumentSuggestion } from '../../../../domain/assessment-i
 import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { createTemplateAssessmentReport } from '../../../../domain/reports'
 import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
-import { generateAssessmentReport, redactPii } from '../../../../integrations/deepseek'
-import { encryptSensitive, decryptSensitive } from '../../../../utils/crypto'
+import { redactPii } from '../../../../integrations/deepseek'
+import { enhancePlanReportInBackground } from '../../../../domain/plan-enhancement'
+import { decryptSensitive } from '../../../../utils/crypto'
 import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
 
@@ -178,34 +179,18 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  // 模型增强报告：与 submit 一致，在事务外执行，用 updatedAt 防止覆盖并发写入。
-  const enhancedReport = await generateAssessmentReport(event, {
-    schoolId,
-    ownerUserId: user.id,
-    module,
-    result: outcome.mergedResult,
-    definition: outcome.definition
-  }).catch(() => null)
-
-  if (outcome.planId && enhancedReport) {
-    const enhancedNarrative = enhancedReport.profile.summary || outcome.mergedResult.reasons.join('；')
-    await db.transaction(async (tx) => {
-      await tx.update(schema.plans).set({
-        summaryEnc: encryptSensitive(enhancedNarrative, secret),
-        report: {
-          ...(enhancedReport as unknown as Record<string, unknown>),
-          planStructure: outcome.planReport?.planStructure
-        },
-        updatedAt: new Date()
-      }).where(and(
-        eq(schema.plans.id, outcome.planId),
-        eq(schema.plans.ownerUserId, user.id),
-        eq(schema.plans.schoolId, schoolId),
-        // updatedAt 恒存在（返回主键必然回读）；仅在有值时参与并发校验
-        ...(outcome.planUpdatedAtForWrite
-          ? [eq(schema.plans.updatedAt, outcome.planUpdatedAtForWrite)]
-          : [])
-      ))
+  // AI 深度报告改为后台增强（fire-and-forget），与 submit 一致：
+  // 事务内确定性方案已可立即返回，教师直接进入方案页；
+  // 增强完成由方案详情页轮询 ai_report_status 感知，失败仅降级为确定性报告。
+  if (outcome.planId) {
+    void enhancePlanReportInBackground(event, {
+      planId: outcome.planId,
+      schoolId,
+      ownerUserId: user.id,
+      module,
+      result: outcome.mergedResult,
+      definition: outcome.definition,
+      expectedPlanUpdatedAt: outcome.planUpdatedAtForWrite
     })
   }
 

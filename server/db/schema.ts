@@ -524,6 +524,8 @@ export const plans = pgTable('plans', {
   actions: jsonb('actions').$type<Array<{ title: string, detail: string, status: string }>>().default([]).notNull(),
   tools: jsonb('tools').$type<Array<{ title: string, content: string }>>().default([]).notNull(),
   report: jsonb('report').$type<Record<string, unknown>>().default({}).notNull(),
+  /** AI 深度报告增强状态：pending 撰写中 / done 已完成（或未启用增强）/ failed 失败降级为确定性报告 */
+  aiReportStatus: varchar('ai_report_status', { length: 20 }).default('done').notNull(),
   sourceVersions: jsonb('source_versions').$type<string[]>().default([]).notNull(),
   status: varchar('status', { length: 30 }).default('in_progress').notNull(),
   acceptanceDecision: varchar('acceptance_decision', { length: 30 }),

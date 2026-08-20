@@ -6,7 +6,7 @@ import { requireUser } from '../../../../utils/auth'
 import { type DbClient, useDb, schema } from '../../../../utils/db'
 import { executeRules, evaluateWithFallback } from '../../../../domain/rules-executor'
 import { resolveAssessmentDefinition, resolveAttributionConfig, resolvePublishedModuleResource } from '../../../../domain/module-resources'
-import { encryptSensitive, decryptSensitive } from '../../../../utils/crypto'
+import { decryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
 import { resolveToolsForPlan } from '../../../../domain/plan-actions'
 import { recordPlanOperationEvent } from '../../../../domain/plan-operations'
@@ -15,7 +15,8 @@ import { isNoPlanNeeded } from '../../../../domain/no-plan-needed'
 import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
-import { generateAssessmentReport, redactPii } from '../../../../integrations/deepseek'
+import { redactPii } from '../../../../integrations/deepseek'
+import { enhancePlanReportInBackground } from '../../../../domain/plan-enhancement'
 import { findInvalidAnswers } from '../../../../domain/assessment-answers'
 import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
 import { mergeGroupResults } from '../../../../domain/plan-merge'
@@ -462,53 +463,22 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  // 模型调用不持有数据库事务。若等待期间同组又补交了量表，plan.updatedAt
-  // 会变化，本次增强报告只回写当前评估，不覆盖更新后的合并方案。
-  // AI 失败（无密钥/超时/非法输出）只降级为确定性报告，不能让整个提交 500。
-  // deferPlan 时跳过：方案由 finalize 用组内结果统一生成，增强报告在那里一并产出，
-  // 提前返回响应让教师立即切入下一张量表（DeepSeek 调用常达 1-2 分钟，不应阻塞连续作答）。
+  // AI 深度报告改为后台增强（fire-and-forget）：事务内确定性方案已可立即返回，
+  // 教师直接进入方案页，增强完成由方案详情页轮询 ai_report_status 感知。
+  // 不再同步等待 DeepSeek（实测常达 1-2 分钟）；AI 失败仅降级为确定性报告。
+  // noPlanNeeded 无方案可增强，仅回写本次评估结果（与同步时代口径一致）。
   if (!result.blocked && !outcome.deferred) {
-    const enhancedReport = await generateAssessmentReport(event, {
+    void enhancePlanReportInBackground(event, {
+      planId: outcome.planId,
+      attemptId: outcome.attemptId,
       schoolId,
       ownerUserId: user.id,
       module,
       result: outcome.mergedResult,
-      definition
-    }).catch(() => null)
-    if (enhancedReport) {
-      const enhancedNarrative = enhancedReport.profile.summary || outcome.mergedResult.reasons.join('；')
-      outcome.report = enhancedReport
-      outcome.result = {
-        ...result,
-        narrative: enhancedNarrative,
-        report: enhancedReport
-      }
-      await db.transaction(async (tx) => {
-        await tx.update(schema.assessmentAttempts).set({
-          result: outcome.result as unknown as Record<string, unknown>,
-          updatedAt: new Date()
-        }).where(and(
-          eq(schema.assessmentAttempts.id, outcome.attemptId),
-          eq(schema.assessmentAttempts.ownerUserId, user.id),
-          eq(schema.assessmentAttempts.schoolId, schoolId)
-        ))
-        if (outcome.planId && outcome.planUpdatedAt && outcome.planReport) {
-          await tx.update(schema.plans).set({
-            summaryEnc: encryptSensitive(enhancedNarrative, secret),
-            report: {
-              ...(enhancedReport as unknown as Record<string, unknown>),
-              planStructure: outcome.planReport.planStructure
-            },
-            updatedAt: new Date()
-          }).where(and(
-            eq(schema.plans.id, outcome.planId),
-            eq(schema.plans.ownerUserId, user.id),
-            eq(schema.plans.schoolId, schoolId),
-            eq(schema.plans.updatedAt, outcome.planUpdatedAt)
-          ))
-        }
-      })
-    }
+      definition,
+      attemptResult: result,
+      expectedPlanUpdatedAt: outcome.planUpdatedAt
+    })
   }
 
   await writeAudit(event, {

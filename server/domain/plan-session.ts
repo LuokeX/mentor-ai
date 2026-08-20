@@ -328,6 +328,8 @@ export async function generateOrMergeSessionPlan(
       actions: mergedActions,
       tools: planTools,
       report: planReport,
+      // 合并重算了方案内容：AI 深度报告基于旧结果，需由调用方重新触发后台增强
+      aiReportStatus: 'pending',
       matchedRuleIds: mergedResult.matchedRuleIds,
       matchedToolCodes: mergeUnique([...(plan?.matchedToolCodes || []), ...matchedToolCodes]),
       sourceVersions: mergeUnique([...(plan?.sourceVersions || []), ...definitionResource.sourceVersions, ...(attributionConfig?.sourceVersions || []), ...mergedResult.matchedRuleIds]),
@@ -381,12 +383,18 @@ export async function generateOrMergeSessionPlan(
     tools: planTools,
     report: planReport,
     sourceVersions: [...definitionResource.sourceVersions, ...(attributionConfig?.sourceVersions || [`fallback-attribution:${module}`]), ...mergedResult.matchedRuleIds],
+    // 方案已可用（确定性报告）；AI 深度报告由调用方后台增强并回写，教师端无需等待
+    aiReportStatus: 'pending',
     status: 'pending_acceptance',
     matchedRuleIds: mergedResult.matchedRuleIds,
     matchedToolCodes,
     sourceResourceVersionIds: sourceResourceVersionIds.length
       ? sourceResourceVersionIds
       : extractSourceResourceVersionIds([...definitionResource.sourceVersions, ...(attributionConfig?.sourceVersions || [])]),
+    // 显式写入毫秒精度时间戳（而非数据库 now() 微秒）：后台 AI 增强用
+    // expectedPlanUpdatedAt 做等值并发校验，微秒/毫秒差异会导致校验恒失败。
+    createdAt: now,
+    updatedAt: now,
     nextReviewAt
   }).returning({ id: schema.plans.id, createdAt: schema.plans.createdAt, updatedAt: schema.plans.updatedAt })
   const planId = plan?.id || null
