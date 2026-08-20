@@ -18,7 +18,10 @@ const libraryTypeOptions = [
   { label: '全部类型', value: '__all__' },
   { label: '量表库', value: 'assessment' },
   { label: '归因库', value: 'attribution' },
-  { label: '工具库', value: 'tool' }
+  { label: '工具库', value: 'tool' },
+  { label: '输出模板', value: 'output_template' },
+  { label: '关键词路由', value: 'keyword_route' },
+  { label: '知识库', value: 'knowledge' }
 ]
 
 const libraryTypeLabels: Record<string, string> = {
