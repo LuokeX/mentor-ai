@@ -99,7 +99,7 @@ const health = computed(() => [
               <UBadge variant="soft" size="xs">{{ log.action }}</UBadge>
               <span class="text-gray-500">{{ log.targetType }} / {{ log.targetId?.slice(0, 8) }}</span>
             </div>
-            <span class="text-xs text-gray-400">{{ new Date(log.createdAt).toLocaleString('zh-CN') }}</span>
+            <span class="text-xs text-gray-400">{{ formatDateTime(log.createdAt) }}</span>
           </div>
         </div>
       </div>

@@ -164,7 +164,7 @@ function effectiveText(value: ModelEntry | undefined) {
           <div class="flex shrink-0 items-center gap-3 text-xs text-gray-400">
             <span v-if="call.latencyMs !== null">{{ call.latencyMs }}ms</span>
             <span v-if="call.errorCode" class="text-red-500">{{ call.errorCode }}</span>
-            <span>{{ new Date(call.createdAt).toLocaleString('zh-CN') }}</span>
+            <span>{{ formatDateTime(call.createdAt) }}</span>
           </div>
         </div>
       </div>

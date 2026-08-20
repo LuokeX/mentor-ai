@@ -151,7 +151,7 @@ function closeDrawer() {
         </UBadge>
         <span v-else class="text-sm text-slate-300">未评估</span>
       </template>
-      <template #updatedAt-data="{ value }">{{ new Date(String(value)).toLocaleDateString('zh-CN') }}</template>
+      <template #updatedAt-data="{ value }">{{ formatDate(value) }}</template>
       <template #actions-data="{ row }">
         <RowActions
           :capabilities="row._capabilities"

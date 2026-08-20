@@ -262,7 +262,7 @@ async function confirmDelete() {
           variant="subtle"
         >{{ STATUS_TEXT[row.status] || row.status }}</UBadge>
       </template>
-      <template #submittedAt-data="{ value }">{{ value ? new Date(String(value)).toLocaleString('zh-CN') : '—' }}</template>
+      <template #submittedAt-data="{ value }">{{ value ? formatDateTime(value) : '—' }}</template>
       <template #actions-data="{ row }">
         <RowActions
           :capabilities="row._capabilities"
@@ -290,7 +290,7 @@ async function confirmDelete() {
           <div><span class="text-slate-400">量表代码</span><p class="font-medium break-all">{{ detail.assessmentCode }}</p></div>
           <div><span class="text-slate-400">版本</span><p class="font-medium">{{ detail.definitionVersion }}</p></div>
           <div><span class="text-slate-400">状态</span><p class="font-medium">{{ STATUS_TEXT[detail.status] || detail.status }}</p></div>
-          <div><span class="text-slate-400">提交时间</span><p class="font-medium">{{ detail.submittedAt ? new Date(detail.submittedAt).toLocaleString('zh-CN') : '—' }}</p></div>
+          <div><span class="text-slate-400">提交时间</span><p class="font-medium">{{ detail.submittedAt ? formatDateTime(detail.submittedAt) : '—' }}</p></div>
         </div>
 
         <section>

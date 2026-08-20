@@ -219,7 +219,7 @@ async function copyInitialPassword() {
       <template #status-data="{ row }">
         <UBadge :color="statusColors[row.status] || 'neutral'" variant="subtle">{{ statusLabels[row.status] || row.status }}</UBadge>
       </template>
-      <template #lastLoginAt-data="{ value }">{{ value ? new Date(String(value)).toLocaleString('zh-CN') : '从未登录' }}</template>
+      <template #lastLoginAt-data="{ value }">{{ value ? formatDateTime(value) : '从未登录' }}</template>
       <template #actions-data="{ row }">
         <div class="flex items-center gap-1">
           <RowActions

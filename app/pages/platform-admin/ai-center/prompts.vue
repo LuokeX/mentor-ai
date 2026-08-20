@@ -140,7 +140,7 @@ async function doReset() {
               <UBadge :color="statusMeta[item.status].color" variant="subtle" size="xs">{{ statusMeta[item.status].label }}</UBadge>
             </td>
             <td class="px-4 py-3 text-xs text-gray-400">
-              {{ item.updatedAt ? new Date(item.updatedAt).toLocaleString('zh-CN') : '—' }}
+              {{ item.updatedAt ? formatDateTime(item.updatedAt) : '—' }}
             </td>
             <td class="px-4 py-3 text-right">
               <div class="flex justify-end gap-1">

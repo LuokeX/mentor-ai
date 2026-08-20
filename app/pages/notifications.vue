@@ -220,7 +220,7 @@ function eventTime(item: CenterEvent) {
 
 function formatTime(value?: string | Date | null) {
   if (!value) return '时间未定'
-  return new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return formatDateTimeShort(value)
 }
 
 function notificationTargetUrl(item: any) {

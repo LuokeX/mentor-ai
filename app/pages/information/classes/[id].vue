@@ -28,19 +28,12 @@ const statuses = [
 ]
 const eventStatusLabel = (s: string) => s === 'open' ? '待处理' : s === 'resolved' ? '已解决' : s === 'closed' ? '已关闭' : s === 'archived' ? '已归档' : s
 
-/** UTC ISO 串 → 本地时间字符串，用于预填 datetime-local（否则浏览器按本地时区解析会偏移 8 小时） */
-function toLocalInput(iso: string) {
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
 function openCreate() {
   editingId.value = null
   Object.assign(form, {
     title: '', eventType: '班级建设', severity: '低',
     description: '', resolution: '', status: 'open',
-    occurredAt: toLocalInput(new Date().toISOString()),
+    occurredAt: toBeijingInput(new Date()),
   })
   formError.value = ''
   drawerOpen.value = true
@@ -55,7 +48,7 @@ function openEdit(row: any) {
     description: row.description || '',
     resolution: row.resolution || '',
     status: row.status,
-    occurredAt: row.occurredAt ? toLocalInput(row.occurredAt) : '',
+    occurredAt: row.occurredAt ? toBeijingInput(row.occurredAt) : '',
   })
   formError.value = ''
   drawerOpen.value = true
@@ -77,7 +70,7 @@ async function saveEvent() {
         body: {
           title: form.title, eventType: form.eventType, severity: form.severity,
           description: form.description || undefined, resolution: form.resolution || undefined,
-          status: form.status, occurredAt: form.occurredAt ? new Date(form.occurredAt).toISOString() : undefined,
+          status: form.status, occurredAt: parseBeijingInput(form.occurredAt)?.toISOString() ?? undefined,
         },
       })
     } else {
@@ -86,7 +79,7 @@ async function saveEvent() {
         body: {
           classId: id, title: form.title, eventType: form.eventType, severity: form.severity,
           description: form.description || undefined,
-          occurredAt: form.occurredAt ? new Date(form.occurredAt).toISOString() : undefined,
+          occurredAt: parseBeijingInput(form.occurredAt)?.toISOString() ?? undefined,
         },
       })
     }
@@ -156,7 +149,7 @@ const dimensionLabel: Record<string, string> = {
             <div><dt class="text-slate-400">班主任</dt><dd class="mt-1 font-medium">{{ data?.class?.classTeacherName || '—' }}</dd></div>
             <div><dt class="text-slate-400">学生人数</dt><dd class="mt-1 font-medium">{{ data?.class?.studentCount ?? '—' }}</dd></div>
             <div><dt class="text-slate-400">男女比例</dt><dd class="mt-1 font-medium">{{ data?.class?.genderRatio ? `${data.class.genderRatio.male} : ${data.class.genderRatio.female}` : '—' }}</dd></div>
-            <div><dt class="text-slate-400">最近评估</dt><dd class="mt-1 font-medium">{{ data?.class?.assessedAt ? new Date(data.class.assessedAt).toLocaleDateString('zh-CN') : '未评估' }}</dd></div>
+            <div><dt class="text-slate-400">最近评估</dt><dd class="mt-1 font-medium">{{ data?.class?.assessedAt ? formatDate(data.class.assessedAt) : '未评估' }}</dd></div>
           </dl>
         </section>
 
@@ -199,7 +192,7 @@ const dimensionLabel: Record<string, string> = {
                 <UBadge :color="item.status === 'resolved' ? 'success' : item.status === 'closed' ? 'neutral' : 'warning'" variant="subtle" size="xs">{{ eventStatusLabel(item.status) }}</UBadge>
               </div>
               <p v-if="item.description" class="mt-2 text-sm leading-6 text-slate-600">{{ item.description }}</p>
-              <p class="mt-2 text-xs text-slate-400">{{ item.occurredAt ? new Date(item.occurredAt).toLocaleString('zh-CN') : '' }}</p>
+              <p class="mt-2 text-xs text-slate-400">{{ item.occurredAt ? formatDateTime(item.occurredAt) : '' }}</p>
             </div>
             <div class="flex shrink-0 gap-2">
               <UButton size="xs" color="neutral" variant="ghost" @click="openEdit(item)">编辑</UButton>

@@ -76,6 +76,6 @@ export default defineEventHandler(async (event) => {
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
 
   setHeader(event, 'Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-  setHeader(event, 'Content-Disposition', `attachment; filename="knowledge_export_${new Date().toISOString().slice(0, 10)}.xlsx"`)
+  setHeader(event, 'Content-Disposition', `attachment; filename="knowledge_export_${formatBeijingDateStamp()}.xlsx"`)
   return buf
 })

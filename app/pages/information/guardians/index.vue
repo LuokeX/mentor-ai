@@ -116,7 +116,7 @@ function closeDrawer() {
           {{ row.status === 'active' ? '有效' : '已归档' }}
         </UBadge>
       </template>
-      <template #updatedAt-data="{ value }">{{ new Date(String(value)).toLocaleDateString('zh-CN') }}</template>
+      <template #updatedAt-data="{ value }">{{ formatDate(value) }}</template>
       <template #actions-data="{ row }">
         <RowActions
           :capabilities="row._capabilities"

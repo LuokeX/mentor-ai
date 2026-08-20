@@ -141,7 +141,7 @@ function activationLink(token: string) {
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value">
       <template #importType-data="{ value }">{{ typeLabels[String(value)] || value }}</template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'committed' ? 'success' : row.status === 'invalid' ? 'error' : 'warning'" variant="subtle">{{ row.status }}</UBadge></template>
-      <template #createdAt-data="{ value }">{{ new Date(String(value)).toLocaleString('zh-CN') }}</template>
+      <template #createdAt-data="{ value }">{{ formatDateTime(value) }}</template>
     </ManagedDataTable>
     <div v-if="list.error.value || formError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ formError || list.error.value }}</div>
     <TablePagination :page="list.page.value" :page-size="list.pageSize.value" :total="list.total.value" @update:page="list.onPageChange" @update:page-size="list.onPageSizeChange" />

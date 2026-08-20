@@ -53,7 +53,7 @@ const roleCodeLabel: Record<string, string> = {
           </div>
           <div class="hidden shrink-0 text-right sm:block">
             <p class="text-sm text-gray-600">记录级 {{ role.recordCount }} 项 · 页面级 {{ role.pageCount }} 项</p>
-            <p class="mt-0.5 text-xs text-gray-400">更新于 {{ new Date(role.updatedAt).toLocaleString('zh-CN') }}</p>
+            <p class="mt-0.5 text-xs text-gray-400">更新于 {{ formatDateTime(role.updatedAt) }}</p>
           </div>
           <UButton icon="i-lucide-chevron-right" variant="ghost" color="neutral" size="sm" class="shrink-0" />
         </div>

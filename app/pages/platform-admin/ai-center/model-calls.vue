@@ -119,7 +119,7 @@ const purposeOptions = [
         </thead>
         <tbody class="divide-y divide-gray-100">
           <tr v-for="row in rows" :key="row.id" class="transition-colors hover:bg-gray-50/50">
-            <td class="whitespace-nowrap px-5 py-3 text-xs text-gray-400">{{ new Date(row.createdAt).toLocaleString('zh-CN') }}</td>
+            <td class="whitespace-nowrap px-5 py-3 text-xs text-gray-400">{{ formatDateTime(row.createdAt) }}</td>
             <td class="px-4 py-3">
               <p class="text-xs text-gray-700">{{ row.schoolName || '—' }}</p>
               <p class="text-xs text-gray-400">{{ row.ownerName || '—' }}</p>

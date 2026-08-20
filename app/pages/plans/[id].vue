@@ -264,7 +264,7 @@ function recommendationGroupPeriod(group: RecommendationGroup) {
   const start = dates[0]!
   const end = dates[dates.length - 1]!
   const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1)
-  return `${days}天（${start.toLocaleDateString('zh-CN')} ～ ${end.toLocaleDateString('zh-CN')}）`
+  return `${days}天（${formatDate(start)} ～ ${formatDate(end)}）`
 }
 
 /** 方案块内动作标题用中文序号，与工具步骤的阿拉伯序号区分层级 */
@@ -345,7 +345,7 @@ function toggleExpand(actionId: string) {
   // 展开未完成的动作时，初始化反馈表单
   if (expandedActionId.value !== actionId) {
     expandedActionId.value = actionId
-    execForm.executedAt = new Date().toISOString().slice(0, 16) // YYYY-MM-DDTHH:mm
+    execForm.executedAt = toBeijingInput(new Date())
     execForm.executionNote = ''
     execForm.blockReason = ''
     execForm.blockNote = ''
@@ -452,7 +452,7 @@ async function createAction() {
       body: {
         title: addActionForm.title.trim(),
         detail: addActionForm.detail.trim(),
-        dueAt: addActionForm.dueAt ? new Date(addActionForm.dueAt).toISOString() : undefined
+        dueAt: parseBeijingInput(addActionForm.dueAt)?.toISOString() ?? undefined
       }
     })
     Object.assign(addActionForm, { title: '', detail: '', dueAt: '' })
@@ -513,7 +513,7 @@ async function submitExecution(actionId: string) {
     const hasVideoEvidence = execEvidenceFiles.value.some(file => file.type.startsWith('video/'))
     if (execEvidenceFiles.value.length) await uploadEvidence(actionId)
     await updateActionStatus(actionId, 'completed', {
-      executedAt: execForm.executedAt ? new Date(execForm.executedAt).toISOString() : undefined,
+      executedAt: parseBeijingInput(execForm.executedAt)?.toISOString() ?? undefined,
       executionNote: execForm.executionNote.trim() || undefined,
       evidenceType: hasVideoEvidence ? 'artifact' : execForm.evidenceType,
       evidenceSummary: execForm.evidenceSummary.trim() || undefined,
@@ -548,16 +548,6 @@ async function toggleAction(actionId: string, currentStatus: string) {
   }
 
   await updateActionStatus(actionId, next)
-}
-
-function formatDate(dateStr: string | null) {
-  if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
-
-function formatInputDate(dateStr: string) {
-  if (!dateStr) return ''
-  return dateStr.slice(0, 16) // YYYY-MM-DDTHH:mm
 }
 
 function scoreOutOfFive(value: unknown) {
@@ -798,7 +788,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
           {{ data.sourceConversation.questionSummary }}
         </p>
         <p class="mt-1 text-xs text-slate-400">
-          {{ new Date(data.sourceConversation.createdAt).toLocaleString('zh-CN') }}
+          {{ formatDateTime(data.sourceConversation.createdAt) }}
         </p>
       </section>
 
@@ -847,7 +837,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
               <span class="text-slate-400">提交时间</span>
               <p class="mt-1 font-medium">
                 {{ assessment.submittedAt
-                  ? new Date(assessment.submittedAt).toLocaleString('zh-CN')
+                  ? formatDateTime(assessment.submittedAt)
                   : '-' }}
               </p>
             </div>
@@ -920,7 +910,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                 <p v-if="action.detail" class="mt-1 whitespace-pre-line text-xs leading-5 text-slate-500">{{ action.detail }}</p>
                 <!-- 截止日期 -->
                 <p v-if="action.dueAt" class="mt-1 text-xs text-amber-600">
-                  截止：{{ formatDate(action.dueAt) }}
+                  截止：{{ formatDateTimeShort(action.dueAt) }}
                 </p>
                 <p v-if="action.blockReason" class="mt-1 text-xs text-red-600">
                   受阻原因：{{ blockReasonOptions.find(item => item.value === action.blockReason)?.label || action.blockReason }}
@@ -975,7 +965,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                   </div>
                   <div v-if="action.executedAt">
                     <span class="text-xs text-slate-400">行动日期</span>
-                    <p class="mt-0.5 font-medium text-slate-700">{{ formatDate(action.executedAt) }}</p>
+                    <p class="mt-0.5 font-medium text-slate-700">{{ formatDateTimeShort(action.executedAt) }}</p>
                   </div>
                   <div v-if="action.blockReason">
                     <span class="text-xs text-slate-400">受阻原因</span>
@@ -1369,7 +1359,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
             <div class="flex justify-between gap-3">
               <strong class="text-sm">效果 {{ scoreOutOfFive(review.effectScore) }}/5</strong>
               <span class="text-xs text-slate-400">
-                {{ new Date(review.reviewAt).toLocaleString('zh-CN') }}
+                {{ formatDateTime(review.reviewAt) }}
               </span>
             </div>
             <p class="mt-2 text-sm leading-6 text-slate-600">{{ review.progressNote }}</p>

@@ -41,13 +41,6 @@ const statuses = [
   { label: '已关闭', value: 'closed' },
 ]
 
-/** UTC ISO 串 → 本地时间字符串，用于预填 datetime-local（否则浏览器按本地时区解析会偏移 8 小时） */
-function toLocalInput(iso: string) {
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
 const { data: studentData } = await useFetch<ManagedListResult<StudentOption>>('/api/v1/information/students', { query: { page: 1, pageSize: 100, status: 'active' } })
 const studentOptions = computed(() => (studentData.value?.rows || []).map(item => ({ label: item.name, value: item.id })))
 
@@ -72,7 +65,7 @@ function openCreate() {
   Object.assign(form, {
     studentId: '', title: '', eventType: '其他', severity: '低',
     description: '', resolution: '', status: 'open',
-    occurredAt: toLocalInput(new Date().toISOString()), updatedAt: '',
+    occurredAt: toBeijingInput(new Date()), updatedAt: '',
   })
   formError.value = ''
   drawerOpen.value = true
@@ -90,7 +83,7 @@ function openEdit(rowOrId: EventRow | string) {
     description: row.description || '',
     resolution: row.resolution || '',
     status: row.status,
-    occurredAt: toLocalInput(row.occurredAt),
+    occurredAt: toBeijingInput(row.occurredAt),
     updatedAt: row.updatedAt,
   })
   formError.value = ''
@@ -111,7 +104,7 @@ async function saveEvent() {
     description: form.description || undefined,
     resolution: form.resolution || undefined,
     status: form.status,
-    occurredAt: new Date(form.occurredAt).toISOString(),
+    occurredAt: parseBeijingInput(form.occurredAt)?.toISOString() ?? undefined,
   }
   try {
     if (editingId.value) {
@@ -167,7 +160,7 @@ async function archiveEvent(eventId: string) {
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #severity-data="{ value }"><UBadge :color="value === '严重' ? 'error' : value === '高' ? 'warning' : 'neutral'" variant="subtle">{{ value }}</UBadge></template>
       <template #status-data="{ value }"><UBadge :color="value === 'open' ? 'warning' : value === 'resolved' ? 'success' : value === 'archived' ? 'neutral' : 'neutral'" variant="subtle">{{ value === 'open' ? '待处理' : value === 'resolved' ? '已解决' : value === 'archived' ? '已归档' : '已关闭' }}</UBadge></template>
-      <template #occurredAt-data="{ value }">{{ new Date(String(value)).toLocaleString('zh-CN') }}</template>
+      <template #occurredAt-data="{ value }">{{ formatDateTime(value) }}</template>
       <template #actions-data="{ row }"><RowActions :capabilities="row._capabilities" :row-id="row.id" @view="openEdit" @edit="openEdit" @archive="archiveEvent" /></template>
     </ManagedDataTable>
     <div v-if="list.error.value || formError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ formError || list.error.value }}</div>

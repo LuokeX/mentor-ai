@@ -111,7 +111,7 @@ async function copyInitialPassword() {
     <TableToolbar :search-value="list.q.value" :status-filter="list.statusFilter.value" :status-options="statusOptions" search-placeholder="搜索学校名称..." :loading="list.loading.value" @search="list.onSearch" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '正常' : '停用' }}</UBadge></template>
-      <template #updatedAt-data="{ value }">{{ new Date(String(value)).toLocaleString('zh-CN') }}</template>
+      <template #updatedAt-data="{ value }">{{ formatDateTime(value) }}</template>
       <template #actions-data="{ row }">
         <RowActions :capabilities="row._capabilities" :row-id="row.id" @view="openEdit" @edit="openEdit" />
       </template>

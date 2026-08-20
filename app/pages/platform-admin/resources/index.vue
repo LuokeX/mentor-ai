@@ -568,7 +568,7 @@ function fileToBase64(file: File) {
                           </span>
                         </div>
                         <span v-if="version.notes" class="max-w-xs truncate text-slate-400">{{ version.notes }}</span>
-                        <span class="text-slate-400">{{ new Date(version.updatedAt).toLocaleString('zh-CN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) }}</span>
+                        <span class="text-slate-400">{{ formatDateTimeShort(version.updatedAt) }}</span>
                       </div>
                       <div class="flex shrink-0 gap-1">
                         <!-- 待验证版本只有向导输入，没有库文件，编辑器/预览/投影/发布都用不了 -->

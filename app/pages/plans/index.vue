@@ -88,9 +88,6 @@ const STATUS_COLOR: Record<string, 'info' | 'success' | 'neutral' | 'warning' | 
 const moduleTitle = (module: string) =>
   (moduleMeta as Record<string, { title: string }>)[module]?.title || module
 
-const formatDate = (value: string | null) =>
-  value ? new Date(value).toLocaleDateString('zh-CN') : '—'
-
 /** 复盘日期已过且方案未结束时标红，让教师一眼看到该处理哪个 */
 function reviewOverdue(row: PlanRow) {
   if (!row.nextReviewAt || row.completedAt) return false

@@ -172,7 +172,7 @@ async function confirmDelete() {
       <template #status-data="{ row }">
         <UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '进行中' : '已归档' }}</UBadge>
       </template>
-      <template #updatedAt-data="{ value }">{{ new Date(String(value)).toLocaleString('zh-CN') }}</template>
+      <template #updatedAt-data="{ value }">{{ formatDateTime(value) }}</template>
       <template #actions-data="{ row }">
         <RowActions
           :capabilities="row._capabilities"
@@ -209,7 +209,7 @@ async function confirmDelete() {
               <div class="flex items-start justify-between gap-2">
                 <div class="flex min-w-0 items-center gap-2">
                   <UBadge :color="roleMeta(message.role).color" variant="soft" size="sm">{{ roleMeta(message.role).label }}</UBadge>
-                  <span class="shrink-0 text-xs text-slate-400">{{ new Date(message.createdAt).toLocaleString('zh-CN') }}</span>
+                  <span class="shrink-0 text-xs text-slate-400">{{ formatDateTime(message.createdAt) }}</span>
                 </div>
                 <UTooltip v-if="isDeletable(message.role)" text="删除该消息（软删除，内容不再可见）">
                   <UButton

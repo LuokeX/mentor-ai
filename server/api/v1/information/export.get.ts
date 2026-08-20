@@ -48,7 +48,7 @@ export default defineEventHandler(async (event) => {
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.export', targetType: 'teacher_profile', targetId: user.id })
   setResponseHeaders(event, {
     'content-type': 'application/json; charset=utf-8',
-    'content-disposition': `attachment; filename="mentor-data-${new Date().toISOString().slice(0, 10)}.json"`,
+    'content-disposition': `attachment; filename="mentor-data-${formatBeijingDateStamp()}.json"`,
     'cache-control': 'no-store, private'
   })
   return payload

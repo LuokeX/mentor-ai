@@ -99,7 +99,7 @@ function topSteps(t: any): string[] {
         <section v-if="data.current" class="panel mt-6 p-6">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p class="text-xs text-slate-400">当前状态（{{ data.current.assessedAt ? new Date(data.current.assessedAt).toLocaleDateString('zh-CN') : '' }}）</p>
+              <p class="text-xs text-slate-400">当前状态（{{ data.current.assessedAt ? formatDate(data.current.assessedAt) : '' }}）</p>
               <div class="mt-2 flex items-center gap-2">
                 <UBadge :color="levelColor(data.current.levelName)" variant="soft" class="!text-base !px-3 !py-1">{{ data.current.levelName }}</UBadge>
                 <span class="text-xs text-slate-400">严重度 {{ severityLabel[data.current.severity] || data.current.severity }}</span>
@@ -113,8 +113,8 @@ function topSteps(t: any): string[] {
             </div>
           </div>
           <div class="mt-4 flex flex-wrap gap-4 text-sm">
-            <p class="text-slate-500">最近深度评估：<span class="font-medium text-slate-700">{{ data.current.assessedAt ? new Date(data.current.assessedAt).toLocaleDateString('zh-CN') : '—' }}</span></p>
-            <p class="text-slate-500">建议下次评估：<span class="font-medium text-slate-700">{{ data.nextAssessmentAt ? new Date(data.nextAssessmentAt).toLocaleDateString('zh-CN') : '—' }}</span></p>
+            <p class="text-slate-500">最近深度评估：<span class="font-medium text-slate-700">{{ data.current.assessedAt ? formatDate(data.current.assessedAt) : '—' }}</span></p>
+            <p class="text-slate-500">建议下次评估：<span class="font-medium text-slate-700">{{ data.nextAssessmentAt ? formatDate(data.nextAssessmentAt) : '—' }}</span></p>
           </div>
           <div v-if="data.suggestions?.length" class="mt-4 space-y-1.5 rounded-xl bg-emerald-50/60 p-4">
             <p v-for="(s, i) in data.suggestions" :key="i" class="flex gap-2 text-sm leading-6 text-emerald-900">
@@ -166,7 +166,7 @@ function topSteps(t: any): string[] {
           <h2 class="font-semibold text-slate-800">评估足迹</h2>
           <div class="mt-3 divide-y divide-slate-100">
             <div v-for="(item, i) in [...data.trend].reverse()" :key="i" class="flex items-center gap-3 py-2.5 text-sm">
-              <span class="w-20 shrink-0 text-slate-500">{{ item.assessedAt ? new Date(item.assessedAt).toLocaleDateString('zh-CN') : '—' }}</span>
+              <span class="w-20 shrink-0 text-slate-500">{{ item.assessedAt ? formatDate(item.assessedAt) : '—' }}</span>
               <UBadge :color="levelColor(item.levelName)" variant="subtle" class="shrink-0">{{ item.levelName || '—' }}</UBadge>
               <span class="min-w-0 truncate text-xs text-slate-400">{{ item.primaryAttribution || '' }}</span>
             </div>

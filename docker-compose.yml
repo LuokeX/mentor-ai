@@ -54,6 +54,10 @@ services:
   postgres:
     image: pgvector/pgvector:0.8.5-pg18-trixie
     restart: unless-stopped
+    # TZ 环境变量对 postgres 服务器进程不生效（实测 SHOW timezone 仍为 Etc/UTC），
+    # 需用 -c timezone 显式指定服务器默认时区；影响 CURRENT_DATE/CURRENT_TIMESTAMP
+    # 与 psql 直查显示，TIMESTAMPTZ 存储语义不变。
+    command: ["postgres", "-c", "timezone=Asia/Shanghai"]
     environment:
       TZ: Asia/Shanghai
       POSTGRES_USER: ${POSTGRES_USER:-mentor_admin}

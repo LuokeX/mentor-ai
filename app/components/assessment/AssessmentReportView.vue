@@ -24,7 +24,7 @@ function attributionStrengthLabel(strength: 'primary' | 'secondary' | 'reference
 <template>
   <div class="panel report-sheet p-7 sm:p-9">
     <div class="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-6">
-      <div><p class="text-sm font-semibold text-emerald-700">正式评估报告</p><h1 class="mt-2 text-3xl font-semibold">{{ report.printMeta.moduleTitle }}</h1><p class="mt-2 text-xs text-slate-400">生成时间：{{ new Date(report.printMeta.generatedAt).toLocaleString('zh-CN') }} · 版本：{{ report.printMeta.assessmentVersion }}</p></div>
+      <div><p class="text-sm font-semibold text-emerald-700">正式评估报告</p><h1 class="mt-2 text-3xl font-semibold">{{ report.printMeta.moduleTitle }}</h1><p class="mt-2 text-xs text-slate-400">生成时间：{{ formatDateTime(report.printMeta.generatedAt) }} · 版本：{{ report.printMeta.assessmentVersion }}</p></div>
       <UBadge size="xl" color="primary" variant="soft">{{ report.risk.label }}</UBadge>
     </div>
     <div class="mt-7 grid gap-6 lg:grid-cols-[.95fr_1.05fr]">

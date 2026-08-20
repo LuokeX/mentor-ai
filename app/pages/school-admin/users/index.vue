@@ -256,7 +256,7 @@ async function copyGeneratedPassword() {
         <span v-else class="text-xs text-slate-400">未评估</span>
       </template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : row.status === 'invited' ? 'info' : 'neutral'" variant="subtle">{{ statusLabels[row.status] || row.status }}</UBadge></template>
-      <template #lastLoginAt-data="{ value }">{{ value ? new Date(String(value)).toLocaleString('zh-CN') : '从未登录' }}</template>
+      <template #lastLoginAt-data="{ value }">{{ value ? formatDateTime(value) : '从未登录' }}</template>
       <template #actions-data="{ row }">
         <RowActions
           :capabilities="row._capabilities"

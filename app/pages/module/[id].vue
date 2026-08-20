@@ -700,7 +700,7 @@ async function submit() {
         <section class="panel p-6 sm:p-7">
           <div v-if="!draftLoaded" class="flex items-center gap-3 text-sm text-slate-500"><UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" />正在检查未完成草稿……</div>
           <template v-else-if="hasDraft">
-            <div class="flex items-start gap-3"><div class="grid size-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700"><UIcon name="i-lucide-file-clock" class="size-4" /></div><div><h2 class="font-semibold">发现未完成评估</h2><p class="mt-1 text-xs text-slate-500">已完成 {{ answeredCount }} / {{ definition.questions.length }} 题<template v-if="draftUpdatedAt"> · {{ new Date(draftUpdatedAt).toLocaleString('zh-CN') }} 保存</template></p></div></div>
+            <div class="flex items-start gap-3"><div class="grid size-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700"><UIcon name="i-lucide-file-clock" class="size-4" /></div><div><h2 class="font-semibold">发现未完成评估</h2><p class="mt-1 text-xs text-slate-500">已完成 {{ answeredCount }} / {{ definition.questions.length }} 题<template v-if="draftUpdatedAt"> · {{ formatDateTime(draftUpdatedAt) }} 保存</template></p></div></div>
             <div class="mt-5 flex flex-wrap gap-3"><UButton icon="i-lucide-play" @click="startAssessment(true)">继续未完成评估</UButton><UButton color="neutral" variant="soft" @click="startAssessment(false)">重新开始</UButton></div>
           </template>
           <template v-else>

@@ -65,7 +65,7 @@ function openReview(row: AccessRequestRow, decision: 'approved' | 'rejected') {
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange">
       <template #reasonText-data="{ row }"><span class="line-clamp-2 max-w-md text-sm">{{ row.reasonText }}</span></template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'pending' ? 'warning' : row.status === 'approved' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'pending' ? '待审批' : row.status === 'approved' ? '已通过' : '已拒绝' }}</UBadge></template>
-      <template #createdAt-data="{ value }">{{ new Date(String(value)).toLocaleString('zh-CN') }}</template>
+      <template #createdAt-data="{ value }">{{ formatDateTime(value) }}</template>
       <template #actions-data="{ row }">
         <div v-if="row.status === 'pending'" class="flex gap-1">
           <UButton size="xs" color="success" variant="soft" @click="openReview(row, 'approved')">通过</UButton>

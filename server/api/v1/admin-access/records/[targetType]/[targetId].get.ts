@@ -64,5 +64,5 @@ export default defineEventHandler(async (event) => {
     action: 'read', path: event.path, fields, metadata: { role: user.role }
   })
   setResponseHeader(event, 'cache-control', 'no-store, private')
-  return { record, access: { grantId: grant.id, expiresAt: grant.expiresAt, watermark: `${user.name} · ${new Date().toLocaleString('zh-CN')} · ${grant.id.slice(0, 8)}` } }
+  return { record, access: { grantId: grant.id, expiresAt: grant.expiresAt, watermark: `${user.name} · ${formatDateTime(new Date())} · ${grant.id.slice(0, 8)}` } }
 })

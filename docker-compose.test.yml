@@ -65,6 +65,8 @@ services:
   postgres:
     image: pgvector/pgvector:0.8.5-pg18-trixie
     restart: unless-stopped
+    # 与 docker-compose.yml 一致：显式指定服务器时区（TZ 环境变量对 postgres 无效）
+    command: ["postgres", "-c", "timezone=Asia/Shanghai"]
     environment:
       TZ: Asia/Shanghai
       POSTGRES_USER: ${POSTGRES_USER:-mentor_admin}

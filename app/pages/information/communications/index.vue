@@ -192,7 +192,7 @@ function closeDrawer() {
     >
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '有效' : '已归档' }}</UBadge></template>
       <template #riskLevel-data="{ value }"><UBadge v-if="value" color="warning" variant="subtle">{{ value }}</UBadge><span v-else>—</span></template>
-      <template #occurredAt-data="{ value }">{{ new Date(String(value)).toLocaleString('zh-CN') }}</template>
+      <template #occurredAt-data="{ value }">{{ formatDateTime(value) }}</template>
       <template #actions-data="{ row }">
         <RowActions
           :capabilities="row._capabilities"

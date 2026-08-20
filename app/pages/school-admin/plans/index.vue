@@ -97,9 +97,6 @@ const PLAN_STATUS_TRANSITIONS: Record<string, string[]> = {
   escalated: ['closed'],
 }
 
-const formatDateTime = (value: string | null) => value ? new Date(value).toLocaleString('zh-CN') : '—'
-const formatDate = (value: string | null) => value ? new Date(value).toLocaleDateString('zh-CN') : '—'
-
 function riskSeverityColor(severity?: string): 'error' | 'warning' | 'success' | 'neutral' {
   const map: Record<string, 'error' | 'warning' | 'success' | 'neutral'> = {
     crisis: 'error', high: 'error', medium: 'warning', low: 'success',
@@ -329,7 +326,7 @@ async function confirmDelete() {
               <div><span class="text-slate-400">量表</span><p class="mt-0.5 font-medium break-all">{{ assessment.code }}</p></div>
               <div><span class="text-slate-400">状态</span><p class="mt-0.5">{{ STATUS_TEXT[assessment.status] || assessment.status }}</p></div>
               <div><span class="text-slate-400">结果</span><p class="mt-0.5 font-medium">{{ assessmentResultSummary(assessment.result) }}</p></div>
-              <div><span class="text-slate-400">提交时间</span><p class="mt-0.5">{{ assessment.submittedAt ? new Date(assessment.submittedAt).toLocaleString('zh-CN') : '—' }}</p></div>
+              <div><span class="text-slate-400">提交时间</span><p class="mt-0.5">{{ assessment.submittedAt ? formatDateTime(assessment.submittedAt) : '—' }}</p></div>
             </div>
           </div>
         </section>

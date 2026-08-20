@@ -388,7 +388,7 @@ async function submitPlanExecution() {
     await $fetch(`/api/v1/chat/messages/${item.messageId}/plan-suggestions/${index}/confirm`, {
       method: 'POST',
       body: {
-        executedAt: planExecForm.executedAt ? new Date(planExecForm.executedAt).toISOString() : undefined,
+        executedAt: parseBeijingInput(planExecForm.executedAt)?.toISOString() ?? undefined,
         executionNote: planExecForm.executionNote.trim() || undefined,
       }
     })
@@ -485,7 +485,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
           <div v-for="item in sessions" :key="item.id" class="group relative rounded-xl text-left text-sm transition" :class="sessionId===item.id?'bg-emerald-50 text-emerald-950 ring-1 ring-inset ring-emerald-100':'text-slate-600 hover:bg-slate-50'">
             <button class="w-full px-3 py-3 text-left" @click="loadSession(item.id)">
               <span class="flex items-start gap-2"><UIcon name="i-lucide-message-circle" class="mt-0.5 size-4 shrink-0" :class="sessionId===item.id?'text-emerald-600':'text-slate-300 group-hover:text-slate-500'" /><span class="line-clamp-2 block leading-5">{{ item.title }}</span></span>
-              <span class="mt-1.5 block pl-6 text-[11px] text-slate-400">{{ new Date(item.updatedAt).toLocaleString('zh-CN') }}</span>
+              <span class="mt-1.5 block pl-6 text-[11px] text-slate-400">{{ formatDateTime(item.updatedAt) }}</span>
             </button>
             <button class="absolute right-1.5 top-2 grid size-6 place-items-center rounded-md text-slate-400 transition hover:bg-red-50 hover:text-red-500" :class="deleteCandidate===item.id?'bg-red-50 text-red-600':'opacity-0 group-hover:opacity-100'" :title="deleteCandidate===item.id?'再次点击确认删除':'删除对话'" @click.stop="deleteSession(item.id)">
               <UIcon name="i-lucide-x" class="size-3.5" />

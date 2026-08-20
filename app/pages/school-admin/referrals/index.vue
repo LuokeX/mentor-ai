@@ -87,7 +87,7 @@ async function assignReferral() {
       <template #priority-data="{ row }"><UBadge :color="row.priority === 'urgent' ? 'error' : 'warning'" variant="subtle">{{ row.priority }}</UBadge></template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'closed' ? 'neutral' : row.status === 'created' || row.status === 'escalated' ? 'error' : 'success'" variant="subtle">{{ row.status }}</UBadge></template>
       <template #psychologistId-data="{ value }">{{ value ? psychologistNames.get(String(value)) || String(value).slice(0, 8) : '未分配' }}</template>
-      <template #createdAt-data="{ value }">{{ new Date(String(value)).toLocaleString('zh-CN') }}</template>
+      <template #createdAt-data="{ value }">{{ formatDateTime(value) }}</template>
       <template #actions-data="{ row }"><RowActions :capabilities="row._capabilities" :row-id="row.id" @view="openAssign" @transfer="openAssign" /></template>
     </ManagedDataTable>
     <div v-if="list.error.value || actionError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ actionError || list.error.value }}</div>
