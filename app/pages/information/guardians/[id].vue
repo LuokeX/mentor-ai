@@ -5,7 +5,7 @@ const { data, error, refresh } = await useFetch<any>(`/api/v1/information/guardi
 const pending = ref(false)
 const formError = ref('')
 const { moduleLabel, planStatusLabel, planStatusColor, riskLevelLabel, commRiskLevelLabel, commRiskLevelColor, severityLabel } = useDisplayLabels()
-const form = reactive({ name: '', phone: '', relation: '', externalRef: '', profile: { parentProfileType: '', parentProfileSubtype: '', relationLevel: '', workshopParticipation: '', parentMeetingParticipation: '', onlineCourseParticipation: '', consultation: '' } })
+const form = reactive({ name: '', phone: '', relation: '', externalRef: '', idCard: '', workUnit: '', profile: { parentProfileType: '', parentProfileSubtype: '', relationLevel: '', workshopParticipation: '', parentMeetingParticipation: '', onlineCourseParticipation: '', consultation: '' } })
 const linkStudentId = ref('')
 const communication = reactive({ studentId: '', summary: '', parentType: '', attitudeType: '', riskLevel: '低风险' })
 const NONE_VALUE = '__none__'
@@ -45,6 +45,8 @@ watchEffect(() => {
   form.phone = data.value.guardian.phone || ''
   form.relation = data.value.guardian.relation || ''
   form.externalRef = data.value.guardian.externalRef || ''
+  form.idCard = data.value.guardian.idCard || ''
+  form.workUnit = data.value.guardian.workUnit || ''
   Object.assign(form.profile, emptyProfile(), data.value.guardian.profile || {})
 })
 
@@ -52,7 +54,7 @@ async function saveGuardian() {
   pending.value = true
   formError.value = ''
   try {
-    await $fetch(`/api/v1/information/guardians/${id}`, { method: 'PATCH', body: { ...form, externalRef: form.externalRef || null, profile: { ...form.profile } } })
+    await $fetch(`/api/v1/information/guardians/${id}`, { method: 'PATCH', body: { ...form, externalRef: form.externalRef || null, idCard: form.idCard || null, workUnit: form.workUnit || null, profile: { ...form.profile } } })
     await refresh()
   } catch (err: any) {
     formError.value = err?.data?.message || '保存失败，请重试'
@@ -110,7 +112,7 @@ async function createCommunication() {
         </div>
       </div><div class="flex flex-wrap justify-end gap-2"><UButton :to="{ path: '/', query: { contextType: 'guardian', contextId: id } }" icon="i-lucide-sparkles">向 AI 咨询该家长</UButton><UBadge color="neutral" variant="soft">关联 {{ data?.students?.length || 0 }} 名学生</UBadge></div></div>
     <div class="mt-8 grid gap-6 lg:grid-cols-[1fr_1fr]">
-      <section class="panel p-6"><h2 class="text-xl font-semibold">基础信息</h2><div class="mt-5 space-y-4"><UFormField label="姓名"><UInput v-model="form.name" class="w-full" /></UFormField><UFormField label="电话"><UInput v-model="form.phone" class="w-full" /></UFormField><UFormField label="关系"><UInput v-model="form.relation" class="w-full" /></UFormField>
+      <section class="panel p-6"><h2 class="text-xl font-semibold">基础信息</h2><div class="mt-5 space-y-4"><UFormField label="姓名"><UInput v-model="form.name" class="w-full" /></UFormField><UFormField label="电话"><UInput v-model="form.phone" class="w-full" /></UFormField><UFormField label="关系"><UInput v-model="form.relation" class="w-full" /></UFormField><UFormField label="工作单位"><UInput v-model="form.workUnit" class="w-full" /></UFormField><UFormField label="身份证号"><UInput v-model="form.idCard" class="w-full" placeholder="18 位身份证号，选填" /></UFormField>
         <div class="rounded-2xl border border-slate-100 p-4"><h3 class="text-sm font-semibold">家校关系档案</h3><div class="mt-4 space-y-4">
           <UFormField label="关系档案编码"><UInput v-model="form.externalRef" class="w-full" placeholder="如 HS-2026-0001" /></UFormField>
           <div class="grid gap-3 md:grid-cols-2"><UFormField label="家长分型"><USelect v-model="parentProfileTypeSelect" :items="[{label:'未填写',value:NONE_VALUE}, ...parentProfileTypeOptions]" class="w-full" /></UFormField><UFormField label="分型亚型说明"><UInput v-model="form.profile.parentProfileSubtype" class="w-full" placeholder="如 P3-C，选填" /></UFormField></div>

@@ -29,6 +29,7 @@ const statusOptions = [
   { label: '已归档', value: 'archived' },
 ]
 const drawerOpen = ref(false)
+const batchImportOpen = ref(false)
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({ name: '', phone: '', relation: '' })
@@ -37,6 +38,10 @@ function openCreate() {
   Object.assign(form, { name: '', phone: '', relation: '' })
   formError.value = ''
   drawerOpen.value = true
+}
+
+function openBatchImport() {
+  batchImportOpen.value = true
 }
 
 async function createGuardian() {
@@ -84,7 +89,10 @@ function closeDrawer() {
     description="维护与当前学生相关的家长档案和关联关系。"
     :can-create="list.pageCapabilities.value.includes('create')"
     create-label="添加家长"
-    @create="openCreate"
+    :create-actions="[
+      { label: '添加信息', icon: 'i-lucide-user-round-plus', handle: openCreate },
+      { label: '批量添加信息', icon: 'i-lucide-file-spreadsheet', handle: openBatchImport },
+    ]"
   >
     <TableToolbar
       :search-value="list.q.value"
@@ -147,5 +155,16 @@ function closeDrawer() {
         </div>
       </form>
     </EntityFormDrawer>
+
+    <BatchImportDrawer
+      :open="batchImportOpen"
+      title="批量添加家长"
+      templateUrl="/api/v1/information/guardians/import-template"
+      previewUrl="/api/v1/information/guardians/import-preview"
+      commitUrl="/api/v1/information/guardians/import-commit"
+      :sample-fields="['studentName', 'name', 'relation']"
+      @close="batchImportOpen = false"
+      @imported="list.refresh"
+    />
   </ManagementPage>
 </template>

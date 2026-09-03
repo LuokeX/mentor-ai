@@ -30,6 +30,10 @@ const bodySchema = z.object({
   relation: z.string().max(40).optional(),
   /** 关系档案编码（外部编号） */
   externalRef: z.string().trim().max(120).nullable().optional(),
+  /** 身份证号（18 位；AES-256-GCM 加密 + 校内查重 hash） */
+  idCard: z.string().trim().max(18).nullable().optional(),
+  /** 工作单位 */
+  workUnit: z.string().trim().max(200).nullable().optional(),
   /** 家校关系档案（家长分型/关系等级/二期关联信息） */
   profile: guardianProfileSchema.optional()
 })
@@ -41,16 +45,17 @@ export default defineEventHandler(async (event) => {
   const expectedUpdatedAt = z.string().datetime().optional().parse(getQuery(event).expectedUpdatedAt)
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
-  const [guardian] = await db.select({
-    id: schema.guardians.id,
-    profileEnc: schema.guardians.profileEnc,
-    updatedAt: schema.guardians.updatedAt,
-  }).from(schema.guardians).where(and(
-    eq(schema.guardians.id, id),
-    eq(schema.guardians.ownerUserId, user.id),
-    eq(schema.guardians.schoolId, user.schoolId!),
-  )).limit(1)
-  if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
+  try {
+    const [guardian] = await db.select({
+      id: schema.guardians.id,
+      profileEnc: schema.guardians.profileEnc,
+      updatedAt: schema.guardians.updatedAt,
+    }).from(schema.guardians).where(and(
+      eq(schema.guardians.id, id),
+      eq(schema.guardians.ownerUserId, user.id),
+      eq(schema.guardians.schoolId, user.schoolId!),
+    )).limit(1)
+    if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
   if (expectedUpdatedAt && !matchesExpectedUpdatedAt(guardian.updatedAt, expectedUpdatedAt)) {
     throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '家长档案已被其他用户修改，请刷新后重试' })
   }
@@ -61,6 +66,11 @@ export default defineEventHandler(async (event) => {
   }
   if (body.phone !== undefined) patch.phoneEnc = body.phone ? encryptSensitive(body.phone, secret) : null
   if (body.relation !== undefined) patch.relation = body.relation
+  if (body.workUnit !== undefined) patch.workUnit = body.workUnit
+  if (body.idCard !== undefined) {
+    patch.idCardEnc = body.idCard ? encryptSensitive(body.idCard, secret) : null
+    patch.idCardSearch = body.idCard ? searchableHash(body.idCard, secret) : null
+  }
   if (body.externalRef !== undefined) {
     patch.externalRefEnc = body.externalRef ? encryptSensitive(body.externalRef, secret) : null
     patch.externalRefSearch = body.externalRef ? searchableHash(body.externalRef, secret) : null
@@ -83,4 +93,8 @@ export default defineEventHandler(async (event) => {
   if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '家长档案已被其他用户修改，请刷新后重试' })
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.guardian.update', targetType: 'guardian', targetId: id })
   return { ok: true }
+  } catch (error: any) {
+    if (error?.code === '23505') throw createError({ statusCode: 409, message: '该身份证号已登记在其他家长档案中' })
+    throw error
+  }
 })

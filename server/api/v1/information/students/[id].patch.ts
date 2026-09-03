@@ -33,6 +33,8 @@ const bodySchema = z.object({
   classId: z.string().uuid().nullable().optional(),
   /** 入学日期（学籍字段） */
   enrolledAt: z.string().datetime().nullable().optional(),
+  /** 现住址（AES-256-GCM 加密落 address_enc） */
+  address: z.string().trim().max(1000).nullable().optional(),
   /** 个体问题解决方案状态：unresolved/in_progress/resolved（红/黄/绿点） */
   caseSolutionStatus: z.enum(['unresolved', 'in_progress', 'resolved']).optional(),
   profile: studentProfileSchema.optional()
@@ -81,6 +83,7 @@ export default defineEventHandler(async (event) => {
     patch.profileEnc = encryptSensitive(JSON.stringify(nextProfile), secret)
   }
   if (body.notes !== undefined) patch.notesEnc = body.notes ? encryptSensitive(body.notes, secret) : null
+  if (body.address !== undefined) patch.addressEnc = body.address ? encryptSensitive(body.address, secret) : null
   if (body.classId !== undefined) patch.classId = body.classId
   if (body.enrolledAt !== undefined) patch.enrolledAt = body.enrolledAt ? new Date(body.enrolledAt) : null
   if (body.caseSolutionStatus !== undefined) patch.caseSolutionStatus = body.caseSolutionStatus

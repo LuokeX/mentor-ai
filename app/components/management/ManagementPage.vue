@@ -4,6 +4,8 @@ defineProps<{
   description?: string
   createLabel?: string
   canCreate?: boolean
+  /** 提供时，「创建」按钮渲染为下拉菜单，点击各选项执行对应 handle */
+  createActions?: Array<{ label: string; icon?: string; handle: () => void }>
 }>()
 const emit = defineEmits<{ create: [] }>()
 
@@ -173,8 +175,34 @@ const contextualNav = computed(() => route.path.startsWith('/information')
         <h1 class="text-2xl font-semibold text-gray-900">{{ title }}</h1>
         <p v-if="description" class="mt-1 text-base text-gray-500">{{ description }}</p>
       </div>
+      <details
+        v-if="canCreate && createActions?.length"
+        class="relative"
+        @mouseenter="openDropdown"
+      >
+        <summary
+          class="inline-flex cursor-pointer list-none select-none items-center gap-1.5 rounded-xl bg-[var(--ui-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+          @click.prevent.stop="toggleDropdown"
+        >
+          <UIcon name="i-lucide-plus" class="size-4" />
+          {{ createLabel }}
+          <UIcon name="i-lucide-chevron-down" class="size-3.5 opacity-70" />
+        </summary>
+        <div class="absolute left-0 top-full z-30 mt-1.5 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+          <button
+            v-for="action in createActions"
+            :key="action.label"
+            type="button"
+            class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800"
+            @click="closeDropdown($event); action.handle()"
+          >
+            <UIcon :name="action.icon || 'i-lucide-file-plus'" class="size-4 text-slate-400" />
+            {{ action.label }}
+          </button>
+        </div>
+      </details>
       <UButton
-        v-if="canCreate && createLabel"
+        v-else-if="canCreate && createLabel"
         icon="i-lucide-plus"
         color="primary"
         size="sm"

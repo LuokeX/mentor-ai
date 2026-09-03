@@ -338,6 +338,9 @@ export const guardians = pgTable('guardians', {
   // ---- 家长业务档案（服务 home_school 模块）----
   occupation: varchar('occupation', { length: 80 }),
   workUnit: varchar('work_unit', { length: 200 }),
+  /** 身份证号（AES-256-GCM 加密）；idCardSearch 用于校内查重 */
+  idCardEnc: text('id_card_enc'),
+  idCardSearch: varchar('id_card_search', { length: 64 }),
   contactEnc: text('contact_enc'),
   isPrimary: boolean('is_primary').default(false).notNull(),
   notesEnc: text('notes_enc'),
@@ -356,7 +359,9 @@ export const guardians = pgTable('guardians', {
 }, table => [
   index('guardians_owner_idx').on(table.ownerUserId),
   index('guardians_school_owner_status_updated_idx').on(table.schoolId, table.ownerUserId, table.status, table.updatedAt),
-  uniqueIndex('guardians_school_external_ref_uidx').on(table.schoolId, table.externalRefSearch)
+  uniqueIndex('guardians_school_external_ref_uidx').on(table.schoolId, table.externalRefSearch),
+  /** 同学校内身份证号唯一（NULL 不参与唯一约束，兼容未登记身份证的存量家长） */
+  uniqueIndex('guardians_school_id_card_uidx').on(table.schoolId, table.idCardSearch)
 ])
 
 export const studentGuardians = pgTable('student_guardians', {

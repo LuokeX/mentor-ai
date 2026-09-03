@@ -60,6 +60,8 @@ export default defineEventHandler(async (event) => {
     student: {
       ...student,
       name: decryptSensitive(student.nameEnc, secret),
+      /** 现住址（address_enc 解密） */
+      address: decryptSensitive(student.addressEnc, secret),
       profile,
       notes: decryptSensitive(student.notesEnc, secret),
       className: klass[0]?.name || null,
@@ -76,6 +78,7 @@ export default defineEventHandler(async (event) => {
       nameEnc: undefined,
       profileEnc: undefined,
       notesEnc: undefined,
+      addressEnc: undefined,
       nameSearch: undefined
     },
     class: klass[0] || null,

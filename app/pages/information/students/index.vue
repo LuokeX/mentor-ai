@@ -42,6 +42,7 @@ const statusOptions = [
 ]
 
 const drawerOpen = ref(false)
+const batchImportOpen = ref(false)
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({ name: '', classId: '', gender: '', notes: '' })
@@ -54,6 +55,10 @@ function openCreate() {
   Object.assign(form, { name: '', classId: '', gender: '', notes: '' })
   formError.value = ''
   drawerOpen.value = true
+}
+
+function openBatchImport() {
+  batchImportOpen.value = true
 }
 
 async function createStudent() {
@@ -102,7 +107,10 @@ function closeDrawer() {
     description="维护您负责班级中的学生档案；归档和跨教师移交由学校管理员处理。"
     :can-create="list.pageCapabilities.value.includes('create')"
     create-label="添加学生"
-    @create="openCreate"
+    :create-actions="[
+      { label: '添加信息', icon: 'i-lucide-user-round-plus', handle: openCreate },
+      { label: '批量添加信息', icon: 'i-lucide-file-spreadsheet', handle: openBatchImport },
+    ]"
   >
     <TableToolbar
       :search-value="list.q.value"
@@ -183,5 +191,16 @@ function closeDrawer() {
         </div>
       </form>
     </EntityFormDrawer>
+
+    <BatchImportDrawer
+      :open="batchImportOpen"
+      title="批量添加学生"
+      templateUrl="/api/v1/information/students/import-template"
+      previewUrl="/api/v1/information/students/import-preview"
+      commitUrl="/api/v1/information/students/import-commit"
+      :sample-fields="['name', 'className']"
+      @close="batchImportOpen = false"
+      @imported="list.refresh"
+    />
   </ManagementPage>
 </template>
