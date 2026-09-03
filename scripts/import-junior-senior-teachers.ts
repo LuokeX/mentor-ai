@@ -24,14 +24,13 @@ interface ClassRow {
 }
 
 // 初中部（grade 7）+ 高中部（grade 10/11），沿用既有「X年级数字班-测试」模式
+// 注：ROWS 保持「本次待导入名单」语义，已导入项归档于注释：
+//   2026-08-20：七年级八班-测试 张九辰 13963390231 | 七年级九班-测试 王伟伟 18033650136 | 七年级十班-测试 张锐 13132545177
+//               高一八班-测试 张新凯 13672116029 | 高一九班-测试 张浩然 18920963515 | 高一十班-测试 王绍鹏 17277769473
+//               高二八班-测试 魏苗苗 17822450916
+//   2026-08-24：七年级十一班-测试 曹莹 17602669264 | 高一十一班-测试 李美慧 15626042800
 const ROWS: ClassRow[] = [
-  { className: '七年级八班-测试', grade: 7, section: 'junior', head: { name: '张九辰', phone: '13963390231' } },
-  { className: '七年级九班-测试', grade: 7, section: 'junior', head: { name: '王伟伟', phone: '18033650136' } },
-  { className: '七年级十班-测试', grade: 7, section: 'junior', head: { name: '张锐', phone: '13132545177' } },
-  { className: '高一八班-测试', grade: 10, section: 'senior', head: { name: '张新凯', phone: '13672116029' } },
-  { className: '高一九班-测试', grade: 10, section: 'senior', head: { name: '张浩然', phone: '18920963515' } },
-  { className: '高一十班-测试', grade: 10, section: 'senior', head: { name: '王绍鹏', phone: '17277769473' } },
-  { className: '高二八班-测试', grade: 11, section: 'senior', head: { name: '魏苗苗', phone: '17822450916' } }
+  { className: '七年级十二班-测试', grade: 7, section: 'junior', head: { name: '顾守连', phone: '13852834971' } }
 ]
 
 const PHONE_RE = /^1\d{10}$/
