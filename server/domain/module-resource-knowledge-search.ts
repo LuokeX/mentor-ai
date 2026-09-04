@@ -36,7 +36,7 @@ export async function searchKnowledgeChunks(
   },
 ): Promise<KnowledgeSearchResult[]> {
   const module = filters?.module
-  const minSimilarity = filters?.minSimilarity ?? 0.65
+  const minSimilarity = filters?.minSimilarity ?? 0.45
   const limit = filters?.limit ?? 5
 
   // 构建 pgvector 向量字符串: '[1.2,3.4,...]'

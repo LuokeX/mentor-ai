@@ -1,6 +1,6 @@
 import type { H3Event } from 'h3'
 import { z } from 'zod'
-import { routeDecisionSchema, type ClarificationRound, type ClarificationSummary, type RouteDecision } from '../../shared/contracts'
+import { routeDecisionSchema, clarificationJudgeSchema, type ClarificationRound, type ClarificationSummary, type ClarificationJudge, type RouteDecision } from '../../shared/contracts'
 import { isValidSummaryOutput, normalizeModuleProportions, sanitizeHistoryForSummary, topModuleFromScores, type SummaryJsonMeta } from '../domain/chat-clarification'
 import type { KeywordRouteEntry, ModuleId, OutputTemplateEntry, RuleExecResult } from '../../shared/contracts'
 import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
@@ -213,6 +213,72 @@ async function buildSummaryMessages(event: H3Event, input: {
 /**
  * 流式调用 DeepSeek 进行追问，实时推送 question 内容，返回解析后的 ClarificationRound。
  */
+/**
+ * 按需追问入口判定（首轮）：判断教师描述的信息充分度。
+ * 足够 → 跳过追问直接总结；不足 → 进入追问轮。
+ * 使用轻量一次调用（router 模型、温度 0.1、3s 超时、失败静默视为"需要追问"以保持历史兜底行为）。
+ */
+export async function judgeClarificationNeeded(
+  event: H3Event,
+  input: {
+    schoolId: string
+    ownerUserId: string
+    sessionId: string
+    message: string
+    history?: Array<{ role: 'user' | 'assistant', content: string }>
+  }
+): Promise<ClarificationJudge> {
+  const config = useRuntimeConfig(event)
+  if (!config.deepseekApiKey) return { needClarification: true, reason: 'DeepSeek 未接入，按需追问不可用' }
+  const redacted = redactPii(input.message)
+  const historyText = (input.history || []).slice(-6).map(item => `${item.role === 'user' ? '教师' : '助手'}: ${redactPii(item.content).slice(0, 300)}`).join('\n')
+  const rt = await getAiRuntimeConfig(event)
+  const routerModel = rt.routerModel || config.deepseekRouterModel
+  const prompt = await renderPrompt(event, 'clarification_judge', { userText: redacted, historyText })
+  const messages: Array<{ role: 'system' | 'user', content: string }> = []
+  if (prompt.system) messages.push({ role: 'system', content: prompt.system })
+  if (prompt.user) messages.push({ role: 'user', content: prompt.user })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const startedAt = Date.now()
+      const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
+        body: JSON.stringify({
+          model: routerModel,
+          messages,
+          response_format: { type: 'json_object' },
+          thinking: { type: 'disabled' },
+          temperature: 0.1
+        }),
+        signal: AbortSignal.timeout(3000)
+      })
+      if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
+      const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+      const content = json.choices?.[0]?.message?.content
+      if (!content) throw new Error('Empty model output')
+      const parsed = clarificationJudgeSchema.parse(JSON.parse(content))
+      await useDb(event).insert(schema.aiModelCalls).values({
+        schoolId: input.schoolId,
+        ownerUserId: input.ownerUserId,
+        sessionId: input.sessionId,
+        provider: 'deepseek',
+        model: routerModel,
+        purpose: 'clarification_judge',
+        status: 'success',
+        latencyMs: Date.now() - startedAt
+      }).catch(() => undefined)
+      return parsed
+    } catch {
+      if (attempt === 1) return { needClarification: true, reason: '判定调用失败，保持追问兜底' }
+    }
+  }
+  return { needClarification: true, reason: '判定调用失败，保持追问兜底' }
+}
+
+/**
+ * 流式调用 DeepSeek 生成追问轮，实时推送问题文本，返回解析后的 ClarificationRound。
+ */
 export async function streamClarificationRound(event: H3Event, input: {
   schoolId: string
   ownerUserId: string
@@ -327,7 +393,7 @@ export async function streamClarificationRound(event: H3Event, input: {
       question = question.slice(0, optionDelimIdx).trim()
     }
 
-    let jsonMeta: { options?: string[]; moduleScores?: Record<string, number> } = {}
+    let jsonMeta: { options?: string[]; moduleScores?: Record<string, number>; needMoreInfo?: boolean } = {}
     if (jsonPart) {
       // 从 jsonPart 中提取 JSON 对象，容忍模型在 JSON 后附带多余文本
       const firstBrace = jsonPart.indexOf('{')
@@ -368,7 +434,9 @@ export async function streamClarificationRound(event: H3Event, input: {
       round: input.clarificationRound,
       question: question.slice(0, 200),
       options: (jsonMeta.options && jsonMeta.options.length ? jsonMeta.options : textOptions.length ? textOptions : fallback.options).slice(0, 6),
-      moduleScores: (jsonMeta.moduleScores || input.previousModuleScores || defaultScores) as ClarificationRound['moduleScores']
+      moduleScores: (jsonMeta.moduleScores || input.previousModuleScores || defaultScores) as ClarificationRound['moduleScores'],
+      // 按需追问：模型未输出时视作 true（保持历史行为：继续追问）；显式 false 时由调用方直接进入总结
+      needMoreInfo: jsonMeta.needMoreInfo !== false
     }
 
     await useDb(event).insert(schema.aiModelCalls).values({

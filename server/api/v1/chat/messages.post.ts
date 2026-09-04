@@ -3,7 +3,7 @@ import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { decryptSensitive, encryptSensitive } from '../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../domain/safety'
-import { routeWithDeepSeek, semanticSafetySignals, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
+import { judgeClarificationNeeded, routeWithDeepSeek, semanticSafetySignals, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
 import type { KnowledgeCitation } from '../../../integrations/deepseek'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
 import { composeClarificationSummaryHistory, topModuleFromScores } from '../../../domain/chat-clarification'
@@ -164,7 +164,7 @@ export default defineEventHandler(async (event) => {
         try {
           const embedding = await embedModuleResourceQuery(event, query)
           if (!embedding || embedding.length === 0) return []
-          const results = await searchKnowledgeChunks(db, embedding, { module, minSimilarity: 0.65, limit: 5 })
+          const results = await searchKnowledgeChunks(db, embedding, { module, minSimilarity: 0.45, limit: 5 })
           return results.map(r => ({
             chunkId: r.chunkId,
             documentTitle: r.documentTitle,
@@ -177,6 +177,50 @@ export default defineEventHandler(async (event) => {
         } catch {
           return []
         }
+      }
+
+      // 澄清总结（isDone / 轮数上限 / 首轮判定无需追问 / 逐轮判定无需追问 四路复用）
+      const runClarificationSummary = async (input: {
+        history: Array<{ role: 'user' | 'assistant', content: string }>
+        citations: KnowledgeCitation[]
+        includeCurrentMessage: boolean
+        lastModuleScores?: Record<string, number>
+      }): Promise<void> => {
+        const lastScores = input.lastModuleScores || clarificationState?.moduleScores || {}
+        const summaryHistory = composeClarificationSummaryHistory({
+          entityMemory,
+          history: input.history,
+          currentMessage: body.message,
+          includeCurrentMessage: input.includeCurrentMessage
+        })
+        emit(controller, 'answer_start', { mode: 'deepseek' })
+        const summary = await streamClarificationSummary(event, {
+          schoolId: user.schoolId!,
+          ownerUserId: user.id,
+          sessionId: ownedSessionId,
+          history: summaryHistory,
+          citations: input.citations,
+          lastModuleScores: lastScores,
+          teacherProfileText,
+          onDelta: text => emit(controller, 'answer_delta', { text })
+        })
+        await db.update(schema.chatSessions).set({
+          title: buildChatTitle({ messages: [...history.filter((h) => h.role === 'user').map((h) => h.content), body.message] }),
+          metadata: { clarificationState: { phase: 'done', round: clarificationState?.round ?? 0, moduleScores: summary.data.moduleProportions } },
+          updatedAt: new Date()
+        }).where(eq(schema.chatSessions.id, ownedSessionId))
+        const summaryText = summary.data.answer
+        const [assistantMessage] = await db.insert(schema.chatMessages).values({
+          schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
+          role: 'assistant', contentEnc: encryptSensitive(summaryText, config.encryptionKey),
+          metadata: { type: 'clarification_summary', answer: summary.data.answer, rationale: summary.data.rationale, primaryModule: summary.data.primaryModule, moduleProportions: summary.data.moduleProportions, suggestedActions: summary.data.suggestedActions }
+        }).returning({ id: schema.chatMessages.id })
+        if (assistantMessage) {
+          emit(controller, 'answer', { messageId: assistantMessage.id, text: summaryText, mode: 'deepseek', suggestedActions: summary.data.suggestedActions })
+        }
+        emit(controller, 'clarification_summary', summary.data)
+        emit(controller, 'done', { sessionId: ownedSessionId })
+        controller.close()
       }
 
       // 从 clarificationState.moduleScores 中提取最高分模块作为知识检索过滤条件
@@ -206,48 +250,12 @@ export default defineEventHandler(async (event) => {
 
         const isDoneSignal = body.message.trim() === CLARIFICATION_DONE_SIGNAL
 
-        // ---- 追问流程 ----
+        // ---- 追问流程（按需追问）----
         if (clarificationState && clarificationState.phase === 'clarifying') {
           if (isDoneSignal) {
             // 用户表示没有补充了 → 进入总结阶段
-            const combinedHistory = composeClarificationSummaryHistory({
-              entityMemory,
-              history,
-              currentMessage: body.message,
-              includeCurrentMessage: false
-            })
-            const topModule = topModuleFromScores(clarificationState.moduleScores)
-            const citations = await fetchKnowledgeCitations(body.message, topModule)
-            emit(controller, 'answer_start', { mode: 'deepseek' })
-            const summary = await streamClarificationSummary(event, {
-              schoolId: user.schoolId!,
-              ownerUserId: user.id,
-              sessionId: ownedSessionId,
-              history: combinedHistory,
-              citations,
-              lastModuleScores: clarificationState.moduleScores,
-              teacherProfileText,
-              onDelta: text => emit(controller, 'answer_delta', { text })
-            })
-            await db.update(schema.chatSessions).set({
-              title: buildChatTitle({ messages: [...history.filter((h) => h.role === 'user').map((h) => h.content), body.message] }),
-              metadata: { clarificationState: { phase: 'done', round: clarificationState.round, moduleScores: summary.data.moduleProportions } },
-              updatedAt: new Date()
-            }).where(eq(schema.chatSessions.id, ownedSessionId))
-
-            // 保存总结消息
-            const summaryText = summary.data.answer
-            const [assistantMessage] = await db.insert(schema.chatMessages).values({
-              schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
-              role: 'assistant', contentEnc: encryptSensitive(summaryText, config.encryptionKey),
-              metadata: { type: 'clarification_summary', answer: summary.data.answer, rationale: summary.data.rationale, primaryModule: summary.data.primaryModule, moduleProportions: summary.data.moduleProportions, suggestedActions: summary.data.suggestedActions }
-            }).returning({ id: schema.chatMessages.id })
-            if (assistantMessage) {
-              emit(controller, 'answer', { messageId: assistantMessage.id, text: summaryText, mode: 'deepseek', suggestedActions: summary.data.suggestedActions })
-            }
-            emit(controller, 'clarification_summary', summary.data)
-            emit(controller, 'done', { sessionId: ownedSessionId })
-            controller.close()
+            const citations = await fetchKnowledgeCitations(body.message, topModuleFromScores(clarificationState.moduleScores))
+            await runClarificationSummary({ history, citations, includeCurrentMessage: false })
             return
           }
 
@@ -256,48 +264,30 @@ export default defineEventHandler(async (event) => {
 
           // 达到上限 → 自动进入总结阶段
           if (nextRound > MAX_CLARIFICATION_ROUNDS) {
-            const combinedHistory = composeClarificationSummaryHistory({
-              entityMemory,
-              history,
-              currentMessage: body.message,
-              includeCurrentMessage: true
-            })
-            const topModule = topModuleFromScores(clarificationState.moduleScores)
-            const citations = await fetchKnowledgeCitations(body.message, topModule)
-            emit(controller, 'answer_start', { mode: 'deepseek' })
-            const summary = await streamClarificationSummary(event, {
-              schoolId: user.schoolId!,
-              ownerUserId: user.id,
-              sessionId: ownedSessionId,
-              history: combinedHistory,
-              citations,
-              lastModuleScores: clarificationState.moduleScores,
-              teacherProfileText,
-              onDelta: text => emit(controller, 'answer_delta', { text })
-            })
-            await db.update(schema.chatSessions).set({
-              title: buildChatTitle({ messages: [...history.filter((h) => h.role === 'user').map((h) => h.content), body.message] }),
-              metadata: { clarificationState: { phase: 'done', round: clarificationState.round, moduleScores: summary.data.moduleProportions } },
-              updatedAt: new Date()
-            }).where(eq(schema.chatSessions.id, ownedSessionId))
-
-            const [assistantMessage] = await db.insert(schema.chatMessages).values({
-              schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
-              role: 'assistant', contentEnc: encryptSensitive(summary.data.answer, config.encryptionKey),
-              metadata: { type: 'clarification_summary', answer: summary.data.answer, rationale: summary.data.rationale, primaryModule: summary.data.primaryModule, moduleProportions: summary.data.moduleProportions, suggestedActions: summary.data.suggestedActions }
-            }).returning({ id: schema.chatMessages.id })
-            if (assistantMessage) {
-              emit(controller, 'answer', { messageId: assistantMessage.id, text: summary.data.answer, mode: 'deepseek', suggestedActions: summary.data.suggestedActions })
-            }
-            emit(controller, 'clarification_summary', summary.data)
-            emit(controller, 'done', { sessionId: ownedSessionId })
-            controller.close()
+            const citations = await fetchKnowledgeCitations(body.message, topModuleFromScores(clarificationState.moduleScores))
+            await runClarificationSummary({ history, citations, includeCurrentMessage: true })
             return
           }
 
           const combinedHistory = [...entityMemory, ...history]
           const topModule = topModuleFromScores(clarificationState.moduleScores)
           const citations = await fetchKnowledgeCitations(body.message, topModule)
+
+          // 按需追问（首轮）：先判定信息充分度，足够则跳过追问直接总结
+          if (clarificationState.round === 0) {
+            const judge = await judgeClarificationNeeded(event, {
+              schoolId: user.schoolId!,
+              ownerUserId: user.id,
+              sessionId: ownedSessionId,
+              message: body.message,
+              history: combinedHistory
+            })
+            if (!judge.needClarification) {
+              await runClarificationSummary({ history, citations, includeCurrentMessage: true })
+              return
+            }
+          }
+
           emit(controller, 'answer_start', { mode: 'deepseek' })
           const result = await streamClarificationRound(event, {
             schoolId: user.schoolId!,
@@ -311,6 +301,16 @@ export default defineEventHandler(async (event) => {
             teacherProfileText,
             onDelta: text => emit(controller, 'answer_delta', { text })
           })
+
+          // 按需追问（每轮自决）：模型表示信息已足够 → 更新评分后直接总结
+          if (result.data.needMoreInfo === false) {
+            await db.update(schema.chatSessions).set({
+              metadata: { clarificationState: { phase: 'summarizing', round: nextRound, moduleScores: result.data.moduleScores } },
+              updatedAt: new Date()
+            }).where(eq(schema.chatSessions.id, ownedSessionId))
+            await runClarificationSummary({ history, citations, includeCurrentMessage: true, lastModuleScores: result.data.moduleScores })
+            return
+          }
 
           // 更新会话追问状态
           const newClarificationState: ClarificationState = {
@@ -328,7 +328,7 @@ export default defineEventHandler(async (event) => {
           const [assistantMessage] = await db.insert(schema.chatMessages).values({
             schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
             role: 'assistant', contentEnc: encryptSensitive(clarificationText, config.encryptionKey),
-            metadata: { type: 'clarification_round', round: result.data.round, question: result.data.question, options: result.data.options, moduleScores: result.data.moduleScores }
+            metadata: { type: 'clarification_round', round: result.data.round, question: result.data.question, options: result.data.options, moduleScores: result.data.moduleScores, needMoreInfo: result.data.needMoreInfo ?? true }
           }).returning({ id: schema.chatMessages.id })
           if (assistantMessage) {
             emit(controller, 'answer', { messageId: assistantMessage.id, text: result.data.question, mode: 'deepseek' })

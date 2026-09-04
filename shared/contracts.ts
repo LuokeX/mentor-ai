@@ -598,7 +598,12 @@ export const clarificationRoundSchema = z.object({
   round: z.number().int().min(1).max(10),
   question: z.string().min(5).max(300),
   options: z.array(z.string().min(2).max(80)).min(3).max(8),
-  moduleScores: z.record(moduleIdSchema, z.number().min(0).max(1))
+  moduleScores: z.record(moduleIdSchema, z.number().min(0).max(1)),
+  /**
+   * 按需追问：模型声明是否还需要继续追问。
+   * 缺省 true（继续），false 表示信息已足够、服务端直接进入总结。
+   */
+  needMoreInfo: z.boolean().optional()
 })
 
 export const clarificationSummarySchema = z.object({
@@ -614,8 +619,15 @@ export const clarificationSummarySchema = z.object({
   })).max(4)
 })
 
+/** 首轮信息充分度判定（按需追问入口）：模型判断教师描述是否已足够清晰，不足时才追问。 */
+export const clarificationJudgeSchema = z.object({
+  needClarification: z.boolean(),
+  reason: z.string().max(200).default('')
+})
+
 export type ClarificationRound = z.infer<typeof clarificationRoundSchema>
 export type ClarificationSummary = z.infer<typeof clarificationSummarySchema>
+export type ClarificationJudge = z.infer<typeof clarificationJudgeSchema>
 
 // ---- 评估系统可配置化 ----
 // V2 字段映射: ③ 量表-清单 + ④ 量表-题目 + ④b 量表-选项组 + ④c 量表-维度定义
