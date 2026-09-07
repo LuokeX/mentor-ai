@@ -31,16 +31,32 @@ interface SourceItem {
   resourceVersionId?: string
 }
 
+interface AgentActionCard {
+  kind: 'recommend_assessment' | 'info'
+  module?: ModuleId
+  assessmentCode?: string
+  title: string
+  reason?: string
+  content?: string
+  ctaLabel?: string
+}
+
 interface TimelineItem {
   messageId?: string
   role: 'user' | 'assistant'
   text: string
   sources?: SourceItem[]
-  mode?: 'deepseek' | 'local_fallback'
+  mode?: 'deepseek' | 'local_fallback' | 'agent'
   planUpdateSuggestions?: Array<any>
   feedback?: 'helpful' | 'not_helpful'
   clarification?: ClarificationRoundData
   summary?: ClarificationSummaryData
+  /** Agent 进程标记（工具调用记录：纯文本或结构化 {name,title,args}） */
+  toolCalls?: Array<string | { name: string; title?: string; args?: string }>
+  /** Agent 输出的动作卡（P0：量表推荐卡） */
+  actionCards?: AgentActionCard[]
+  /** 回答是否已完成（answer 事件到达）：完成前不展示工具/引用/量表过程块，避免抢在流式答案前出现 */
+  answerCompleted?: boolean
 }
 
 const { user } = useAuth()
@@ -57,7 +73,17 @@ const sessionId = ref<string>()
 const route = ref<(RouteDecision & { id: string }) | null>(null)
 const fuse = ref<{ message: string, guide: string } | null>(null)
 const timeline = ref<TimelineItem[]>([])
-const assistantMode = ref<'deepseek' | 'local_fallback'>(assistantStatus.value?.mode || 'local_fallback')
+const assistantMode = ref<'deepseek' | 'local_fallback' | 'agent'>(assistantStatus.value?.mode || 'local_fallback')
+/** 等待中状态条文案（Agent 灰度下由 thinking 事件更新为「Agent 思考中…」） */
+const pendingLabel = ref('正在澄清问题并判断推荐模块')
+/** 是否存在「待填充」的空气泡（answer_start 已建立但文本未流入）：动画应并入该气泡，独立状态条不再显示 */
+const pendingAssistantBubble = computed(() => {
+  const last = timeline.value[timeline.value.length - 1]
+  return Boolean(last && last.role === 'assistant' && last.text === '' && pending.value)
+})
+const assistantModeLabel = computed(() => assistantMode.value === 'deepseek' ? 'DeepSeek 已接入' : assistantMode.value === 'agent' ? 'Agent 回答模式' : '本地降级模式')
+const assistantModeColor = computed(() => assistantMode.value === 'deepseek' ? 'success' : assistantMode.value === 'agent' ? 'primary' : 'warning')
+const assistantModeDot = computed(() => assistantMode.value === 'deepseek' ? 'bg-emerald-500' : assistantMode.value === 'agent' ? 'bg-blue-500' : 'bg-amber-500')
 const messageViewport = ref<HTMLElement | null>(null)
 const copiedMessage = ref<number | null>(null)
 const confirmingModule = ref<ModuleId | null>(null)
@@ -187,7 +213,9 @@ async function loadSession(id: string) {
         text: item.text,
         mode: item.metadata?.mode,
         sources: item.metadata?.sources || [],
-        planUpdateSuggestions: item.metadata?.planUpdateSuggestions || []
+        planUpdateSuggestions: item.metadata?.planUpdateSuggestions || [],
+        // 历史消息都是已完成的回答：工具/引用/量表块可以直接展示
+        answerCompleted: item.role === 'assistant'
       }
       // 恢复追问轮次数据
       if (item.metadata?.type === 'clarification_round') {
@@ -211,6 +239,12 @@ async function loadSession(id: string) {
           suggestedActions: item.metadata.suggestedActions
         }
         if (item.metadata.moduleProportions) updateScores(item.metadata.moduleProportions)
+      }
+      // 恢复 Agent 回答的动作卡与工具/引用过程（含旧消息兼容：无 toolCalls/sources 字段时置空数组）
+      if (item.metadata?.type === 'agent_answer') {
+        base.actionCards = item.metadata?.actionCards || []
+        base.toolCalls = Array.isArray(item.metadata?.toolCalls) ? item.metadata.toolCalls : []
+        base.sources = Array.isArray(item.metadata?.sources) ? item.metadata.sources : []
       }
       return base
     })
@@ -246,6 +280,7 @@ async function ask() {
   const text = input.value.trim()
   input.value = ''
   pending.value = true
+  pendingLabel.value = '正在澄清问题并判断推荐模块'
   route.value = null
   fuse.value = null
   routeConfirmError.value = ''
@@ -282,13 +317,21 @@ async function ask() {
           }
         }
         if (event === 'answer_start') {
-          pending.value = false
+          // Agent 模式：保持 pending 状态条（文案随 thinking 变化），气泡先建立供工具/引用/卡片挂载
           assistantMode.value = data.mode
           timeline.value.push({ role: 'assistant', text: '', mode: data.mode, sources: [] })
           assistantIndex = timeline.value.length - 1
+          if (data.mode === 'agent') {
+            pending.value = true
+            pendingLabel.value = 'Agent 正在分析问题…'
+          } else {
+            pending.value = false
+          }
           await scrollToLatest()
         }
         if (event === 'answer_delta') {
+          // 文字开始流入：撤下状态条（只在首次 delta 生效）
+          if (assistantIndex >= 0 && timeline.value[assistantIndex]?.text === '') pending.value = false
           if (assistantIndex < 0) {
             pending.value = false
             timeline.value.push({ role: 'assistant', text: '', sources: [] })
@@ -305,8 +348,9 @@ async function ask() {
             timeline.value[assistantIndex]!.messageId = data.messageId
             timeline.value[assistantIndex]!.text = data.text
             timeline.value[assistantIndex]!.mode = data.mode
+            timeline.value[assistantIndex]!.answerCompleted = true
           } else {
-            timeline.value.push({ messageId: data.messageId, role: 'assistant', text: data.text, mode: data.mode, sources: [] })
+            timeline.value.push({ messageId: data.messageId, role: 'assistant', text: data.text, mode: data.mode, sources: [], answerCompleted: true })
             assistantIndex = timeline.value.length - 1
           }
           await scrollToLatest()
@@ -315,7 +359,6 @@ async function ask() {
           timeline.value[assistantIndex]!.messageId = data.messageId
           timeline.value[assistantIndex]!.planUpdateSuggestions = data.suggestions
         }
-        if (event === 'sources' && assistantIndex >= 0) timeline.value[assistantIndex]!.sources = data
         if (event === 'route') route.value = data
         if (event === 'clarification_round') {
           if (assistantIndex >= 0) {
@@ -328,6 +371,70 @@ async function ask() {
             timeline.value[assistantIndex]!.summary = data
           }
           updateScores(data.moduleProportions)
+        }
+        if (event === 'thinking') {
+          // Agent 思考中：复用现有 pending 状态条，仅更新文案（不新增气泡）
+          const phase = data && typeof data === 'object' ? (data as any)?.phase : undefined
+          pendingLabel.value = phase === 'tool' ? '正在调用工具…' : 'Agent 正在分析问题…'
+        }
+        if (event === 'tool_call') {
+          // 记入当前 assistant 气泡的工具调用过程（结构化：name/title/args）
+          if (assistantIndex >= 0 && timeline.value[assistantIndex]) {
+            const payload = data && typeof data === 'object' ? (data as any) : undefined
+            const toolName = typeof payload?.name === 'string' ? payload.name
+              : typeof payload?.tool === 'string' ? payload.tool
+                : typeof payload?.toolName === 'string' ? payload.toolName
+                  : typeof payload?.input?.tool === 'string' ? payload.input.tool : ''
+            const item = timeline.value[assistantIndex]!
+            if (!item.toolCalls) item.toolCalls = []
+            if (typeof payload?.title === 'string') {
+              item.toolCalls.push({
+                name: toolName || 'tool',
+                title: payload.title,
+                args: typeof payload?.args === 'string' ? payload.args.slice(0, 80) : undefined
+              })
+            } else {
+              item.toolCalls.push(`[工具] ${toolName || '工具'}`)
+            }
+            await scrollToLatest('auto')
+          }
+        }
+        if (event === 'sources') {
+          // 知识库引用来源标签：合并到当前 assistant 气泡（按 chunkId 去重）
+          if (assistantIndex >= 0 && timeline.value[assistantIndex]) {
+            const items = Array.isArray((data as any)?.items) ? (data as any).items : []
+            const item = timeline.value[assistantIndex]!
+            const existing = Array.isArray(item.sources) ? item.sources : (item.sources = [])
+            for (const src of items as any[]) {
+              if (src?.chunkId && !existing.some(s => s.chunkId === src.chunkId)) {
+                existing.push({
+                  chunkId: src.chunkId,
+                  documentTitle: src.documentTitle || '知识库片段',
+                  heading: src.heading || null,
+                  excerpt: src.excerpt,
+                  module: src.module || undefined,
+                  libraryType: src.libraryType || undefined
+                })
+              }
+            }
+            await scrollToLatest('auto')
+          }
+        }
+        if (event === 'action_card') {
+          // 兼容两种载荷：原始 ActionCard 或 { card: ActionCard } 包装
+          const wrapped = data && typeof data === 'object' && (data as any)?.card && typeof (data as any).card === 'object' ? (data as any).card : data
+          const card = wrapped && typeof wrapped === 'object' && typeof wrapped?.kind === 'string' ? wrapped as AgentActionCard : undefined
+          if (card) {
+            if (assistantIndex < 0) {
+              pending.value = false
+              timeline.value.push({ role: 'assistant', text: '', sources: [], actionCards: [] })
+              assistantIndex = timeline.value.length - 1
+            }
+            const item = timeline.value[assistantIndex]!
+            if (!item.actionCards) item.actionCards = []
+            item.actionCards.push(card)
+            await scrollToLatest()
+          }
         }
         if (event === 'fuse') fuse.value = data
         if (event === 'error') throw new Error(data.message)
@@ -417,6 +524,27 @@ async function confirmModule(module: ModuleId) {
         ? { contextType: selectedContext.value.type, contextId: selectedContext.value.id, sourceChatSessionId: sessionId.value }
         : { sourceChatSessionId: sessionId.value }),
       ...(route.value?.suggestedInstrumentCode ? { instrumentCode: route.value.suggestedInstrumentCode } : {}),
+      ...(lastUserMessage.value ? { q: lastUserMessage.value.slice(0, 500) } : {})
+    }
+  })
+}
+
+/** Agent 动作卡正文（recommend_assessment 用 reason，info 用 content） */
+function cardBodyText(card: AgentActionCard): string {
+  if (card.kind === 'recommend_assessment') return card.reason || ''
+  return card.content || ''
+}
+
+/** 量表推荐卡 CTA：跳转对应模块评估页（与 suggestedActions/route 确认跳转同模式） */
+function openAgentActionCard(card: AgentActionCard) {
+  if (card.kind !== 'recommend_assessment' || !card.module) return
+  void navigateTo({
+    path: `/module/${card.module}`,
+    query: {
+      ...(card.assessmentCode ? { instrumentCode: card.assessmentCode } : {}),
+      ...(selectedContext.value
+        ? { contextType: selectedContext.value.type, contextId: selectedContext.value.id, sourceChatSessionId: sessionId.value }
+        : { sourceChatSessionId: sessionId.value }),
       ...(lastUserMessage.value ? { q: lastUserMessage.value.slice(0, 500) } : {})
     }
   })
@@ -520,7 +648,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
           </div>
           <div class="flex min-w-0 flex-wrap items-center gap-2">
             <USelect v-model="selectedContextKey" :items="contextSelectItems" class="w-64 max-w-full" />
-            <UBadge :color="assistantMode==='deepseek'?'success':'warning'" variant="soft"><span class="mr-1.5 size-1.5 rounded-full" :class="assistantMode==='deepseek'?'bg-emerald-500':'bg-amber-500'" />{{ assistantMode==='deepseek'?'DeepSeek 已接入':'本地降级模式' }}</UBadge>
+            <UBadge :color="assistantModeColor" variant="soft"><span class="mr-1.5 size-1.5 rounded-full" :class="assistantModeDot" />{{ assistantModeLabel }}</UBadge>
           </div>
         </div>
         <div v-if="selectedContext" class="border-b border-emerald-100 bg-emerald-50/70 px-5 py-3 text-sm sm:px-6">
@@ -540,8 +668,36 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                 <div class="mb-1.5 flex items-center gap-2 text-[11px] text-slate-400" :class="item.role === 'user' ? 'justify-end' : ''"><span>{{ item.role === 'user' ? '我' : '赋能助手' }}</span><span v-if="item.role === 'assistant' && item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
                 <div class="group relative rounded-2xl px-4 py-3 text-sm leading-7 shadow-sm" :class="item.role === 'user' ? 'rounded-tr-md bg-emerald-800 text-white' : 'rounded-tl-md border border-slate-100 bg-white text-slate-700'">
                   <div v-if="item.role === 'user'" class="whitespace-pre-wrap" v-text="item.text" />
+                  <!-- 空气泡内部动画：answer_start 已建立气泡但文本未流入时，动画显示在气泡内，避免与底部独立状态条重复 -->
+                  <div v-else-if="item.text === '' && index === timeline.length - 1 && pending" class="flex items-center gap-1.5 py-1.5">
+                    <span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.3s]" />
+                    <span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.15s]" />
+                    <span class="size-1.5 animate-bounce rounded-full bg-emerald-400" />
+                    <span class="ml-2 text-xs text-slate-400">{{ pendingLabel }}</span>
+                  </div>
                   <div v-else class="markdown-body" v-html="useMarkdown(item.text)" />
                   <button v-if="item.role === 'assistant'" type="button" class="absolute -bottom-7 left-0 flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
+                </div>
+                <details v-if="item.role === 'assistant' && item.answerCompleted && item.toolCalls?.length" class="group mt-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-xs text-slate-600">
+                  <summary class="flex cursor-pointer list-none items-center justify-between px-3.5 py-2 font-medium text-slate-500">
+                    <span class="flex items-center gap-2"><UIcon name="i-lucide-wrench" class="size-4" />调用过 {{ item.toolCalls.length }} 个工具</span>
+                    <UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" />
+                  </summary>
+                  <div class="space-y-1.5 border-t border-slate-200 px-3 py-2.5">
+                    <div v-for="(call, callIndex) in item.toolCalls" :key="`tool-${callIndex}`" class="rounded-lg bg-white/80 p-2.5">
+                      <p class="flex items-center gap-1.5 font-medium text-slate-700"><UIcon name="i-lucide-wrench" class="size-3 shrink-0 text-slate-400" /><span>{{ typeof call === 'string' ? call.replace(/^\[工具\]\s*/, '') : (call.title || call.name) }}</span></p>
+                      <p v-if="typeof call === 'object' && call.args" class="mt-1 break-all text-[11px] leading-4 text-slate-400">{{ call.args }}</p>
+                    </div>
+                  </div>
+                </details>
+                <div v-if="item.role === 'assistant' && item.answerCompleted && item.actionCards?.length" class="mt-3 space-y-2">
+                  <div v-for="(card, cardIndex) in item.actionCards" :key="`action-card-${cardIndex}`" class="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+                    <p class="text-sm font-semibold text-emerald-800">{{ card.title }}</p>
+                    <p class="mt-1 text-sm leading-6 text-slate-600">{{ cardBodyText(card) }}</p>
+                    <div v-if="card.kind === 'recommend_assessment' && card.module" class="mt-3">
+                      <UButton color="primary" size="sm" @click="openAgentActionCard(card)">{{ card.ctaLabel || '进入模块完成评估' }}</UButton>
+                    </div>
+                  </div>
                 </div>
                 <ClarificationOptions
                   v-if="item.clarification"
@@ -571,7 +727,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                     >{{ action.label }}</UButton>
                   </div>
                 </div>
-                <details v-if="item.sources?.length" class="group mt-7 overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/50 text-xs text-slate-600">
+                <details v-if="item.role === 'assistant' && item.answerCompleted && item.sources?.length" class="group mt-7 overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/50 text-xs text-slate-600">
                   <summary class="flex cursor-pointer list-none items-center justify-between px-3.5 py-2.5 font-medium text-emerald-800"><span class="flex items-center gap-2"><UIcon name="i-lucide-book-open-check" class="size-4" />参考了 {{ item.sources.length }} 条知识内容</span><UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" /></summary>
                   <div class="space-y-2 border-t border-emerald-100 px-3 py-3">
                     <div v-for="(source, sourceIndex) in item.sources" :key="source.chunkId" class="rounded-lg bg-white/80 p-3">
@@ -585,7 +741,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
               </div>
             </div>
 
-            <div v-if="pending" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div><div><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="flex items-center gap-1.5 rounded-2xl rounded-tl-md border border-slate-100 bg-white px-4 py-4 shadow-sm"><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.3s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.15s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400" /><span class="ml-2 text-xs text-slate-400">正在澄清问题并判断推荐模块</span></div></div></div>
+            <div v-if="pending && !pendingAssistantBubble" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div><div><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="flex items-center gap-1.5 rounded-2xl rounded-tl-md border border-slate-100 bg-white px-4 py-4 shadow-sm"><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.3s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.15s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400" /><span class="ml-2 text-xs text-slate-400">{{ pendingLabel }}</span></div></div></div>
 
             <div v-if="fuse" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-red-200 bg-red-50 text-red-600 shadow-sm"><UIcon name="i-lucide-siren" class="size-4" /></div><div class="min-w-0 max-w-[88%] sm:max-w-[82%]"><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="rounded-2xl rounded-tl-md border-2 border-red-200 bg-red-50 p-5"><div class="flex gap-3"><UIcon name="i-lucide-siren" class="mt-1 size-6 shrink-0 text-red-600" /><div><h3 class="font-semibold text-red-900">常规建议已暂停</h3><p class="mt-2 text-sm text-red-800">{{ fuse.message }}</p><p class="mt-3 rounded-xl bg-white/70 p-3 text-sm text-red-900">{{ fuse.guide }}</p></div></div></div></div></div>
             <div v-if="route && !fuse" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div><div class="min-w-0 max-w-[88%] sm:max-w-[82%]"><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="rounded-2xl rounded-tl-md border border-emerald-100 bg-emerald-50/70 p-5"><div class="flex items-center gap-2 text-xs font-semibold text-emerald-700"><UIcon name="i-lucide-route" class="size-4" />建议处理方向</div><p class="mt-2 text-sm leading-6 text-slate-600">{{ route.rationale }}</p><UAlert v-if="routeConfirmError" class="mt-3" color="warning" variant="soft" :description="routeConfirmError" /><div class="mt-4 flex flex-wrap items-center gap-2"><UButton color="primary" :loading="confirmingModule === route.primaryModule" :disabled="Boolean(confirmingModule)" @click="confirmModule(route.primaryModule)">{{ moduleMeta[route.primaryModule].title }} · {{ Math.round(route.confidence * 100) }}%</UButton><UButton v-for="item in route.secondaryModules" :key="item.module" color="neutral" variant="soft" :loading="confirmingModule === item.module" :disabled="Boolean(confirmingModule)" @click="confirmModule(item.module)">{{ moduleMeta[item.module].title }} · {{ Math.round(item.confidence * 100) }}%</UButton></div><p class="mt-3 text-xs text-slate-500">由您确认处理方向；进入模块后再由规则引擎完成评估与分级。</p></div></div></div>

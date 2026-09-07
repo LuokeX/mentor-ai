@@ -91,7 +91,7 @@ function closeDropdown(event: Event) {
     <main class="pb-20 md:pb-0">
       <slot />
     </main>
-    <footer v-if="user" class="mx-auto max-w-7xl px-5 pb-6 pt-2 print:block">
+    <footer v-if="user && route.path !== '/'" class="mx-auto max-w-7xl px-5 pb-6 pt-2 print:block">
       <p class="text-center text-xs text-slate-400">AI 辅助建议，需人工专业判断</p>
     </footer>
     <SurveyFeedbackButton v-if="user" />

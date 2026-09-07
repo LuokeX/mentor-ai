@@ -101,7 +101,10 @@ services:
   app:
     build: .
     restart: unless-stopped
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      # 仅测试环境：开启 Agent（回答先行）灰度；正式环境（docker-compose.yml）不设置
+      AGENT_ENABLED: "true"
     depends_on:
       migrate:
         condition: service_completed_successfully

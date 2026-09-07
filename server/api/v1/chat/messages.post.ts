@@ -6,7 +6,10 @@ import { detectSafetySignals, createSafetyReferral } from '../../../domain/safet
 import { judgeClarificationNeeded, routeWithDeepSeek, semanticSafetySignals, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
 import type { KnowledgeCitation } from '../../../integrations/deepseek'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
-import { composeClarificationSummaryHistory, topModuleFromScores } from '../../../domain/chat-clarification'
+import { composeClarificationSummaryHistory, sanitizeHistoryForSummary, topModuleFromScores } from '../../../domain/chat-clarification'
+import { runAgentGraph } from '../../../agent/graph'
+import { buildAgentSystemPrompt } from '../../../agent/prompts'
+import type { AgentMessage, AgentUserContext } from '../../../agent/types'
 import { buildChatTitle } from '../../../domain/chat-titles'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
 import { trackProductEvent } from '../../../domain/product-events'
@@ -24,6 +27,20 @@ interface ClarificationState {
   phase: 'clarifying' | 'summarizing' | 'done'
   round: number
   moduleScores: Record<string, number>
+}
+
+/**
+ * runAgentGraph 返回值的入口侧视图（AGENT-A 的 graph.ts 为并行交付，实际返回以该模块为准）。
+ * 兼容两种形态：扁平字段（answer/actionCards/fallbackUsed）与 AgentState 风格嵌套（output.answer/output.actionCards）。
+ */
+interface AgentGraphRunResult {
+  answer?: string | null
+  actionCards?: unknown
+  fallbackUsed?: boolean
+  exitReason?: string | null
+  toolCalls?: Array<{ name: string; title: string; args: string }>
+  sources?: Array<{ chunkId: string; documentTitle: string; heading?: string | null; excerpt?: string; module?: string | null; libraryType?: string }>
+  output?: { answer?: string | null, actionCards?: unknown } | null
 }
 
 function getClarificationState(sessionMetadata: Record<string, unknown> | null | undefined): ClarificationState | null {
@@ -144,6 +161,9 @@ export default defineEventHandler(async (event) => {
   const ownedSessionId = sessionId
   const clarificationState = getClarificationState(sessionMetadata)
 
+  // Agent「回答先行」灰度开关：AGENT_ENABLED 环境变量 或 runtimeConfig.agentEnabled（NUXT_AGENT_ENABLED 可运行时覆盖）
+  const agentEnabled = process.env.AGENT_ENABLED === 'true' || config.agentEnabled === true
+
   const stream = new ReadableStream({
     async start(controller) {
       // 流式逐字输出（用于追问/总结等非 DeepSeek streaming 分支）
@@ -223,6 +243,75 @@ export default defineEventHandler(async (event) => {
         controller.close()
       }
 
+      // Agent 回退路径：复用澄清总结流程（含全部现有 emit 事件与 controller.close）
+      const runAgentFallbackSummary = async () => {
+        const citations = await fetchKnowledgeCitations(body.message, topModuleFromScores(clarificationState?.moduleScores))
+        await runClarificationSummary({ history, citations, includeCurrentMessage: true, lastModuleScores: clarificationState?.moduleScores })
+      }
+
+      // ---- Agent（回答先行）分支：图驱动回答，SSE 事件由 onEvent 原样转发 ----
+      const runAgentAnswer = async () => {
+        try {
+          // 复用已装载上下文：history / businessContext / entityMemory / teacherProfileText
+          const businessContextText = businessContext && !body.withoutRecord
+            ? `当前咨询对象：${businessContext.type} / ${businessContext.label}\n${businessContext.prompt}`
+            : null
+          // 知识检索由 Agent 运行时工具完成：模板知识段只承载引用边界，避免与工具检索重复
+          const knowledgeContext = '知识检索由运行时工具完成：仅当工具返回已发布的资源片段时才可引用并标注来源；未命中时只能基于通用班主任工作方法回答，不得编造平台手册、量表、SOP、等级、制度、数据或来源。'
+          const systemPrompt = await buildAgentSystemPrompt(event, { knowledgeContext, businessContextText, teacherProfileText })
+          const userCtx: AgentUserContext = {
+            schoolId: user.schoolId!,
+            userId: user.id,
+            sessionId: ownedSessionId,
+            businessContextText,
+            entityMemory,
+            teacherProfileText,
+            lastModuleScores: (clarificationState?.moduleScores ?? {}) as Record<ModuleId, number>
+          }
+          const agentMessages: AgentMessage[] = [
+            ...entityMemory,
+            ...sanitizeHistoryForSummary(history),
+            { role: 'user', content: body.message }
+          ]
+          // 先发 answer_start 创建助手气泡：后续 thinking/tool_call/sources/action_card/answer_delta
+          // 都能挂到同一气泡上；否则前端要等首个 answer_delta（约 1s 首 token 延迟）才建气泡，
+          // 导致工具/引用事件被丢弃、量表卡先于文字出现、出现空白块。
+          emit(controller, 'answer_start', { mode: 'agent' })
+          const result = await runAgentGraph(event, {
+            messages: agentMessages,
+            userCtx,
+            systemPrompt,
+            onEvent: (eventName: string, data: unknown) => emit(controller, eventName, data)
+          }) as unknown as AgentGraphRunResult
+
+          if (result?.fallbackUsed === true || result?.exitReason === 'fallback') {
+            await runAgentFallbackSummary()
+            return
+          }
+          const answer = (typeof result?.answer === 'string' && result.answer.trim() ? result.answer : '')
+            || (typeof result?.output?.answer === 'string' ? result.output.answer : '')
+          if (!answer.trim()) throw new Error('Agent 未生成有效回答')
+          const actionCards = Array.isArray(result?.actionCards)
+            ? result.actionCards
+            : (Array.isArray(result?.output?.actionCards) ? result.output!.actionCards : [])
+          // 工具调用过程 + 知识库引用来源：随消息持久化，切换会话/刷新后仍可展示
+          const toolCalls = Array.isArray(result?.toolCalls) ? result.toolCalls : []
+          const sources = Array.isArray(result?.sources) ? result.sources : []
+          const [assistantMessage] = await db.insert(schema.chatMessages).values({
+            schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
+            role: 'assistant', contentEnc: encryptSensitive(answer, config.encryptionKey),
+            metadata: { type: 'agent_answer', actionCards, toolCalls, sources }
+          }).returning({ id: schema.chatMessages.id })
+          if (!assistantMessage) throw new Error('Agent 回答保存失败')
+          emit(controller, 'answer', { messageId: assistantMessage.id, text: answer, mode: 'agent' })
+          emit(controller, 'done', { sessionId: ownedSessionId })
+          controller.close()
+        } catch {
+          // 图执行/回答保存抛错：回退到现有澄清总结路径（该路径自带 done 事件与 close）
+          await runAgentFallbackSummary()
+        }
+      }
+
       // 从 clarificationState.moduleScores 中提取最高分模块作为知识检索过滤条件
 
       try {
@@ -245,6 +334,13 @@ export default defineEventHandler(async (event) => {
           })
           emit(controller, 'done', { sessionId: ownedSessionId })
           controller.close()
+          return
+        }
+
+        // ---- Agent（回答先行）分支：命中安全信号之后、澄清/分诊流程之前 ----
+        // 开启后所有消息走 runAgentGraph；图内部 fallback 或异常时回退澄清总结路径
+        if (agentEnabled) {
+          await runAgentAnswer()
           return
         }
 

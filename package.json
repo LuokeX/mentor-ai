@@ -34,6 +34,9 @@
     "scaffold:management": "tsx scripts/scaffold-management.ts"
   },
   "dependencies": {
+    "@langchain/core": "^1.2.9",
+    "@langchain/langgraph": "^1.4.13",
+    "@langchain/openai": "^1.5.11",
     "@nuxt/ui": "latest",
     "argon2": "latest",
     "drizzle-orm": "latest",
