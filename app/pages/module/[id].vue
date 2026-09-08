@@ -135,6 +135,7 @@ async function selectInstrument(code: string) {
   continueIntent.value = null
   recommendBody.answers = undefined
   recommendBody.instrumentCode = undefined
+  cancelAutoAdvance()
   for (const key of Object.keys(answers)) delete answers[key]
   current.value = 0
   started.value = false
@@ -246,6 +247,26 @@ const allowUnlinked = ref(false)
 const selectedContextKey = ref('none')
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let saveInFlight: Promise<void> | undefined
+/** 选择后 120ms 自动翻题的定时器：手动点「上一题/下一题」或切换量表时必须先取消，
+ *  否则选择后立即点「下一题」会翻两次跳过一题，某题未作答进度永远 <100%，提交按钮置灰。 */
+let autoAdvanceTimer: ReturnType<typeof setTimeout> | undefined
+
+/** 取消尚未触发的自动翻题（选择后的延迟翻题与手动导航不能叠加）。 */
+function cancelAutoAdvance() {
+  if (autoAdvanceTimer) {
+    clearTimeout(autoAdvanceTimer)
+    autoAdvanceTimer = undefined
+  }
+}
+function goPrev() {
+  cancelAutoAdvance()
+  if (current.value > 0) current.value--
+}
+function goNext() {
+  cancelAutoAdvance()
+  if (!definition.value) return
+  if (current.value < definition.value.questions.length - 1) current.value++
+}
 
 const contextRules: Record<string, Array<ContextOption['type']>> = {
   self_growth: [],
@@ -294,6 +315,7 @@ function canStart() {
 async function startAssessment(resume: boolean) {
   if (!canStart()) return
   submitted.value = false
+  cancelAutoAdvance()
   if (!resume) {
     Object.keys(answers).forEach(key => delete answers[key])
     current.value = 0
@@ -326,7 +348,11 @@ function choose(value: number) {
       draftSaveError.value = error?.data?.message || '草稿暂未同步到服务器，请检查网络后继续。'
     })
   }, 450)
-  if (current.value < definition.value.questions.length - 1) setTimeout(() => current.value++, 120)
+  // 自动翻题：先取消上一次未触发的，避免选择后立即点「下一题」造成跳题，某题未答进度卡在 <100%。
+  cancelAutoAdvance()
+  if (current.value < definition.value.questions.length - 1) {
+    autoAdvanceTimer = setTimeout(() => { current.value++ }, 120)
+  }
 }
 
 async function saveDraft() {
@@ -763,8 +789,8 @@ async function submit() {
             </div>
           </div>
         </section>
-        <!-- 提交进行中提示：AI 加工为方案内容做准备，耗时约 10 秒至 1 分钟（模型异常时更久，
-             期间按钮 loading 且答案锁定），明确告知避免被当作「卡死」。
+        <!-- 提交进行中提示：提交只等确定性方案写库（秒级），AI 改写与深度报告在进入方案页后
+             后台生成；这里不再承诺 10 秒至 1 分钟，避免与「进方案页等待 AI」的体验冲突。
              注意：UAlert 不渲染默认插槽，必须用 title/description props。 -->
         <UAlert
           v-if="pending && !submitError"
@@ -772,15 +798,15 @@ async function submit() {
           color="info"
           variant="soft"
           title="正在提交并生成方案"
-          description="AI 正在加工方案内容，通常需要 10 秒至 1 分钟（模型繁忙时更久）；请耐心等待，不要关闭页面。"
+          description="正在汇总量表结果并生成方案结构，通常几秒内完成；具体实施方案由 AI 在方案页后台生成。"
         />
         <div class="mt-8 flex items-center justify-between gap-3">
           <p v-if="submitted" class="text-xs text-slate-400">评估已提交，答案已锁定</p>
           <p v-else class="text-xs text-slate-400">可返回上一题修改，提交后答案锁定</p>
           <div class="flex gap-2">
-            <UButton color="neutral" variant="soft" :disabled="current === 0 || submitted" @click="() => { current-- }">上一题</UButton>
+            <UButton color="neutral" variant="soft" :disabled="current === 0 || submitted" @click="goPrev">上一题</UButton>
             <!-- 用 === undefined 判断，不能用真值：0 是合法分值（0/1 二值选项组），会被当成未作答 -->
-            <UButton v-if="current < definition.questions.length - 1" :disabled="answers[question!.id] === undefined || submitted" @click="() => { current++ }">下一题</UButton>
+            <UButton v-if="current < definition.questions.length - 1" :disabled="answers[question!.id] === undefined || submitted" @click="goNext">下一题</UButton>
             <!-- 最后一题答完后才可提交；已提交后不可重复提交 -->
             <UButton v-else :disabled="progress < 100 || submitted" :loading="pending" @click="submit">提交并生成方案</UButton>
           </div>
@@ -791,7 +817,8 @@ async function submit() {
     <!-- 连续量表流程收尾：全部量表完成后统一生成方案，失败时可重试 -->
     <section v-if="flowState === 'finalizing' && !output" class="panel mt-6 p-7 text-center">
       <UIcon v-if="!finalizeError" name="i-lucide-loader-circle" class="mx-auto size-8 animate-spin text-emerald-600" />
-      <p v-if="!finalizeError" class="mt-3 text-sm text-slate-600">全部量表已完成，正在生成方案…</p>
+      <p v-if="!finalizeError" class="mt-3 text-sm text-slate-600">全部量表已完成，正在生成方案结构…</p>
+      <p v-if="!finalizeError" class="mt-1 text-xs text-slate-400">生成后会进入方案页，具体实施方案由 AI 在页面内后台生成。</p>
       <template v-else>
         <UIcon name="i-lucide-triangle-alert" class="mx-auto size-8 text-red-500" />
         <p class="mt-3 text-sm text-red-600">{{ finalizeError }}</p>
