@@ -411,6 +411,11 @@ async function continueSuggestedInstrument() {
 /** 提交前的选择：先做下一张量表（沿用同一评估组）。先提交当前量表，成功后切入新量表作答。 */
 async function continueWithNext(option: InstrumentOption) {
   if (option.status === 'locked') return
+  // 防御：推荐卡只在 progress===100 时显示，这里再兜底一次，避免「还差最后一题」时直接提交 422
+  if (progress.value !== 100) {
+    toast.add({ title: '还有题目未作答', description: '请先完成全部题目，再选择继续下一张量表。', color: 'warning' })
+    return
+  }
   continueIntent.value = option
   await submit()
 }
@@ -520,6 +525,7 @@ async function submit() {
         continueIntent.value = null
         await selectInstrument(next.code)
         started.value = true
+        toast.add({ title: '已保存本次评估结果', description: `继续完成「${next.title}」，完成后将自动生成方案。`, color: 'success' })
         return
       }
       await finalizeAndGo()
@@ -733,9 +739,11 @@ async function submit() {
             <span class="grid size-8 shrink-0 place-items-center rounded-full border text-sm" :class="answers[question!.id] === option.value ? 'border-emerald-600 bg-emerald-700 text-white' : 'border-slate-200'">{{ option.value }}</span><span>{{ option.label }}</span>
           </button>
         </div>
-        <!-- 提交前的选择：还有可继续的量表时，由教师决定先做下一张还是直接生成方案 -->
+        <!-- 提交前的选择：还有可继续的量表时，由教师决定先做下一张还是直接生成方案。
+             必须答完全部题目（progress===100）才出现：最后一题未作答时点「先做这张量表」
+             会直接提交并收到 422「请完成全部题目」，是衔接混乱的直接原因。 -->
         <section
-          v-if="!submitted && current === definition.questions.length - 1 && nextInstruments.length"
+          v-if="!submitted && progress === 100 && current === definition.questions.length - 1 && nextInstruments.length"
           class="mt-7 rounded-2xl border border-violet-200 bg-violet-50/70 p-5"
         >
           <div class="flex items-start gap-3">
@@ -755,6 +763,23 @@ async function submit() {
             </div>
           </div>
         </section>
+        <!-- 提交进行中提示：AI 加工为方案内容做准备，耗时约 10 秒至 1 分钟（模型异常时更久，
+             期间按钮 loading 且答案锁定），明确告知避免被当作「卡死」。 -->
+        <UAlert
+          v-if="pending && !submitError"
+          class="mb-4"
+          color="info"
+          variant="soft"
+          :icon="false"
+        >
+          <div class="flex items-center gap-3">
+            <UIcon name="i-lucide-loader-circle" class="size-4 shrink-0 animate-spin text-primary-500" />
+            <div class="min-w-0 text-xs leading-5">
+              <p class="font-semibold text-primary-900">正在提交并生成方案</p>
+              <p class="text-primary-700">AI 正在加工方案内容，通常需要 10 秒至 1 分钟；请耐心等待，不要关闭页面。</p>
+            </div>
+          </div>
+        </UAlert>
         <div class="mt-8 flex items-center justify-between gap-3">
           <p v-if="submitted" class="text-xs text-slate-400">评估已提交，答案已锁定</p>
           <p v-else class="text-xs text-slate-400">可返回上一题修改，提交后答案锁定</p>
