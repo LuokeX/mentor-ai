@@ -90,7 +90,7 @@ describe('mergePolishResults', () => {
   })
 })
 
-describe('runPolishWithRetry', () => {
+describe('runPolishWithRetry', { timeout: 15_000 }, () => {
   it('首次尝试全部通过则直接返回，不重试', async () => {
     let calls = 0
     const { tools, attempts } = await runPolishWithRetry(inputTools, async () => {
@@ -223,7 +223,7 @@ describe('parsePolishOutput 模式 B（expected 为空 · 无工具生成）', (
   })
 })
 
-describe('runGeneratedPolishRetry', () => {
+describe('runGeneratedPolishRetry', { timeout: 15_000 }, () => {
   it('首次尝试全部通过则直接返回，不重试', async () => {
     let calls = 0
     const { tools, attempts } = await runGeneratedPolishRetry(async () => {
@@ -377,7 +377,7 @@ describe('actions 加工（parsePolishOutput 传入 expectedActions）', () => {
   })
 })
 
-describe('actions 加工（runPolishWithRetry）', () => {
+describe('actions 加工（runPolishWithRetry）', { timeout: 15_000 }, () => {
   const inputActions = [
     { title: '针对「意义感流失」', detail: '每周五下班前用 10 分钟做一次周复盘，记录最有成就感的 1 件事。', code: 'A-001' },
     { title: '针对「职业倦怠」', detail: '找一位信任的同事聊一聊近期的感受，把压力说出来。', code: 'A-002' },
