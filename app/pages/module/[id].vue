@@ -764,22 +764,16 @@ async function submit() {
           </div>
         </section>
         <!-- 提交进行中提示：AI 加工为方案内容做准备，耗时约 10 秒至 1 分钟（模型异常时更久，
-             期间按钮 loading 且答案锁定），明确告知避免被当作「卡死」。 -->
+             期间按钮 loading 且答案锁定），明确告知避免被当作「卡死」。
+             注意：UAlert 不渲染默认插槽，必须用 title/description props。 -->
         <UAlert
           v-if="pending && !submitError"
           class="mb-4"
           color="info"
           variant="soft"
-          :icon="false"
-        >
-          <div class="flex items-center gap-3">
-            <UIcon name="i-lucide-loader-circle" class="size-4 shrink-0 animate-spin text-primary-500" />
-            <div class="min-w-0 text-xs leading-5">
-              <p class="font-semibold text-primary-900">正在提交并生成方案</p>
-              <p class="text-primary-700">AI 正在加工方案内容，通常需要 10 秒至 1 分钟；请耐心等待，不要关闭页面。</p>
-            </div>
-          </div>
-        </UAlert>
+          title="正在提交并生成方案"
+          description="AI 正在加工方案内容，通常需要 10 秒至 1 分钟（模型繁忙时更久）；请耐心等待，不要关闭页面。"
+        />
         <div class="mt-8 flex items-center justify-between gap-3">
           <p v-if="submitted" class="text-xs text-slate-400">评估已提交，答案已锁定</p>
           <p v-else class="text-xs text-slate-400">可返回上一题修改，提交后答案锁定</p>
