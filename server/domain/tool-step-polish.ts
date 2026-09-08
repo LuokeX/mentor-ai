@@ -1,25 +1,26 @@
-// 工具步骤内容的 AI 加工（同步调用，fire-on-request）
+// 工具步骤 / 归因行动的 AI 加工（后台调用，由 plan-action-enhancement 编排）
 //
 // 目标：把工具库匹配出的结构化步骤（"1. 标题: 说明 + 提示/话术/达标" 机械条目）
-// 改写成「人话版」——教师看了能直接照着执行的口语化内容，工具名与步骤
-// 数量/顺序/关键事实不变；当没有匹配工具但知识库向量检索有命中间接指导时，
+// 与归因建议行动改写成「人话版」——教师看了能直接照着执行的口语化内容，工具名与
+// 步骤数量/顺序/关键事实不变；当没有匹配工具但知识库向量检索有命中间接指导时，
 // 改为依据 knowledgeChunks 生成 1..MAX_GENERATED_TOOLS 条新建议（title 为
 // AI 自拟，与模式 A 的 title 必须来自输入不同）。
 //
 // 设计要点：
-//   - 同步调用：发生在 submit 链路中写库（事务）之前，教师提交时等待一次
-//     DeepSeek 调用，写进 result.tools 的即是加工后正文；AI 失败时逐项回退
-//     三库原文，不阻塞方案生成（与无密钥时行为完全一致）。
+//   - 后台调用：由 plan-action-enhancement 在提交事务返回后执行，教师端进方案页
+//     等待（ai_actions_status=pending），完成后回写正文；本函数本身不写 plans。
+//   - 全覆盖（complete）：模式 A 要求每个工具、每条行动都被 AI 改写命中，模式 B
+//     要求行动全部命中且（有知识片段时）生成了工具；任一条目未被覆盖即
+//     complete=false，调用方不得写入部分结果，也不再用三库原文兜底。
 //   - 双模式：模式 A（expected 非空）把已有工具改写成人话版；模式 B（expected
 //     为空、无工具）依据检索片段生成新建议，title/content 由 AI 自拟并经
 //     独立校验（见 parsePolishOutput）。
 //   - actions 同车加工：归因建议行动（actions，title/条数来自输入，detail 为
 //     一句话建议）与 tools 在一次调用内共同输出，逐条改写为可执行步骤；
-//     校验违规计入同一 errors 并触发重试，耗尽后未命中项回退原文 detail
-//     （mergeActionResults）。
+//     校验违规计入同一 errors 并触发重试。
 //   - 重试：格式类一过性错误（JSON 解析失败、结构校验不过）最多重试 3 次
-//     （含首次），重试时把上次输出与校验错误附给模型修正；耗尽后模式 A
-//     逐项回退、模式 B 保留各尝试中通过校验的生成项（上限 MAX_GENERATED_TOOLS）。
+//     （含首次），重试时把上次输出与校验错误附给模型修正；耗尽后仍未覆盖的
+//     条目只影响 complete 标记，不写入原文兜底。
 //   - 解析/合并/重试循环均为纯函数（parsePolishOutput / mergePolishResults /
 //     runPolishWithRetry / runGeneratedPolishRetry），可直接单测；
 //     真实网络调用封装在 polishToolSteps。
@@ -95,21 +96,24 @@ export interface PolishAttemptResult {
  * 解析模型输出并逐项关联回输入（纯函数，工具双模式 + 可选 actions 加工）：
  *  - 模式 A（expected 非空）：改写已有工具——数量必须与输入一致、title 必须
  *    匹配输入工具、content 非空且 ≤ MAX_TOOL_POLISH_CONTENT。
- *  - 模式 B（expected 为空）：无工具生成——不存在「输入中没有的工具名」概念，
- *    title 为 AI 自拟，需 trim 后非空且 ≤ MAX_GENERATED_TITLE_LENGTH、不得
- *    重复；content 非空且 ≤ MAX_TOOL_POLISH_CONTENT；数量限制 1..MAX_GENERATED_TOOLS
- *    （0 条或超出都计入 errors）。
+ *  - 模式 B（expected 为空、options.generateTools 非 false）：无工具生成——不存在
+ *    「输入中没有的工具名」概念，title 为 AI 自拟，需 trim 后非空且
+ *    ≤ MAX_GENERATED_TITLE_LENGTH、不得重复；content 非空且 ≤ MAX_TOOL_POLISH_CONTENT；
+ *    数量限制 1..MAX_GENERATED_TOOLS（0 条或超出都计入 errors）。
+ *  - options.generateTools === false（expected 必须为空）：只改写行动，tools 必须
+ *    输出空数组（无匹配工具且知识库无可检索片段时使用）。
  *  - actions 加工（仅当 expectedActions 传入时启用）：数量必须等于输入、title
  *    必须匹配输入 action、content 非空且 ≤ MAX_TOOL_POLISH_CONTENT；违规与
  *    tools 计入同一 errors（错误文案风格与工具侧一致）。第三参缺省时完全不
  *    处理 actions（返回空 actionsMatched），tools 行为与之前完全一致。
  * 任何一项不合法都进入 errors（触发重试），合法的部分仍通过 matched /
- * actionsMatched 保留，供所有尝试耗尽时做「合法的保留 AI 版、非法的回退/丢弃」的合并。
+ * actionsMatched 保留，供调用方按覆盖率决定是否采用。
  */
 export function parsePolishOutput(
   rawText: string,
   expected: Array<{ title: string }>,
-  expectedActions?: Array<{ title: string }>
+  expectedActions?: Array<{ title: string }>,
+  options?: { generateTools?: boolean }
 ): PolishAttemptResult {
   const matched = new Map<string, string>()
   const actionsMatched = new Map<string, string>()
@@ -129,8 +133,10 @@ export function parsePolishOutput(
   }
   const outputTools = parsed.data.tools
   const outputActions = parsed.data.actions
-  // 模式 B：expected 为空（无工具生成场景），title 全部为 AI 自拟
-  const generating = expected.length === 0
+  // 模式 B：expected 为空时默认按「无工具生成」处理（title 全部 AI 自拟）；
+  // 调用方明确传 generateTools: false 时退化为「只改写行动、tools 必须输出空数组」，
+  // 用于「无匹配工具且知识库无可检索片段」的场景。
+  const generating = options?.generateTools ?? (expected.length === 0)
   const expectedTitles = new Set(expected.map(item => item.title.trim()).filter(Boolean))
   if (generating) {
     if (outputTools.length < 1 || outputTools.length > MAX_GENERATED_TOOLS) {
@@ -246,14 +252,20 @@ function matchedToActions(matched: Map<string, string>): Array<{ title: string, 
  * 带重试的加工循环（纯编排，可注入调用器直接单测）：
  * 最多 MAX_TOOL_POLISH_ATTEMPTS 次尝试；任一次全部通过立即返回——「全部通过」
  * 指 tools 与 actions 的校验错误都为空（两者计入同一 errors）；尝试的 matched
- * 与 actionsMatched 都会累计，耗尽后按「已通过项用 AI 版、其余回退原文」合并
- * 返回（inputTools 为空时等价于纯 actions 场景，tools 返回空数组、actions 仍
- * 按累计结果给出）。
+ * 与 actionsMatched 都会累计，耗尽后按「已通过项用 AI 版、其余保留输入原文」
+ * 合并返回，并额外返回累计命中的标题集合（matchedTitles / matchedActionTitles），
+ * 供调用方判断是否「全覆盖」（inputTools 为空时等价于纯 actions 场景）。
  */
 export async function runPolishWithRetry<T extends PolishTool>(
   inputTools: T[],
   callOnce: PolishCallFn
-): Promise<{ tools: T[], actions: Array<{ title: string, content: string }>, attempts: number }> {
+): Promise<{
+  tools: T[],
+  actions: Array<{ title: string, content: string }>,
+  attempts: number,
+  matchedTitles: Set<string>,
+  matchedActionTitles: Set<string>
+}> {
   const cumulative = new Map<string, string>()
   const cumulativeActions = new Map<string, string>()
   let previous: PolishAttemptResult | undefined
@@ -268,7 +280,9 @@ export async function runPolishWithRetry<T extends PolishTool>(
       return {
         tools: mergePolishResults(inputTools, cumulative),
         actions: matchedToActions(result.actionsMatched ?? new Map()),
-        attempts
+        attempts,
+        matchedTitles: new Set(cumulative.keys()),
+        matchedActionTitles: new Set(cumulativeActions.keys())
       }
     }
     previous = result
@@ -277,22 +291,31 @@ export async function runPolishWithRetry<T extends PolishTool>(
   return {
     tools: mergePolishResults(inputTools, cumulative),
     actions: matchedToActions(cumulativeActions),
-    attempts
+    attempts,
+    matchedTitles: new Set(cumulative.keys()),
+    matchedActionTitles: new Set(cumulativeActions.keys())
   }
 }
 
 /**
  * 带重试的「无工具生成」循环（纯编排，可注入调用器直接单测）。
  * 与 runPolishWithRetry 语义一致（最多 MAX_TOOL_POLISH_ATTEMPTS 次、失败带
- * 反馈重试、间隔 1s），差异只在装配：模式 B 没有可回退的三库原文，成功即返回
+ * 反馈重试、间隔 3s），差异只在装配：模式 B 没有可回退的三库原文，成功即返回
  * 本次全过校验的生成项；耗尽时返回各尝试累计且通过校验的生成项（先到先得，
  * 并按 MAX_GENERATED_TOOLS 截断），无通过项则返回空数组。tools 与 actions 在
  * 同一次调用中产出（「通过」指两者的校验错误都为空），actions 累计不截断——
- * 条数由输入决定，无 AI 自拟数量上限。
+ * 条数由输入决定，无 AI 自拟数量上限。返回的 matchedTitles / matchedActionTitles
+ * 为累计命中集合，供调用方判断 actions 是否全覆盖。
  */
 export async function runGeneratedPolishRetry(
   callOnce: PolishCallFn
-): Promise<{ tools: PolishTool[], actions: Array<{ title: string, content: string }>, attempts: number }> {
+): Promise<{
+  tools: PolishTool[],
+  actions: Array<{ title: string, content: string }>,
+  attempts: number,
+  matchedTitles: Set<string>,
+  matchedActionTitles: Set<string>
+}> {
   const cumulative = new Map<string, string>()
   const cumulativeActions = new Map<string, string>()
   let previous: PolishAttemptResult | undefined
@@ -305,7 +328,13 @@ export async function runGeneratedPolishRetry(
     if (!result.errors.length) {
       const tools = [...result.matched].map(([title, content]) => ({ title, content }))
       const actions = matchedToActions(result.actionsMatched ?? new Map())
-      return { tools, actions, attempts }
+      return {
+        tools,
+        actions,
+        attempts,
+        matchedTitles: new Set(result.matched.keys()),
+        matchedActionTitles: new Set(result.actionsMatched?.keys() ?? [])
+      }
     }
     previous = result
     if (attempt < MAX_TOOL_POLISH_ATTEMPTS) await sleep(RETRY_DELAY_MS)
@@ -314,7 +343,13 @@ export async function runGeneratedPolishRetry(
     .slice(0, MAX_GENERATED_TOOLS)
     .map(([title, content]) => ({ title, content }))
   const actions = matchedToActions(cumulativeActions)
-  return { tools, actions, attempts }
+  return {
+    tools,
+    actions,
+    attempts,
+    matchedTitles: new Set(cumulative.keys()),
+    matchedActionTitles: new Set(cumulativeActions.keys())
+  }
 }
 
 /**
@@ -322,29 +357,30 @@ export async function runGeneratedPolishRetry(
  * 片段生成新建议（模式 B）；归因建议行动（actions，title/条数来自输入）与 tools
  * 在同一次调用中加工，两种模式（tools 空/非空）下都被处理。
  *  - 无 deepseekApiKey：原样返回（tools 保持原文，actions 用原文 detail 填充
- *    content），调用方无需区分。
+ *    content），complete=true（AI 未启用，无重试意义）。
  *  - knowledgeQuery 非空且 embedding 可用：先做向量检索（最多 5 段），片段与
  *    tools、actions 共同并入 facts；检索不可用（未启用/向量为空/任何异常）一律
  *    降级为空片段，不抛错。
- *  - tools、actions、知识片段皆空：不调 AI，返回空 tools 与空 actions。
- *  - 有工具：模式 A，最多 3 次尝试，全部失败逐项回退原文；无工具但有知识命中或
- *    有待加工 actions：模式 B 生成 1..MAX_GENERATED_TOOLS 条（无知识命中时模型
- *    只输出 actions 也会逐次累计通过校验的项，耗尽时回退），actions 耗尽时未命中
- *    项回退原文 detail。
- * 返回 { tools, actions }：actions 的 content 为 AI 改写后的可执行步骤或原文 detail，
- * title 与输入一致。全程不抛出、不阻塞方案生成。
+ *  - tools、actions、知识片段皆空：不调 AI，返回空 tools 与空 actions，
+ *    complete=true（没有需要 AI 输出的条目）。
+ *  - 有工具：模式 A，最多 3 次尝试；无工具但有知识命中或待加工 actions：模式 B。
+ *  - complete：模式 A 要求每个工具、每条行动都被 AI 改写命中；模式 B 要求行动
+ *    全部命中且（有知识片段时）生成了工具。未全覆盖时调用方不得写入部分结果。
+ * 返回 { tools, actions, complete }：actions 的 content 为 AI 改写后的可执行步骤，
+ * title 与输入一致（未命中项由调用方按 complete 决定是否采用）。全程不抛出。
  */
 export async function polishToolSteps<T extends PolishTool>(
   event: H3Event,
   input: ToolPolishInput & { tools: T[] }
-): Promise<{ tools: T[], actions: Array<{ title: string, content: string }> }> {
+): Promise<{ tools: T[], actions: Array<{ title: string, content: string }>, complete: boolean }> {
   const config = useRuntimeConfig(event)
   const inputActions = input.actions ?? []
-  // 无密钥：原样回退（与现状一致，调用方无需区分）
+  // 无密钥：原样返回（AI 未启用，没有可等待的改写）
   if (!config.deepseekApiKey) {
     return {
       tools: input.tools,
-      actions: inputActions.map(action => ({ title: action.title, content: action.detail }))
+      actions: inputActions.map(action => ({ title: action.title, content: action.detail })),
+      complete: true
     }
   }
 
@@ -370,11 +406,18 @@ export async function polishToolSteps<T extends PolishTool>(
   }
   // tools、actions、知识片段全空：没有可改写也没有可生成的内容，直接返回（不调 AI）
   if (input.tools.length === 0 && inputActions.length === 0 && chunks.length === 0) {
-    return { tools: input.tools, actions: inputActions.map(action => ({ title: action.title, content: action.detail })) }
+    return {
+      tools: input.tools,
+      actions: inputActions.map(action => ({ title: action.title, content: action.detail })),
+      complete: true
+    }
   }
 
   const rt = await getAiRuntimeConfig(event)
   const model = rt.generatorModel || config.deepseekGeneratorModel
+  // 只有检索到知识片段才让模型自拟新工具；既无匹配工具也无片段时退化为
+  // 「只改写行动、tools 输出空数组」，避免模型凭空编造工具。
+  const generateTools = input.tools.length === 0 && chunks.length > 0
   const facts = {
     module: input.module,
     moduleTitle: moduleMeta[input.module].title,
@@ -425,7 +468,12 @@ export async function polishToolSteps<T extends PolishTool>(
       const content = json.choices?.[0]?.message?.content
       if (!content) throw new Error('Empty model output')
       // actions 为空时第三参传 undefined：不启用 actions 校验，行为与之前一致
-      const parsed = parsePolishOutput(content, input.tools, inputActions.length > 0 ? inputActions : undefined)
+      const parsed = parsePolishOutput(
+        content,
+        input.tools,
+        inputActions.length > 0 ? inputActions : undefined,
+        { generateTools }
+      )
       await recordToolPolishCall(event, input, model, parsed.errors.length === 0 ? 'success' : 'failed', Date.now() - startedAt, json.usage?.prompt_tokens, json.usage?.completion_tokens)
       return { ...parsed, raw: content }
     } catch (error) {
@@ -434,26 +482,30 @@ export async function polishToolSteps<T extends PolishTool>(
     }
   }
 
-  // 模式 A（有工具）：改写 + 原文回退；模式 B（无工具）：知识生成 + actions 加工。
-  // 两种模式下 actions 都在同一次调用内校验并累计，最终按输入顺序逐项合并回填。
+  // 模式 A（有工具）：改写已有工具；模式 B（无工具）：知识生成 + actions 加工。
+  // 两种模式下 actions 都在同一次调用内校验并累计；complete 标记是否全部覆盖，
+  // 未覆盖的条目由调用方按 complete 决定是否采用（此处不再回退三库原文）。
   let polishedTools: T[]
   let polishedActions: Array<{ title: string, content: string }>
+  let complete: boolean
   if (input.tools.length === 0) {
-    const { tools, actions } = await runGeneratedPolishRetry(callOnce)
+    const { tools, actions, matchedActionTitles } = await runGeneratedPolishRetry(callOnce)
     // 本分支调用方传入的是空工具数组，T 的运行时形状即 PolishTool；生成的
     // { title, content } 完全满足 PolishTool，窄化仅为满足泛型签名。
     polishedTools = tools as T[]
     polishedActions = actions
+    // 模式 B 的 tools 由 AI 生成、不存在「覆盖输入」问题：只要待加工行动全部命中，
+    // 且确实处于「生成工具」模式时生成了工具，即视为完整。
+    complete = inputActions.every(action => matchedActionTitles.has(action.title.trim()))
+      && (!generateTools || polishedTools.length > 0)
   } else {
-    const { tools, actions } = await runPolishWithRetry(input.tools, callOnce)
+    const { tools, actions, matchedTitles, matchedActionTitles } = await runPolishWithRetry(input.tools, callOnce)
     polishedTools = tools
     polishedActions = actions
+    complete = input.tools.every(tool => matchedTitles.has(tool.title.trim()))
+      && inputActions.every(action => matchedActionTitles.has(action.title.trim()))
   }
-  // actions 逐项回退合并：AI 命中项以 content 替换 detail，未命中保留原文；
-  // 空输入直接返回空数组。输出 shape 为 { title, content }。
-  const actions = mergeActionResults(inputActions, new Map(polishedActions.map(item => [item.title, item.content])))
-    .map(action => ({ title: action.title, content: action.detail }))
-  return { tools: polishedTools, actions }
+  return { tools: polishedTools, actions: polishedActions, complete }
 }
 
 function toolPolishFormatExample() {

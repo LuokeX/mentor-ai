@@ -309,6 +309,37 @@ describe('runGeneratedPolishRetry', { timeout: 15_000 }, () => {
   })
 })
 
+describe('parsePolishOutput generateTools: false（无匹配工具且无知识片段，只改写行动）', () => {
+  const inputActions = [
+    { title: '针对「情绪觉察薄弱」', detail: '每天睡前记录三件让自己有情绪波动的事。' },
+  ]
+
+  it('tools 输出空数组、actions 合法时通过', () => {
+    const raw = JSON.stringify({
+      tools: [],
+      actions: [{ title: '针对「情绪觉察薄弱」', content: '睡前花 5 分钟记下当天情绪最明显的三件事。' }],
+    })
+    const result = parsePolishOutput(raw, [], inputActions, { generateTools: false })
+    expect(result.errors).toEqual([])
+    expect(result.matched.size).toBe(0)
+    expect(result.actionsMatched.get('针对「情绪觉察薄弱」')).toContain('睡前花 5 分钟')
+  })
+
+  it('模型仍编造工具时报数量错误（不得凭空生成工具）', () => {
+    const raw = JSON.stringify({
+      tools: [{ title: '自拟工具', content: '内容' }],
+      actions: [{ title: '针对「情绪觉察薄弱」', content: '睡前花 5 分钟记下当天情绪最明显的三件事。' }],
+    })
+    const result = parsePolishOutput(raw, [], inputActions, { generateTools: false })
+    expect(result.errors.join('；')).toContain('输出 tools 数量 1，应为 0')
+  })
+
+  it('缺省 generateTools 时仍按模式 B 要求 1-3 条工具（向后兼容）', () => {
+    const result = parsePolishOutput(JSON.stringify({ tools: [] }), [], inputActions)
+    expect(result.errors.join('；')).toContain(`数量 0，应为 1-${MAX_GENERATED_TOOLS}`)
+  })
+})
+
 describe('actions 加工（parsePolishOutput 传入 expectedActions）', () => {
   const inputActions = [
     { title: '针对「意义感流失」', detail: '每周五下班前用 10 分钟做一次周复盘，记录最有成就感的 1 件事。', code: 'A-001' },
@@ -446,6 +477,47 @@ describe('actions 加工（runPolishWithRetry）', { timeout: 15_000 }, () => {
     const merged = mergeActionResults(inputActions, new Map(polished.map(item => [item.title, item.content])))
     expect(merged[0]).toEqual({ ...inputActions[0], detail: '第二版 AI 内容' })
     expect(merged[1]).toEqual(inputActions[1])
+  })
+})
+
+describe('覆盖率标记（enhancePlanActions 判定「是否全部由 AI 改写」的数据来源）', { timeout: 15_000 }, () => {
+  const inputActions = [
+    { title: '针对「意义感流失」', detail: '每周五做一次周复盘。', code: 'A-001' },
+    { title: '针对「职业倦怠」', detail: '与信任的同事聊聊感受。', code: 'A-002' },
+  ]
+
+  it('全部通过：matchedTitles / matchedActionTitles 覆盖全部输入', async () => {
+    const { matchedTitles, matchedActionTitles } = await runPolishWithRetry(inputTools, async () => ({
+      matched: new Map([['结构化沟通三步法', 'A'], ['家庭作业约定术', 'B']]),
+      actionsMatched: new Map([['针对「意义感流失」', 'C'], ['针对「职业倦怠」', 'D']]),
+      errors: [],
+    }))
+    expect([...matchedTitles].sort()).toEqual(inputTools.map(tool => tool.title).sort())
+    expect([...matchedActionTitles].sort()).toEqual(inputActions.map(action => action.title).sort())
+  })
+
+  it('重试耗尽：只包含累计命中项，未命中项不在集合里（调用方据此拒绝写入部分结果）', async () => {
+    const { matchedTitles, matchedActionTitles } = await runPolishWithRetry(inputTools, async () => ({
+      matched: new Map([['结构化沟通三步法', '部分成功']]),
+      actionsMatched: new Map([['针对「意义感流失」', 'C']]),
+      errors: ['缺少工具「家庭作业约定术」'],
+    }))
+    expect([...matchedTitles]).toEqual(['结构化沟通三步法'])
+    expect([...matchedActionTitles]).toEqual(['针对「意义感流失」'])
+    // 未命中的条目不在集合里 → 覆盖判定为 false
+    expect(matchedTitles.has('家庭作业约定术')).toBe(false)
+    expect(matchedActionTitles.has('针对「职业倦怠」')).toBe(false)
+  })
+
+  it('模式 B 耗尽：matchedActionTitles 保留累计命中项，工具为 AI 生成项', async () => {
+    const { tools, matchedActionTitles } = await runGeneratedPolishRetry(async () => ({
+      matched: new Map([['课间冲突化解四步', '内容A']]),
+      actionsMatched: new Map([['针对「意义感流失」', 'C']]),
+      errors: ['actions 数量 1，应为 2'],
+    }))
+    expect(tools).toEqual([{ title: '课间冲突化解四步', content: '内容A' }])
+    expect([...matchedActionTitles]).toEqual(['针对「意义感流失」'])
+    expect(matchedActionTitles.has('针对「职业倦怠」')).toBe(false)
   })
 })
 

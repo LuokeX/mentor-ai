@@ -330,6 +330,20 @@
       "when": 1788420875530,
       "tag": "0046_smooth_hemingway",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1788856362841,
+      "tag": "0047_lucky_killmonger",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1788858464731,
+      "tag": "0048_smiling_thor_girl",
+      "breakpoints": true
     }
   ]
 }

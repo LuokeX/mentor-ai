@@ -1,0 +1,1 @@
+ALTER TABLE "plans" ADD COLUMN "ai_actions_enhanced_at" timestamp with time zone;

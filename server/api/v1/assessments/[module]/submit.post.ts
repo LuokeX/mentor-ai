@@ -2,7 +2,6 @@ import { z } from 'zod'
 import { and, asc, desc, eq, inArray, isNull, max, ne } from 'drizzle-orm'
 import type { OutputTemplateEntry, RuleExecResult } from '../../../../../shared/contracts'
 import { moduleIdSchema } from '../../../../../shared/contracts'
-import { moduleMeta } from '../../../../../shared/assessments'
 import { requireUser } from '../../../../utils/auth'
 import { type DbClient, useDb, schema } from '../../../../utils/db'
 import { executeRules, evaluateWithFallback } from '../../../../domain/rules-executor'
@@ -10,7 +9,6 @@ import { resolveAssessmentDefinition, resolveAttributionConfig, resolvePublished
 import { decryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
 import { resolveToolsForPlan } from '../../../../domain/plan-actions'
-import { polishToolSteps } from '../../../../domain/tool-step-polish'
 import { recordPlanOperationEvent } from '../../../../domain/plan-operations'
 import { collectSessionSnapshots, generateOrMergeSessionPlan } from '../../../../domain/plan-session'
 import { isNoPlanNeeded } from '../../../../domain/no-plan-needed'
@@ -18,7 +16,7 @@ import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
 import { redactPii } from '../../../../integrations/deepseek'
-import { enhancePlanReportInBackground } from '../../../../domain/plan-enhancement'
+import { enhancePlanInBackground } from '../../../../domain/plan-enhancement'
 import { findInvalidAnswers } from '../../../../domain/assessment-answers'
 import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
 import { mergeGroupResults } from '../../../../domain/plan-merge'
@@ -64,7 +62,6 @@ export default defineEventHandler(async (event) => {
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const schoolId = user.schoolId
   const module = moduleIdSchema.parse(getRouterParam(event, 'module'))
-  const moduleTitle = moduleMeta[module].title
   const body = bodySchema.parse(await readBody(event))
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
@@ -161,35 +158,13 @@ export default defineEventHandler(async (event) => {
     requiredCodes: result.interventionToolCodes,
     schoolId: schoolId
   })
-  // 同步 AI 加工：把工具库机械结构与知识库检索片段（按工具卡名称检索术语解释）共同输入，
-  // 有工具时综合改写（工具名/数量不变）、无工具时按知识片段生成 1-3 条；无密钥/失败逐项回退原文。
-  // 归因建议行动随工具一起交 AI 加工并写回：逐项按 title 命中替换、未命中保留原文。
-  // 熔断时跳过加工，tools/actions 均保持原样。加工发生在事务外，不占用数据库事务与组行锁。
-  const polished = result.blocked
-    ? { tools: [] as typeof matchedTools, actions: [] as Array<{ title: string, content: string }> }
-    : await polishToolSteps(event, {
-        schoolId,
-        ownerUserId: user.id,
-        module,
-        severity: result.severity,
-        attributions: result.attributions.map(attribution => ({
-          name: attribution.name,
-          strength: attribution.strength,
-          reasons: attribution.reasons
-        })),
-        tools: matchedTools,
-        // 归因建议行动原文随输入给出（title+detail），供模型逐条改写
-        actions: result.actions.map(action => ({ title: action.title, detail: action.detail })),
-        knowledgeQuery: matchedTools.length
-          ? matchedTools.map(tool => tool.title).join('、')
-          : `${moduleTitle}：${result.primaryAttribution || '状态待定'}，教师可执行的操作步骤`
-      })
-  result.tools = [...result.tools, ...polished.tools]
-  // 行动逐项回退合并：AI 加工按 title 命中则只替换 detail，未命中保留原文
-  result.actions = result.actions.map(existing => {
-    const polishedAction = polished.actions.find(item => item.title === existing.title)
-    return polishedAction ? { ...existing, detail: polishedAction.content } : existing
-  })
+  // 工具/行动步骤的 AI 改写已改为后台增强（enhancePlanInBackground）：
+  // 事务内先写入三库原文并置 aiActionsStatus=pending，请求返回后由后台改写并回写。
+  // 旧实现同步调用 polishToolSteps，模型慢时频繁撞超时，失败即回退原文且不再升级。
+  // 熔断时跳过工具匹配，tools/actions 均保持原样。
+  if (!result.blocked) {
+    result.tools = [...result.tools, ...matchedTools]
+  }
 
   const outputTemplateResource = result.blocked
     ? null
@@ -494,12 +469,13 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  // AI 深度报告改为后台增强（fire-and-forget）：事务内确定性方案已可立即返回，
-  // 教师直接进入方案页，增强完成由方案详情页轮询 ai_report_status 感知。
-  // 不再同步等待 DeepSeek（实测常达 1-2 分钟）；AI 失败仅降级为确定性报告。
+  // AI 增强改为后台编排（fire-and-forget）：事务内确定性方案已可立即返回，
+  // 教师直接进入方案页，增强完成由方案详情页轮询 ai_actions_status / ai_report_status 感知。
+  // 阶段一改写工具与行动步骤，阶段二生成深度报告，顺序执行避免并发写同一行方案。
+  // 不再同步等待 DeepSeek（实测常达 1-2 分钟）；AI 失败仅降级为确定性方案。
   // noPlanNeeded 无方案可增强，仅回写本次评估结果（与同步时代口径一致）。
   if (!result.blocked && !outcome.deferred) {
-    void enhancePlanReportInBackground(event, {
+    void enhancePlanInBackground(event, {
       planId: outcome.planId,
       attemptId: outcome.attemptId,
       schoolId,

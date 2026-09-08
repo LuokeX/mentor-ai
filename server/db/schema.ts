@@ -531,6 +531,14 @@ export const plans = pgTable('plans', {
   report: jsonb('report').$type<Record<string, unknown>>().default({}).notNull(),
   /** AI 深度报告增强状态：pending 撰写中 / done 已完成（或未启用增强）/ failed 失败降级为确定性报告 */
   aiReportStatus: varchar('ai_report_status', { length: 20 }).default('done').notNull(),
+  /** AI 行动步骤改写状态：pending 改写中 / done 已完成（或未启用增强）/ failed 失败（不写入部分结果，方案页提示重试） */
+  aiActionsStatus: varchar('ai_actions_status', { length: 20 }).default('done').notNull(),
+  /**
+   * AI 行动步骤改写完成时间（null = 当前方案内容还没经过 AI 改写）。
+   * 方案页读取时据此自动补跑改写：老方案（该列为空）打开即进入「等待 AI 生成」，
+   * 不再把三库机械条目当最终正文展示。
+   */
+  aiActionsEnhancedAt: timestamp('ai_actions_enhanced_at', { withTimezone: true }),
   sourceVersions: jsonb('source_versions').$type<string[]>().default([]).notNull(),
   status: varchar('status', { length: 30 }).default('in_progress').notNull(),
   acceptanceDecision: varchar('acceptance_decision', { length: 30 }),

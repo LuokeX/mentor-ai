@@ -13,6 +13,7 @@ import type { AssessmentDefinition } from '../../shared/assessments'
 import { useDb, schema } from '../utils/db'
 import { generateAssessmentReport } from '../integrations/deepseek'
 import { encryptSensitive } from '../utils/crypto'
+import { enhancePlanActions } from './plan-action-enhancement'
 
 export interface PlanEnhancementInput {
   planId: string | null
@@ -28,6 +29,33 @@ export interface PlanEnhancementInput {
   attemptResult?: RuleExecResult
   /** 提交时事务内的 plan.updatedAt：回写前校验，任何并发更新（合并重算/接受/调整）都会使增强放弃，防止过期报告覆盖新内容 */
   expectedPlanUpdatedAt?: Date | null
+}
+
+/**
+ * 后台增强编排入口：内部自行吞掉所有异常，调用方直接 void 触发，不得 await。
+ *
+ * 两个阶段顺序执行，避免两个后台任务并发改写同一行 plans 导致 updatedAt 并发校验互相踩踏：
+ *   1) 行动步骤改写（enhancePlanActions）：回写 plans.actions/tools 与 plan_actions.detail；
+ *   2) 深度报告（enhancePlanReportInBackground）：回写 plans.report/summaryEnc。
+ * 阶段一成功会把新的 updatedAt 传给阶段二做并发校验；失败则沿用原 token。
+ */
+export async function enhancePlanInBackground(event: H3Event, input: PlanEnhancementInput): Promise<void> {
+  let expectedPlanUpdatedAt = input.expectedPlanUpdatedAt
+  try {
+    const { planUpdatedAt } = await enhancePlanActions(event, {
+      planId: input.planId,
+      schoolId: input.schoolId,
+      ownerUserId: input.ownerUserId,
+      module: input.module,
+      expectedPlanUpdatedAt
+    })
+    if (planUpdatedAt) expectedPlanUpdatedAt = planUpdatedAt
+  } catch (error) {
+    // enhancePlanActions 内部已收敛状态，这里只兜底记录，保证报告阶段继续执行。
+    console.error('[plan-enhancement] 行动改写阶段异常，继续执行深度报告:',
+      error instanceof Error ? error.message : error)
+  }
+  await enhancePlanReportInBackground(event, { ...input, expectedPlanUpdatedAt })
 }
 
 /**

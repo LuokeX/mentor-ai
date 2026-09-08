@@ -1,0 +1,1 @@
+ALTER TABLE "plans" ADD COLUMN "ai_actions_status" varchar(20) DEFAULT 'done' NOT NULL;

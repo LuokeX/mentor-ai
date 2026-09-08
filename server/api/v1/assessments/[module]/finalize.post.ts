@@ -19,7 +19,7 @@ import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { createTemplateAssessmentReport } from '../../../../domain/reports'
 import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
 import { redactPii } from '../../../../integrations/deepseek'
-import { enhancePlanReportInBackground } from '../../../../domain/plan-enhancement'
+import { enhancePlanInBackground } from '../../../../domain/plan-enhancement'
 import { decryptSensitive } from '../../../../utils/crypto'
 import { trackProductEvent } from '../../../../domain/product-events'
 import { writeAudit } from '../../../../utils/audit'
@@ -179,11 +179,12 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  // AI 深度报告改为后台增强（fire-and-forget），与 submit 一致：
+  // AI 增强改为后台编排（fire-and-forget），与 submit 一致：
   // 事务内确定性方案已可立即返回，教师直接进入方案页；
-  // 增强完成由方案详情页轮询 ai_report_status 感知，失败仅降级为确定性报告。
+  // 阶段一改写工具与行动步骤，阶段二生成深度报告，由方案详情页轮询两个状态感知，
+  // 失败仅降级为确定性方案。
   if (outcome.planId) {
-    void enhancePlanReportInBackground(event, {
+    void enhancePlanInBackground(event, {
       planId: outcome.planId,
       schoolId,
       ownerUserId: user.id,

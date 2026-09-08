@@ -1,13 +1,20 @@
 import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm'
 import { z } from 'zod'
-import type { ModuleId } from '../../../../shared/contracts'
+import { moduleIdSchema, type ModuleId } from '../../../../shared/contracts'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
 import { ensurePlanActions } from '../../../domain/plan-actions'
+import { enhancePlanActions, hasAiManagedActionItems } from '../../../domain/plan-action-enhancement'
 import { truncateByChars } from '../../../domain/plan-titles'
 import { redactPii } from '../../../integrations/deepseek'
 import { listInstrumentOptions } from '../../../domain/assessment-instruments'
+
+/**
+ * 后台 AI 增强「任务丢失」判定窗口：增强顺序执行行动改写与深度报告，
+ * 最坏耗时接近 9 分钟，超过该窗口仍 pending 才收敛为 failed。
+ */
+const AI_ENHANCEMENT_STALE_MS = 600_000
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -25,10 +32,53 @@ export default defineEventHandler(async (event) => {
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
 
   // 后台 AI 增强兜底：进程崩溃会留下 pending 状态且无任务可收敛。
-  // 超过模型超时上限（360s）仍 pending 视为任务丢失，收敛为 failed（保留确定性报告）。
-  if (plan.aiReportStatus === 'pending' && Date.now() - plan.updatedAt.getTime() > 360_000) {
-    await db.update(schema.plans).set({ aiReportStatus: 'failed' }).where(eq(schema.plans.id, id))
-    plan.aiReportStatus = 'failed'
+  // 增强为「行动改写 → 深度报告」顺序执行，最坏耗时接近 9 分钟
+  // （改写 3 次 ×60s 重试 + 报告 360s 上限），超过该窗口仍 pending 视为任务丢失，
+  // 收敛为 failed（保留确定性方案与三库原文）。
+  if ((plan.aiReportStatus === 'pending' || plan.aiActionsStatus === 'pending')
+    && Date.now() - plan.updatedAt.getTime() > AI_ENHANCEMENT_STALE_MS) {
+    const patch: { aiReportStatus?: string, aiActionsStatus?: string } = {}
+    if (plan.aiReportStatus === 'pending') {
+      patch.aiReportStatus = 'failed'
+      plan.aiReportStatus = 'failed'
+    }
+    if (plan.aiActionsStatus === 'pending') {
+      patch.aiActionsStatus = 'failed'
+      plan.aiActionsStatus = 'failed'
+    }
+    await db.update(schema.plans).set(patch).where(eq(schema.plans.id, id))
+  }
+
+  // 老方案补跑：方案正文还没经过 AI 改写（aiActionsEnhancedAt 为空）时，打开方案页
+  // 即置回 pending 并后台补跑，教师端进入「等待 AI 生成」而不是看到三库机械条目。
+  // 条件 UPDATE 抢占，并发打开只触发一次；补跑失败会收敛为 failed 并展示重试入口。
+  if (plan.aiActionsStatus === 'done'
+    && !plan.aiActionsEnhancedAt
+    && hasAiManagedActionItems(plan)) {
+    const [claimed] = await db.update(schema.plans).set({
+      aiActionsStatus: 'pending',
+      updatedAt: new Date()
+    }).where(and(
+      eq(schema.plans.id, id),
+      eq(schema.plans.ownerUserId, user.id),
+      eq(schema.plans.schoolId, user.schoolId),
+      eq(schema.plans.aiActionsStatus, 'done'),
+      isNull(schema.plans.aiActionsEnhancedAt)
+    )).returning({ updatedAt: schema.plans.updatedAt })
+    const parsedModule = moduleIdSchema.safeParse(plan.module)
+    if (claimed && parsedModule.success) {
+      plan.aiActionsStatus = 'pending'
+      void enhancePlanActions(event, {
+        planId: plan.id,
+        schoolId: user.schoolId,
+        ownerUserId: user.id,
+        module: parsedModule.data,
+        expectedPlanUpdatedAt: claimed.updatedAt
+      })
+    } else if (claimed) {
+      // 模块值异常（理论上不会发生）：回退状态，避免方案永远停在 pending
+      await db.update(schema.plans).set({ aiActionsStatus: 'done' }).where(eq(schema.plans.id, id))
+    }
   }
 
   const config = useRuntimeConfig(event)
@@ -191,7 +241,7 @@ export default defineEventHandler(async (event) => {
     // 建议计算失败不阻断方案查看
   }
 
-  const { summaryEnc, acceptanceReasonEnc, ...publicPlan } = plan
+  const { summaryEnc, acceptanceReasonEnc, aiActionsEnhancedAt: _aiActionsEnhancedAt, ...publicPlan } = plan
 
   return {
     ...publicPlan,

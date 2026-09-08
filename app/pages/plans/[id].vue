@@ -171,6 +171,30 @@ function isToolAction(action: PlanAction) {
   return action.title.startsWith('使用工具「')
 }
 
+/**
+ * AI 改写负责的实施方案条目：工具动作与归因建议行动。
+ * 深度诊断待办是服务端确定性生成的指令，教师手动新增的行动也不在其中，
+ * 两者正文始终原样展示。
+ */
+function isAiManagedAction(action: PlanAction) {
+  return isToolAction(action) || action.title.startsWith('针对「')
+}
+
+const AI_ACTIONS_PENDING_HINT = 'AI 正在生成具体实施方案，请稍候…'
+const AI_ACTIONS_FAILED_HINT = 'AI 生成未完成，请点击上方「重新生成实施方案」重试。'
+
+/**
+ * 实施方案正文：AI 生成期间与失败态都不回落到三库机械条目——
+ * 需求是「实施方案必须由 AI 输出」，机械条目只作为 AI 输入与数据保留。
+ */
+function displayActionDetail(action: PlanAction): string {
+  if (isAiManagedAction(action)) {
+    if (aiActionsPending.value) return AI_ACTIONS_PENDING_HINT
+    if (aiActionsFailed.value) return AI_ACTIONS_FAILED_HINT
+  }
+  return action.detail
+}
+
 const activeActions = computed<PlanAction[]>(() => {
   return data.value?.actions || []
 })
@@ -276,10 +300,11 @@ function recommendationImplementation(group: RecommendationGroup) {
       const numbered = group.actions.length > 1
       const ordinal = CN_ORDINALS[index] || String(index + 1)
       const head = numbered ? `${ordinal}、${action.title}` : action.title
-      if (!action.detail) return head
+      const detail = displayActionDetail(action)
+      if (!detail) return head
       // 工具动作的正文是结构化步骤（自带序号），标题独占一行，步骤换行展开
-      if (isToolAction(action)) return `${head}\n${action.detail}`
-      return numbered ? `${head}：${action.detail}` : action.detail
+      if (isToolAction(action)) return `${head}\n${detail}`
+      return numbered ? `${head}：${detail}` : detail
     })
     .join('\n\n')
 }
@@ -624,12 +649,19 @@ function toggleFeedbackTag(tag: string, checked: boolean | string) {
 }
 
 /**
- * AI 深度报告状态：提交接口已改为异步增强（后台生成），确定性方案先返回。
- * pending 期间 5s 轮询方案详情，状态收敛为 done/failed 后自动停止；
- * 后端对丢失的任务有 360s 兜底收敛，轮询不会无限持续。
+ * AI 后台增强状态：提交/生成方案接口已异步化，确定性方案先返回。
+ *  - aiActionsStatus：工具与行动步骤的 AI 改写（先执行）；
+ *  - aiReportStatus：深度报告（后执行）。
+ * 任一 pending 时每 5s 轮询方案详情，全部收敛为 done/failed 后自动停止；
+ * 后端对丢失的任务有 10 分钟兜底收敛，轮询不会无限持续。
  */
 const aiReportStatus = computed(() => data.value?.aiReportStatus || 'done')
+const aiActionsStatus = computed(() => data.value?.aiActionsStatus || 'done')
 const aiPending = computed(() => aiReportStatus.value === 'pending')
+const aiActionsPending = computed(() => aiActionsStatus.value === 'pending')
+const aiActionsFailed = computed(() => aiActionsStatus.value === 'failed')
+/** 任一阶段在生成中：方案页等待 AI，期间不展示三库机械条目 */
+const aiEnhancing = computed(() => aiPending.value || aiActionsPending.value)
 const aiElapsed = ref(0)
 let aiPollTimer: ReturnType<typeof setInterval> | undefined
 let aiElapsedTimer: ReturnType<typeof setInterval> | undefined
@@ -644,7 +676,7 @@ function stopAiPolling() {
 // 轮询与计时只能在浏览器执行：SSR 阶段 setInterval 会被 Nuxt 拦截导致页面 500。
 let stopAiWatcher: (() => void) | undefined
 onMounted(() => {
-  stopAiWatcher = watch(aiPending, (pending) => {
+  stopAiWatcher = watch(aiEnhancing, (pending) => {
     if (pending) {
       aiElapsed.value = 0
       aiElapsedTimer = setInterval(() => aiElapsed.value++, 1000)
@@ -659,6 +691,30 @@ onBeforeUnmount(() => {
   stopAiWatcher?.()
   stopAiPolling()
 })
+
+/** 手动重跑 AI 实施方案改写（失败态与已生成态都可用；请求返回后由轮询接续等待）。 */
+const retryActionsPending = ref(false)
+async function retryEnhanceActions() {
+  if (retryActionsPending.value) return
+  retryActionsPending.value = true
+  try {
+    await $fetch(`/api/v1/plans/${id}/enhance-actions`, { method: 'POST' })
+    await refresh()
+    toast.add({
+      title: '已重新开始生成实施方案',
+      description: 'AI 正在逐条改写，完成后页面自动更新。',
+      color: 'success',
+    })
+  } catch (error: any) {
+    toast.add({
+      title: '重新生成失败',
+      description: error?.data?.message || '请稍后重试。',
+      color: 'error',
+    })
+  } finally {
+    retryActionsPending.value = false
+  }
+}
 
 useHead({ title: () => data.value?.title || '方案详情' })
 </script>
@@ -698,9 +754,9 @@ useHead({ title: () => data.value?.title || '方案详情' })
     </div>
 
     <div v-else class="flex flex-col gap-6">
-      <!-- AI 深度报告状态条：确定性方案先返回，深度报告后台撰写中（提交接口已异步化） -->
+      <!-- AI 后台增强状态条：确定性方案先返回，工具/行动改写与深度报告在后台顺序生成 -->
       <UAlert
-        v-if="aiPending"
+        v-if="aiEnhancing"
         color="primary"
         variant="soft"
         :icon="false"
@@ -708,12 +764,36 @@ useHead({ title: () => data.value?.title || '方案详情' })
         <div class="flex items-center gap-3">
           <UIcon name="i-lucide-loader-circle" class="size-5 shrink-0 animate-spin text-primary-500" />
           <div class="min-w-0">
-            <p class="text-sm font-semibold text-primary-900">AI 正在撰写深度报告</p>
+            <p class="text-sm font-semibold text-primary-900">
+              {{ aiActionsPending ? '第 1/2 步 · AI 正在生成实施方案' : '第 2/2 步 · AI 正在撰写深度报告' }}
+            </p>
             <p class="mt-0.5 text-xs leading-5 text-primary-700">
-              方案主体已生成，可先查看下方归因与行动项。深度报告通常需要 1-2 分钟，完成后自动更新（已等待 {{ aiElapsed }} 秒）。
+              {{ aiActionsPending
+                ? `方案结构已生成，具体实施步骤正由 AI 逐条改写，完成后自动更新（已等待 ${aiElapsed} 秒）。`
+                : `方案主体已生成，深度报告通常需要 1-2 分钟，完成后自动更新（已等待 ${aiElapsed} 秒）。` }}
             </p>
           </div>
         </div>
+      </UAlert>
+      <UAlert
+        v-else-if="aiActionsFailed"
+        color="warning"
+        variant="soft"
+        icon="i-lucide-circle-alert"
+        title="AI 实施方案生成未完成"
+        description="三库机械条目不作为最终正文展示，可重新生成一次。"
+      >
+        <template #actions>
+          <UButton
+            size="xs"
+            color="warning"
+            variant="soft"
+            :loading="retryActionsPending"
+            @click="retryEnhanceActions"
+          >
+            重新生成实施方案
+          </UButton>
+        </template>
       </UAlert>
       <UAlert
         v-else-if="aiReportStatus === 'failed'"
@@ -907,7 +987,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                   {{ action.title }}
                 </p>
                 <!-- 工具动作与普通动作一致展示正文（结构化步骤），与建议区排版同步 -->
-                <p v-if="action.detail" class="mt-1 whitespace-pre-line text-xs leading-5 text-slate-500">{{ action.detail }}</p>
+                <p v-if="displayActionDetail(action)" class="mt-1 whitespace-pre-line text-xs leading-5 text-slate-500">{{ displayActionDetail(action) }}</p>
                 <!-- 截止日期 -->
                 <p v-if="action.dueAt" class="mt-1 text-xs text-amber-600">
                   截止：{{ formatDateTimeShort(action.dueAt) }}
@@ -1221,10 +1301,22 @@ useHead({ title: () => data.value?.title || '方案详情' })
               请结合实际情况按方案块确认。接受家长或学校配合部分，表示教师同意发起协同，不代表替对方承诺执行。
             </p>
           </div>
-          <div class="flex flex-wrap gap-2 text-xs">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
             <UBadge color="success" variant="soft">已接受 {{ includedRecommendationCount }}</UBadge>
             <UBadge color="neutral" variant="soft">暂不接受 {{ rejectedRecommendationCount }}</UBadge>
             <UBadge v-if="pendingRecommendationCount" color="warning" variant="soft">待处理 {{ pendingRecommendationCount }}</UBadge>
+            <!-- 手动重跑 AI 改写：早期方案的工具/行动正文仍是三库机械条目，可重新生成 -->
+            <UButton
+              v-if="activeActions.length && !aiEnhancing && !aiActionsFailed"
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-sparkles"
+              :loading="retryActionsPending"
+              @click="retryEnhanceActions"
+            >
+              AI 重新生成
+            </UButton>
           </div>
         </div>
 

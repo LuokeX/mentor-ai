@@ -328,8 +328,11 @@ export async function generateOrMergeSessionPlan(
       actions: mergedActions,
       tools: planTools,
       report: planReport,
-      // 合并重算了方案内容：AI 深度报告基于旧结果，需由调用方重新触发后台增强
+      // 合并重算了方案内容：AI 深度报告与行动改写基于旧结果，需由调用方重新触发后台增强
       aiReportStatus: 'pending',
+      aiActionsStatus: 'pending',
+      // 内容已重算，旧的 AI 改写完成标记失效：方案页据此判断是否需要补跑
+      aiActionsEnhancedAt: null,
       matchedRuleIds: mergedResult.matchedRuleIds,
       matchedToolCodes: mergeUnique([...(plan?.matchedToolCodes || []), ...matchedToolCodes]),
       sourceVersions: mergeUnique([...(plan?.sourceVersions || []), ...definitionResource.sourceVersions, ...(attributionConfig?.sourceVersions || []), ...mergedResult.matchedRuleIds]),
@@ -383,8 +386,9 @@ export async function generateOrMergeSessionPlan(
     tools: planTools,
     report: planReport,
     sourceVersions: [...definitionResource.sourceVersions, ...(attributionConfig?.sourceVersions || [`fallback-attribution:${module}`]), ...mergedResult.matchedRuleIds],
-    // 方案已可用（确定性报告）；AI 深度报告由调用方后台增强并回写，教师端无需等待
+    // 方案已可用（确定性报告）；AI 行动改写与深度报告由调用方后台增强并回写，教师端无需等待
     aiReportStatus: 'pending',
+    aiActionsStatus: 'pending',
     status: 'pending_acceptance',
     matchedRuleIds: mergedResult.matchedRuleIds,
     matchedToolCodes,
