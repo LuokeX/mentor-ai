@@ -4,6 +4,7 @@ import {
   MAX_GENERATED_TOOLS,
   MAX_TOOL_POLISH_ATTEMPTS,
   MAX_TOOL_POLISH_CONTENT,
+  mergeActionResults,
   mergePolishResults,
   parsePolishOutput,
   runGeneratedPolishRetry,
@@ -305,5 +306,164 @@ describe('runGeneratedPolishRetry', () => {
     }))
     expect(attempts).toBe(MAX_TOOL_POLISH_ATTEMPTS)
     expect(tools).toEqual([])
+  })
+})
+
+describe('actions 加工（parsePolishOutput 传入 expectedActions）', () => {
+  const inputActions = [
+    { title: '针对「意义感流失」', detail: '每周五下班前用 10 分钟做一次周复盘，记录最有成就感的 1 件事。', code: 'A-001' },
+    { title: '针对「职业倦怠」', detail: '找一位信任的同事聊一聊近期的感受，把压力说出来。', code: 'A-002' },
+  ]
+  const goodActions = [
+    { title: '针对「意义感流失」', content: '每周五下班前用 10 分钟写下本周最有成就感的 1 件事与当时的做法，存入备忘录；连续 4 周后提炼成自己的「能量清单」。' },
+    { title: '针对「职业倦怠」', content: '本周内约一位信任的同事喝杯茶，把近期的疲惫与困惑说出来，并约定之后每月互相倾听一次。' },
+  ]
+  const mixedOkRaw = () => okOutput({ actions: goodActions })
+
+  it('actions 合法输出通过校验并逐条关联回输入（matched 正确）', () => {
+    const result = parsePolishOutput(mixedOkRaw(), inputTools, inputActions)
+    expect(result.errors).toEqual([])
+    expect(result.matched.size).toBe(2)
+    expect(result.actionsMatched.size).toBe(2)
+    expect(result.actionsMatched.get('针对「意义感流失」')).toContain('每周五下班前用 10 分钟写下')
+    expect(result.actionsMatched.get('针对「职业倦怠」')).toContain('约一位信任的同事喝杯茶')
+  })
+
+  it('actions 数量与输入不符时报错', () => {
+    const raw = okOutput({ actions: [goodActions[0]] })
+    const result = parsePolishOutput(raw, inputTools, inputActions)
+    expect(result.errors.join('；')).toContain('actions 数量 1，应为 2')
+    expect(result.actionsMatched.size).toBe(1)
+  })
+
+  it('actions 出现输入中没有的 title 时报错', () => {
+    const raw = okOutput({ actions: [{ title: '乱写的动作', content: '内容' }, goodActions[1]] })
+    const result = parsePolishOutput(raw, inputTools, inputActions)
+    expect(result.errors.join('；')).toContain('出现输入中没有的 action「乱写的动作」')
+    expect(result.actionsMatched.size).toBe(1)
+    expect(result.actionsMatched.has('针对「职业倦怠」')).toBe(true)
+  })
+
+  it('actions content 为空时报错', () => {
+    const raw = okOutput({ actions: [{ ...goodActions[0], content: '   ' }, goodActions[1]] })
+    const result = parsePolishOutput(raw, inputTools, inputActions)
+    expect(result.errors.join('；')).toContain('action「针对「意义感流失」」内容为空')
+    expect(result.actionsMatched.has('针对「意义感流失」')).toBe(false)
+    expect(result.actionsMatched.has('针对「职业倦怠」')).toBe(true)
+  })
+
+  it('actions content 超过 MAX_TOOL_POLISH_CONTENT 时报错', () => {
+    const raw = okOutput({ actions: [{ title: '针对「意义感流失」', content: 'x'.repeat(MAX_TOOL_POLISH_CONTENT + 1) }, goodActions[1]] })
+    const result = parsePolishOutput(raw, inputTools, inputActions)
+    expect(result.errors.join('；')).toContain('action「针对「意义感流失」」内容过长')
+    expect(result.errors.join('；')).toContain(`上限 ${MAX_TOOL_POLISH_CONTENT}`)
+    expect(result.actionsMatched.has('针对「意义感流失」')).toBe(false)
+  })
+
+  it('缺少某个 action 时报错', () => {
+    const raw = okOutput({ actions: [goodActions[0]] })
+    const result = parsePolishOutput(raw, inputTools, inputActions)
+    expect(result.errors.join('；')).toContain('缺少 action「针对「职业倦怠」」')
+  })
+
+  it('不传 expectedActions：actionsMatched 为空 Map、输出中的 actions 被忽略，tools 行为不变（向后兼容）', () => {
+    // 输出里带了非法 actions，但不传第三参 → 完全不校验 actions
+    const raw = okOutput({ actions: [{ title: '乱写的动作', content: '' }] })
+    const result = parsePolishOutput(raw, inputTools)
+    expect(result.errors).toEqual([])
+    expect(result.actionsMatched.size).toBe(0)
+    expect(result.matched.size).toBe(2)
+    expect(result.matched.get('结构化沟通三步法')).toContain('先让两个孩子分开')
+  })
+})
+
+describe('actions 加工（runPolishWithRetry）', () => {
+  const inputActions = [
+    { title: '针对「意义感流失」', detail: '每周五下班前用 10 分钟做一次周复盘，记录最有成就感的 1 件事。', code: 'A-001' },
+    { title: '针对「职业倦怠」', detail: '找一位信任的同事聊一聊近期的感受，把压力说出来。', code: 'A-002' },
+  ]
+  const goodActions = [
+    { title: '针对「意义感流失」', content: '每周五下班前用 10 分钟写下本周最有成就感的 1 件事与当时的做法，存入备忘录。' },
+    { title: '针对「职业倦怠」', content: '本周内约一位信任的同事喝杯茶，把近期的疲惫与困惑说出来。' },
+  ]
+  const mixedOkRaw = () => okOutput({ actions: goodActions })
+
+  it('tools 与 actions 混合输出同一条 raw 一次调用全部通过（attempts=1 不重试）', async () => {
+    let calls = 0
+    const raw = mixedOkRaw()
+    const { tools, actions, attempts } = await runPolishWithRetry(inputTools, async () => {
+      calls++
+      const parsed = parsePolishOutput(raw, inputTools, inputActions)
+      expect(parsed.errors).toEqual([])
+      return { ...parsed, raw }
+    })
+    expect(calls).toBe(1)
+    expect(attempts).toBe(1)
+    expect(tools[0].content).toContain('先让两个孩子分开')
+    expect(actions).toEqual(goodActions)
+  })
+
+  it('首轮 actions 非法触发重试，第二轮 tools 与 actions 全过（attempts=2，携带上次输出与错误）', async () => {
+    const firstRaw = okOutput({ actions: [{ ...goodActions[0], content: '   ' }, goodActions[1]] })
+    const raws = [firstRaw, mixedOkRaw()]
+    let calls = 0
+    const { tools, actions, attempts } = await runPolishWithRetry(inputTools, async (attempt, previous) => {
+      calls++
+      if (attempt === 2) {
+        expect(previous).toBeDefined()
+        expect(previous?.errors.join('；')).toContain('action「针对「意义感流失」」内容为空')
+        expect(previous?.raw).toContain('"actions"')
+      }
+      const raw = raws[attempt - 1]
+      const parsed = parsePolishOutput(raw, inputTools, inputActions)
+      return { ...parsed, raw }
+    })
+    expect(calls).toBe(2)
+    expect(attempts).toBe(2)
+    expect(actions).toEqual(goodActions)
+    expect(tools[0].content).toContain('先让两个孩子分开')
+  })
+
+  it('重试耗尽：actions 累计命中项用 AI content、未命中项保留原文 detail（mergeActionResults 回填）', async () => {
+    const raws = [
+      // 第 1 次：action 一合法、action 二内容为空 → 仍失败
+      okOutput({ actions: [goodActions[0], { title: '针对「职业倦怠」', content: '   ' }] }),
+      // 第 2 次：action 一合法新版（覆盖第 1 次的版本）、action 二 title 不匹配 → 仍失败
+      okOutput({ actions: [{ title: '针对「意义感流失」', content: '第二版 AI 内容' }, { title: '乱写的动作', content: '内容' }] }),
+      // 第 3 次：两条内容都为空 → 失败，耗尽
+      okOutput({ actions: [{ title: '针对「意义感流失」', content: '' }, { title: '针对「职业倦怠」', content: ' ' }] }),
+    ]
+    const { actions: polished, attempts } = await runPolishWithRetry(inputTools, async (attempt) => {
+      const raw = raws[attempt - 1]
+      const parsed = parsePolishOutput(raw, inputTools, inputActions)
+      expect(parsed.errors.length).toBeGreaterThan(0)
+      return { ...parsed, raw }
+    })
+    expect(attempts).toBe(MAX_TOOL_POLISH_ATTEMPTS)
+    // 只保留第 2 次通过校验的新版，未命中的「针对「职业倦怠」」不在结果里
+    expect(polished).toEqual([{ title: '针对「意义感流失」', content: '第二版 AI 内容' }])
+    // 逐项回填：命中项 detail 换成 AI content，未命中项保留原文 detail（与 polishToolSteps 装配一致）
+    const merged = mergeActionResults(inputActions, new Map(polished.map(item => [item.title, item.content])))
+    expect(merged[0]).toEqual({ ...inputActions[0], detail: '第二版 AI 内容' })
+    expect(merged[1]).toEqual(inputActions[1])
+  })
+})
+
+describe('mergeActionResults', () => {
+  const inputActions = [
+    { title: '针对「意义感流失」', detail: '每周五做一次周复盘。', code: 'A-001' },
+    { title: '针对「职业倦怠」', detail: '与信任的同事聊聊感受。' },
+  ]
+
+  it('命中项用 AI 版替换 detail、未命中项保留原文，编码字段不丢', () => {
+    const matched = new Map([['针对「意义感流失」', '可执行步骤 A']])
+    const merged = mergeActionResults(inputActions, matched)
+    expect(merged[0]).toEqual({ ...inputActions[0], detail: '可执行步骤 A' })
+    expect(merged[1]).toEqual(inputActions[1])
+  })
+
+  it('无任何匹配时原样返回（逐项回退原文）', () => {
+    const merged = mergeActionResults(inputActions, new Map())
+    expect(merged).toEqual(inputActions)
   })
 })

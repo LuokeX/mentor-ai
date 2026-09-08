@@ -163,23 +163,33 @@ export default defineEventHandler(async (event) => {
   })
   // 同步 AI 加工：把工具库机械结构与知识库检索片段（按工具卡名称检索术语解释）共同输入，
   // 有工具时综合改写（工具名/数量不变）、无工具时按知识片段生成 1-3 条；无密钥/失败逐项回退原文。
-  // 加工发生在事务外，不占用数据库事务与组行锁。
-  const polished = result.blocked ? [] : await polishToolSteps(event, {
-    schoolId,
-    ownerUserId: user.id,
-    module,
-    severity: result.severity,
-    attributions: result.attributions.map(attribution => ({
-      name: attribution.name,
-      strength: attribution.strength,
-      reasons: attribution.reasons
-    })),
-    tools: matchedTools,
-    knowledgeQuery: matchedTools.length
-      ? matchedTools.map(tool => tool.title).join('、')
-      : `${moduleTitle}：${result.primaryAttribution || '状态待定'}，教师可执行的操作步骤`
+  // 归因建议行动随工具一起交 AI 加工并写回：逐项按 title 命中替换、未命中保留原文。
+  // 熔断时跳过加工，tools/actions 均保持原样。加工发生在事务外，不占用数据库事务与组行锁。
+  const polished = result.blocked
+    ? { tools: [] as typeof matchedTools, actions: [] as Array<{ title: string, content: string }> }
+    : await polishToolSteps(event, {
+        schoolId,
+        ownerUserId: user.id,
+        module,
+        severity: result.severity,
+        attributions: result.attributions.map(attribution => ({
+          name: attribution.name,
+          strength: attribution.strength,
+          reasons: attribution.reasons
+        })),
+        tools: matchedTools,
+        // 归因建议行动原文随输入给出（title+detail），供模型逐条改写
+        actions: result.actions.map(action => ({ title: action.title, detail: action.detail })),
+        knowledgeQuery: matchedTools.length
+          ? matchedTools.map(tool => tool.title).join('、')
+          : `${moduleTitle}：${result.primaryAttribution || '状态待定'}，教师可执行的操作步骤`
+      })
+  result.tools = [...result.tools, ...polished.tools]
+  // 行动逐项回退合并：AI 加工按 title 命中则只替换 detail，未命中保留原文
+  result.actions = result.actions.map(existing => {
+    const polishedAction = polished.actions.find(item => item.title === existing.title)
+    return polishedAction ? { ...existing, detail: polishedAction.content } : existing
   })
-  result.tools = [...result.tools, ...polished]
 
   const outputTemplateResource = result.blocked
     ? null
