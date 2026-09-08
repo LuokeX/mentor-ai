@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { moduleMeta } from '#shared/assessments'
+import { APP_VERSION } from '#shared/app-version'
 const route = useRoute()
 const { user, refresh, logout } = useAuth()
 await refresh()
@@ -53,7 +54,7 @@ function closeDropdown(event: Event) {
           <span>
             <span class="flex items-center gap-2">
               <strong class="block text-sm">教师赋能智能平台</strong>
-              <span class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-wide text-emerald-700">v1.0.0</span>
+              <span class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-wide text-emerald-700">{{ APP_VERSION }}</span>
             </span>
             <small class="text-xs text-slate-500">AI · 安全 · 成长</small>
           </span>
