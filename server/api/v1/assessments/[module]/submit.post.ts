@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { and, asc, desc, eq, inArray, isNull, max, ne } from 'drizzle-orm'
 import type { OutputTemplateEntry, RuleExecResult } from '../../../../../shared/contracts'
 import { moduleIdSchema } from '../../../../../shared/contracts'
+import { moduleMeta } from '../../../../../shared/assessments'
 import { requireUser } from '../../../../utils/auth'
 import { type DbClient, useDb, schema } from '../../../../utils/db'
 import { executeRules, evaluateWithFallback } from '../../../../domain/rules-executor'
@@ -9,6 +10,7 @@ import { resolveAssessmentDefinition, resolveAttributionConfig, resolvePublished
 import { decryptSensitive } from '../../../../utils/crypto'
 import { createSafetyReferral } from '../../../../domain/safety'
 import { resolveToolsForPlan } from '../../../../domain/plan-actions'
+import { polishToolSteps } from '../../../../domain/tool-step-polish'
 import { recordPlanOperationEvent } from '../../../../domain/plan-operations'
 import { collectSessionSnapshots, generateOrMergeSessionPlan } from '../../../../domain/plan-session'
 import { isNoPlanNeeded } from '../../../../domain/no-plan-needed'
@@ -62,6 +64,7 @@ export default defineEventHandler(async (event) => {
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const schoolId = user.schoolId
   const module = moduleIdSchema.parse(getRouterParam(event, 'module'))
+  const moduleTitle = moduleMeta[module].title
   const body = bodySchema.parse(await readBody(event))
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
@@ -158,7 +161,25 @@ export default defineEventHandler(async (event) => {
     requiredCodes: result.interventionToolCodes,
     schoolId: schoolId
   })
-  if (matchedTools.length) result.tools = [...result.tools, ...matchedTools]
+  // 同步 AI 加工：把工具库机械结构与知识库检索片段（按工具卡名称检索术语解释）共同输入，
+  // 有工具时综合改写（工具名/数量不变）、无工具时按知识片段生成 1-3 条；无密钥/失败逐项回退原文。
+  // 加工发生在事务外，不占用数据库事务与组行锁。
+  const polished = result.blocked ? [] : await polishToolSteps(event, {
+    schoolId,
+    ownerUserId: user.id,
+    module,
+    severity: result.severity,
+    attributions: result.attributions.map(attribution => ({
+      name: attribution.name,
+      strength: attribution.strength,
+      reasons: attribution.reasons
+    })),
+    tools: matchedTools,
+    knowledgeQuery: matchedTools.length
+      ? matchedTools.map(tool => tool.title).join('、')
+      : `${moduleTitle}：${result.primaryAttribution || '状态待定'}，教师可执行的操作步骤`
+  })
+  result.tools = [...result.tools, ...polished]
 
   const outputTemplateResource = result.blocked
     ? null

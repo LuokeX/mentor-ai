@@ -3,13 +3,15 @@ import { PROMPT_BUILTINS, renderTemplate } from '../server/domain/ai-config'
 import { aiRuntimeSettingsPatchSchema } from '../shared/contracts'
 
 describe('PROMPT_BUILTINS 内置提示词基线', () => {
-  it('覆盖全部 9 个 AI 调用点且 code 唯一', () => {
+  it('覆盖全部 11 个 AI 调用点且 code 唯一', () => {
     const codes = PROMPT_BUILTINS.map(item => item.code)
     expect(codes).toEqual([
       'assistant_chat',
+      'clarification_judge',
       'clarification_round',
       'clarification_summary',
       'assessment_report',
+      'tool_step_polish',
       'semantic_safety',
       'rule_expression',
       'module_router',
