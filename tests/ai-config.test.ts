@@ -73,6 +73,11 @@ describe('aiRuntimeSettingsPatchSchema 运行时配置契约', () => {
       timeoutMs: 30000,
       embeddingModel: null,
       embeddingEnabled: false,
+      agentEnabled: true,
+      agentMaxRounds: 6,
+      agentTemperature: 0.35,
+      agentTools: ['recommend_assessment', 'knowledge_search'],
+      agentBehaviorNotes: '回答先行，只输出自然语言。',
     })
     expect(parsed.success).toBe(true)
   })
@@ -80,5 +85,17 @@ describe('aiRuntimeSettingsPatchSchema 运行时配置契约', () => {
   it('超时超出范围被拒绝', () => {
     expect(aiRuntimeSettingsPatchSchema.safeParse({ timeoutMs: 100 }).success).toBe(false)
     expect(aiRuntimeSettingsPatchSchema.safeParse({ timeoutMs: 200000 }).success).toBe(false)
+  })
+
+  it('Agent 字段：tool 空数组合法（禁用全部工具），agentTools 为 null 合法（回落默认）', () => {
+    expect(aiRuntimeSettingsPatchSchema.safeParse({ agentTools: [] }).success).toBe(true)
+    expect(aiRuntimeSettingsPatchSchema.safeParse({ agentTools: null }).success).toBe(true)
+  })
+
+  it('Agent 字段：轮次上限与温度超出范围被拒绝', () => {
+    expect(aiRuntimeSettingsPatchSchema.safeParse({ agentMaxRounds: 0 }).success).toBe(false)
+    expect(aiRuntimeSettingsPatchSchema.safeParse({ agentMaxRounds: 21 }).success).toBe(false)
+    expect(aiRuntimeSettingsPatchSchema.safeParse({ agentTemperature: -0.1 }).success).toBe(false)
+    expect(aiRuntimeSettingsPatchSchema.safeParse({ agentTemperature: 2.5 }).success).toBe(false)
   })
 })

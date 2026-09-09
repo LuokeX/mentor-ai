@@ -1075,6 +1075,16 @@ export const aiRuntimeSettings = pgTable('ai_runtime_settings', {
   timeoutMs: integer('timeout_ms'),
   embeddingModel: varchar('embedding_model', { length: 80 }),
   embeddingEnabled: boolean('embedding_enabled'),
+  /** Agent（回答先行）启用开关：null = 回落环境变量 AGENT_ENABLED / NUXT_AGENT_ENABLED。 */
+  agentEnabled: boolean('agent_enabled'),
+  /** Agent 工具轮次上限：null = 回落代码默认（6）。 */
+  agentMaxRounds: integer('agent_max_rounds'),
+  /** Agent 采样温度：null = 回落代码默认（0.35）。 */
+  agentTemperature: real('agent_temperature'),
+  /** Agent 启用的工具名数组：null = 回落全部默认工具；空数组 = 禁用全部工具。 */
+  agentTools: jsonb('agent_tools').$type<string[]>(),
+  /** Agent 行为补充要点（追加在提示词末尾）：null = 回落硬编码 AGENT_BEHAVIOR_NOTES。 */
+  agentBehaviorNotes: text('agent_behavior_notes'),
   updatedBy: uuid('updated_by').references(() => users.id),
   ...timestamps
 })

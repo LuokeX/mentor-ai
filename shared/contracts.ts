@@ -886,7 +886,17 @@ export const aiRuntimeSettingsPatchSchema = z.object({
   generatorModel: z.string().trim().max(80).nullable().optional(),
   timeoutMs: z.coerce.number().int().min(500).max(120000).nullable().optional(),
   embeddingModel: z.string().trim().max(80).nullable().optional(),
-  embeddingEnabled: z.boolean().nullable().optional()
+  embeddingEnabled: z.boolean().nullable().optional(),
+  /** Agent（回答先行）启用开关：null = 回落环境变量。 */
+  agentEnabled: z.boolean().nullable().optional(),
+  /** Agent 工具轮次上限：null = 回落代码默认。 */
+  agentMaxRounds: z.coerce.number().int().min(1).max(20).nullable().optional(),
+  /** Agent 采样温度：null = 回落代码默认。 */
+  agentTemperature: z.coerce.number().min(0).max(2).nullable().optional(),
+  /** Agent 启用的工具名数组：null = 回落全部默认工具；空数组 = 禁用全部工具。 */
+  agentTools: z.array(z.string().trim().min(1).max(80)).nullable().optional(),
+  /** Agent 行为补充要点：null = 回落硬编码默认。 */
+  agentBehaviorNotes: z.string().trim().max(4000).nullable().optional()
 })
 
 /** 调研反馈入口配置更新（平台后台）：url 为 null = 清空并隐藏按钮。 */

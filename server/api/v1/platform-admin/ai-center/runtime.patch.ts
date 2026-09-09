@@ -19,6 +19,11 @@ export default defineEventHandler(async (event) => {
     timeoutMs: parsed.data.timeoutMs ?? null,
     embeddingModel: parsed.data.embeddingModel ?? null,
     embeddingEnabled: parsed.data.embeddingEnabled ?? null,
+    agentEnabled: parsed.data.agentEnabled ?? null,
+    agentMaxRounds: parsed.data.agentMaxRounds ?? null,
+    agentTemperature: parsed.data.agentTemperature ?? null,
+    agentTools: parsed.data.agentTools ?? null,
+    agentBehaviorNotes: parsed.data.agentBehaviorNotes ?? null,
     updatedBy: admin.id
   }
   const [row] = existing

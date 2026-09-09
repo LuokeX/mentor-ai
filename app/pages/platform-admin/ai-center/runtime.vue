@@ -16,6 +16,11 @@ const { data, refresh } = await useFetch<{
     timeoutMs: RuntimeEntry
     embeddingModel: RuntimeEntry
     embeddingEnabled: RuntimeEntry
+    agentEnabled: RuntimeEntry
+    agentMaxRounds: RuntimeEntry
+    agentTemperature: RuntimeEntry
+    agentTools: RuntimeEntry
+    agentBehaviorNotes: RuntimeEntry
   }
   envOnly: {
     deepseekApiKey: { configured: boolean }
@@ -32,6 +37,18 @@ const generatorModel = ref('')
 const timeoutMs = ref('')
 const embeddingModel = ref('')
 const embeddingEnabled = ref('') // '' 默认 | 'true' | 'false'
+const agentEnabled = ref('') // '' 默认 | 'true' | 'false'
+const agentMaxRounds = ref('')
+const agentTemperature = ref('')
+const agentTools = ref<string[]>([])
+const agentBehaviorNotes = ref('')
+
+const AGENT_TOOL_OPTIONS = [
+  { label: '推荐量表', value: 'recommend_assessment' },
+  { label: '知识库检索', value: 'knowledge_search' },
+  { label: '问题分诊（模块路由）', value: 'module_route' },
+  { label: '实体记忆', value: 'entity_memory' },
+]
 
 watch(data, (value) => {
   if (!value) return
@@ -40,6 +57,11 @@ watch(data, (value) => {
   timeoutMs.value = value.values.timeoutMs.override !== null ? String(value.values.timeoutMs.override) : ''
   embeddingModel.value = (value.values.embeddingModel.override as string) ?? ''
   embeddingEnabled.value = value.values.embeddingEnabled.override === null ? '' : String(value.values.embeddingEnabled.override)
+  agentEnabled.value = value.values.agentEnabled.override === null ? '' : String(value.values.agentEnabled.override)
+  agentMaxRounds.value = value.values.agentMaxRounds.override !== null ? String(value.values.agentMaxRounds.override) : ''
+  agentTemperature.value = value.values.agentTemperature.override !== null ? String(value.values.agentTemperature.override) : ''
+  agentTools.value = Array.isArray(value.values.agentTools.override) ? value.values.agentTools.override as string[] : []
+  agentBehaviorNotes.value = (value.values.agentBehaviorNotes.override as string) ?? ''
 }, { immediate: true })
 
 const saving = ref(false)
@@ -54,6 +76,11 @@ async function save() {
         timeoutMs: timeoutMs.value.trim() ? Number(timeoutMs.value.trim()) : null,
         embeddingModel: embeddingModel.value.trim() || null,
         embeddingEnabled: embeddingEnabled.value === '' ? null : embeddingEnabled.value === 'true',
+        agentEnabled: agentEnabled.value === '' ? null : agentEnabled.value === 'true',
+        agentMaxRounds: agentMaxRounds.value.trim() ? Number(agentMaxRounds.value.trim()) : null,
+        agentTemperature: agentTemperature.value.trim() ? Number(agentTemperature.value.trim()) : null,
+        agentTools: agentTools.value.length ? agentTools.value : null,
+        agentBehaviorNotes: agentBehaviorNotes.value.trim() || null,
       },
     })
     toast.add({ title: '配置已保存', description: '已热生效（缓存 30 秒内）。留空字段继续使用环境变量默认。', color: 'success' })
@@ -163,6 +190,86 @@ async function testConnection() {
           @update:model-value="(v: any) => { embeddingEnabled = String(v ?? '') }"
         />
         <p class="mt-2 text-xs text-gray-400">环境变量默认：{{ data?.values.embeddingEnabled.env ? '开启' : '关闭' }}</p>
+      </div>
+    </div>
+
+    <!-- Agent（回答先行）可编辑配置 -->
+    <h2 class="mt-8 text-lg font-semibold text-gray-900">Agent 回答模式</h2>
+    <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <!-- Agent 启用开关 -->
+      <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-gray-700">Agent 启用</p>
+          <UBadge v-if="data?.values.agentEnabled.override !== null" variant="soft" color="primary" size="xs">DB 覆盖</UBadge>
+        </div>
+        <p class="mt-0.5 text-xs text-gray-400">开启后所有消息走「回答先行 Agent」；关闭回落澄清分诊流程</p>
+        <USelect
+          :model-value="agentEnabled"
+          class="mt-2 w-full"
+          :options="[
+            { label: '默认（环境变量）', value: '' },
+            { label: '开启', value: 'true' },
+            { label: '关闭', value: 'false' },
+          ]"
+          value-key="value"
+          @update:model-value="(v: any) => { agentEnabled = String(v ?? '') }"
+        />
+        <p class="mt-2 text-xs text-gray-400">环境变量默认：{{ data?.values.agentEnabled.env ? '开启' : '关闭' }}</p>
+      </div>
+
+      <!-- Agent 工具轮次上限 -->
+      <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-gray-700">工具轮次上限</p>
+          <UBadge v-if="data?.values.agentMaxRounds.override !== null" variant="soft" color="primary" size="xs">DB 覆盖</UBadge>
+        </div>
+        <p class="mt-0.5 text-xs text-gray-400">Agent 单轮最多调用工具次数（1~20）</p>
+        <UInput v-model="agentMaxRounds" class="mt-2 w-full" type="number" min="1" max="20" placeholder="如 6" />
+        <p class="mt-2 text-xs text-gray-400">环境变量默认：{{ data?.values.agentMaxRounds.env }}</p>
+      </div>
+
+      <!-- Agent 采样温度 -->
+      <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-gray-700">采样温度</p>
+          <UBadge v-if="data?.values.agentTemperature.override !== null" variant="soft" color="primary" size="xs">DB 覆盖</UBadge>
+        </div>
+        <p class="mt-0.5 text-xs text-gray-400">0~2，值越高回答越发散</p>
+        <UInput v-model="agentTemperature" class="mt-2 w-full" type="number" min="0" max="2" step="0.05" placeholder="如 0.35" />
+        <p class="mt-2 text-xs text-gray-400">环境变量默认：{{ data?.values.agentTemperature.env }}</p>
+      </div>
+
+      <!-- Agent 启用的工具 -->
+      <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-gray-700">启用工具</p>
+          <UBadge v-if="data?.values.agentTools.override !== null" variant="soft" color="primary" size="xs">DB 覆盖</UBadge>
+        </div>
+        <p class="mt-0.5 text-xs text-gray-400">不勾选 = 使用全部默认工具</p>
+        <USelectMultiple
+          v-model="agentTools"
+          class="mt-2 w-full"
+          :options="AGENT_TOOL_OPTIONS"
+          value-key="value"
+          placeholder="选择启用的工具"
+          size="sm"
+        />
+        <p class="mt-2 text-xs text-gray-400">可用工具：推荐量表 / 知识库检索 / 问题分诊 / 实体记忆</p>
+      </div>
+
+      <!-- Agent 行为补充要点 -->
+      <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm lg:col-span-2">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-gray-700">行为补充要点</p>
+          <UBadge v-if="data?.values.agentBehaviorNotes.override !== null" variant="soft" color="primary" size="xs">DB 覆盖</UBadge>
+        </div>
+        <p class="mt-0.5 text-xs text-gray-400">追加在系统提示词末尾的行为约束；留空 = 使用内置「回答先行」要点。注：诊断/确定性规则边界等硬约束仍由代码强制。</p>
+        <UTextarea
+          v-model="agentBehaviorNotes"
+          class="mt-2 w-full"
+          :rows="5"
+          placeholder="每行一条行为约束，如：回答先行，只输出给班主任看的自然语言回答。"
+        />
       </div>
     </div>
 

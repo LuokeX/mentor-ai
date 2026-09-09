@@ -17,7 +17,12 @@ export default defineEventHandler(async (event) => {
       generatorModel: { env: config.deepseekGeneratorModel, override: runtime.generatorModel, effective: runtime.generatorModel || config.deepseekGeneratorModel },
       timeoutMs: { env: Number(config.deepseekTimeoutMs) || 30000, override: runtime.timeoutMs, effective: runtime.timeoutMs || Number(config.deepseekTimeoutMs) || 30000 },
       embeddingModel: { env: config.embeddingModel, override: runtime.embeddingModel, effective: runtime.embeddingModel || config.embeddingModel },
-      embeddingEnabled: { env: Boolean(config.embeddingEnabled), override: runtime.embeddingEnabled, effective: runtime.embeddingEnabled ?? Boolean(config.embeddingEnabled) }
+      embeddingEnabled: { env: Boolean(config.embeddingEnabled), override: runtime.embeddingEnabled, effective: runtime.embeddingEnabled ?? Boolean(config.embeddingEnabled) },
+      agentEnabled: { env: Boolean(process.env.AGENT_ENABLED === 'true' || config.agentEnabled === true), override: runtime.agentEnabled, effective: runtime.agentEnabled ?? Boolean(process.env.AGENT_ENABLED === 'true' || config.agentEnabled === true) },
+      agentMaxRounds: { env: 6, override: runtime.agentMaxRounds, effective: runtime.agentMaxRounds ?? 6 },
+      agentTemperature: { env: 0.35, override: runtime.agentTemperature, effective: runtime.agentTemperature ?? 0.35 },
+      agentTools: { env: null, override: runtime.agentTools, effective: runtime.agentTools ?? null },
+      agentBehaviorNotes: { env: null, override: runtime.agentBehaviorNotes, effective: runtime.agentBehaviorNotes ?? null }
     },
     envOnly: {
       deepseekApiKey: { configured: Boolean(config.deepseekApiKey) },

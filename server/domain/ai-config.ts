@@ -44,6 +44,16 @@ export interface AiRuntimeConfig {
   timeoutMs: number | null
   embeddingModel: string | null
   embeddingEnabled: boolean | null
+  /** Agent（回答先行）启用：null = 回落环境变量。 */
+  agentEnabled: boolean | null
+  /** Agent 工具轮次上限：null = 回落代码默认。 */
+  agentMaxRounds: number | null
+  /** Agent 采样温度：null = 回落代码默认。 */
+  agentTemperature: number | null
+  /** Agent 启用的工具名数组：null = 回落全部默认工具；空数组 = 禁用全部工具。 */
+  agentTools: string[] | null
+  /** Agent 行为补充要点：null = 回落硬编码默认。 */
+  agentBehaviorNotes: string | null
 }
 
 const SYSTEM_MARKER = '###SYSTEM###\n'
@@ -429,7 +439,12 @@ export async function getAiRuntimeConfig(event: H3Event): Promise<AiRuntimeConfi
     generatorModel: null,
     timeoutMs: null,
     embeddingModel: null,
-    embeddingEnabled: null
+    embeddingEnabled: null,
+    agentEnabled: null,
+    agentMaxRounds: null,
+    agentTemperature: null,
+    agentTools: null,
+    agentBehaviorNotes: null
   }
   try {
     const now = Date.now()
@@ -443,7 +458,12 @@ export async function getAiRuntimeConfig(event: H3Event): Promise<AiRuntimeConfi
               generatorModel: row.generatorModel,
               timeoutMs: row.timeoutMs,
               embeddingModel: row.embeddingModel,
-              embeddingEnabled: row.embeddingEnabled
+              embeddingEnabled: row.embeddingEnabled,
+              agentEnabled: row.agentEnabled,
+              agentMaxRounds: row.agentMaxRounds,
+              agentTemperature: row.agentTemperature,
+              agentTools: row.agentTools,
+              agentBehaviorNotes: row.agentBehaviorNotes
             }
           : empty
       }
