@@ -172,12 +172,14 @@ function isToolAction(action: PlanAction) {
 }
 
 /**
- * AI 改写负责的实施方案条目：工具动作与归因建议行动。
+ * AI 改写负责的实施方案条目：工具动作、归因建议行动与分级干预动作。
  * 深度诊断待办是服务端确定性生成的指令，教师手动新增的行动也不在其中，
  * 两者正文始终原样展示。
  */
 function isAiManagedAction(action: PlanAction) {
-  return isToolAction(action) || action.title.startsWith('针对「')
+  return isToolAction(action)
+    || action.title.startsWith('针对「')
+    || action.title.startsWith('按「')
 }
 
 const AI_ACTIONS_PENDING_HINT = 'AI 正在生成具体实施方案，请稍候…'
@@ -294,7 +296,13 @@ function recommendationGroupPeriod(group: RecommendationGroup) {
 /** 方案块内动作标题用中文序号，与工具步骤的阿拉伯序号区分层级 */
 const CN_ORDINALS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
 
+/** 该方案块是否为「AI 生成中」：块内含 AI 托管动作，且 AI 实施方案尚未完成（已有统一转圈提示，不再逐条展示占位文本）。 */
+function groupAiPending(group: RecommendationGroup): boolean {
+  return aiActionsPending.value && group.actions.some(isAiManagedAction)
+}
+
 function recommendationImplementation(group: RecommendationGroup) {
+  if (groupAiPending(group)) return ''
   return group.actions
     .map((action, index) => {
       const numbered = group.actions.length > 1
@@ -1282,15 +1290,6 @@ useHead({ title: () => data.value?.title || '方案详情' })
 
       <!-- ══════════ 5. 行动方案建议（按方案块确认） ══════════ -->
       <section v-if="activeActions.length || needsAcceptance" class="order-6 rounded-2xl border border-slate-200 bg-white p-5">
-        <!-- 深度诊断待办（工具项形态）：基于本次测量结果的进一步诊断建议，完成对应量表后自动消失 -->
-        <div v-if="nextInstrumentSuggestion" class="mb-4 flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
-          <div class="min-w-0">
-            <p class="text-xs font-semibold text-amber-700">待办 · 建议深度诊断</p>
-            <p class="mt-1 text-sm font-medium text-slate-800">建议进一步完成「{{ nextInstrumentSuggestion.title }}」</p>
-            <p v-if="nextInstrumentSuggestion.note" class="mt-1 text-xs leading-5 text-slate-500">{{ nextInstrumentSuggestion.note }}</p>
-          </div>
-          <UButton size="sm" color="warning" icon="i-lucide-arrow-right" trailing :to="`/module/${data.module}`">去完成</UButton>
-        </div>
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 class="flex items-center gap-2 font-semibold text-slate-800">
@@ -1362,7 +1361,13 @@ useHead({ title: () => data.value?.title || '方案详情' })
 
             <dl class="divide-y divide-slate-100 text-sm md:grid md:grid-cols-[9rem_1fr] md:divide-y-0">
               <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-b md:border-r md:border-slate-100">具体实施方案</dt>
-              <dd class="whitespace-pre-line px-4 py-3 leading-7 text-slate-700 md:border-b md:border-slate-100">{{ recommendationImplementation(group) }}</dd>
+              <dd class="whitespace-pre-line px-4 py-3 leading-7 text-slate-700 md:border-b md:border-slate-100">
+                <div v-if="groupAiPending(group)" class="flex items-center gap-2 text-primary-600">
+                  <UIcon name="i-lucide-loader-circle" class="size-4 shrink-0 animate-spin" />
+                  <span>AI 正在生成具体实施方案，完成后页面将自动刷新…</span>
+                </div>
+                <template v-else>{{ recommendationImplementation(group) }}</template>
+              </dd>
               <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-b md:border-r md:border-slate-100">执行人</dt>
               <dd class="px-4 py-3 text-slate-700 md:border-b md:border-slate-100">{{ recommendationMeta(group.audience).executor }}</dd>
               <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-b md:border-r md:border-slate-100">时间周期</dt>

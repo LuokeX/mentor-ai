@@ -86,6 +86,13 @@ export interface PolishAttemptResult {
   /** 本次尝试中通过校验的 actions（title → 加工后 content）；parsePolishOutput
    *  未收到 expectedActions 时返回空 Map，外部注入的尝试结果可缺省（按空 Map 处理） */
   actionsMatched?: Map<string, string>
+  /**
+   * actions 按输入顺序的加工结果（仅保留通过校验的条目，顺序与输入一致）。
+   * 用于支持同名多条 action（如分级干预「按「…」干预」）——标题匹配会因重名
+   * 相互覆盖/判重复，这里按位置对号，配套 parsePolishOutput/runPolishWithRetry
+   * 返回有序结果。未收到 expectedActions 时缺省。
+   */
+  actionContents?: Array<{ title: string, content: string }>
   /** 校验错误摘要（tools 与 actions 违规计入同一数组）；为空表示本次尝试全部通过 */
   errors: string[]
   /** 本次尝试的原始输出（重试时反馈给模型修正） */
@@ -117,6 +124,7 @@ export function parsePolishOutput(
 ): PolishAttemptResult {
   const matched = new Map<string, string>()
   const actionsMatched = new Map<string, string>()
+  const actionContents: Array<{ title: string, content: string }> = []
   const errors: string[] = []
   let data: unknown
   try {
@@ -184,21 +192,26 @@ export function parsePolishOutput(
     }
   }
   // actions 逐条校验：仅当调用方提供 expectedActions 时启用；缺省时完全不
-  // 处理 actions，保持既有 tools-only 语义不变。校验规则与模式 A 的工具一致
-  // （数量/标题必须来自输入、内容非空且 ≤ MAX_TOOL_POLISH_CONTENT、不得重复）。
+  // 处理 actions，保持既有 tools-only 语义不变。
+  // 匹配按「位置对号」（非标题）：同一等级可能有多条同名动作（如分级干预
+  // 「按「…」干预」），按标题匹配会因重名相互覆盖/判重复。模型被要求保持
+  // 条数与顺序一致（见提示词 2a），这里校验 outputActions[i] 的标题必须等于
+  // expectedActions[i] 的标题、内容非空且 ≤ MAX_TOOL_POLISH_CONTENT。
   if (expectedActions) {
-    const expectedActionTitles = new Set(expectedActions.map(item => item.title.trim()).filter(Boolean))
     if (outputActions.length !== expectedActions.length) {
       errors.push(`actions 数量 ${outputActions.length}，应为 ${expectedActions.length}`)
     }
-    const seenActions = new Set<string>()
-    for (const item of outputActions) {
-      const title = item.title.trim()
-      if (!expectedActionTitles.has(title)) {
-        errors.push(`出现输入中没有的 action「${title.slice(0, 40)}」`)
+    for (let index = 0; index < expectedActions.length; index++) {
+      const expectedAction = expectedActions[index]
+      const output = outputActions[index]
+      if (!expectedAction || !output) continue
+      const expectedTitle = expectedAction.title.trim()
+      const title = output.title.trim()
+      if (title !== expectedTitle) {
+        errors.push(`第 ${index + 1} 条 action「${title.slice(0, 40)}」标题与输入不一致（应为「${expectedTitle.slice(0, 40)}」）`)
         continue
       }
-      const content = item.content.trim()
+      const content = output.content.trim()
       if (!content) {
         errors.push(`action「${title.slice(0, 40)}」内容为空`)
         continue
@@ -207,19 +220,11 @@ export function parsePolishOutput(
         errors.push(`action「${title.slice(0, 40)}」内容过长（${content.length} 字符，上限 ${MAX_TOOL_POLISH_CONTENT}）`)
         continue
       }
-      if (seenActions.has(title)) {
-        errors.push(`action「${title.slice(0, 40)}」重复输出`)
-        continue
-      }
-      seenActions.add(title)
+      actionContents.push({ title, content })
       actionsMatched.set(title, content)
     }
-    for (const item of expectedActions) {
-      const title = item.title.trim()
-      if (title && !actionsMatched.has(title)) errors.push(`缺少 action「${title.slice(0, 40)}」`)
-    }
   }
-  return { matched, actionsMatched, errors }
+  return { matched, actionsMatched, actionContents, errors }
 }
 
 /** 合并加工结果：through 校验的工具用 AI 版，其余保留三库原文（纯函数）。 */
@@ -279,7 +284,8 @@ export async function runPolishWithRetry<T extends PolishTool>(
     if (!result.errors.length) {
       return {
         tools: mergePolishResults(inputTools, cumulative),
-        actions: matchedToActions(result.actionsMatched ?? new Map()),
+        // 优先取按输入顺序的加工结果（支持同名多条 action）；外部注入未提供时回到标题 map
+        actions: result.actionContents ?? matchedToActions(result.actionsMatched ?? new Map()),
         attempts,
         matchedTitles: new Set(cumulative.keys()),
         matchedActionTitles: new Set(cumulativeActions.keys())
@@ -327,7 +333,8 @@ export async function runGeneratedPolishRetry(
     for (const [title, content] of result.actionsMatched ?? new Map()) cumulativeActions.set(title, content)
     if (!result.errors.length) {
       const tools = [...result.matched].map(([title, content]) => ({ title, content }))
-      const actions = matchedToActions(result.actionsMatched ?? new Map())
+      // actionContents 为按输入顺序的加工结果（支持同名多条 action）；未提供时回到标题 map
+      const actions = result.actionContents ?? matchedToActions(result.actionsMatched ?? new Map())
       return {
         tools,
         actions,

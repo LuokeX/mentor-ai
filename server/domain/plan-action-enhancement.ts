@@ -25,6 +25,18 @@ import { polishToolSteps } from './tool-step-polish'
 
 /** 归因建议行动的标题口径（与 rules-executor 生成口径一致）。 */
 const ATTRIBUTION_ACTION_PREFIX = '针对「'
+/** 分级干预动作的标题口径（与 rules-executor 的「按「等级」干预」一致）。 */
+const INTERVENTION_ACTION_PREFIX = '按「'
+
+/**
+ * 需要 AI 改写正文的动作：归因建议（针对「…」）与分级干预（按「…」干预）。
+ * 深度诊断待办（kind=instrument_suggestion）与教师手动新增的动作不在其中，
+ * 前者是确定性「去完成」跳转，后者由教师自己撰写。
+ */
+export function isAiManagedActionTitle(title: string): boolean {
+  const t = String(title || '').trim()
+  return t.startsWith(ATTRIBUTION_ACTION_PREFIX) || t.startsWith(INTERVENTION_ACTION_PREFIX)
+}
 
 export interface PlanActionEnhancementInput {
   planId: string | null
@@ -82,7 +94,7 @@ export function hasAiManagedActionItems(plan: { tools?: unknown, actions?: unkno
   const tools = Array.isArray(plan.tools) ? plan.tools : []
   if (tools.length) return true
   const actions = Array.isArray(plan.actions) ? plan.actions : []
-  return actions.some(action => String((action as { title?: unknown })?.title || '').trim().startsWith(ATTRIBUTION_ACTION_PREFIX))
+  return actions.some(action => isAiManagedActionTitle(String((action as { title?: unknown })?.title || '')))
 }
 
 /**
@@ -122,7 +134,7 @@ export async function enhancePlanActions(
     code: (tool as { code?: string }).code
   })).filter(tool => tool.title && tool.content)
   const aiActions = (plan.actions || [])
-    .filter(action => String(action.title || '').trim().startsWith(ATTRIBUTION_ACTION_PREFIX))
+    .filter(action => isAiManagedActionTitle(String(action.title || '')))
     .map(action => ({ title: String(action.title || '').trim(), detail: String(action.detail || '') }))
     .filter(action => action.title && action.detail)
   const attributions = resolveAttributions(plan.report)
@@ -159,11 +171,19 @@ export async function enhancePlanActions(
       return { planUpdatedAt: null }
     }
 
-    // 标题 → 改写后正文。工具动作按「使用工具「X」」匹配，归因行动按原标题匹配。
-    const detailByTitle = new Map<string, string>()
-    for (const action of polished.actions) detailByTitle.set(action.title.trim(), action.content)
-    for (const tool of polished.tools) detailByTitle.set(toolActionTitle(tool.title), tool.content)
+    // 改写后正文关联：工具动作按「使用工具「X」」标题匹配（工具标题唯一）；
+    // 归因/分级干预动作按输入顺序对号——同名多条（如「按「…」干预」）无法靠标题区分。
     const toolContentByTitle = new Map(polished.tools.map(tool => [tool.title.trim(), tool.content]))
+    const toolDetailByTitle = new Map(polished.tools.map(tool => [toolActionTitle(tool.title), tool.content]))
+    // 每次消费按 polished.actions 顺序推进；对应"传入 polish 的 aiActions 子集"的顺序。
+    const makeActionConsumer = () => {
+      let index = 0
+      return () => {
+        const matched = polished.actions[index]
+        index++
+        return matched ? matched.content : undefined
+      }
+    }
 
     return await db.transaction(async (tx) => {
       const [current] = await tx.select({
@@ -180,8 +200,12 @@ export async function enhancePlanActions(
       if (!current) return { planUpdatedAt: null }
 
       // 1) plans.actions / plans.tools 快照回写
+      const consumeSnapshotAction = makeActionConsumer()
       const nextActions = (current.actions || []).map(action => {
-        const detail = detailByTitle.get(action.title.trim())
+        // 只有「传给 polish 的条目」才有改写结果：AI 管理标题且正文非空（与 aiActions 过滤口径一致）
+        if (!isAiManagedActionTitle(String(action.title || ''))) return action
+        if (!String(action.detail || '')) return action
+        const detail = consumeSnapshotAction()
         return detail && detail !== action.detail ? { ...action, detail } : action
       })
       // 模式 B（无匹配工具、依据知识片段）生成的建议工具需要落进 plans.tools，
@@ -214,7 +238,9 @@ export async function enhancePlanActions(
       )).returning({ updatedAt: schema.plans.updatedAt })
       if (!updated) return { planUpdatedAt: null }
 
-      // 2) plan_actions 明细回写（教师端详情页读这张表；只改标题命中的行）
+      // 2) plan_actions 明细回写（教师端详情页读这张表）。归因/分级干预按顺序对号，
+      //    工具动作按「使用工具「X」」标题匹配（工具标题唯一）。
+      const consumeRowAction = makeActionConsumer()
       const rows = await tx.select({ id: schema.planActions.id, title: schema.planActions.title, detail: schema.planActions.detail })
         .from(schema.planActions)
         .where(and(
@@ -222,7 +248,13 @@ export async function enhancePlanActions(
           eq(schema.planActions.ownerUserId, input.ownerUserId)
         ))
       for (const row of rows) {
-        const detail = detailByTitle.get(row.title.trim())
+        const title = String(row.title || '').trim()
+        let detail: string | undefined
+        if (isAiManagedActionTitle(title) && String(row.detail || '')) {
+          detail = consumeRowAction()
+        } else if (title.startsWith('使用工具「')) {
+          detail = toolDetailByTitle.get(title)
+        }
         if (!detail || detail === row.detail) continue
         await tx.update(schema.planActions).set({ detail, updatedAt: now })
           .where(eq(schema.planActions.id, row.id))
@@ -242,9 +274,11 @@ export async function enhancePlanActions(
           if (!result) continue
           const resultActions = Array.isArray(result.actions) ? result.actions as Array<Record<string, unknown>> : []
           const resultTools = Array.isArray(result.tools) ? result.tools as Array<Record<string, unknown>> : []
+          const consumeResultAction = makeActionConsumer()
           const nextResultActions = resultActions.map(action => {
             const title = String(action.title || '')
-            const detail = detailByTitle.get(title.trim())
+            if (!isAiManagedActionTitle(title) || !String(action.detail || '')) return action
+            const detail = consumeResultAction()
             return detail && detail !== action.detail ? { ...action, detail } : action
           })
           const nextResultTools = resultTools.map(tool => {

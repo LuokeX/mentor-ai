@@ -367,10 +367,10 @@ describe('actions 加工（parsePolishOutput 传入 expectedActions）', () => {
     expect(result.actionsMatched.size).toBe(1)
   })
 
-  it('actions 出现输入中没有的 title 时报错', () => {
+  it('actions 第 N 条标题与输入不一致时报错（按顺序对号，不再靠标题）', () => {
     const raw = okOutput({ actions: [{ title: '乱写的动作', content: '内容' }, goodActions[1]] })
     const result = parsePolishOutput(raw, inputTools, inputActions)
-    expect(result.errors.join('；')).toContain('出现输入中没有的 action「乱写的动作」')
+    expect(result.errors.join('；')).toContain('第 1 条 action「乱写的动作」标题与输入不一致（应为「针对「意义感流失」」）')
     expect(result.actionsMatched.size).toBe(1)
     expect(result.actionsMatched.has('针对「职业倦怠」')).toBe(true)
   })
@@ -391,10 +391,11 @@ describe('actions 加工（parsePolishOutput 传入 expectedActions）', () => {
     expect(result.actionsMatched.has('针对「意义感流失」')).toBe(false)
   })
 
-  it('缺少某个 action 时报错', () => {
+  it('actions 数量与输入不符时报错（缺少某条）', () => {
     const raw = okOutput({ actions: [goodActions[0]] })
     const result = parsePolishOutput(raw, inputTools, inputActions)
-    expect(result.errors.join('；')).toContain('缺少 action「针对「职业倦怠」」')
+    expect(result.errors.join('；')).toContain('actions 数量 1，应为 2')
+    expect(result.actionsMatched.size).toBe(1)
   })
 
   it('不传 expectedActions：actionsMatched 为空 Map、输出中的 actions 被忽略，tools 行为不变（向后兼容）', () => {
@@ -405,6 +406,29 @@ describe('actions 加工（parsePolishOutput 传入 expectedActions）', () => {
     expect(result.actionsMatched.size).toBe(0)
     expect(result.matched.size).toBe(2)
     expect(result.matched.get('结构化沟通三步法')).toContain('先让两个孩子分开')
+  })
+
+  it('同名多条 action（分级干预「按「…」干预」）按顺序对号，逐条返回各自改写结果', () => {
+    // 同一等级命中两条干预动作，标题相同、内容不同——标题匹配会相互覆盖/判重复。
+    const dupActions = [
+      { title: '按「橙色-高响应」干预', detail: '启动 S2 全方位评估（课堂观察/学生访谈/科任交叉/家长沟通/六维评估）' },
+      { title: '按「橙色-高响应」干预', detail: '制定综合干预方案，纳入年级组周例会讨论' },
+    ]
+    const raw = JSON.stringify({
+      tools: [],
+      actions: [
+        { title: '按「橙色-高响应」干预', content: '48 小时内组织课堂观察、学生访谈、科任老师交叉了解、家长沟通，并从六维做一次完整评估。' },
+        { title: '按「橙色-高响应」干预', content: '汇总评估结果，牵头在年级组周例会上讨论并形成综合干预方案。' },
+      ],
+    })
+    const result = parsePolishOutput(raw, [], dupActions, { generateTools: false })
+    expect(result.errors).toEqual([])
+    // 两条同名 action 都命中，actionsMatched 按标题去重成 map（兼容层），actionContents 保留顺序
+    expect(result.actionsMatched.size).toBe(1)
+    expect(result.actionsMatched.get('按「橙色-高响应」干预')).toContain('综合干预方案')
+    expect(result.actionContents).toHaveLength(2)
+    expect(result.actionContents![0]!.content).toContain('六维做一次完整评估')
+    expect(result.actionContents![1]!.content).toContain('年级组周例会')
   })
 })
 
