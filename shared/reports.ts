@@ -88,16 +88,10 @@ export const assessmentReportSchema = z.object({
   attributions: z.array(z.object({
     name: z.string().trim().min(2).max(120),
     strength: z.enum(['primary', 'secondary', 'reference']),
-    reasons: z.array(z.string().trim().min(2).max(500)).max(8).default([])
+    // 多信号案例（如学生个案）单条归因的命中依据可超过 8 条；放宽到 12，
+    // 校验前由 validateAssessmentReport 对模型输出截断归一化到该上限，避免误判失败回退模板。
+    reasons: z.array(z.string().trim().min(2).max(500)).max(12).default([])
   })).max(5).default([]),
-  /** 归因叙述：attribution 类型输出模板的渲染结果。无归因命中时不生成。 */
-  attributionNarrative: z.string().trim().min(4).max(500).optional(),
-  evidence: z.array(z.object({
-    title: z.string().trim().min(2).max(100),
-    detail: z.string().trim().min(4).max(400)
-  })).min(1).max(8),
-  /** 工具导读：tool 类型输出模板的渲染结果，置于工具卡列表前。无匹配工具时不生成。 */
-  toolIntro: z.string().trim().min(4).max(400).optional(),
   printMeta: z.object({
     module: moduleIdSchema,
     moduleTitle: z.string().trim().min(2).max(80),

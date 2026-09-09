@@ -45,7 +45,7 @@ describe('assessment reports', () => {
     expect(() => validateAssessmentReport(tampered, 'student_case', result)).toThrow('forbidden')
   })
 
-  it('renders extended placeholders and attribution/tool template types', () => {
+  it('renders summary placeholders into the report', () => {
     const base = evaluateAssessment('home_school', answers('home_school', 3))
     const result = {
       ...base,
@@ -58,42 +58,17 @@ describe('assessment reports', () => {
         strength: 'primary' as const, reasons: ['信任维度得分低'], evidenceCodes: ['HS_EV_007'],
         description: '家校之间的信任基础已经受损', suggestedAction: '先做一次只核对事实的沟通'
       }],
-      tools: [{ title: '三分钟冷静法', content: '1) 停 2) 呼吸 3) 再开口' }],
       escalationTarget: '心理专员'
     }
     const templates = [
-      { code: 'T1', module: 'home_school' as const, attributionLevel: 'orange', type: 'summary' as const, content: '当前${等级中文名}，重点「${最薄弱维度}」，主归因${主要归因}。', order: 1 },
-      { code: 'T2', module: 'home_school' as const, attributionLevel: 'orange', type: 'attribution' as const, content: '归因诊断：${主要归因}（${归因说明}），关键撬动点为${关键撬动点}。', order: 2 },
-      { code: 'T3', module: 'home_school' as const, attributionLevel: 'orange', type: 'tool' as const, content: '推荐工具：${工具名称}（${操作步骤摘要}）。', order: 3 },
-      { code: 'T4', module: 'home_school' as const, attributionLevel: 'orange', type: 'action' as const, content: '请联系${责任人}跟进。', order: 4 }
+      { code: 'T1', module: 'home_school' as const, attributionLevel: 'orange', type: 'summary' as const, content: '当前${等级中文名}，重点「${最薄弱维度}」，主归因${主要归因}。', order: 1 }
     ]
     const report = createTemplateAssessmentReport({ module: 'home_school', result, outputTemplates: templates })
     expect(report.profile.summary).toContain('需重点支持')
     expect(report.profile.summary).not.toContain('${')
-    expect(report.attributionNarrative).toBe('归因诊断：信任缺失（家校之间的信任基础已经受损），关键撬动点为先做一次只核对事实的沟通。')
-    expect(report.toolIntro).toBe('推荐工具：三分钟冷静法（1) 停 2) 呼吸 3) 再开口）。')
-    // goal/action/review 类型模板已不再消费：报告不再生成 supportGoal/firstAction/复盘字段
-    expect(report.firstAction).toBeUndefined()
-  })
-
-  it('skips attribution/tool templates when there are no attributions or tools', () => {
-    const base = evaluateAssessment('home_school', answers('home_school', 3))
-    const result = { ...base, attributions: [], tools: [] }
-    const templates = [
-      { code: 'T2', module: 'home_school' as const, attributionLevel: 'none', type: 'attribution' as const, content: '归因诊断：${主要归因}。', order: 1 },
-      { code: 'T3', module: 'home_school' as const, attributionLevel: 'none', type: 'tool' as const, content: '推荐工具：${工具名称}。', order: 2 }
-    ]
-    const report = createTemplateAssessmentReport({ module: 'home_school', result, outputTemplates: templates })
-    expect(report.attributionNarrative).toBeUndefined()
-    expect(report.toolIntro).toBeUndefined()
-  })
-
-  it('truncates oversized tool body instead of failing report schema', () => {
-    const base = evaluateAssessment('home_school', answers('home_school', 3))
-    const longBody = `步骤 1：${'详细做法 '.repeat(80)}\n步骤 2：${'话术示例 '.repeat(80)}\n步骤 3：${'达标标准 '.repeat(80)}`
-    expect(longBody.length).toBeGreaterThan(500)
-    const result = { ...base, tools: [{ title: `超长工具名称${'甲'.repeat(90)}`, content: longBody }] }
-    const report = createTemplateAssessmentReport({ module: 'home_school', result })
-    expect(assessmentReportSchema.safeParse(report).success).toBe(true)
+    // 教师方案页不展示的字段（evidence/attributionNarrative/toolIntro）已彻底移除，报告不应再携带这些键
+    expect((report as Record<string, unknown>).attributionNarrative).toBeUndefined()
+    expect((report as Record<string, unknown>).toolIntro).toBeUndefined()
+    expect((report as Record<string, unknown>).evidence).toBeUndefined()
   })
 })

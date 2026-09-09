@@ -5,7 +5,8 @@
 //      教师立即进入方案页，内容已完整可用；
 //   2) DeepSeek 深度报告在请求返回后异步执行（实测常达 1-2 分钟，超时上限 360s），
 //      完成后回写 plans.report / summaryEnc，并由方案详情页轮询 ai_report_status 感知。
-// 后端不再向教师端暴露不可观测的同步等待；AI 失败仅降级为确定性报告，不影响方案本身。
+// 后端不再向教师端暴露不可观测的同步等待；AI 失败不降级为「模板当 AI 输出」——生成阶段
+// 重试耗尽即抛错，后台收敛为 failed 并保留事务内已写入的确定性标准报告，方案本身不受影响。
 import type { H3Event } from 'h3'
 import { and, eq } from 'drizzle-orm'
 import type { ModuleId, RuleExecResult } from '../../shared/contracts'
@@ -83,8 +84,10 @@ export async function enhancePlanReportInBackground(event: H3Event, input: PlanE
       definition
     })
 
-    // 已配置密钥但模型不可用/输出非法：generateAssessmentReport 已降级返回模板报告，
-    // 此时方案内容完整可用，但教师端需感知「深度报告不可用」，标记 failed 展示提示。
+    // 禁止失败回退模板：generateAssessmentReport 在重试耗尽后抛错（由下方 catch 收敛为
+    // failed），不会再把模板报告当 AI 输出返回。这里保留 source 判断仅作兜底——仅当
+    // 「未配置密钥 / 高危熔断」等 AI 不适用场景（已在上面提前 return）才可能拿到模板，
+    // 此时方案内容完整可用，标记 failed 让教师端感知「深度报告暂不可用」。
     if (report.printMeta?.source !== 'ai') {
       await settlePlanAiStatus(event, planId, 'failed')
       return

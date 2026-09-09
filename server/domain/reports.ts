@@ -189,17 +189,6 @@ export function createTemplateAssessmentReport(input: {
       ),
       nonDiagnosticNote
     },
-    // evidence 上限 8 条，归因数和证据数都会增长，这里按归因聚合并截断
-    evidence: [
-      ...(attributions.length
-        ? attributions.slice(0, 4).map(attribution => ({
-            title: `归因依据·${attribution.name}`,
-            detail: (attribution.reasons.join('；') || '由归因证据规则命中').slice(0, 400)
-          }))
-        : result.reasons.slice(0, 4).map(reason => ({ title: '规则依据', detail: reason.slice(0, 400) }))),
-      { title: '主要短板/重点', detail: `当前重点维度：${weak}；相对优势维度：${strong}。` },
-      { title: '规则版本', detail: `${definition.code}@${definition.version}；命中规则：${result.matchedRuleIds.join('、')}`.slice(0, 400) }
-    ],
     printMeta: {
       module: input.module,
       moduleTitle: moduleMeta[input.module].title,
@@ -210,20 +199,33 @@ export function createTemplateAssessmentReport(input: {
       disclaimer: nonDiagnosticNote
     }
   }
-  // attribution/tool 类型：无归因命中或无匹配工具时跳过，避免占位符全空的残句进入报告
-  const attributionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'attribution')
-  if (attributionTemplate && attributions.length) {
-    report.attributionNarrative = fitReportText(renderOutputTemplate(attributionTemplate.content, result, weak, strong), 500)
-  }
-  const toolTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'tool')
-  if (toolTemplate && result.tools.length) {
-    report.toolIntro = fitReportText(renderOutputTemplate(toolTemplate.content, result, weak, strong), 400)
-  }
   return assessmentReportSchema.parse(report)
 }
 
+/**
+ * 把模型/外部报告对象里的数组截断到 schema 上限，作为严格校验前的归一化。
+ * 背景：多信号案例（如学生个案「橙色-高响应」单条归因命中 8 条以上依据）模型
+ * 展开成依据时经常超过 schema 上限，直接 parse 会抛 too_big → 回退模板报告。
+ * 模板报告用 slice 截断能过、模型输出没截断却判失败，属于同源不同处理的不一致。
+ * 这里在 parse 前统一截断：attributions ≤5、单条归因 reasons ≤12。
+ * 只截断不新增，不削弱后续的安全校验（等级/模块/规则 ID/归因名/违禁词）。
+ */
+function clampReportArrays(input: unknown): unknown {
+  if (!input || typeof input !== 'object') return input
+  const obj = input as Record<string, unknown>
+  const attributions = Array.isArray(obj.attributions)
+    ? obj.attributions.slice(0, 5).map(item => {
+        if (!item || typeof item !== 'object') return item
+        const attr = item as Record<string, unknown>
+        if (Array.isArray(attr.reasons)) attr.reasons = attr.reasons.slice(0, 12)
+        return attr
+      })
+    : obj.attributions
+  return { ...obj, attributions }
+}
+
 export function validateAssessmentReport(input: unknown, module: ModuleId, result: ReportResult): AssessmentReport {
-  const parsed = assessmentReportSchema.parse(input)
+  const parsed = assessmentReportSchema.parse(clampReportArrays(input))
   if (parsed.risk.level !== result.level) throw new Error('AI report changed rule level')
   // severity 是确定性结果，AI 润色时经常整字段丢掉。它决定前端等级徽章的颜色，
   // 丢了就恒为灰，所以这里无条件用引擎的值覆盖，而不是校验后放行。

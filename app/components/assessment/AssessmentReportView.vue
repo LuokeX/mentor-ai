@@ -60,12 +60,8 @@ function attributionStrengthLabel(strength: 'primary' | 'secondary' | 'reference
           </ul>
         </div>
       </div>
-      <p v-if="report.attributionNarrative" class="mt-4 rounded-xl bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">{{ report.attributionNarrative }}</p>
     </section>
-    <section class="mt-8"><h2 class="text-lg font-semibold">关键依据</h2><div class="mt-4 grid gap-3 md:grid-cols-2"><div v-for="item in report.evidence" :key="item.title + item.detail" class="rounded-xl border border-slate-100 p-4"><p class="text-sm font-semibold">{{ item.title }}</p><p class="mt-2 text-xs leading-5 text-slate-500">{{ item.detail }}</p></div></div></section>
-    <section class="mt-8" v-if="tools?.length"><h2 class="text-lg font-semibold">工具卡</h2><p v-if="report.toolIntro" class="mt-2 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-600">{{ report.toolIntro }}</p><div class="mt-4 grid gap-4 md:grid-cols-2"><div v-for="tool in tools" :key="tool.title" class="rounded-xl bg-slate-50 p-4"><p class="text-sm font-semibold">{{ tool.title }}</p><p class="mt-2 text-xs leading-5 text-slate-500">{{ tool.content }}</p></div></div></section>
-    <!-- 无匹配工具时整块不渲染，否则会留下一个只有「工具卡」标题的空区 -->
-    <section v-if="tools?.length" class="mt-8"><h2 class="text-lg font-semibold">工具卡</h2><p v-if="report.toolIntro" class="mt-2 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-600">{{ report.toolIntro }}</p><div class="mt-4 grid gap-4 md:grid-cols-2"><div v-for="tool in tools" :key="tool.title" class="rounded-xl bg-slate-50 p-4"><p class="text-sm font-semibold">{{ tool.title }}</p><p class="mt-2 text-xs leading-5 text-slate-500">{{ tool.content }}</p></div></div></section>
+    <section class="mt-8" v-if="tools?.length"><h2 class="text-lg font-semibold">工具卡</h2><div class="mt-4 grid gap-4 md:grid-cols-2"><div v-for="tool in tools" :key="tool.title" class="rounded-xl bg-slate-50 p-4"><p class="text-sm font-semibold">{{ tool.title }}</p><p class="mt-2 text-xs leading-5 text-slate-500">{{ tool.content }}</p></div></div></section>
     <p class="mt-8 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-400">{{ report.printMeta.disclaimer }}</p>
   </div>
 </template>

@@ -1019,7 +1019,7 @@ export async function generateAssessmentReport(event: H3Event, input: {
     } catch {
       // fallback 来自确定性模板，个别旧模板渲染内容可能越界（如工具正文超长）。
       // 降级为未校验的 JSON 示例，避免提交 500；模型输出仍会被 validate 校验，
-      // 非法输出走 catch 回退 fallback。
+      // 非法输出走重试、耗尽后抛错（不再回退模板）。
       return JSON.stringify(base)
     }
   })()
@@ -1032,62 +1032,83 @@ export async function generateAssessmentReport(event: H3Event, input: {
   const messages: Array<{ role: 'system' | 'user', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
-  const startedAt = Date.now()
-  try {
-    const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
-      body: JSON.stringify({
+  // 报告是全场最长输出，模型偶发超时/输出非法。为满足「必须输出 AI 深度报告」，失败时
+  // 带反馈重试（与 tool_step_polish 的 3 次策略一致）；安全类校验（改等级/未知归因/违禁词）
+  // 同样触发重试。重试耗尽仍失败时不再回退模板报告——这里抛错交给后台任务收敛为 failed，
+  // 由方案页提示重新生成；只有「未配置密钥」或「高危熔断」这类「AI 不适用」场景才在函数
+  // 顶部直接返回 fallback（模板报告），两者不是同一含义。
+  const MAX_REPORT_ATTEMPTS = 3
+  const REPORT_RETRY_DELAY_MS = 3000
+  let previousError: string | undefined
+  for (let attempt = 1; attempt <= MAX_REPORT_ATTEMPTS; attempt++) {
+    const startedAt = Date.now()
+    const attemptMessages = [...messages]
+    if (previousError) {
+      attemptMessages.push({
+        role: 'user',
+        content: `\n\n上次输出未通过校验：${previousError}\n\n请修正后重新输出严格 JSON，字段结构必须与示例完全一致，并把超限字段（归因依据列表、单条依据长度等）收敛到示例允许的数量。`
+      })
+    }
+    try {
+      const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
+        body: JSON.stringify({
+          model: generatorModel,
+          messages: attemptMessages,
+          response_format: { type: 'json_object' },
+          temperature: 0.35
+        }),
+        // 评估报告是全场最长输出（完整报告 JSON），全局 DEEPSEEK_TIMEOUT_MS（如 30000）
+        // 对生成模型偏短，实测多次 60s 超时；DB 显式配置优先，其余情况不低于 360s。
+        signal: AbortSignal.timeout(rt.timeoutMs || Math.max(Number(config.deepseekTimeoutMs) || 0, 360000))
+      })
+      if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
+      const json = await response.json() as {
+        choices?: Array<{ message?: { content?: string } }>
+        usage?: { prompt_tokens?: number, completion_tokens?: number }
+      }
+      const content = json.choices?.[0]?.message?.content
+      if (!content) throw new Error('Empty model output')
+      const report = validateAssessmentReport(JSON.parse(content), input.module, input.result)
+      report.printMeta.source = 'ai'
+      if (outputTemplates.length) {
+        const deterministic = createTemplateAssessmentReport({ module: input.module, result: input.result, definition, outputTemplates })
+        report.profile.summary = deterministic.profile.summary
+        report.risk.description = deterministic.risk.description
+      }
+      await useDb(event).insert(schema.aiModelCalls).values({
+        schoolId: input.schoolId,
+        ownerUserId: input.ownerUserId,
+        provider: 'deepseek',
         model: generatorModel,
-        messages,
-        response_format: { type: 'json_object' },
-        temperature: 0.35
-      }),
-      // 评估报告是全场最长输出（完整报告 JSON），全局 DEEPSEEK_TIMEOUT_MS（如 30000）
-      // 对生成模型偏短，实测多次 60s 超时；DB 显式配置优先，其余情况不低于 360s。
-      signal: AbortSignal.timeout(rt.timeoutMs || Math.max(Number(config.deepseekTimeoutMs) || 0, 360000))
-    })
-    if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
-    const json = await response.json() as {
-      choices?: Array<{ message?: { content?: string } }>
-      usage?: { prompt_tokens?: number, completion_tokens?: number }
+        purpose: 'assessment_report',
+        status: 'success',
+        latencyMs: Date.now() - startedAt,
+        promptTokens: json.usage?.prompt_tokens,
+        completionTokens: json.usage?.completion_tokens
+      }).catch(() => undefined)
+      return report
+    } catch (error) {
+      await useDb(event).insert(schema.aiModelCalls).values({
+        schoolId: input.schoolId,
+        ownerUserId: input.ownerUserId,
+        provider: 'deepseek',
+        model: generatorModel,
+        purpose: 'assessment_report',
+        status: 'failed',
+        latencyMs: Date.now() - startedAt,
+        errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown'
+      }).catch(() => undefined)
+      previousError = error instanceof Error ? error.message : '未知错误'
+      if (attempt < MAX_REPORT_ATTEMPTS) {
+        await new Promise(resolve => setTimeout(resolve, REPORT_RETRY_DELAY_MS))
+      }
     }
-    const content = json.choices?.[0]?.message?.content
-    if (!content) throw new Error('Empty model output')
-    const report = validateAssessmentReport(JSON.parse(content), input.module, input.result)
-    report.printMeta.source = 'ai'
-    if (outputTemplates.length) {
-      const deterministic = createTemplateAssessmentReport({ module: input.module, result: input.result, definition, outputTemplates })
-      report.profile.summary = deterministic.profile.summary
-      report.risk.description = deterministic.risk.description
-      if (deterministic.attributionNarrative) report.attributionNarrative = deterministic.attributionNarrative
-      if (deterministic.toolIntro) report.toolIntro = deterministic.toolIntro
-    }
-    await useDb(event).insert(schema.aiModelCalls).values({
-      schoolId: input.schoolId,
-      ownerUserId: input.ownerUserId,
-      provider: 'deepseek',
-      model: generatorModel,
-      purpose: 'assessment_report',
-      status: 'success',
-      latencyMs: Date.now() - startedAt,
-      promptTokens: json.usage?.prompt_tokens,
-      completionTokens: json.usage?.completion_tokens
-    }).catch(() => undefined)
-    return report
-  } catch (error) {
-    await useDb(event).insert(schema.aiModelCalls).values({
-      schoolId: input.schoolId,
-      ownerUserId: input.ownerUserId,
-      provider: 'deepseek',
-      model: generatorModel,
-      purpose: 'assessment_report',
-      status: 'failed',
-      latencyMs: Date.now() - startedAt,
-      errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown'
-    }).catch(() => undefined)
-    return fallback
   }
+  // 禁止失败回退模板：重试耗尽仍无法产出合法 AI 报告时抛错，由调用方（后台增强）收敛为
+  // failed 并保留事务内已写入的确定性标准报告，教师端据此提示「深度报告暂不可用」。
+  throw new Error(`AI 深度报告生成失败：已重试 ${MAX_REPORT_ATTEMPTS} 次仍无法产出合法报告，最后错误：${previousError || '未知'}`)
 }
 
 function splitRouteKeywords(value?: string) {
