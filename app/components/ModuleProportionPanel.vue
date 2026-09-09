@@ -29,23 +29,23 @@ function percentage(value: number): string {
 </script>
 
 <template>
-  <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-    <div class="mb-3 flex items-center gap-2">
-      <UIcon name="i-lucide-bar-chart-3" class="size-4 text-emerald-600" />
+  <div class="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+    <div class="mb-2 flex items-center gap-2">
+      <UIcon name="i-lucide-bar-chart-3" class="size-3.5 text-emerald-600" />
       <span class="text-xs font-semibold text-slate-500">模块评估占比</span>
     </div>
 
-    <div v-if="!hasScores" class="py-3 text-center text-xs text-slate-400">
+    <div v-if="!hasScores" class="py-2 text-center text-xs text-slate-400">
       对话后将自动分析
     </div>
 
-    <div v-else class="space-y-2.5">
-      <div v-for="item in sortedModules" :key="item.id" class="space-y-1">
+    <div v-else class="space-y-1.5">
+      <div v-for="item in sortedModules" :key="item.id" class="space-y-0.5">
         <div class="flex items-center justify-between text-xs">
           <span class="text-slate-600">{{ item.title }}</span>
           <span class="font-mono tabular-nums text-slate-500">{{ percentage(item.score) }}</span>
         </div>
-        <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div class="h-1 w-full overflow-hidden rounded-full bg-slate-100">
           <div
             :class="item.color"
             class="h-full rounded-full transition-all duration-500 ease-out"

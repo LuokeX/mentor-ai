@@ -258,7 +258,7 @@ export default defineEventHandler(async (event) => {
 
 - 首页 AI 只做澄清与分诊：多轮澄清问题、给出模块占比、说明理由和评估准备事项；不能生成正式方案，不能跳过量表，不能替代归因规则。
 - 会话状态机在 `server/api/v1/chat/messages.post.ts` 与 `server/domain/chat-clarification.ts`：`clarificationState.phase` 为 `clarifying | summarizing | done`，`moduleScores` 记录模块占比。
-- SSE 事件当前为：`ack`、`answer_start`、`answer_delta`、`answer`、`clarification_round`、`clarification_summary`、`route`、`fuse`、`error`、`done`。改动事件名必须同时更新前端消费方。
+- SSE 事件当前为：`ack`、`answer_start`、`answer_delta`、`answer`、`clarification_round`、`clarification_summary`、`module_proportions`（Agent 回答先行模式下回传最终模块评估占比）、`route`、`fuse`、`error`、`done`。改动事件名必须同时更新前端消费方。
 
 ### 8.3 三库资源
 

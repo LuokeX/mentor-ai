@@ -62,9 +62,7 @@ interface TimelineItem {
 const { user } = useAuth()
 const { updateScores, moduleScores } = useModuleScores()
 const { data: sessions, refresh: refreshSessions } = await useFetch<any[]>('/api/v1/chat/sessions')
-const { data: assistantStatus } = await useFetch<any>('/api/v1/chat/status')
 const { data: governance, refresh: refreshGovernance } = await useFetch<any>('/api/v1/chat/data-governance')
-const { data: activePlans } = await useFetch<any>('/api/v1/plans/active')
 const { data: contextOptions } = await useFetch<any>('/api/v1/chat/context-options')
 const input = ref('')
 const pending = ref(false)
@@ -73,7 +71,6 @@ const sessionId = ref<string>()
 const route = ref<(RouteDecision & { id: string }) | null>(null)
 const fuse = ref<{ message: string, guide: string } | null>(null)
 const timeline = ref<TimelineItem[]>([])
-const assistantMode = ref<'deepseek' | 'local_fallback' | 'agent'>(assistantStatus.value?.mode || 'local_fallback')
 /** 等待中状态条文案（Agent 灰度下由 thinking 事件更新为「Agent 思考中…」） */
 const pendingLabel = ref('正在澄清问题并判断推荐模块')
 /** 是否存在「待填充」的空气泡（answer_start 已建立但文本未流入）：动画应并入该气泡，独立状态条不再显示 */
@@ -81,9 +78,6 @@ const pendingAssistantBubble = computed(() => {
   const last = timeline.value[timeline.value.length - 1]
   return Boolean(last && last.role === 'assistant' && last.text === '' && pending.value)
 })
-const assistantModeLabel = computed(() => assistantMode.value === 'deepseek' ? 'DeepSeek 已接入' : assistantMode.value === 'agent' ? 'Agent 回答模式' : '本地降级模式')
-const assistantModeColor = computed(() => assistantMode.value === 'deepseek' ? 'success' : assistantMode.value === 'agent' ? 'primary' : 'warning')
-const assistantModeDot = computed(() => assistantMode.value === 'deepseek' ? 'bg-emerald-500' : assistantMode.value === 'agent' ? 'bg-blue-500' : 'bg-amber-500')
 const messageViewport = ref<HTMLElement | null>(null)
 const copiedMessage = ref<number | null>(null)
 const confirmingModule = ref<ModuleId | null>(null)
@@ -118,12 +112,6 @@ const greetingName = computed(() => {
   if (!name) return '老师'
   return name.endsWith('老师') ? name : `${name}老师`
 })
-const contextSelectItems = computed(() => [
-  { label: '不指定对象', value: 'none' },
-  ...((contextOptions.value?.students || []).map((item: any) => ({ label: `学生 · ${item.label}`, value: `student:${item.id}` }))),
-  ...((contextOptions.value?.classes || []).map((item: any) => ({ label: `班级 · ${item.label}`, value: `class:${item.id}` }))),
-  ...((contextOptions.value?.guardians || []).map((item: any) => ({ label: `家长 · ${item.label}`, value: `guardian:${item.id}` })))
-])
 const mobileSessionItems = computed(() => (sessions.value || []).map((item: any) => ({
   label: item.title,
   value: item.id
@@ -177,6 +165,9 @@ function newConversation() {
   fuse.value = null
   routeConfirmError.value = ''
   selectedOptions.value = {}
+  selectedContextKey.value = 'none'
+  mentionOpen.value = false
+  mentionQuery.value = ''
   nextTick(() => scrollToLatest('auto'))
 }
 
@@ -185,11 +176,7 @@ function handleMobileSessionSelect(value: string | undefined) {
   void loadSession(value)
 }
 
-watch(selectedContextKey, () => {
-  if (suppressContextWatch.value) return
-  if (!sessionId.value || !timeline.value.length) return
-  newConversation()
-})
+// 会话内允许随时 @ 切换咨询对象：切换后保留当前对话，后续消息由后端更新会话绑定（跟随最新对象）
 
 async function loadSession(id: string) {
   if (pending.value) return
@@ -245,6 +232,7 @@ async function loadSession(id: string) {
         base.actionCards = item.metadata?.actionCards || []
         base.toolCalls = Array.isArray(item.metadata?.toolCalls) ? item.metadata.toolCalls : []
         base.sources = Array.isArray(item.metadata?.sources) ? item.metadata.sources : []
+        if (item.metadata?.moduleProportions) updateScores(item.metadata.moduleProportions)
       }
       return base
     })
@@ -261,7 +249,6 @@ async function loadSession(id: string) {
       }
     }
     const lastAssistant = [...result.messages].reverse().find((item: any) => item.role === 'assistant')
-    if (lastAssistant?.metadata?.mode) assistantMode.value = lastAssistant.metadata.mode
     if (lastAssistant?.metadata?.route) route.value = { id: lastAssistant.metadata.route.decisionId || '', ...lastAssistant.metadata.route }
     await scrollToLatest('auto')
   } finally { loadingSession.value = false }
@@ -318,7 +305,6 @@ async function ask() {
         }
         if (event === 'answer_start') {
           // Agent 模式：保持 pending 状态条（文案随 thinking 变化），气泡先建立供工具/引用/卡片挂载
-          assistantMode.value = data.mode
           timeline.value.push({ role: 'assistant', text: '', mode: data.mode, sources: [] })
           assistantIndex = timeline.value.length - 1
           if (data.mode === 'agent') {
@@ -343,7 +329,6 @@ async function ask() {
           await new Promise(r => requestAnimationFrame(r))
         }
         if (event === 'answer') {
-          assistantMode.value = data.mode
           if (assistantIndex >= 0) {
             timeline.value[assistantIndex]!.messageId = data.messageId
             timeline.value[assistantIndex]!.text = data.text
@@ -370,6 +355,10 @@ async function ask() {
           if (assistantIndex >= 0) {
             timeline.value[assistantIndex]!.summary = data
           }
+          updateScores(data.moduleProportions)
+        }
+        if (event === 'module_proportions') {
+          // Agent 回答先行模式：模块分诊路由结果回传，驱动「模块评估占比」面板
           updateScores(data.moduleProportions)
         }
         if (event === 'thinking') {
@@ -448,6 +437,64 @@ async function ask() {
     await scrollToLatest()
   }
 }
+
+// ---- 输入框 @ 关联咨询对象 ----
+const mentionOpen = ref(false)
+const mentionQuery = ref('')
+/** @ 触发匹配：返回输入文本中最后一个以 @ 开头的词的起点与检索词 */
+function mentionAt(value: string): { index: number; query: string } | null {
+  const lastAt = value.lastIndexOf('@')
+  if (lastAt < 0) return null
+  const after = value.slice(lastAt + 1)
+  // @ 之后出现空格视为普通符号，不触发关联
+  if (after.includes(' ')) return null
+  return { index: lastAt, query: after }
+}
+function handleMentionInput(event: Event) {
+  const value = (event.target as HTMLTextAreaElement).value
+  const at = mentionAt(value)
+  if (at) {
+    mentionOpen.value = true
+    mentionQuery.value = at.query
+  } else {
+    mentionOpen.value = false
+  }
+}
+function applyMention(type: string, id: string) {
+  const at = mentionAt(input.value)
+  if (at) {
+    input.value = input.value.slice(0, at.index) + input.value.slice(at.index + 1 + at.query.length)
+  }
+  const key = `${type}:${id}`
+  mentionOpen.value = false
+  mentionQuery.value = ''
+  // 在已有会话中切换到另一个咨询对象：自动新建会话并绑定新对象，避免上下文混搭
+  if (key !== selectedContextKey.value && sessionId.value) {
+    sessionId.value = undefined
+    timeline.value = []
+    route.value = null
+    fuse.value = null
+    routeConfirmError.value = ''
+    selectedOptions.value = {}
+    nextTick(() => scrollToLatest('auto'))
+  }
+  selectedContextKey.value = key
+}
+function closeMention() {
+  mentionOpen.value = false
+  mentionQuery.value = ''
+}
+const mentionOptions = computed(() => {
+  const q = mentionQuery.value.trim().toLowerCase()
+  const all = allContextOptions.value
+  if (!q) return all
+  return all.filter((item: any) =>
+    (item.label || '').toLowerCase().includes(q) ||
+    (item.className || '').toLowerCase().includes(q) ||
+    (item.description || '').toLowerCase().includes(q)
+  )
+})
+const mentionTypeLabel = (type: string) => type === 'student' ? '学生' : type === 'class' ? '班级' : '家长'
 
 async function loadContextPreview() {
   if (!selectedContext.value) { contextPreview.value = null; return }
@@ -601,7 +648,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
 <template>
   <div class="mx-auto max-w-7xl px-5 pb-8 pt-4 sm:pb-12 sm:pt-6">
     <section id="chat-section" class="grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
-      <aside class="panel hidden h-[18rem] flex-col overflow-hidden lg:flex lg:h-[calc(100dvh-7rem)] lg:min-h-[34rem]">
+      <aside class="panel hidden h-[18rem] flex-col overflow-hidden lg:flex lg:h-[calc(100dvh-8.5rem)] lg:min-h-[34rem]">
         <div class="border-b border-slate-100 p-4">
           <button type="button" class="w-full flex items-center justify-center gap-2 rounded-lg bg-[var(--ui-primary)] px-4 py-3 text-base font-medium text-white" @click="newConversation"><UIcon name="i-lucide-message-square-plus" class="size-5" />新对话</button>
         </div>
@@ -611,9 +658,9 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         </div>
         <div class="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
           <div v-for="item in sessions" :key="item.id" class="group relative rounded-xl text-left text-sm transition" :class="sessionId===item.id?'bg-emerald-50 text-emerald-950 ring-1 ring-inset ring-emerald-100':'text-slate-600 hover:bg-slate-50'">
-            <button class="w-full px-3 py-3 text-left" @click="loadSession(item.id)">
+            <button class="w-full px-3 py-2 text-left" @click="loadSession(item.id)">
               <span class="flex items-start gap-2"><UIcon name="i-lucide-message-circle" class="mt-0.5 size-4 shrink-0" :class="sessionId===item.id?'text-emerald-600':'text-slate-300 group-hover:text-slate-500'" /><span class="line-clamp-2 block leading-5">{{ item.title }}</span></span>
-              <span class="mt-1.5 block pl-6 text-[11px] text-slate-400">{{ formatDateTime(item.updatedAt) }}</span>
+              <span class="mt-1 block pl-6 text-[11px] text-slate-400">{{ formatDateTime(item.updatedAt) }}</span>
             </button>
             <button class="absolute right-1.5 top-2 grid size-6 place-items-center rounded-md text-slate-400 transition hover:bg-red-50 hover:text-red-500" :class="deleteCandidate===item.id?'bg-red-50 text-red-600':'opacity-0 group-hover:opacity-100'" :title="deleteCandidate===item.id?'再次点击确认删除':'删除对话'" @click.stop="deleteSession(item.id)">
               <UIcon name="i-lucide-x" class="size-3.5" />
@@ -621,13 +668,12 @@ watch(sessions, autoRestoreLatestSession, { once: true })
           </div>
           <div v-if="!sessions?.length" class="grid place-items-center px-3 py-16 text-center"><UIcon name="i-lucide-messages-square" class="size-7 text-slate-300" /><p class="mt-2 text-xs text-slate-400">暂无历史对话</p></div>
         </div>
-        <div class="border-t border-slate-100 px-4 py-3 text-xs leading-5 text-slate-400"><UIcon name="i-lucide-lock-keyhole" class="mr-1 inline size-3.5" />对话仅您本人可见</div>
         <div class="border-t border-slate-100 p-3">
           <ModuleProportionPanel />
         </div>
       </aside>
 
-      <div class="panel flex h-[calc(100dvh-10rem)] min-h-[26rem] min-w-0 flex-col overflow-hidden lg:h-[calc(100dvh-7rem)] lg:min-h-[34rem]">
+      <div class="panel flex h-[calc(100dvh-10rem)] min-h-[26rem] min-w-0 flex-col overflow-hidden lg:h-[calc(100dvh-8.5rem)] lg:min-h-[34rem]">
         <div class="border-b border-slate-100 bg-white/95 px-4 py-3 lg:hidden">
           <div class="flex items-center gap-2">
             <UButton icon="i-lucide-message-square-plus" size="sm" @click="newConversation">新对话</UButton>
@@ -644,19 +690,17 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white/90 px-5 py-3.5 sm:px-6">
           <div class="flex min-w-0 items-center gap-3">
             <div class="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-4.5" /></div>
-            <div class="min-w-0"><div class="flex items-center gap-2"><strong class="text-sm">AI 分诊助手</strong><span class="size-1.5 rounded-full bg-emerald-500" /></div><p class="truncate text-xs text-slate-400">只做问题澄清与模块推荐 · 不跳过量表和规则归因</p></div>
+            <div class="min-w-0"><div class="flex items-center gap-2"><strong class="text-sm">AI 分诊助手</strong><span class="size-1.5 rounded-full bg-emerald-500" /></div></div>
           </div>
           <div class="flex min-w-0 flex-wrap items-center gap-2">
-            <USelect v-model="selectedContextKey" :items="contextSelectItems" class="w-64 max-w-full" />
-            <UBadge :color="assistantModeColor" variant="soft"><span class="mr-1.5 size-1.5 rounded-full" :class="assistantModeDot" />{{ assistantModeLabel }}</UBadge>
+            <div v-if="selectedContext" class="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800"><UIcon :name="selectedContext.type === 'student' ? 'i-lucide-user-round' : selectedContext.type === 'class' ? 'i-lucide-users' : 'i-lucide-user-round-check'" class="size-3.5" /><span>{{ mentionTypeLabel(selectedContext.type) }} · {{ selectedContext.label }}</span></div>
+            <span v-else class="text-xs text-slate-400">未指定对象 · 输入框输入 @ 可关联</span>
           </div>
         </div>
         <div v-if="selectedContext" class="border-b border-emerald-100 bg-emerald-50/70 px-5 py-3 text-sm sm:px-6">
           <div class="flex flex-wrap items-center justify-between gap-2"><div class="flex items-center gap-2"><UIcon name="i-lucide-link" class="text-emerald-700" /><strong>{{ selectedContext.type === 'student' ? '咨询学生' : selectedContext.type === 'class' ? '咨询班级' : '咨询家长' }}：{{ selectedContext.label }}</strong></div><div class="flex items-center gap-3"><label class="flex items-center gap-2 text-xs text-slate-600"><USwitch v-model="withoutRecord" size="sm" />不带档案咨询</label><details class="relative"><summary class="cursor-pointer list-none text-xs font-medium text-emerald-700">本次将发送的信息</summary><div class="absolute right-0 top-7 z-30 max-h-80 w-[min(32rem,85vw)] overflow-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"><p class="text-xs leading-5 text-slate-500">数据模式：{{ contextPreview?.mode || governance?.effectiveMode }}；始终排除 {{ contextPreview?.excludedFields?.join('、') }}</p><pre class="mt-3 whitespace-pre-wrap text-xs leading-5 text-slate-600">{{ withoutRecord ? '本次不发送档案信息。' : JSON.stringify(contextPreview?.context?.snapshot || {}, null, 2) }}</pre></div></details></div></div>
         </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
-
-        <NuxtLink v-if="activePlans?.count" to="/plans" class="mx-4 mt-2 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm transition hover:bg-emerald-100 sm:mx-6"><UIcon name="i-lucide-clipboard-list" class="size-5 text-emerald-600" /><div class="flex-1"><strong class="text-emerald-800">您有 {{ activePlans.count }} 个进行中的方案</strong><p class="text-xs text-emerald-600">点击查看之前的方案及执行情况，避免重复规划</p></div><UIcon name="i-lucide-arrow-right" class="size-4 text-emerald-400" /></NuxtLink>
 
         <div ref="messageViewport" class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/70 to-white px-4 py-6 sm:px-6" :class="{'opacity-60':loadingSession}">
           <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-7">
@@ -676,7 +720,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                     <span class="ml-2 text-xs text-slate-400">{{ pendingLabel }}</span>
                   </div>
                   <div v-else class="markdown-body" v-html="useMarkdown(item.text)" />
-                  <button v-if="item.role === 'assistant'" type="button" class="absolute -bottom-7 left-0 flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
+                  <button v-if="item.role === 'assistant'" type="button" class="absolute bottom-2 right-2 flex items-center gap-1 rounded-md bg-white/95 px-1.5 py-1 text-[11px] text-slate-400 opacity-0 shadow-sm transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
                 </div>
                 <details v-if="item.role === 'assistant' && item.answerCompleted && item.toolCalls?.length" class="group mt-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-xs text-slate-600">
                   <summary class="flex cursor-pointer list-none items-center justify-between px-3.5 py-2 font-medium text-slate-500">
@@ -727,7 +771,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                     >{{ action.label }}</UButton>
                   </div>
                 </div>
-                <details v-if="item.role === 'assistant' && item.answerCompleted && item.sources?.length" class="group mt-7 overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/50 text-xs text-slate-600">
+                <details v-if="item.role === 'assistant' && item.answerCompleted && item.sources?.length" class="group mt-2 overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/50 text-xs text-slate-600">
                   <summary class="flex cursor-pointer list-none items-center justify-between px-3.5 py-2.5 font-medium text-emerald-800"><span class="flex items-center gap-2"><UIcon name="i-lucide-book-open-check" class="size-4" />参考了 {{ item.sources.length }} 条知识内容</span><UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" /></summary>
                   <div class="space-y-2 border-t border-emerald-100 px-3 py-3">
                     <div v-for="(source, sourceIndex) in item.sources" :key="source.chunkId" class="rounded-lg bg-white/80 p-3">
@@ -754,12 +798,31 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         </div>
 
         <form class="sticky bottom-0 border-t border-slate-100 bg-white px-4 py-3.5 sm:px-6" @submit.prevent="ask">
-          <div class="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100">
-            <UTextarea v-model="input" :rows="4" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="请详细描述您的问题，包括：问题表现、涉及对象、发生频率、您的感受。系统将自动匹配关键词进行智能识别。" aria-label="向 AI 赋能助手提问" @keydown.enter.exact.prevent="ask" />
-            <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
+          <div class="relative">
+            <div v-if="mentionOpen" class="fixed inset-0 z-20" @click="closeMention" />
+            <div v-if="mentionOpen" class="absolute bottom-full left-0 right-0 z-30 mb-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+              <div class="flex items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs text-slate-400">
+                <UIcon name="i-lucide-search" class="size-3.5" />
+                <span v-if="mentionQuery" class="truncate">检索“{{ mentionQuery }}”</span>
+                <span v-else>输入关键词检索 · 选择对象后自动关联</span>
+              </div>
+              <div class="max-h-60 overflow-y-auto p-1.5">
+                <button v-if="!mentionOptions.length" type="button" class="w-full px-3 py-3 text-center text-xs text-slate-400" @click="closeMention">无可供关联的对象</button>
+                <button v-for="item in mentionOptions" :key="`${item.type}:${item.id}`" type="button" class="flex w-full items-start gap-2 rounded-xl px-3 py-2 text-left transition hover:bg-emerald-50" @mousedown.prevent="applyMention(item.type, item.id)">
+                  <span class="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700"><UIcon :name="item.type === 'student' ? 'i-lucide-user-round' : item.type === 'class' ? 'i-lucide-users' : 'i-lucide-user-round-check'" class="size-3.5" /></span>
+                  <span class="min-w-0">
+                    <span class="block truncate text-sm text-slate-700">{{ item.label }}</span>
+                    <span class="block truncate text-xs text-slate-400">{{ mentionTypeLabel(item.type) }} · {{ item.description }}</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100">
+              <UTextarea v-model="input" :rows="2" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="请详细描述您的问题，包括：问题表现、涉及对象、发生频率、您的感受。系统将自动匹配关键词进行智能识别。" aria-label="向 AI 赋能助手提问" @input="handleMentionInput" @keydown.enter.exact.prevent="ask" @keydown.esc="closeMention" />
+              <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
+            </div>
           </div>
-          <div class="mt-2 flex items-center justify-between px-1 text-[11px] text-slate-400"><span>Enter 发送 · Shift + Enter 换行</span><span>{{ input.length }}/4000</span></div>
-          <p class="mt-1 text-center text-[11px] text-slate-300">AI 辅助建议，需人工专业判断</p>
+          <div class="mt-1 flex items-center justify-between px-1 text-[11px]"><span class="text-slate-300">AI 辅助建议，需人工专业判断 · 输入 @ 关联对象</span><span class="text-slate-400">Enter 发送 · Shift + Enter 换行 {{ input.length }}/4000</span></div>
         </form>
       </div>
     </section>

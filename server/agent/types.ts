@@ -60,6 +60,7 @@ export const AGENT_SSE_EVENTS = {
   SOURCES: 'sources',
   ANSWER_DELTA: 'answer_delta',
   ANSWER: 'answer',
+  MODULE_PROPORTIONS: 'module_proportions',
   DONE: 'done'
 } as const
 

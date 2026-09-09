@@ -1293,3 +1293,49 @@ export async function extractPlanUpdates(
     return []
   }
 }
+
+/**
+ * 用大模型为教师咨询对话提炼一句简短中文标题（约 12~16 字）。
+ * 输入已脱敏；无 DeepSeek Key、模型不可用或解析失败时返回 null，
+ * 由调用方降级到 buildChatTitle 的截断法。
+ */
+export async function generateChatTitle(event: H3Event, messages: string[]): Promise<string | null> {
+  const config = useRuntimeConfig(event)
+  if (!config.deepseekApiKey) return null
+  const rt = await getAiRuntimeConfig(event)
+  const model = rt.generatorModel || config.deepseekGeneratorModel
+  const text = messages
+    .map((message) => redactPii(message))
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 400)
+  if (!text.trim()) return null
+  const startedAt = Date.now()
+  try {
+    const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: '你是中文对话标题助手。请为下面的教师咨询对话生成一句 12 到 16 个字的中文标题，概括对话的核心对象与问题。要求：不出现姓名、电话、邮箱等个人信息；不用引号、冒号、省略号等标点；只输出标题本身，不要任何解释或多余文字。' },
+          { role: 'user', content: text }
+        ],
+        temperature: 0.3,
+        max_tokens: 40,
+        thinking: { type: 'disabled' }
+      }),
+      signal: AbortSignal.timeout(rt.timeoutMs && rt.timeoutMs < 5000 ? rt.timeoutMs : 5000)
+    })
+    if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
+    const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+    const content = json.choices?.[0]?.message?.content
+    if (!content) return null
+    const title = content.trim().replace(/[。！？!?，,、；;：:""''“”]/g, '').slice(0, 16)
+    if (title.length < 4) return null
+    return title
+  } catch {
+    console.warn('[chat] 标题生成失败，降级截断法:', `${Date.now() - startedAt}ms`)
+    return null
+  }
+}

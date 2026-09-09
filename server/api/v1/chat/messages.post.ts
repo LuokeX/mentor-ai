@@ -3,7 +3,7 @@ import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { decryptSensitive, encryptSensitive } from '../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../domain/safety'
-import { judgeClarificationNeeded, routeWithDeepSeek, semanticSafetySignals, streamClarificationRound, streamClarificationSummary } from '../../../integrations/deepseek'
+import { judgeClarificationNeeded, routeWithDeepSeek, semanticSafetySignals, streamClarificationRound, streamClarificationSummary, generateChatTitle } from '../../../integrations/deepseek'
 import type { KnowledgeCitation } from '../../../integrations/deepseek'
 import { buildAssistantBusinessContext, fetchEntityMemory } from '../../../domain/assistant-context'
 import { composeClarificationSummaryHistory, sanitizeHistoryForSummary, topModuleFromScores } from '../../../domain/chat-clarification'
@@ -12,6 +12,7 @@ import { buildAgentSystemPrompt } from '../../../agent/prompts'
 import type { AgentMessage, AgentUserContext } from '../../../agent/types'
 import { buildChatTitle } from '../../../domain/chat-titles'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
+import { getAiRuntimeConfig } from '../../../domain/ai-config'
 import { trackProductEvent } from '../../../domain/product-events'
 import { embedModuleResourceQuery } from '../../../integrations/embeddings'
 import { searchKnowledgeChunks } from '../../../domain/module-resource-knowledge-search'
@@ -40,6 +41,7 @@ interface AgentGraphRunResult {
   exitReason?: string | null
   toolCalls?: Array<{ name: string; title: string; args: string }>
   sources?: Array<{ chunkId: string; documentTitle: string; heading?: string | null; excerpt?: string; module?: string | null; libraryType?: string }>
+  moduleProportions?: Record<ModuleId, number>
   output?: { answer?: string | null, actionCards?: unknown } | null
 }
 
@@ -91,6 +93,7 @@ export default defineEventHandler(async (event) => {
     const sessionContextType = owned.contextType === 'none' ? undefined : owned.contextType
     const requestedType = body.contextType
     const requestedId = body.contextId
+    // 一个会话始终只绑定一个咨询对象；切换对象由前端新建会话完成，此处校验不允许直接换绑
     if (requestedType && (requestedType !== sessionContextType || requestedId !== owned.contextId)) {
       throw createError({ statusCode: 409, message: '该对话已绑定其他咨询对象，请新建对话后切换对象' })
     }
@@ -161,8 +164,9 @@ export default defineEventHandler(async (event) => {
   const ownedSessionId = sessionId
   const clarificationState = getClarificationState(sessionMetadata)
 
-  // Agent「回答先行」灰度开关：AGENT_ENABLED 环境变量 或 runtimeConfig.agentEnabled（NUXT_AGENT_ENABLED 可运行时覆盖）
-  const agentEnabled = process.env.AGENT_ENABLED === 'true' || config.agentEnabled === true
+  // Agent「回答先行」开关：后台 AI 中心运行时配置优先；NULL 回落环境变量 AGENT_ENABLED / NUXT_AGENT_ENABLED
+  const aiRuntime = await getAiRuntimeConfig(event)
+  const agentEnabled = aiRuntime.agentEnabled ?? (process.env.AGENT_ENABLED === 'true' || config.agentEnabled === true)
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -224,8 +228,10 @@ export default defineEventHandler(async (event) => {
           teacherProfileText,
           onDelta: text => emit(controller, 'answer_delta', { text })
         })
+        const titleInput = [...history.filter((h) => h.role === 'user').map((h) => h.content), body.message]
+        const sessionTitle = (await generateChatTitle(event, titleInput)) ?? buildChatTitle({ messages: titleInput })
         await db.update(schema.chatSessions).set({
-          title: buildChatTitle({ messages: [...history.filter((h) => h.role === 'user').map((h) => h.content), body.message] }),
+          title: sessionTitle,
           metadata: { clarificationState: { phase: 'done', round: clarificationState?.round ?? 0, moduleScores: summary.data.moduleProportions } },
           updatedAt: new Date()
         }).where(eq(schema.chatSessions.id, ownedSessionId))
@@ -300,10 +306,30 @@ export default defineEventHandler(async (event) => {
           const [assistantMessage] = await db.insert(schema.chatMessages).values({
             schoolId: user.schoolId!, ownerUserId: user.id, sessionId: ownedSessionId,
             role: 'assistant', contentEnc: encryptSensitive(answer, config.encryptionKey),
-            metadata: { type: 'agent_answer', actionCards, toolCalls, sources }
+            metadata: { type: 'agent_answer', actionCards, toolCalls, sources, moduleProportions: result?.moduleProportions }
           }).returning({ id: schema.chatMessages.id })
           if (!assistantMessage) throw new Error('Agent 回答保存失败')
+          // 把本轮模块评估占比写回会话澄清状态，后续轮次（module_route 等）与回放仍可引用
+          if (result?.moduleProportions) {
+            try {
+              await db.update(schema.chatSessions).set({
+                metadata: { clarificationState: { phase: 'done', round: clarificationState?.round ?? 0, moduleScores: result.moduleProportions } },
+                updatedAt: new Date()
+              }).where(eq(schema.chatSessions.id, ownedSessionId))
+            } catch (metaError) {
+              // 会话状态更新为次要写入，失败不影响本轮回答主流程
+              console.warn('[chat] Agent 模块占比状态写回失败:', metaError instanceof Error ? metaError.message : metaError)
+            }
+          }
           emit(controller, 'answer', { messageId: assistantMessage.id, text: answer, mode: 'agent' })
+          // 对话推进后提炼简短智能标题（DeepSeek 不可用时降级截断法）
+          try {
+            const titleInput = [...history.filter((h) => h.role === 'user').map((h) => h.content), body.message]
+            const newTitle = (await generateChatTitle(event, titleInput)) ?? buildChatTitle({ messages: titleInput })
+            await db.update(schema.chatSessions).set({ title: newTitle, updatedAt: new Date() }).where(eq(schema.chatSessions.id, ownedSessionId))
+          } catch (titleError) {
+            console.warn('[chat] Agent 标题生成失败:', titleError instanceof Error ? titleError.message : titleError)
+          }
           emit(controller, 'done', { sessionId: ownedSessionId })
           controller.close()
         } catch {

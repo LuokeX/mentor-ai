@@ -9,10 +9,11 @@
  *    再拆 final 节点。
  *
  * 事件流（onEvent 回调，事件名与契约 AGENT_SSE_EVENTS 一致，由入口转发 SSE）：
- *  tool_call    → { name, args }（args 截断到 300 字符）
- *  tool_result  → { name, result }（result 截断到 500 字符）
- *  action_card  → ActionCard（工具返回含 { actionCard } 时即时推送并收集）
- *  answer_delta → { text }（模型流式文本逐段推送）
+ *  tool_call          → { name, args }（args 截断到 300 字符）
+ *  tool_result        → { name, result }（result 截断到 500 字符）
+ *  action_card        → ActionCard（工具返回含 { actionCard } 时即时推送并收集）
+ *  answer_delta       → { text }（模型流式文本逐段推送）
+ *  module_proportions → { moduleProportions }（最终模块评估占比，驱动前端「模块评估占比」面板）
  */
 import type { H3Event } from 'h3'
 import { createReactAgent } from '@langchain/langgraph/prebuilt'
@@ -24,6 +25,7 @@ import { getAiRuntimeConfig } from '../domain/ai-config'
 import { sanitizeHistoryForSummary } from '../domain/chat-clarification'
 import { createAgentLlm } from '../integrations/models'
 import { buildAgentTools } from './tools/index'
+import type { ModuleId } from '../../shared/contracts'
 
 /** 拼在 system prompt 末尾的行为附加说明（回答先行约束）。 */
 const AGENT_BEHAVIOR_NOTES = '回答先行：基于现有信息直接给出初步判断（注明为初步理解，不诊断、不承诺、不替代量表结果）；信息不足时可在回答末尾自然附带一句简短澄清；当信息足以判断方向时调用 recommend_assessment 工具推荐量表；量表结果优先于初步判断。不得输出 \'选项：\' 列表，不得输出 JSON 代码块。'
@@ -57,12 +59,14 @@ export interface RunAgentGraphResult {
   toolCalls?: Array<{ name: string; title: string; args: string }>
   /** 本轮知识库引用来源（供入口持久化到消息 metadata） */
   sources?: Array<{ chunkId: string; documentTitle: string; heading?: string | null; excerpt?: string; module?: string | null; libraryType?: string }>
+  /** 模块评估占比（0~1）。由 module_route / recommend_assessment 工具最终路由结果推导，供前端「模块评估占比」面板展示。 */
+  moduleProportions?: Record<ModuleId, number>
 }
 
 /** 工具层由 AGENT-B 提供；加载失败时不抛错，本轮以“无工具”运行保证可降级。 */
-async function loadAgentTools(userCtx: AgentUserContext): Promise<AgentTool[]> {
+async function loadAgentTools(userCtx: AgentUserContext, enabledTools?: string[] | null): Promise<AgentTool[]> {
   try {
-    const built = await buildAgentTools(userCtx)
+    const built = await buildAgentTools(userCtx, enabledTools)
     return Array.isArray(built) ? built : []
   } catch (error) {
     console.error('[agent/graph] 工具层加载失败，本轮以无工具运行:', error instanceof Error ? error.message : error)
@@ -237,6 +241,44 @@ function renderToolMessageContent(content: unknown): string | null {
   return null
 }
 
+/** 五个业务模块 ID（模块占比兜底/归一化用）。 */
+const MODULE_IDS: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
+
+/** 所有模块清零的占比映射。 */
+function emptyModuleProportions(): Record<ModuleId, number> {
+  return Object.fromEntries(MODULE_IDS.map(m => [m, 0])) as Record<ModuleId, number>
+}
+
+/** 从上一轮模块评分（可为空）播种占比：只保留合法模块并夹到 0~1。 */
+function seedModuleProportions(last?: Record<ModuleId, number> | null): Record<ModuleId, number> {
+  const out = emptyModuleProportions()
+  if (last && typeof last === 'object') {
+    for (const id of MODULE_IDS) {
+      const v = last[id]
+      if (typeof v === 'number' && Number.isFinite(v)) out[id] = Math.min(1, Math.max(0, Math.round(v * 100) / 100))
+    }
+  }
+  return out
+}
+
+/** 从 module_route / recommend_assessment 的工具输出中读取路由到的模块与置信度。 */
+function extractRoutedModule(output: unknown): { module: ModuleId; confidence?: number } | null {
+  const text = renderToolMessageContent((output as { content?: unknown } | null)?.content ?? output)
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (!parsed || typeof parsed !== 'object') return null
+    const rec = parsed as Record<string, unknown>
+    if (typeof rec.module !== 'string' || !MODULE_IDS.includes(rec.module as ModuleId)) return null
+    return {
+      module: rec.module as ModuleId,
+      confidence: typeof rec.confidence === 'number' && Number.isFinite(rec.confidence) ? rec.confidence : undefined
+    }
+  } catch {
+    return null
+  }
+}
+
 /**
  * 运行「回答先行 Agent」图，返回最终答案、推荐卡与终止原因。
  *
@@ -252,6 +294,10 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
   const config = useRuntimeConfig(event)
   const rt = await getAiRuntimeConfig(event)
   const totalTimeoutMs = rt.timeoutMs ?? 60_000
+  // Agent 运行参数：后台 AI 中心运行时配置优先，NULL 回落代码默认
+  const maxToolRounds = rt.agentMaxRounds ?? MAX_TOOL_ROUNDS
+  const behaviorNotes = rt.agentBehaviorNotes?.trim() || AGENT_BEHAVIOR_NOTES
+  const temperature = rt.agentTemperature ?? undefined
   const actionCards: ActionCard[] = []
   /** 工具/引用过程记录（用于展示：工具调用与知识库引用来源）。 */
   const contextEvents: Array<unknown> = []
@@ -259,6 +305,8 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
   const toolCallRecords: Array<{ name: string; title: string; args: string }> = []
   /** 知识库引用来源（供持久化） */
   const sourceRecords: Array<{ chunkId: string; documentTitle: string; heading?: string | null; excerpt?: string; module?: string | null; libraryType?: string }> = []
+  /** 模块评估占比：由 module_route / recommend_assessment 工具路由结果累加推导。 */
+  const moduleProportions = seedModuleProportions(userCtx.lastModuleScores)
 
   // 未接入模型：直接返回本地兜底文本（由入口补发 answer_start 后整体推送）
   if (!config.deepseekApiKey) {
@@ -271,13 +319,13 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
   let fallbackUsed = false
   const deadline = Date.now() + totalTimeoutMs
   try {
-    const llm = await createAgentLlm(event)
-    const agentTools = await loadAgentTools(userCtx)
+    const llm = await createAgentLlm(event, { temperature })
+    const agentTools = await loadAgentTools(userCtx, rt.agentTools)
     const tools = agentTools.map(def => toLangChainTool(def, { event, user: userCtx }))
     const agent = createReactAgent({ llm, tools })
 
     // system（AGENT-C 模板 + 行为附加说明）+ 历史（sanitize 后截断，避免“选项：”列表被模型模仿）
-    const systemText = [systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT, AGENT_BEHAVIOR_NOTES].join('\n\n')
+    const systemText = [systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT, behaviorNotes].join('\n\n')
     const historyMessages: BaseMessage[] = sanitizeHistoryForSummary(messages)
       .slice(-12)
       .map(item => (item.role === 'user' ? new HumanMessage(item.content) : new AIMessage(item.content)))
@@ -286,13 +334,13 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     onEvent(AGENT_SSE_EVENTS.THINKING, { phase: 'planning' })
     const stream = await agent.streamEvents(
       { messages: langMessages },
-      { version: 'v2', recursionLimit: MAX_TOOL_ROUNDS + 4 }
+      { version: 'v2', recursionLimit: maxToolRounds + 4 }
     )
     let toolRounds = 0
     for await (const rawChunk of stream) {
       if (!isStreamChunk(rawChunk)) continue
       // 轮次/总时长上限：把已生成文本作为答案返回
-      if (toolRounds >= MAX_TOOL_ROUNDS || Date.now() >= deadline) {
+      if (toolRounds >= maxToolRounds || Date.now() >= deadline) {
         exitReason = 'max_rounds'
         break
       }
@@ -313,8 +361,17 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
           actionCards.push(card)
           onEvent(AGENT_SSE_EVENTS.ACTION_CARD, card)
         }
-        // 知识库检索：把命中片段作为引用来源推送给前端（来源标签）
+        // 模块分诊：从 module_route / recommend_assessment 输出中累加路由到的模块占比
         const toolName = rawChunk.name ?? ''
+        if (toolName === 'module_route' || toolName === 'recommend_assessment') {
+          const routed = extractRoutedModule(output)
+          if (routed) {
+            // 该工具推荐置信度（recommend_assessment 无置信度，默认按最高路由此判定）
+            const score = routed.confidence != null ? Math.min(1, Math.max(0, routed.confidence)) : 0.75
+            moduleProportions[routed.module] = Math.max(moduleProportions[routed.module], score)
+          }
+        }
+        // 知识库检索：把命中片段作为引用来源推送给前端（来源标签）
         const sourceItems = toolName === 'knowledge_search' ? extractKnowledgeSources(output) : []
         if (sourceItems.length) {
           contextEvents.push({ name: 'sources', title: '知识库引用', items: sourceItems })
@@ -342,7 +399,18 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     } else if (exitReason === null) {
       exitReason = 'done'
     }
-    return { answer: answerText.trim(), actionCards, exitReason, fallbackUsed, toolCalls: toolCallRecords, sources: sourceRecords }
+
+    // 有路由判定时，把最终模块评估占比以共享事件推给前端（供「模块评估占比」面板展示）
+    const hasProportion = Object.values(moduleProportions).some(v => v > 0)
+    if (hasProportion) {
+      onEvent(AGENT_SSE_EVENTS.MODULE_PROPORTIONS, { moduleProportions })
+    }
+
+    return {
+      answer: answerText.trim(), actionCards, exitReason, fallbackUsed,
+      toolCalls: toolCallRecords, sources: sourceRecords,
+      moduleProportions: hasProportion ? moduleProportions : undefined
+    }
   } catch (error) {
     console.error('[agent/graph] runAgentGraph 失败:', error instanceof Error ? error.message : error)
     return { answer: '', actionCards, exitReason: 'error', fallbackUsed: true }
