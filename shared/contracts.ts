@@ -833,6 +833,26 @@ export interface AttributionOutcome {
   suggestedAction?: string
 }
 
+/**
+ * 工具处方条目。生成方案时标记「是谁把它带出来的」：归因加权匹配带出（attribution，
+ * 记录本次占比最高的那条归因）或等级直选带出（intervention）。方案页据此把工具并进
+ * 对应的「针对归因」条或「按等级干预」条，不再靠读取时反查工具库 attributionLabel。
+ */
+export interface PlanToolPrescription {
+  title: string
+  content: string
+  /** 工具库编码，用于跨量表合并去重 */
+  code?: string
+  sourceVersionId?: string
+  /** 归因加权匹配得分（等级直选工具无得分） */
+  matchScore?: number
+  /** 生成来源：归因加权匹配 / 等级直选 */
+  sourceChannel?: 'attribution' | 'intervention'
+  /** sourceChannel=attribution 时，带出该工具的归因编码与名称 */
+  attributionCode?: string
+  attributionName?: string
+}
+
 // 规则执行结果
 export interface RuleExecResult {
   level: string
@@ -857,7 +877,7 @@ export interface RuleExecResult {
   /** 维度编码 → 中文名。面向班主任的文案必须用名称，不能把编码露出去。 */
   dimensionLabels: Record<string, string>
   actions: Array<{ title: string, detail: string, status: 'pending' }>
-  tools: Array<{ title: string, content: string }>
+  tools: PlanToolPrescription[]
   /** 命中分级规则的「升级目标」（⑤e），供输出模板 ${责任人} 占位符使用 */
   escalationTarget?: string
   /** 命中分级规则配置的等级直选工具编码（⑤e 干预工具），由 API 层解析成工具正文 */

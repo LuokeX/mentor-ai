@@ -175,7 +175,7 @@ export async function recomputeAssessmentResult(
   const matchedTools = result.blocked ? [] : await resolveToolsForPlan(event, input.module, {
     dimensions: result.dimensions,
     severity: result.severity,
-    attributions: result.attributions.map(attribution => ({ code: attribution.code, share: attribution.share })),
+    attributions: result.attributions.map(attribution => ({ code: attribution.code, share: attribution.share, name: attribution.name })),
     toolTags: result.toolTags,
     requiredCodes: result.interventionToolCodes,
     schoolId: input.schoolId

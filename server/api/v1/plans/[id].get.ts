@@ -9,6 +9,8 @@ import { enhancePlanActions, hasAiManagedActionItems } from '../../../domain/pla
 import { truncateByChars } from '../../../domain/plan-titles'
 import { redactPii } from '../../../integrations/deepseek'
 import { listInstrumentOptions } from '../../../domain/assessment-instruments'
+import { mergePlanActionDisplay, MAX_EXECUTABLE_PLAN_ACTIONS, TOOL_ACTION_PREFIX, toolTitleOf, type PlanActionDisplayAction } from '../../../domain/plan-action-display'
+import { resolvePlanAttributionOrder, resolvePlanToolPlacementBinding } from '../../../domain/plan-action-display-context'
 
 /**
  * 后台 AI 增强「任务丢失」判定窗口：增强顺序执行行动改写与深度报告，
@@ -243,6 +245,28 @@ export default defineEventHandler(async (event) => {
 
   const { summaryEnc, acceptanceReasonEnc, aiActionsEnhancedAt: _aiActionsEnhancedAt, ...publicPlan } = plan
 
+  // 展示层合并：「使用工具」并进带出它的动作（归因条 / 等级干预条），并按归因占比截断到上限。
+  // 工具归属来自生成时写入 plans.tools 的 sourceChannel；只有老方案无标记时才回退查工具库。
+  // 与验收校验共用同一套解析（见 plan-action-display-context），避免「页面看不到却卡住确认」。
+  const displayActions = actions.map(({ blockNoteEnc, evidenceSummaryEnc, decisionNoteEnc, ...action }) => ({
+    ...action,
+    blockNote: blockNoteEnc ? decryptSensitive(blockNoteEnc, secret) : null,
+    evidenceSummary: evidenceSummaryEnc ? decryptSensitive(evidenceSummaryEnc, secret) : null,
+    decisionNote: decisionNoteEnc ? decryptSensitive(decisionNoteEnc, secret) : null,
+    evidenceFiles: evidenceByAction.get(action.id) || [],
+    // 深度诊断建议行动项：附带量表编码，前端渲染「去完成」跳转
+    suggestion: suggestionByActionTitle.get(action.title) || null
+  })) as unknown as PlanActionDisplayAction[]
+  const { placement, fallbackBinding } = await resolvePlanToolPlacementBinding(event, {
+    module: plan.module,
+    schoolId: user.schoolId,
+    toolTitles: displayActions
+      .filter(action => action.title.startsWith(TOOL_ACTION_PREFIX))
+      .map(action => toolTitleOf(action.title)),
+    planTools: plan.tools
+  })
+  const attributionOrder = resolvePlanAttributionOrder(plan.report)
+
   return {
     ...publicPlan,
     summary: decryptSensitive(summaryEnc, secret),
@@ -253,15 +277,13 @@ export default defineEventHandler(async (event) => {
     assessments,
     sourceConversation,
     nextInstrumentSuggestion,
-    actions: actions.map(({ blockNoteEnc, evidenceSummaryEnc, decisionNoteEnc, ...action }) => ({
-      ...action,
-      blockNote: blockNoteEnc ? decryptSensitive(blockNoteEnc, secret) : null,
-      evidenceSummary: evidenceSummaryEnc ? decryptSensitive(evidenceSummaryEnc, secret) : null,
-      decisionNote: decisionNoteEnc ? decryptSensitive(decisionNoteEnc, secret) : null,
-      evidenceFiles: evidenceByAction.get(action.id) || [],
-      // 深度诊断建议行动项：附带量表编码，前端渲染「去完成」跳转
-      suggestion: suggestionByActionTitle.get(action.title) || null
-    })),
+    actions: mergePlanActionDisplay(
+      displayActions,
+      placement,
+      attributionOrder,
+      MAX_EXECUTABLE_PLAN_ACTIONS,
+      fallbackBinding
+    ),
     reviews,
     feedback: feedback.map(({ noteEnc, ...item }) => ({
       ...item,

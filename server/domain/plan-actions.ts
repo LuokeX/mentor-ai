@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import { and, asc, eq, max } from 'drizzle-orm'
 import { schema, useDb, type DbClient } from '../utils/db'
-import type { RuleExecResult, ToolStructuredStep, ToolContraindicationRule, Severity } from '../../shared/contracts'
+import type { RuleExecResult, ToolStructuredStep, ToolContraindicationRule, Severity, PlanToolPrescription } from '../../shared/contracts'
 
 type LegacyAction = {
   title: string
@@ -144,7 +144,8 @@ export interface ToolMatchInput {
   dimensions: Record<string, number>
   /** 分级规则产出的严重度，与工具库的严重度共用同一套枚举 */
   severity?: Severity
-  attributions?: Array<{ code: string, share: number }>
+  /** 本次命中的归因（按占比降序）。name 用于生成时记录工具归属，缺失时回退用 code 占位 */
+  attributions?: Array<{ code: string, share: number, name?: string }>
   toolTags?: string[]
   /** 薄弱维度判定阈值 */
   weakDimensionThreshold?: number
@@ -264,12 +265,35 @@ export function renderToolContent(tool: Record<string, unknown>): string {
   return `${steps}${scripts}${prohibitions}`
 }
 
+/**
+ * 归因通道的工具归属：取工具声明的归因编码（attributionCode + attributionCodes）与本次
+ * 命中归因的交集，按本次占比降序取第一条。生成时记录进 plans.tools，方案页据此把工具并进
+ * 对应的「针对「归因」」条。返回 null 表示工具没声明本次命中的归因（只靠标签/维度得分入选），
+ * 展示层回退到工具库 attributionLabel 解析。
+ */
+export function resolveToolAttributionPlacement(
+  tool: Record<string, unknown>,
+  attributions: Array<{ code: string, share: number, name?: string }>
+): { code: string, name: string } | null {
+  const declared = new Set([
+    tool.attributionCode,
+    ...(Array.isArray(tool.attributionCodes) ? tool.attributionCodes : [])
+  ].map(normalize).filter(Boolean))
+  if (!declared.size) return null
+  for (const attribution of attributions) {
+    const code = String(attribution.code || '').trim()
+    if (!code || !declared.has(normalize(code))) continue
+    return { code, name: String(attribution.name || '').trim() || code }
+  }
+  return null
+}
+
 // 从 moduleResourceLibraries 加载工具库，根据评估结果匹配适用的工具处方
 export async function resolveToolsForPlan(
   event: H3Event,
   module: string,
   input: ToolMatchInput & { schoolId?: string | null, requiredCodes?: string[] }
-): Promise<Array<{ title: string, content: string, code?: string, sourceVersionId?: string, matchScore?: number }>> {
+): Promise<PlanToolPrescription[]> {
   const { resolvePublishedModuleResource } = await import('./module-resources')
   const resource = await resolvePublishedModuleResource<{ tools?: Array<Record<string, unknown>> }>(
     event,
@@ -286,25 +310,43 @@ export async function resolveToolsForPlan(
 
   if (tools.length === 0) return []
 
-  const render = (tool: Record<string, unknown>, score?: number) => ({
+  // 生成时打标：sourceChannel 记录「谁把这个工具带出来的」，方案页按它合并，不再反查工具库。
+  const render = (tool: Record<string, unknown>, extra: {
+    matchScore?: number
+    sourceChannel: 'attribution' | 'intervention'
+    attributionCode?: string
+    attributionName?: string
+  }): PlanToolPrescription => ({
     title: String(tool.name || tool.title || ''),
     code: String(tool.code || '').trim() || undefined,
     sourceVersionId: resource.versionId,
-    matchScore: score,
+    matchScore: extra.matchScore,
+    sourceChannel: extra.sourceChannel,
+    attributionCode: extra.attributionCode,
+    attributionName: extra.attributionName,
     content: renderToolContent(tool)
   })
 
   // 等级干预通道：命中等级直选的工具按编码无条件入选（跳过打分），且优先于归因加权结果
   const required = new Set((input.requiredCodes || []).map(normalize).filter(Boolean))
   const direct = required.size
-    ? tools.filter(tool => required.has(normalize(tool.code))).map(tool => render(tool, undefined))
+    ? tools.filter(tool => required.has(normalize(tool.code)))
+        .map(tool => render(tool, { sourceChannel: 'intervention' }))
     : []
 
   // 归因加权匹配照常打分；与直选工具按编码去重（直选优先），总量仍受 MAX_MATCHED_TOOLS 约束
   const scored = scoreTools(tools, input)
     .filter(({ tool }) => !required.has(normalize(tool.code)))
     .slice(0, Math.max(0, MAX_MATCHED_TOOLS - direct.length))
-    .map(({ tool, score }) => render(tool, score))
+    .map(({ tool, score }) => {
+      const placement = resolveToolAttributionPlacement(tool, input.attributions || [])
+      return render(tool, {
+        matchScore: score,
+        sourceChannel: 'attribution',
+        attributionCode: placement?.code,
+        attributionName: placement?.name
+      })
+    })
 
   return [...direct, ...scored]
 }

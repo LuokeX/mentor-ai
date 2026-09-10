@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { planAcceptanceSchema } from '../../../../../shared/reports'
 import { closeAssessmentSessionsForPlan } from '../../../../domain/assessment-sessions'
+import { resolveDecidablePlanActionIds } from '../../../../domain/plan-action-display-context'
 import { recordPlanOperationEvent } from '../../../../domain/plan-operations'
 import { trackProductEvent } from '../../../../domain/product-events'
 import { requireUser } from '../../../../utils/auth'
@@ -23,7 +24,10 @@ export default defineEventHandler(async (event) => {
     schoolId: schema.plans.schoolId,
     ownerUserId: schema.plans.ownerUserId,
     status: schema.plans.status,
-    acceptedAt: schema.plans.acceptedAt
+    acceptedAt: schema.plans.acceptedAt,
+    module: schema.plans.module,
+    report: schema.plans.report,
+    tools: schema.plans.tools
   }).from(schema.plans).where(and(
     eq(schema.plans.id, id),
     eq(schema.plans.ownerUserId, user.id),
@@ -38,21 +42,33 @@ export default defineEventHandler(async (event) => {
 
   const actions = await db.select({
     id: schema.planActions.id,
+    title: schema.planActions.title,
+    detail: schema.planActions.detail,
     decision: schema.planActions.decision
   }).from(schema.planActions).where(and(
     eq(schema.planActions.planId, plan.id),
     eq(schema.planActions.ownerUserId, user.id),
     eq(schema.planActions.schoolId, schoolId)
   ))
-  if (body.decision === 'accepted' && actions.length) {
-    if (actions.some(action => action.decision === 'pending')) {
+  // 只校验「教师能在方案页确认的动作」：读取层会把工具并进归因条、并把可执行条目
+  // 截断到展示上限，被隐藏的行教师无从决策，不应再卡住确认（与读取层共用同一套规则）。
+  const decidableIds = await resolveDecidablePlanActionIds(event, {
+    module: plan.module,
+    schoolId,
+    report: plan.report,
+    actions,
+    tools: plan.tools
+  })
+  const decidableActions = actions.filter(action => decidableIds.has(action.id))
+  if (body.decision === 'accepted' && decidableActions.length) {
+    if (decidableActions.some(action => action.decision === 'pending')) {
       throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '请先处理全部行动方案建议' })
     }
-    if (!actions.some(action => action.decision === 'included')) {
+    if (!decidableActions.some(action => action.decision === 'included')) {
       throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '请至少纳入一项行动方案建议' })
     }
   }
-  if (body.decision === 'deferred' && actions.length && actions.some(action => action.decision !== 'rejected')) {
+  if (body.decision === 'deferred' && decidableActions.length && decidableActions.some(action => action.decision !== 'rejected')) {
     throw createError({ statusCode: 409, statusMessage: 'INVALID_TRANSITION', message: '暂不执行前，请逐条反馈行动方案建议' })
   }
 

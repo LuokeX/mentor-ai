@@ -152,7 +152,7 @@ export default defineEventHandler(async (event) => {
   const matchedTools = result.blocked ? [] : await resolveToolsForPlan(event, module, {
     dimensions: result.dimensions,
     severity: result.severity,
-    attributions: result.attributions.map(attribution => ({ code: attribution.code, share: attribution.share })),
+    attributions: result.attributions.map(attribution => ({ code: attribution.code, share: attribution.share, name: attribution.name })),
     toolTags: result.toolTags,
     // 等级干预通道：命中等级直选的工具编码无条件入选，与归因加权结果按编码去重
     requiredCodes: result.interventionToolCodes,

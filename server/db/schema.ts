@@ -527,7 +527,20 @@ export const plans = pgTable('plans', {
   instrumentSnapshots: jsonb('instrument_snapshots').$type<Array<{ code: string, name: string, version: string, sequence: number }>>().default([]).notNull(),
   summaryEnc: text('summary_enc').notNull(),
   actions: jsonb('actions').$type<Array<{ title: string, detail: string, status: string }>>().default([]).notNull(),
-  tools: jsonb('tools').$type<Array<{ title: string, content: string }>>().default([]).notNull(),
+  tools: jsonb('tools').$type<Array<{
+    title: string
+    content: string
+    /** 工具库编码，用于跨量表合并去重 */
+    code?: string
+    sourceVersionId?: string
+    /** 归因加权匹配得分（等级直选工具无得分） */
+    matchScore?: number
+    /** 生成来源：归因加权匹配 / 等级直选。方案页据此把工具并进对应动作。 */
+    sourceChannel?: 'attribution' | 'intervention'
+    /** sourceChannel=attribution 时，带出该工具的归因编码与名称 */
+    attributionCode?: string
+    attributionName?: string
+  }>>().default([]).notNull(),
   report: jsonb('report').$type<Record<string, unknown>>().default({}).notNull(),
   /** AI 深度报告增强状态：pending 撰写中 / done 已完成（或未启用增强）/ failed 失败降级为确定性报告 */
   aiReportStatus: varchar('ai_report_status', { length: 20 }).default('done').notNull(),

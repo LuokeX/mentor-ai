@@ -12,6 +12,8 @@ type PlanAction = {
   teacherConfidence?: number | null;
   /** 深度诊断建议行动项：附带建议完成的量表编码，渲染「去完成」跳转 */
   suggestion?: { instrumentCode: string } | null;
+  /** 展示层合并：同一归因下并入的工具步骤（读取层把「使用工具」并进了「针对归因」条） */
+  mergedTools?: Array<{ title: string; content: string }>;
   evidenceFiles?: Array<{
     id: string; kind: string; filename: string; mimeType: string; byteSize: number; createdAt: string;
   }>;
@@ -172,6 +174,14 @@ function isToolAction(action: PlanAction) {
 }
 
 /**
+ * 展示层合并后：归因动作（「针对「…」」）可能携带 mergedTools（同一归因下并入的工具步骤）。
+ * 工具步骤作为归因动作正文的一部分展示，由 displayActionDetail / recommendationImplementation 拼接。
+ */
+function actionMergedTools(action: PlanAction): Array<{ title: string; content: string }> {
+  return action.mergedTools || []
+}
+
+/**
  * AI 改写负责的实施方案条目：工具动作、归因建议行动与分级干预动作。
  * 深度诊断待办是服务端确定性生成的指令，教师手动新增的行动也不在其中，
  * 两者正文始终原样展示。
@@ -188,13 +198,29 @@ const AI_ACTIONS_FAILED_HINT = 'AI 生成未完成，请点击上方「重新生
 /**
  * 实施方案正文：AI 生成期间与失败态都不回落到三库机械条目——
  * 需求是「实施方案必须由 AI 输出」，机械条目只作为 AI 输入与数据保留。
+ * 展示层合并后：「针对归因」条若携带 mergedTools（并入的工具步骤），在其正文后追加
+ * 「配套工具」块；执行区（displayActionDetail）与建议区（recommendationImplementation）
+ * 共用此正文，避免两处重复拼接。
  */
+function detailWithMergedTools(action: PlanAction): string {
+  let body = action.detail || ''
+  const tools = actionMergedTools(action)
+  if (tools.length) {
+    const toolBlock = tools.map(tool => {
+      const head = `—— 配套工具：${tool.title}`
+      return tool.content ? `${head}\n${tool.content}` : head
+    }).join('\n\n')
+    body = body ? `${body}\n\n${toolBlock}` : toolBlock
+  }
+  return body
+}
+
 function displayActionDetail(action: PlanAction): string {
   if (isAiManagedAction(action)) {
     if (aiActionsPending.value) return AI_ACTIONS_PENDING_HINT
     if (aiActionsFailed.value) return AI_ACTIONS_FAILED_HINT
   }
-  return action.detail
+  return detailWithMergedTools(action)
 }
 
 const activeActions = computed<PlanAction[]>(() => {
@@ -404,6 +430,14 @@ async function updateAcceptance(decision: 'accepted' | 'deferred' | 'not_applica
     })
     acceptanceForm.reason = ''
     await refresh()
+  } catch (error: any) {
+    // 后端校验未通过时给出可见提示并刷新，避免「点了没反应」。
+    await refresh()
+    toast.add({
+      title: decision === 'accepted' ? '方案确认失败' : '方案反馈提交失败',
+      description: error?.data?.message || error?.message || '请稍后重试',
+      color: 'error'
+    })
   } finally {
     acceptancePending.value = false
   }
@@ -661,7 +695,7 @@ function toggleFeedbackTag(tag: string, checked: boolean | string) {
  *  - aiActionsStatus：工具与行动步骤的 AI 改写（先执行）；
  *  - aiReportStatus：深度报告（后执行）。
  * 任一 pending 时每 5s 轮询方案详情，全部收敛为 done/failed 后自动停止；
- * 后端对丢失的任务有 10 分钟兜底收敛，轮询不会无限持续。
+ * 后端对丢失的任务有 30 分钟兜底收敛，轮询不会无限持续。
  */
 const aiReportStatus = computed(() => data.value?.aiReportStatus || 'done')
 const aiActionsStatus = computed(() => data.value?.aiActionsStatus || 'done')
