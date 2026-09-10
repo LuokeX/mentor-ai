@@ -1,8 +1,9 @@
 /**
  * Agent（回答先行）系统提示词构建。
  *
- * 与 buildAssistantMessages（server/integrations/deepseek.ts）一致，从 AI 管理中心读取
- * 'assistant_chat' 模板：DB 已发布优先，无则内置基线，运行时替换 {{占位符}}。
+ * 模板文本来自数据库已发布提示词（ai_prompt_templates.published，AI 中心维护）：
+ * 'assistant_chat' 即 Agent 的 system 提示词，运行时替换 {{占位符}}。
+ * 代码不再内置模板正文；该条未配置或未发布时直接抛错，由调用入口回退到澄清总结路径。
  *
  * assistant_chat 模板的实际占位符只有三个：formatInstruction / knowledgeContext /
  * businessContextText（teacherProfileText 无独立占位符，按身份前缀并入 formatInstruction）。
@@ -35,27 +36,9 @@ function buildFormatInstruction(input: { teacherProfileText?: string }): string 
   return identityText ? `${identityText}\n${behaviors}` : behaviors
 }
 
-/** 模板整体不可用（system 与 user 两段都为空）时的硬编码兜底，行为要点与占位符注入保持一致。 */
-function fallbackSystemPrompt(input: AgentSystemPromptInput & { contextText: string; formatInstruction: string }): string {
-  const { knowledgeContext, contextText, teacherProfileText, formatInstruction } = input
-  const identityText = teacherProfileText?.trim() ? `您是${teacherProfileText}。` : ''
-  return `你是"教师赋能智能平台"的统一 AI 助手，服务班主任。业务模块只有 self_growth、class_system、home_school、student_case、learning_problem。
-${identityText}
-职责：理解教师自然语言，结合已审核知识与通用班主任工作方法，直接给出当下可执行的回应，并建议进入合适模块完成规则评估。
-
-行为要点：
-${formatInstruction}
-
-已审核知识：
-${knowledgeContext}
-
-当前业务对象上下文：
-${contextText}`
-}
-
 /**
  * 构建 Agent 的 system 提示词。
- * 模板渲染为空（发布模板被清空等异常情况）时回退到硬编码兜底文本，不阻断 Agent 调用。
+ * 提示词未配置或未发布时抛错（不再回退代码内置文本），由调用入口回退到澄清总结路径。
  */
 export async function buildAgentSystemPrompt(event: H3Event, input: AgentSystemPromptInput): Promise<string> {
   const knowledgeContext = input.knowledgeContext.trim() || '没有检索到已发布知识。'
@@ -73,6 +56,5 @@ export async function buildAgentSystemPrompt(event: H3Event, input: AgentSystemP
   const userText = prompt.user?.trim()
   if (userText) return userText
 
-  // 兜底：模板不可用（system/user 均为空）
-  return fallbackSystemPrompt({ ...input, contextText, formatInstruction })
+  throw new Error('AI 助手提示词未配置或未发布（assistant_chat）')
 }

@@ -874,6 +874,7 @@ export const aiPromptPlaceholderSchema = z.object({
   description: z.string().trim().max(500).optional()
 })
 
+/** 提示词草稿保存：正文长度上限 20000 字。 */
 export const aiPromptTemplateSaveSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(1000).optional(),
@@ -895,7 +896,7 @@ export const aiRuntimeSettingsPatchSchema = z.object({
   agentTemperature: z.coerce.number().min(0).max(2).nullable().optional(),
   /** Agent 启用的工具名数组：null = 回落全部默认工具；空数组 = 禁用全部工具。 */
   agentTools: z.array(z.string().trim().min(1).max(80)).nullable().optional(),
-  /** Agent 行为补充要点：null = 回落硬编码默认。 */
+  /** Agent 行为补充要点：null = 未配置（不追加行为要点，不再有代码默认值）。 */
   agentBehaviorNotes: z.string().trim().max(4000).nullable().optional()
 })
 

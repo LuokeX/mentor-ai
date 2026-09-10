@@ -1,44 +1,65 @@
+import { readFileSync, readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { PROMPT_BUILTINS, renderTemplate } from '../server/domain/ai-config'
+import { PROMPT_REGISTRY, renderTemplate } from '../server/domain/ai-config'
 import { aiRuntimeSettingsPatchSchema } from '../shared/contracts'
 
-describe('PROMPT_BUILTINS 内置提示词基线', () => {
+const AI_CENTER_CODES = [
+  'assistant_chat',
+  'clarification_judge',
+  'clarification_round',
+  'clarification_summary',
+  'assessment_report',
+  'tool_step_polish',
+  'semantic_safety',
+  'rule_expression',
+  'module_router',
+  'plan_update_extractor',
+  'instrument_recommendation',
+]
+
+/** 从 drizzle/*.sql 中提取已初始化的提示词正文（$<code>_tpl$ ... $<code>_tpl$）。 */
+function readSeededTemplates(): Map<string, string> {
+  const dir = new URL('../drizzle/', import.meta.url)
+  const seeded = new Map<string, string>()
+  for (const file of readdirSync(dir).filter(name => name.endsWith('.sql'))) {
+    const sql = readFileSync(new URL(file, dir), 'utf8')
+    for (const match of sql.matchAll(/\$(\w+)_tpl\$([\s\S]*?)\$\1_tpl\$/g)) {
+      if (!seeded.has(match[1]!)) seeded.set(match[1]!, match[2]!)
+    }
+  }
+  return seeded
+}
+
+describe('PROMPT_REGISTRY 提示词注册表', () => {
   it('覆盖全部 11 个 AI 调用点且 code 唯一', () => {
-    const codes = PROMPT_BUILTINS.map(item => item.code)
-    expect(codes).toEqual([
-      'assistant_chat',
-      'clarification_judge',
-      'clarification_round',
-      'clarification_summary',
-      'assessment_report',
-      'tool_step_polish',
-      'semantic_safety',
-      'rule_expression',
-      'module_router',
-      'plan_update_extractor',
-      'instrument_recommendation',
-    ])
+    const codes = PROMPT_REGISTRY.map(item => item.code)
+    expect(codes).toEqual(AI_CENTER_CODES)
     expect(new Set(codes).size).toBe(codes.length)
   })
 
-  it('模板中的 {{占位符}} 与 placeholders 元数据一一对应', () => {
-    for (const item of PROMPT_BUILTINS) {
-      const inTemplate = [...item.template.matchAll(/\{\{(\w+)\}\}/g)].map(match => match[1])
-      const declared = item.placeholders.map(ph => ph.key)
-      expect(new Set(inTemplate)).toEqual(new Set(declared))
+  it('每条都带名称与用途说明（正文不在代码里）', () => {
+    for (const item of PROMPT_REGISTRY) {
+      expect(item.name.length).toBeGreaterThan(0)
+      expect(item.description.length).toBeGreaterThan(0)
+      expect(item).not.toHaveProperty('template')
     }
   })
 
-  it('分段标记格式正确：带 SYSTEM 标记的模板要么有 USER 段要么整段为 system', () => {
-    for (const item of PROMPT_BUILTINS) {
-      const rendered = renderTemplate(item.template, {})
-      if (item.template.startsWith('###SYSTEM###\n')) {
-        expect(rendered.system).toBeTruthy()
-        // instrument_recommendation 无标记 = 整体 user 消息
-      } else {
-        expect(rendered.system).toBeNull()
-        expect(rendered.user).toBeTruthy()
-      }
+  it('每条提示词都已由数据库迁移初始化（空库也有可发布正文）', () => {
+    const seeded = readSeededTemplates()
+    for (const code of AI_CENTER_CODES) {
+      expect(seeded.get(code), `迁移里缺少 ${code}`).toBeTruthy()
+      expect(seeded.get(code)!.trim().length).toBeGreaterThan(0)
+    }
+  })
+
+  it('初始化的正文占位符都在注册表声明范围内', () => {
+    const seeded = readSeededTemplates()
+    for (const item of PROMPT_REGISTRY) {
+      const template = seeded.get(item.code)!
+      const inTemplate = [...template.matchAll(/\{\{(\w+)\}\}/g)].map(match => match[1])
+      const declared = item.placeholders.map(ph => ph.key)
+      for (const key of inTemplate) expect(declared, `${item.code} 未声明占位符 ${key}`).toContain(key)
     }
   })
 })
@@ -62,6 +83,18 @@ describe('renderTemplate 占位符渲染', () => {
     const result = renderTemplate('只返回 json。文本：{{userText}}', { userText: 'abc' })
     expect(result.system).toBeNull()
     expect(result.user).toBe('只返回 json。文本：abc')
+  })
+
+  it('已初始化正文的分段标记可正常解析', () => {
+    for (const [code, template] of readSeededTemplates()) {
+      const rendered = renderTemplate(template, {})
+      if (template.startsWith('###SYSTEM###\n')) {
+        expect(rendered.system, `${code} 应有 system 段`).toBeTruthy()
+      } else {
+        expect(rendered.system, `${code} 应整段为 user 消息`).toBeNull()
+        expect(rendered.user, `${code} 应有 user 段`).toBeTruthy()
+      }
+    }
   })
 })
 

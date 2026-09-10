@@ -8,7 +8,7 @@ import { assessmentDefinitions, moduleMeta, type AssessmentDefinition } from '..
 import type { RuleOutput } from '../domain/rules'
 import type { AssistantBusinessContext } from '../domain/assistant-context'
 import { createTemplateAssessmentReport, validateAssessmentReport } from '../domain/reports'
-import { getAiRuntimeConfig, renderPrompt } from '../domain/ai-config'
+import { getAiRuntimeConfig, promptAvailable, renderPrompt } from '../domain/ai-config'
 import { resolvePublishedModuleResource } from '../domain/module-resources'
 import { schema, useDb } from '../utils/db'
 
@@ -103,7 +103,7 @@ function buildAssistantMessages(input: {
   }
 }
 
-/** 聊天助手消息：system 提示词来自 AI 管理中心模板，history/user 由代码注入。 */
+/** 聊天助手消息：system 提示词来自数据库已发布模板（assistant_chat），history/user 由代码注入。 */
 async function buildAssistantMessagesWithPrompt(event: H3Event, input: {
   message: string
   history: Array<{ role: 'user' | 'assistant', content: string }>
@@ -117,6 +117,7 @@ async function buildAssistantMessagesWithPrompt(event: H3Event, input: {
     knowledgeContext: parts.knowledgeContext,
     businessContextText: parts.businessContextText
   })
+  if (!promptAvailable(prompt)) throw new Error('AI 助手提示词未配置或未发布（assistant_chat）')
   const messages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
@@ -146,7 +147,7 @@ function buildClarificationPrompt(input: {
   return { knowledgeContext, previousScores, roundNumber: String(input.clarificationRound), teacherProfile: input.teacherProfileText || '' }
 }
 
-/** 澄清追问消息：system 提示词来自 AI 管理中心模板。 */
+/** 澄清追问消息：system 提示词来自数据库已发布模板（clarification_round）。 */
 async function buildClarificationMessages(event: H3Event, input: {
   message: string
   history: Array<{ role: 'user' | 'assistant', content: string }>
@@ -162,6 +163,7 @@ async function buildClarificationMessages(event: H3Event, input: {
     knowledgeContext: parts.knowledgeContext,
     teacherProfile: parts.teacherProfile
   })
+  if (!promptAvailable(prompt)) throw new Error('澄清追问提示词未配置或未发布（clarification_round）')
   const messages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
@@ -187,7 +189,7 @@ function buildSummaryPrompt(input: {
   return { knowledgeContext, scoresContext, teacherProfile: input.teacherProfileText || '' }
 }
 
-/** 澄清总结消息：system 提示词来自 AI 管理中心模板。 */
+/** 澄清总结消息：system 提示词来自数据库已发布模板（clarification_summary）。 */
 async function buildSummaryMessages(event: H3Event, input: {
   history: Array<{ role: 'user' | 'assistant', content: string }>
   citations: KnowledgeCitation[]
@@ -200,6 +202,7 @@ async function buildSummaryMessages(event: H3Event, input: {
     knowledgeContext: parts.knowledgeContext,
     teacherProfile: parts.teacherProfile
   })
+  if (!promptAvailable(prompt)) throw new Error('澄清总结提示词未配置或未发布（clarification_summary）')
   const messages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
@@ -235,6 +238,7 @@ export async function judgeClarificationNeeded(
   const rt = await getAiRuntimeConfig(event)
   const routerModel = rt.routerModel || config.deepseekRouterModel
   const prompt = await renderPrompt(event, 'clarification_judge', { userText: redacted, historyText })
+  if (!promptAvailable(prompt)) return { needClarification: true, reason: '澄清判定提示词未配置，按需追问不可用' }
   const messages: Array<{ role: 'system' | 'user', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
@@ -309,16 +313,17 @@ export async function streamClarificationRound(event: H3Event, input: {
   const startedAt = Date.now()
   const rt = await getAiRuntimeConfig(event)
   const generatorModel = rt.generatorModel || config.deepseekGeneratorModel
-  const messages = await buildClarificationMessages(event, {
-    message: input.message,
-    history: input.history,
-    citations: input.citations,
-    clarificationRound: input.clarificationRound,
-    previousModuleScores: input.previousModuleScores,
-    teacherProfileText: input.teacherProfileText
-  })
 
   try {
+    // 提示词未配置时这里抛错，由下方 catch 回退到确定性兜底追问
+    const messages = await buildClarificationMessages(event, {
+      message: input.message,
+      history: input.history,
+      citations: input.citations,
+      clarificationRound: input.clarificationRound,
+      previousModuleScores: input.previousModuleScores,
+      teacherProfileText: input.teacherProfileText
+    })
     const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
@@ -814,7 +819,13 @@ export async function generateAssistantResponse(event: H3Event, input: {
   const allowedCitationIds = new Set(input.citations.map(item => item.chunkId))
   const rt = await getAiRuntimeConfig(event)
   const generatorModel = rt.generatorModel || config.deepseekGeneratorModel
-  const messages = await buildAssistantMessagesWithPrompt(event, input, 'json')
+  let messages: Array<{ role: 'system' | 'user' | 'assistant', content: string }>
+  try {
+    messages = await buildAssistantMessagesWithPrompt(event, input, 'json')
+  } catch {
+    // 提示词未配置或未发布：AI 能力不可用，回退本地确定性回答
+    return localAssistantResponse(input.message, input.citations, input.businessContext)
+  }
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const startedAt = Date.now()
@@ -906,6 +917,7 @@ export async function semanticSafetySignals(event: H3Event, text: string, forceL
   const rt = await getAiRuntimeConfig(event)
   const routerModel = rt.routerModel || config.deepseekRouterModel
   const prompt = await renderPrompt(event, 'semantic_safety', { userText: redacted })
+  if (!promptAvailable(prompt)) return []
   const messages: Array<{ role: 'system' | 'user', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
@@ -944,6 +956,7 @@ export async function expressRuleResult(event: H3Event, module: string, result: 
   const rt = await getAiRuntimeConfig(event)
   const generatorModel = rt.generatorModel || config.deepseekGeneratorModel
   const prompt = await renderPrompt(event, 'rule_expression', { facts })
+  if (!promptAvailable(prompt)) return fallback
   const messages: Array<{ role: 'system' | 'user', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
@@ -1029,6 +1042,7 @@ export async function generateAssessmentReport(event: H3Event, input: {
     facts: JSON.stringify(facts),
     jsonFormat: format
   })
+  if (!promptAvailable(prompt)) return fallback
   const messages: Array<{ role: 'system' | 'user', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
@@ -1201,6 +1215,7 @@ export async function routeWithDeepSeek(
   const rt = await getAiRuntimeConfig(event)
   const routerModel = rt.routerModel || config.deepseekRouterModel
   const prompt = await renderPrompt(event, 'module_router', { userText: redacted })
+  if (!promptAvailable(prompt)) return localRoute(text)
   const messages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   // 回放本会话（及跨会话实体记忆）最近消息，让分诊基于完整对话而非单条输入
@@ -1277,6 +1292,7 @@ export async function extractPlanUpdates(
     plansSummary: JSON.stringify(plansSummary, null, 2),
     aiResponse: aiResponse.slice(0, 2000)
   })
+  if (!promptAvailable(prompt)) return []
   const messages: Array<{ role: 'system' | 'user', content: string }> = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })

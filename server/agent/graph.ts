@@ -27,12 +27,6 @@ import { createAgentLlm } from '../integrations/models'
 import { buildAgentTools } from './tools/index'
 import type { ModuleId } from '../../shared/contracts'
 
-/** 拼在 system prompt 末尾的行为附加说明（回答先行约束）。 */
-const AGENT_BEHAVIOR_NOTES = '回答先行：基于现有信息直接给出初步判断（注明为初步理解，不诊断、不承诺、不替代量表结果）；信息不足时可在回答末尾自然附带一句简短澄清；当信息足以判断方向时调用 recommend_assessment 工具推荐量表；量表结果优先于初步判断。不得输出 \'选项：\' 列表，不得输出 JSON 代码块。'
-
-/** systemPrompt 为空时的最小默认提示词（正常情况下由 AGENT-C 提供 renderPrompt 结果）。 */
-const DEFAULT_SYSTEM_PROMPT = '你是"教师赋能智能平台"的统一 AI 助手，服务班主任教师。请遵循平台边界：不做精神、医学或法律诊断，不承诺效果，不替代心理专员或校方制度；回答温和、简洁、可执行。'
-
 /** 模型/工具默认轮次上限（P0 默认 6 轮）。 */
 const MAX_TOOL_ROUNDS = 6
 
@@ -294,9 +288,9 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
   const config = useRuntimeConfig(event)
   const rt = await getAiRuntimeConfig(event)
   const totalTimeoutMs = rt.timeoutMs ?? 60_000
-  // Agent 运行参数：后台 AI 中心运行时配置优先，NULL 回落代码默认
+  // Agent 运行参数：后台 AI 中心运行时配置优先；行为要点不再有代码默认值，未配置即不追加
   const maxToolRounds = rt.agentMaxRounds ?? MAX_TOOL_ROUNDS
-  const behaviorNotes = rt.agentBehaviorNotes?.trim() || AGENT_BEHAVIOR_NOTES
+  const behaviorNotes = rt.agentBehaviorNotes?.trim() || ''
   const temperature = rt.agentTemperature ?? undefined
   const actionCards: ActionCard[] = []
   /** 工具/引用过程记录（用于展示：工具调用与知识库引用来源）。 */
@@ -324,8 +318,9 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     const tools = agentTools.map(def => toLangChainTool(def, { event, user: userCtx }))
     const agent = createReactAgent({ llm, tools })
 
-    // system（AGENT-C 模板 + 行为附加说明）+ 历史（sanitize 后截断，避免“选项：”列表被模型模仿）
-    const systemText = [systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT, behaviorNotes].join('\n\n')
+    // system（AI 中心 assistant_chat 模板 + 行为附加说明）+ 历史（sanitize 后截断，避免“选项：”列表被模型模仿）
+    if (!systemPrompt.trim()) throw new Error('系统提示词未提供（assistant_chat 未配置或未发布）')
+    const systemText = [systemPrompt.trim(), behaviorNotes].filter(Boolean).join('\n\n')
     const historyMessages: BaseMessage[] = sanitizeHistoryForSummary(messages)
       .slice(-12)
       .map(item => (item.role === 'user' ? new HumanMessage(item.content) : new AIMessage(item.content)))

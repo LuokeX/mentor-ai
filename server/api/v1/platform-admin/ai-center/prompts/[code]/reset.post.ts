@@ -1,34 +1,38 @@
 import { eq } from 'drizzle-orm'
-import { listBuiltinPrompts, invalidateAiConfigCache } from '../../../../../../domain/ai-config'
+import { invalidateAiConfigCache, isPromptCode } from '../../../../../../domain/ai-config'
 import { requireUser } from '../../../../../../utils/auth'
 import { writeAudit } from '../../../../../../utils/audit'
 import { schema, useDb } from '../../../../../../utils/db'
 
-/** 重置为内置基线：草稿恢复内置内容，已发布内容清空（运行时回退内置），立即热生效。 */
+/**
+ * 放弃未发布的改动：草稿恢复为当前已发布文本，运行时内容不变。
+ * 提示词正文不再有代码内置基线，因此不存在「重置为内置」；如需回退，改回内容后重新发布即可。
+ */
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['platform_admin'])
   const code = String(getRouterParam(event, 'code') || '')
-  const builtin = listBuiltinPrompts().find(item => item.code === code)
-  if (!builtin) throw createError({ statusCode: 404, message: '未知的提示词编码' })
+  if (!isPromptCode(code)) throw createError({ statusCode: 404, message: '未知的提示词编码' })
 
   const db = useDb(event)
-  const [existing] = await db.select({ id: schema.aiPromptTemplates.id }).from(schema.aiPromptTemplates).where(eq(schema.aiPromptTemplates.code, code)).limit(1)
+  const [existing] = await db
+    .select({ id: schema.aiPromptTemplates.id, published: schema.aiPromptTemplates.published })
+    .from(schema.aiPromptTemplates)
+    .where(eq(schema.aiPromptTemplates.code, code))
+    .limit(1)
   if (!existing) throw createError({ statusCode: 409, message: '该提示词尚未初始化' })
+  if (!existing.published?.trim()) throw createError({ statusCode: 409, message: '该提示词尚未发布，无可回退的生效版本' })
 
   const [row] = await db.update(schema.aiPromptTemplates).set({
-    name: builtin.name,
-    description: builtin.description,
-    template: builtin.template,
-    published: null,
-    publishedBy: null,
-    publishedAt: null,
-    updatedBy: admin.id
+    template: existing.published,
+    updatedBy: admin.id,
+    updatedAt: new Date()
   }).where(eq(schema.aiPromptTemplates.id, existing.id)).returning()
-  if (!row) throw createError({ statusCode: 500, message: '重置失败' })
+  if (!row) throw createError({ statusCode: 500, message: '放弃草稿失败' })
+
   invalidateAiConfigCache()
   await writeAudit(event, {
     actorId: admin.id,
-    action: 'platform_admin.ai_center.prompt.reset',
+    action: 'platform_admin.ai_center.prompt.discard_draft',
     targetType: 'ai_prompt_template',
     targetId: row.id,
     metadata: { code }

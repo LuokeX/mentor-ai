@@ -1049,9 +1049,11 @@ export const auditLogs = pgTable('audit_logs', {
 }, table => [index('audit_school_created_idx').on(table.schoolId, table.createdAt)])
 
 /**
- * AI 提示词模板库（AI 管理中心）。
- * 每个 code 一行：template 为草稿/编辑中内容，published 为已发布生效内容。
- * published 为 null 时运行时使用代码内置提示词（PROMPT_BUILTINS），行为与未启用管理前一致。
+ * AI 提示词存储（AI 管理中心）。
+ * 提示词正文（template 草稿 / published 已发布）的唯一事实来源就是本表：出厂基线由迁移
+ * drizzle/0050_prompt_template_baseline.sql 写入，之后在平台后台 AI 中心维护，发布即热生效。
+ * 代码侧只保留编码、名称、说明与占位符元数据（server/domain/ai-config.ts 的 PROMPT_REGISTRY）；
+ * 某条提示词未配置或未发布时，运行时按「该 AI 能力不可用」降级到确定性路径，不回退代码文本。
  */
 export const aiPromptTemplates = pgTable('ai_prompt_templates', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -1083,7 +1085,7 @@ export const aiRuntimeSettings = pgTable('ai_runtime_settings', {
   agentTemperature: real('agent_temperature'),
   /** Agent 启用的工具名数组：null = 回落全部默认工具；空数组 = 禁用全部工具。 */
   agentTools: jsonb('agent_tools').$type<string[]>(),
-  /** Agent 行为补充要点（追加在提示词末尾）：null = 回落硬编码 AGENT_BEHAVIOR_NOTES。 */
+  /** Agent 行为补充要点（追加在提示词末尾）：null = 未配置（不追加，不再有代码默认值）。 */
   agentBehaviorNotes: text('agent_behavior_notes'),
   updatedBy: uuid('updated_by').references(() => users.id),
   ...timestamps

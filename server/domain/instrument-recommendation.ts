@@ -16,7 +16,7 @@ import { INSTRUMENT_ROLE_LABELS } from '../../shared/contracts'
 import { moduleMeta } from '../../shared/assessments'
 import { schema, useDb } from '../utils/db'
 import { redactPii } from '../integrations/deepseek'
-import { getAiRuntimeConfig, renderPrompt } from './ai-config'
+import { getAiRuntimeConfig, promptAvailable, renderPrompt } from './ai-config'
 import {
   fallbackInstrument,
   filterTeacherVisibleInstruments,
@@ -133,6 +133,8 @@ export async function recommendInstrument(
     instrumentOptions: JSON.stringify(describeForPrompt(selectable)),
     userText: redactPii(text)
   })
+  // 提示词未配置或未发布：AI 能力不可用，按量表库的必做标记推荐
+  if (!promptAvailable(prompt)) return fallbackResult(options, '量表分诊提示词未配置，按量表库的必做标记推荐。')
 
   const audit = (status: 'success' | 'fallback') => useDb(event).insert(schema.aiModelCalls).values({
     schoolId: input.user.schoolId || null,

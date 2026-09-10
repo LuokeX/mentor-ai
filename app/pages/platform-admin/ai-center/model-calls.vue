@@ -75,7 +75,7 @@ const purposeOptions = [
 </script>
 
 <template>
-  <ManagementPage title="AI 管理中心" description="平台 AI 服务配置、提示词模板、调用监控与治理概览。">
+  <ManagementPage title="AI 管理中心" description="平台 AI 服务配置、提示词定稿、调用监控与治理概览。">
     <AiCenterTabs />
 
     <div class="mt-6 flex flex-wrap items-center justify-between gap-3">

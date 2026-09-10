@@ -28,7 +28,7 @@ import type { H3Event } from 'h3'
 import { z } from 'zod'
 import type { ModuleId, Severity } from '../../shared/contracts'
 import { moduleMeta } from '../../shared/assessments'
-import { getAiRuntimeConfig, renderPrompt } from './ai-config'
+import { getAiRuntimeConfig, isPromptPublished, promptAvailable, renderPrompt } from './ai-config'
 import { embedModuleResourceQuery } from '../integrations/embeddings'
 import { searchKnowledgeChunks, type KnowledgeSearchResult } from './module-resource-knowledge-search'
 import { schema, useDb } from '../utils/db'
@@ -391,6 +391,15 @@ export async function polishToolSteps<T extends PolishTool>(
     }
   }
 
+  // 提示词未配置或未发布：与「AI 未启用」一致，原样返回三库内容，不阻断方案生成
+  if (!(await isPromptPublished(event, 'tool_step_polish'))) {
+    return {
+      tools: input.tools,
+      actions: inputActions.map(action => ({ title: action.title, content: action.detail })),
+      complete: true
+    }
+  }
+
   // 知识库向量检索（模式 A 的常规步骤，模式 B 无工具时同样执行）。
   // 任何失败都降级为空片段，避免检索故障阻断主流程。
   let chunks: KnowledgeSearchResult[] = []
@@ -453,6 +462,7 @@ export async function polishToolSteps<T extends PolishTool>(
         jsonFormat,
         feedback
       })
+      if (!promptAvailable(prompt)) throw new Error('工具步骤改写提示词未配置或未发布（tool_step_polish）')
       const messages: Array<{ role: 'system' | 'user', content: string }> = []
       if (prompt.system) messages.push({ role: 'system', content: prompt.system })
       if (prompt.user) messages.push({ role: 'user', content: prompt.user })
