@@ -124,6 +124,7 @@ function libraryTypeLabel(type: string | null | undefined) {
 
         <div class="mt-4 grid gap-3 sm:grid-cols-3 text-xs text-slate-400">
           <div>来源：{{ document.originalFilename || '直接输入' }}</div>
+          <div v-if="document.metadata?.notes" class="break-words sm:col-span-3">备注：{{ document.metadata.notes }}</div>
           <div>类型：{{ document.sourceType }}</div>
           <div>内容字符数：{{ document.contentCharCount?.toLocaleString() }}</div>
           <div>向量模型：{{ document.embeddingSummary?.model || '-' }}</div>
