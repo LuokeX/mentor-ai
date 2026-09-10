@@ -13,10 +13,11 @@ import { mergePlanActionDisplay, MAX_EXECUTABLE_PLAN_ACTIONS, TOOL_ACTION_PREFIX
 import { resolvePlanAttributionOrder, resolvePlanToolPlacementBinding } from '../../../domain/plan-action-display-context'
 
 /**
- * 后台 AI 增强「任务丢失」判定窗口：增强顺序执行行动改写与深度报告，
- * 最坏耗时接近 9 分钟，超过该窗口仍 pending 才收敛为 failed。
+ * 后台 AI 增强「任务丢失」判定窗口：增强顺序执行行动改写与深度报告。
+ * 行动改写单次尝试上限 300s、最多重试 3 次（约 15 分钟），深度报告上限 360s，
+ * 最坏耗时接近 21 分钟；超过该窗口仍 pending 才收敛为 failed。
  */
-const AI_ENHANCEMENT_STALE_MS = 600_000
+const AI_ENHANCEMENT_STALE_MS = 1_800_000
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -34,9 +35,9 @@ export default defineEventHandler(async (event) => {
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
 
   // 后台 AI 增强兜底：进程崩溃会留下 pending 状态且无任务可收敛。
-  // 增强为「行动改写 → 深度报告」顺序执行，最坏耗时接近 9 分钟
-  // （改写 3 次 ×60s 重试 + 报告 360s 上限），超过该窗口仍 pending 视为任务丢失，
-  // 收敛为 failed（保留确定性方案与三库原文）。
+  // 增强为「行动改写 → 深度报告」顺序执行，行动改写单次上限 300s、最多 3 次，
+  // 最坏接近 21 分钟；超过该窗口仍 pending 视为任务丢失，收敛为 failed。
+  // （保留确定性方案与三库原文。）
   if ((plan.aiReportStatus === 'pending' || plan.aiActionsStatus === 'pending')
     && Date.now() - plan.updatedAt.getTime() > AI_ENHANCEMENT_STALE_MS) {
     const patch: { aiReportStatus?: string, aiActionsStatus?: string } = {}

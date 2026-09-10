@@ -60,12 +60,14 @@ export const MAX_GENERATED_TITLE_LENGTH = 30
 export const KNOWLEDGE_CHUNK_MAX_LENGTH = 600
 const RETRY_DELAY_MS = 3000
 /**
- * 单次尝试的超时下限。实测单次提交含 9-13 个工具 + 建议 + 知识片段时耗时 26-30s，
- * 恰在 30s 上限边缘，导致高频超时回退原文；提高到 60s 与实测波动匹配（不再依赖
- * DEEPSEEK_TIMEOUT_MS=30000 的全局值——该值经 Math.max 参与计算，floor 提高后
- * 本调用点取 60s，不影响报告（360s 下限）/澄清（小超时固定）等其他调用点）。
+ * 单次尝试的超时下限。实测单次提交含 5-13 个工具 + 建议 + 知识片段时，模型要逐条
+ * 扩写为「何时做 → 怎么做 → 话术 → 频率 → 达标」的长段落，输出可达 7000+ token，
+ * DEEPSEEK_TIMEOUT_MS=30000 与 60s 的调用点实际都频繁超时（ai_model_calls 审计里
+ * tool_step_polish 失败样本集中在 60000ms 附近）。为让「具体实施建议」真正生成出来，
+ * 本调用点把超时上限提升到 300s（经 Math.max 参与计算，只影响本调用点，不影响报告
+ * 的 360s 下限与澄清等其他小超时调用点）。
  */
-const SINGLE_ATTEMPT_TIMEOUT_FLOOR_MS = 60_000
+const SINGLE_ATTEMPT_TIMEOUT_FLOOR_MS = 300_000
 
 // tools 保持必填：缺 tools 字段时按「结构校验失败」处理（历史语义，见单测）；
 // actions 与 tools 同构但可选（输出可只有 tools，actions 缺省为空数组）。
