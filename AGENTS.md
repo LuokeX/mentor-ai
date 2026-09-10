@@ -26,6 +26,8 @@
 4. 专题文档：`docs/ROLE_MATRIX.md`、`docs/MANAGEMENT_FRAMEWORK.md`、`docs/AI_ASSISTANT_AND_KNOWLEDGE.md`、`docs/DEVELOPMENT_AND_PRODUCTION.md`、`docs/OPERATIONS.md`、`docs/PILOT_ROLLOUT.md`、`docs/business/**`。
 5. `README.md` 和本文件中的概览性描述。
 
+AI 提示词与运行时配置的事实来源补充：提示词正文的唯一代码事实来源是 `server/domain/ai-prompt-baselines.ts`（编码/名称/占位符元数据在 `server/domain/ai-config.ts` 的 `PROMPT_REGISTRY`）；运行时参数来自环境变量与代码默认值。数据库 `ai_prompt_templates`、`ai_runtime_settings` 已弃用、不再参与运行时，只作历史留存，不要再依据其中的行判断行为。
+
 如果文档、脚本和实现不一致：
 
 - 不要静默选择一个版本继续扩展。
@@ -273,7 +275,9 @@ export default defineEventHandler(async (event) => {
 
 ### 8.4 AI 中心与三库向导
 
-- 平台后台 AI 中心（`server/api/v1/platform-admin/ai-center/` + `server/domain/ai-config.ts`）：Prompt 模板版本化管理（`prompts` 列表/编辑/发布/重置）、模型调用审计（`model-calls`，只记元数据）、运行时配置与联调测试（`runtime`）。
+- 平台后台 AI 中心（`server/api/v1/platform-admin/ai-center/` + `server/domain/ai-config.ts`）：提示词正文随代码发布（`prompts` 只读列表，正文唯一来源是 `server/domain/ai-prompt-baselines.ts`，改文案走代码评审与发版）、模型调用审计（`model-calls`，只记元数据）、运行时配置只读展示与联调测试（`runtime`，参数来自环境变量与代码默认值）。
+- 提示词与运行时配置不再读写数据库：`ai_prompt_templates`、`ai_runtime_settings` 已弃用（表与历史行保留，schema 注释已标注），不要再为 AI 中心新增写接口或依赖这两张表。
+- Agent（回答先行）开关由环境变量 `AGENT_ENABLED` / `NUXT_AGENT_ENABLED` 决定；`.env`、`.env.example` 与 `docker-compose.yml`、`docker-compose.test.yml` 当前统一为 `AGENT_ENABLED=true`。
 - 三库向导（`server/api/v1/platform-admin/module-resources/wizard-*` + `server/domain/business-wizard*.ts`）：以 `business-libraries/wizard-inputs/` 为输入，走编译 → 校验/预览 → 模拟 → 导入链路，与 XLSX 导入共用同一套校验与投影，禁止绕过校验直接写明细表。
 
 涉及这部分的修改应同时阅读 `docs/AI_ASSISTANT_AND_KNOWLEDGE.md`、`server/domain/safety.ts`、`server/domain/rules-executor.ts` 和相关测试。

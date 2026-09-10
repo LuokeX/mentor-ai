@@ -1063,10 +1063,11 @@ export const auditLogs = pgTable('audit_logs', {
 
 /**
  * AI 提示词存储（AI 管理中心）。
- * 提示词正文（template 草稿 / published 已发布）的唯一事实来源就是本表：出厂基线由迁移
- * drizzle/0050_prompt_template_baseline.sql 写入，之后在平台后台 AI 中心维护，发布即热生效。
- * 代码侧只保留编码、名称、说明与占位符元数据（server/domain/ai-config.ts 的 PROMPT_REGISTRY）；
- * 某条提示词未配置或未发布时，运行时按「该 AI 能力不可用」降级到确定性路径，不回退代码文本。
+ *
+ * 已弃用：提示词正文自本版本起随代码发布，唯一来源是 server/domain/ai-prompt-baselines.ts，
+ * AI 中心只读展示（server/api/v1/platform-admin/ai-center/prompts），不再读写本表。
+ * 表与历史行保留以备追溯；出厂基线见迁移 drizzle/0050_prompt_template_baseline.sql，
+ * 编码、名称、说明与占位符元数据见 server/domain/ai-config.ts 的 PROMPT_REGISTRY。
  */
 export const aiPromptTemplates = pgTable('ai_prompt_templates', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -1082,7 +1083,11 @@ export const aiPromptTemplates = pgTable('ai_prompt_templates', {
   ...timestamps
 }, table => [uniqueIndex('ai_prompt_templates_code_uidx').on(table.code)])
 
-/** AI 运行时配置（AI 管理中心）。单行记录，字段为 NULL 时回落环境变量默认值。 */
+/**
+ * AI 运行时配置（AI 管理中心）。已弃用：运行时参数只来自环境变量与代码默认值，
+ * 运行时不再读取本表（见 server/domain/ai-config.ts 的 getAiRuntimeConfig）。
+ * 表与历史行保留以备追溯，字段语义如下方注释（当前恒为空/无覆盖）。
+ */
 export const aiRuntimeSettings = pgTable('ai_runtime_settings', {
   id: uuid('id').defaultRandom().primaryKey(),
   routerModel: varchar('router_model', { length: 80 }),
@@ -1090,15 +1095,15 @@ export const aiRuntimeSettings = pgTable('ai_runtime_settings', {
   timeoutMs: integer('timeout_ms'),
   embeddingModel: varchar('embedding_model', { length: 80 }),
   embeddingEnabled: boolean('embedding_enabled'),
-  /** Agent（回答先行）启用开关：null = 回落环境变量 AGENT_ENABLED / NUXT_AGENT_ENABLED。 */
+  /** Agent（回答先行）启用开关：现由环境变量 AGENT_ENABLED / NUXT_AGENT_ENABLED 决定。 */
   agentEnabled: boolean('agent_enabled'),
-  /** Agent 工具轮次上限：null = 回落代码默认（6）。 */
+  /** Agent 工具轮次上限：现取代码默认（server/agent/graph.ts 的 MAX_TOOL_ROUNDS）。 */
   agentMaxRounds: integer('agent_max_rounds'),
-  /** Agent 采样温度：null = 回落代码默认（0.35）。 */
+  /** Agent 采样温度：现取代码默认（server/integrations/models.ts 的默认温度）。 */
   agentTemperature: real('agent_temperature'),
-  /** Agent 启用的工具名数组：null = 回落全部默认工具；空数组 = 禁用全部工具。 */
+  /** Agent 启用的工具名数组：现恒为全部默认工具（server/agent/tools/index.ts）。 */
   agentTools: jsonb('agent_tools').$type<string[]>(),
-  /** Agent 行为补充要点（追加在提示词末尾）：null = 未配置（不追加，不再有代码默认值）。 */
+  /** Agent 行为补充要点：已合并进代码行为要点（server/agent/prompts.ts 的 buildFormatInstruction）。 */
   agentBehaviorNotes: text('agent_behavior_notes'),
   updatedBy: uuid('updated_by').references(() => users.id),
   ...timestamps

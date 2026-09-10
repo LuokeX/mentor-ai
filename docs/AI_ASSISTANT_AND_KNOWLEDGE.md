@@ -44,7 +44,18 @@ DEEPSEEK_TIMEOUT_MS=30000
 
 DeepSeek 用于语义风险辅助、分诊路由和必要表达润色。没有密钥、超时或响应校验失败时，系统自动使用本地分诊与安全降级。
 
-超时说明：`DEEPSEEK_TIMEOUT_MS` 是全局默认（建议 30000）。评估报告润色是最长输出（完整报告 JSON），走专用逻辑：AI 运行时配置显式设置优先，否则不低于 360000ms，不受全局短超时影响。
+Agent（回答先行）开关与提示词：
+
+```env
+# 所有环境统一开启 Agent（回答先行）；容器环境变量在创建时注入，改后需重建 app 容器
+AGENT_ENABLED=true
+```
+
+- 提示词正文随代码发布，唯一来源是 `server/domain/ai-prompt-baselines.ts`；平台后台 AI 中心的提示词页只读展示，改文案走代码评审与发版。
+- 数据库 `ai_prompt_templates`（提示词）与 `ai_runtime_settings`（运行时配置）已弃用、不再读写，表与历史行保留以备追溯。
+- Agent 行为要点（回答先行、量表优先、不得输出「选项：」列表）在 `server/agent/prompts.ts` 的 `buildFormatInstruction`，原 `agent_behavior_notes` 文字已合并进来。
+
+超时说明：`DEEPSEEK_TIMEOUT_MS` 是全局默认（建议 30000）。评估报告润色是最长输出（完整报告 JSON），走专用逻辑：不低于 360000ms，不受全局短超时影响。运行时参数（模型名、超时、Agent 开关）只来自环境变量与代码默认值，数据库 `ai_runtime_settings` 已弃用、不再读取。
 
 Embedding 只服务模块资源文档分块，不再服务旧知识库：
 

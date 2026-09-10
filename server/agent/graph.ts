@@ -288,9 +288,8 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
   const config = useRuntimeConfig(event)
   const rt = await getAiRuntimeConfig(event)
   const totalTimeoutMs = rt.timeoutMs ?? 60_000
-  // Agent 运行参数：后台 AI 中心运行时配置优先；行为要点不再有代码默认值，未配置即不追加
+  // Agent 运行参数取代码默认值（运行时配置已改为环境变量，见 domain/ai-config.ts）
   const maxToolRounds = rt.agentMaxRounds ?? MAX_TOOL_ROUNDS
-  const behaviorNotes = rt.agentBehaviorNotes?.trim() || ''
   const temperature = rt.agentTemperature ?? undefined
   const actionCards: ActionCard[] = []
   /** 工具/引用过程记录（用于展示：工具调用与知识库引用来源）。 */
@@ -318,9 +317,9 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     const tools = agentTools.map(def => toLangChainTool(def, { event, user: userCtx }))
     const agent = createReactAgent({ llm, tools })
 
-    // system（AI 中心 assistant_chat 模板 + 行为附加说明）+ 历史（sanitize 后截断，避免“选项：”列表被模型模仿）
-    if (!systemPrompt.trim()) throw new Error('系统提示词未提供（assistant_chat 未配置或未发布）')
-    const systemText = [systemPrompt.trim(), behaviorNotes].filter(Boolean).join('\n\n')
+    // system（代码基线 assistant_chat 模板 + 代码行为要点）+ 历史（sanitize 后截断，避免“选项：”列表被模型模仿）
+    if (!systemPrompt.trim()) throw new Error('系统提示词未提供（assistant_chat 正文缺失）')
+    const systemText = systemPrompt.trim()
     const historyMessages: BaseMessage[] = sanitizeHistoryForSummary(messages)
       .slice(-12)
       .map(item => (item.role === 'user' ? new HumanMessage(item.content) : new AIMessage(item.content)))

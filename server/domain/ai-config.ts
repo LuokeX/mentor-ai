@@ -1,24 +1,21 @@
 /**
  * AI 配置层（AI 管理中心）。
  *
- * 提示词唯一来源是数据库 ai_prompt_templates：
- *  - 运行时只读「已发布」文本（published），在 AI 中心发布即热生效；
- *  - 代码不再内置任何提示词正文，只维护编码、名称、说明与占位符清单（PROMPT_REGISTRY）；
- *  - 某条提示词未配置（库中无记录或未发布）时，调用点按「该 AI 能力不可用」降级到
- *    确定性路径，不回退到任何代码内置文本；
- *  - 全新环境的初始文本由数据库迁移 drizzle/0050_prompt_template_baseline.sql 写入，
- *    之后所有修改都在平台后台 AI 中心完成，不需要发版。
+ * 提示词正文的唯一来源是代码 `server/domain/ai-prompt-baselines.ts`：
+ *  - 运行时读取代码基线（本文件只做渲染与降级），AI 中心仅做只读展示；
+ *  - 本文件保留编码、名称、说明与占位符清单（PROMPT_REGISTRY）；
+ *  - 某条正文缺失时调用点按「该 AI 能力不可用」降级到确定性路径；
+ *  - 数据库 ai_prompt_templates 已弃用，不再读取（表与旧行保留，见 schema 注释）。
  *
- * 运行时配置：DB（ai_runtime_settings）优先，NULL 回落环境变量；内存缓存，写端点显式失效。
+ * 运行时配置（模型名、超时、Agent 开关等）来自环境变量与代码默认值，
+ * 数据库 ai_runtime_settings 已弃用，不再读取。
  *
  * 模板语法：
  *  以 `###SYSTEM###\n` 开头的模板分为 system 段与 user 段（以 `###USER###\n` 分隔）；
  *  不含该标记的模板整体作为 user 消息。渲染后调用点自行决定消息 role。
- *
- * 缓存为进程内单实例假设（当前容器部署单副本成立）；多实例部署时需换共享缓存。
  */
 import type { H3Event } from 'h3'
-import { schema, useDb } from '../utils/db'
+import { getPromptBaseline } from './ai-prompt-baselines'
 
 export interface PromptPlaceholder {
   key: string
@@ -26,7 +23,7 @@ export interface PromptPlaceholder {
   description?: string
 }
 
-/** 提示词注册表（只有元数据，不含正文；正文一律存在数据库里）。 */
+/** 提示词注册表（编码、名称、说明与占位符元数据；正文在代码基线 ai-prompt-baselines.ts）。 */
 export interface PromptDefinition {
   /** 模板唯一编码，对应调用点 */
   code: string
@@ -54,8 +51,6 @@ export interface AiRuntimeConfig {
   agentTemperature: number | null
   /** Agent 启用的工具名数组：null = 回落全部默认工具；空数组 = 禁用全部工具。 */
   agentTools: string[] | null
-  /** Agent 行为补充要点：null = 未配置（不再回退代码文本）。 */
-  agentBehaviorNotes: string | null
 }
 
 const SYSTEM_MARKER = '###SYSTEM###\n'
@@ -167,9 +162,9 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
 
 const promptRegistryMap = new Map(PROMPT_REGISTRY.map(item => [item.code, item]))
 
-/** 提示词注册表列表（管理页展示编码与占位符元数据用） */
-export function listPromptRegistry(): PromptDefinition[] {
-  return PROMPT_REGISTRY.map(item => ({ ...item }))
+/** 提示词注册表列表（AI 中心只读展示用）：元数据 + 代码正文。 */
+export function listPromptRegistry(): Array<PromptDefinition & { template: string | null }> {
+  return PROMPT_REGISTRY.map(item => ({ ...item, template: getPromptBaseline(item.code) }))
 }
 
 /** 是否为已注册的提示词编码 */
@@ -177,41 +172,13 @@ export function isPromptCode(code: string): boolean {
   return promptRegistryMap.has(code)
 }
 
-/** 进程内缓存：已发布提示词正文（TTL 30s，写端点显式失效） */
-let promptCache: { at: number; data: Map<string, string | null> } | null = null
-/** 进程内缓存：运行时配置（TTL 30s，写端点显式失效） */
-let runtimeCache: { at: number; data: AiRuntimeConfig } | null = null
-const RUNTIME_CACHE_TTL_MS = 30_000
-
-/** 提示词/运行时配置写端点调用后失效缓存 */
-export function invalidateAiConfigCache() {
-  runtimeCache = null
-  promptCache = null
-}
-
-/** 读取全部已发布提示词文本（DB 失败时返回空表，调用点按未配置降级）。 */
-async function loadPublishedPrompts(event: H3Event): Promise<Map<string, string | null>> {
-  const now = Date.now()
-  if (promptCache && now - promptCache.at <= RUNTIME_CACHE_TTL_MS) return promptCache.data
-  try {
-    const rows = await useDb(event)
-      .select({ code: schema.aiPromptTemplates.code, published: schema.aiPromptTemplates.published })
-      .from(schema.aiPromptTemplates)
-    promptCache = { at: now, data: new Map(rows.map(row => [row.code, row.published])) }
-  } catch (error) {
-    console.error('[ai-config] 读取提示词失败，按未配置降级:', error instanceof Error ? error.message : error)
-    promptCache = { at: now, data: new Map() }
-  }
-  return promptCache.data
-}
-
 /**
- * 取运行时生效的提示词定稿：只认数据库「已发布」内容。
- * 未配置（无记录 / 未发布 / 库不可用）返回 null，由调用点降级，不回退代码文本。
+ * 取运行时生效的提示词正文：来自代码基线。
+ * 未登记的编码返回 null，由调用点降级；保留 async 签名以兼容既有调用点。
  */
 export async function getPromptTemplate(event: H3Event, code: string): Promise<string | null> {
-  const published = (await loadPublishedPrompts(event)).get(code)
-  return published && published.trim() ? published : null
+  void event
+  return getPromptBaseline(code)
 }
 
 /** 模板渲染（纯函数）：解析 ###SYSTEM###/###USER### 分段并替换 {{占位符}}。 */
@@ -237,43 +204,50 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
 }
 
 /**
- * 渲染已发布提示词并替换 {{占位符}}。
- * 未配置的编码返回 { system: null, user: null }（不抛错、不阻断请求），调用点按
+ * 渲染提示词正文并替换 {{占位符}}。
+ * 未登记的编码返回 { system: null, user: null }（不抛错、不阻断请求），调用点按
  * 「该 AI 能力不可用」走确定性降级；缺失的占位符替换为空字符串。
  */
 export async function renderPrompt(event: H3Event, code: string, vars: Record<string, string>): Promise<RenderedPrompt> {
   const template = await getPromptTemplate(event, code)
   if (!template) {
     if (!promptRegistryMap.has(code)) console.warn(`[ai-config] 未注册的提示词编码: ${code}`)
-    else console.warn(`[ai-config] 提示词未配置或未发布，调用点降级: ${code}`)
+    else console.warn(`[ai-config] 提示词正文缺失，调用点降级: ${code}`)
     return { system: null, user: null }
   }
   return renderTemplate(template, vars)
 }
 
 /**
- * 某条提示词是否已在库中发布。
+ * 某条提示词是否有可用的代码正文。
  * 调用点需要在渲染前判断（例如尚未拿到占位符内容）时使用。
  */
 export async function isPromptPublished(event: H3Event, code: string): Promise<boolean> {
-  return Boolean(await getPromptTemplate(event, code))
+  void event
+  return Boolean(getPromptBaseline(code))
 }
 
 /**
  * 提示词是否已配置出可用内容。
- * 返回 false 表示该调用点的 AI 能力当前不可用（未发布/未配置/数据库不可用），
- * 调用点应走自己的确定性降级分支，不再使用任何代码内置文本。
+ * 返回 false 表示该调用点的 AI 能力当前不可用（正文缺失），
+ * 调用点应走自己的确定性降级分支。
  */
 export function promptAvailable(prompt: RenderedPrompt): boolean {
   return Boolean(prompt.system?.trim() || prompt.user?.trim())
 }
 
 /**
- * 获取运行时 AI 配置：DB 单行字段优先，NULL 回落环境变量默认值。
- * 返回的对象只含 DB 覆盖值（null = 使用环境变量），调用点与 env 兜底组合。
+ * 运行时 AI 配置。
+ *
+ * 数据库 ai_runtime_settings 已弃用，这里不再读取任何库内覆盖值，
+ * 一律返回 null 表示「无覆盖」，由调用点回落环境变量与代码默认值：
+ *  - 模型名/超时/embedding：nuxt.config.ts 的 runtimeConfig（环境变量）；
+ *  - Agent 轮次、温度、工具：代码默认（server/agent/graph.ts）；
+ *  - Agent 行为要点：已合并进代码（server/agent/prompts.ts 的 buildFormatInstruction）。
  */
 export async function getAiRuntimeConfig(event: H3Event): Promise<AiRuntimeConfig> {
-  const empty: AiRuntimeConfig = {
+  void event
+  return {
     routerModel: null,
     generatorModel: null,
     timeoutMs: null,
@@ -282,34 +256,6 @@ export async function getAiRuntimeConfig(event: H3Event): Promise<AiRuntimeConfi
     agentEnabled: null,
     agentMaxRounds: null,
     agentTemperature: null,
-    agentTools: null,
-    agentBehaviorNotes: null
-  }
-  try {
-    const now = Date.now()
-    if (!runtimeCache || now - runtimeCache.at > RUNTIME_CACHE_TTL_MS) {
-      const [row] = await useDb(event).select().from(schema.aiRuntimeSettings).limit(1)
-      runtimeCache = {
-        at: now,
-        data: row
-          ? {
-              routerModel: row.routerModel,
-              generatorModel: row.generatorModel,
-              timeoutMs: row.timeoutMs,
-              embeddingModel: row.embeddingModel,
-              embeddingEnabled: row.embeddingEnabled,
-              agentEnabled: row.agentEnabled,
-              agentMaxRounds: row.agentMaxRounds,
-              agentTemperature: row.agentTemperature,
-              agentTools: row.agentTools,
-              agentBehaviorNotes: row.agentBehaviorNotes
-            }
-          : empty
-      }
-    }
-    return runtimeCache.data
-  } catch (error) {
-    console.error('[ai-config] 读取运行时配置失败，使用环境变量:', error instanceof Error ? error.message : error)
-    return empty
+    agentTools: null
   }
 }

@@ -1,6 +1,7 @@
 # AI 提示词版本差异说明（2026-09-10）
 
-> 结论：差异已经消除。提示词正文现在只存在一份——数据库 `ai_prompt_templates`（平台后台 AI 中心维护，发布即生效），代码不再内置副本。落库见迁移 `drizzle/0050_prompt_template_baseline.sql`。
+> 结论：差异已经消除，而且来源改为**唯一一份代码基线**。提示词正文现在只存在一处——`server/domain/ai-prompt-baselines.ts`，随版本发布；AI 中心只做只读展示。数据库 `ai_prompt_templates` 已弃用，不再读写（表与历史行保留以备追溯）。
+> 代码基线的取值以测试/正式库一致的 `0050` 定稿为准（11 条齐全）；本地 dev 库的旧文本作废。
 > 各条当前全文见 `ai-prompts-export-20260910.md`。
 
 ## 一、差异是怎么来的
@@ -19,13 +20,19 @@
 
 另外两条编码（`clarification_judge`、`tool_step_polish`）当时只写在代码里、库中没有记录，本次也一并写入库中成为正式模板。
 
+三个环境核对后，本地 dev 库当时仍是旧文本（`assessment_report` 380→337、`clarification_round` 2368→2678、`clarification_summary` 1096→1391，且缺 `clarification_judge`、`tool_step_polish`），测试与正式库才是一致定稿。因此本次回代码以测试/正式库的 `0050` 文本为准。
+
 ## 三、现在的规则
 
-- 正文只在库里：`ai_prompt_templates.template` 是草稿，`published` 是生效版本；在 AI 中心发布即生效，代码不参与正文。
-- 代码里只保留编码、名称、占位符注册表（`server/domain/ai-config.ts` 的 `PROMPT_REGISTRY`），以及运行时兜底（提示词未配置或未发布时降级到确定性流程）。
-- AI 中心「重置」的语义随之变化：放弃未发布的草稿、恢复为当前已发布文本，不再是"重置为代码内置基线"。
-- 迁移 `0050` 的写入策略是 `ON CONFLICT DO UPDATE`：新库完成初始化，存量库对齐到同一份定稿。
+- 正文只在代码里：`server/domain/ai-prompt-baselines.ts` 的 `AI_PROMPT_BASELINES` 是唯一来源，改文案走代码评审与发版。
+- AI 中心（`prompts` 页）只读展示代码正文与 `PROMPT_REGISTRY` 元数据（编码、名称、说明、占位符），不提供编辑、发布或重置。
+- 运行时（`server/domain/ai-config.ts` 的 `getPromptTemplate`）直接返回代码基线；代码基线缺失时按「该 AI 能力不可用」降级到确定性流程。
+- 运行时配置（Agent 开关、模型、超时等）同样不再读库：模型名与超时来自环境变量，轮次/温度/工具集用代码默认。
+- `agent_behavior_notes` 的现网文字（回答先行、量表优先、不得输出「选项：」列表）已合并进 `server/agent/prompts.ts` 的 `buildFormatInstruction`，数据库字段不再读取。
+- 迁移 `0050` 不动：它的写入策略是 `ON CONFLICT DO UPDATE`，仍作为测试/正式库的定稿记录与追溯依据；本次不新增迁移。
 
 ## 四、需要留意的影响
 
-执行迁移 `0050` 后，`clarification_round`、`clarification_summary`、`assessment_report` 三条的实际输出会从 2026-08 的旧文本切换到上表"处理结果"列的定稿，澄清追问、澄清总结和评估报告润色的措辞与约束条目会随之变化。上线前建议先在测试环境确认这三条的输出效果。
+- 提示词从此随发版生效，AI 中心热改提示词的能力消失（这是本次目的）；改文案需走代码评审与发布。
+- 在本次代码改造发布之前，正式环境的行为仍由数据库里的提示词与 `AGENT_ENABLED` 决定；发布后由代码基线接管。
+- `ai_prompt_templates`、`ai_runtime_settings` 成为遗留表；将来若要按学校定制提示词需要重新设计。

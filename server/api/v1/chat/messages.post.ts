@@ -164,7 +164,7 @@ export default defineEventHandler(async (event) => {
   const ownedSessionId = sessionId
   const clarificationState = getClarificationState(sessionMetadata)
 
-  // Agent「回答先行」开关：后台 AI 中心运行时配置优先；NULL 回落环境变量 AGENT_ENABLED / NUXT_AGENT_ENABLED
+  // Agent「回答先行」开关：取环境变量 AGENT_ENABLED / NUXT_AGENT_ENABLED（数据库运行时配置已弃用）
   const aiRuntime = await getAiRuntimeConfig(event)
   const agentEnabled = aiRuntime.agentEnabled ?? (process.env.AGENT_ENABLED === 'true' || config.agentEnabled === true)
 

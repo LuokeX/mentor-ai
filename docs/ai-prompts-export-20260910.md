@@ -1,27 +1,26 @@
 # AI 提示词清单（导出时间 2026-09-10）
 
-> 正文唯一来源是数据库 `ai_prompt_templates`（平台后台 AI 中心维护，发布即生效）。代码侧只保留编码、名称、占位符注册表（`server/domain/ai-config.ts` 的 `PROMPT_REGISTRY`），不内置任何提示词正文；未配置或未发布的编码在运行时降级到确定性流程。
-> 下列 11 条全文取自迁移 `drizzle/0050_prompt_template_baseline.sql` 写入数据库的定稿，每条都标了「调用情况」，说明它在 Agent 开启或关闭时是否会被执行。
-> Agent 开关优先级：数据库 `ai_runtime_settings.agent_enabled` 优先，为空时回落环境变量 `AGENT_ENABLED` / `NUXT_AGENT_ENABLED`。导出时测试环境（3400）由容器环境变量 `AGENT_ENABLED=true` 开启，正式环境（3300）未开启；两处副本的历史差异见 `docs/ai-prompts-diff-20260910.md`。
+> 正文唯一来源是代码 `server/domain/ai-prompt-baselines.ts`（随版本发布；改文案走代码评审与发版）。AI 中心只做只读展示（`PROMPT_REGISTRY` 提供编码、名称、说明与占位符元数据）；缺少代码基线的编码在运行时降级到确定性流程。数据库 `ai_prompt_templates` 已弃用，不再读写。
+> 下列 11 条全文与迁移 `drizzle/0050_prompt_template_baseline.sql` 写入测试/正式库的定稿逐条一致（本地 dev 旧文本已作废）。
+> Agent 开关：只由环境变量 `AGENT_ENABLED` / `NUXT_AGENT_ENABLED` 决定（数据库 `ai_runtime_settings` 已弃用）。当前 `.env`、`.env.example` 与两个 compose 文件统一为 `AGENT_ENABLED=true`，即所有环境都开启 Agent；两处副本的历史差异见 `docs/ai-prompts-diff-20260910.md`。
 
 ## 一、运行时触发链（Agent 开启时的首页对话）
 
-Agent（回答先行）开启后，首页每轮对话按下面顺序执行；正文来自数据库（`ai_prompt_templates`）的环节在表中标为「库」。
+Agent（回答先行）开启后，首页每轮对话按下面顺序执行；正文来自代码（`server/domain/ai-prompt-baselines.ts`）的环节在表中标为「代码」。
 
 | 顺序 | 环节 | 正文来源 | 触发条件 |
 | --- | --- | --- | --- |
 | 1 | 本地危机关键词规则 | 代码 `server/domain/safety.ts` | 每轮先跑，不调用模型 |
-| 2 | `semantic_safety` | 库 | 本地规则未命中时调用；数据模式为 `local` 时强制不调用模型 |
+| 2 | `semantic_safety` | 代码基线 | 本地规则未命中时调用；数据模式为 `local` 时强制不调用模型 |
 | 3 | 红灯危机引导（`createSafetyReferral`） | 代码，纯确定性 | 命中即结束本轮，不进入 Agent |
-| 4 | `assistant_chat` | 库 | Agent 每轮必用，作为 system 提示词 |
+| 4 | `assistant_chat` | 代码基线 | Agent 每轮必用，作为 system 提示词 |
 | 5 | Agent 行为要点（`{{formatInstruction}}`） | 代码 `server/agent/prompts.ts` | 注入第 4 条的占位符 |
 | 6 | 知识段边界句、业务对象摘要 | 代码 `server/api/v1/chat/messages.post.ts` | 注入 `{{knowledgeContext}}` 与 `{{businessContextText}}` |
-| 7 | Agent 行为附加说明 | 库（AI 中心「运行时配置」的 `agentBehaviorNotes`） | 非空时追加在 system 末尾 |
-| 8 | 工具循环：`knowledge_search`、`module_route`、`recommend_assessment`、`entity_memory` | 代码 `server/agent/tools/*.ts` | 模型按需调用；工具内部逻辑全部是确定性的，不经过提示词 |
-| 9 | 会话标题提示词 | 代码 `server/integrations/deepseek.ts` | 回答完成后另起一条 system 消息生成标题 |
-| 10 | `clarification_summary` | 库 | 仅当 Agent 图返回 fallback 或抛错时，把回答换成澄清总结 |
+| 7 | 工具循环：`knowledge_search`、`module_route`、`recommend_assessment`、`entity_memory` | 代码 `server/agent/tools/*.ts` | 模型按需调用；工具内部逻辑全部是确定性的，不经过提示词 |
+| 8 | 会话标题提示词 | 代码 `server/integrations/deepseek.ts` | 回答完成后另起一条 system 消息生成标题 |
+| 9 | `clarification_summary` | 代码基线 | 仅当 Agent 图返回 fallback 或抛错时，把回答换成澄清总结 |
 
-Agent 模式下**不执行**的库内提示词共 8 条（它们仍留在库中，只是这条链路不会渲染）：
+Agent 模式下**不执行**的提示词共 8 条（正文仍在代码里，只是这条链路不会渲染）：
 
 | 编码 | Agent 模式下的现状 |
 | --- | --- |
@@ -39,7 +38,7 @@ Agent 模式下**不执行**的库内提示词共 8 条（它们仍留在库中�
 ### 1. assistant_chat — AI 助手系统提示词
 
 - 用途：教师端统一 AI 助手（聊天流式与 JSON 模式共用）：身份、职责与硬约束。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**Agent 模式每轮必用**，作为 Agent 的 system 提示词（`server/agent/prompts.ts` 的 `buildAgentSystemPrompt`）；Agent 关闭时是经典分诊、追问、总结链路的系统提示词。
 - 占位符：
   - {{formatInstruction}}（输出格式指令）：由代码按输出模式注入：严格 JSON 示例或 500 字自然语言约束。
@@ -77,7 +76,7 @@ Agent 模式下**不执行**的库内提示词共 8 条（它们仍留在库中�
 ### 2. clarification_judge — 首轮信息充分度判定提示词
 
 - 用途：按需追问的入口判定：教师描述是否已足够清晰，足够则直接总结，不足才进入追问轮。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**【Agent 模式不执行】** 只在 Agent 关闭时执行：经典追问流程的首轮信息充分度判定（`server/api/v1/chat/messages.post.ts`）。
 - 占位符：
   - {{userText}}（脱敏后的教师输入）：已脱敏（电话/邮箱/人名/密钥）的教师描述文本。
@@ -111,7 +110,7 @@ Agent 模式下**不执行**的库内提示词共 8 条（它们仍留在库中�
 ### 3. clarification_round — 澄清追问提示词
 
 - 用途：首页分诊多轮追问：每轮一个问题 + 2~4 个选项 + 内部模块评分。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**【Agent 模式不执行】** 只在 Agent 关闭时执行：经典多轮追问（`streamClarificationRound`）；Agent 模式所有消息走 Agent 图，追问环节被整段跳过。
 - 占位符：
   - {{roundNumber}}（追问轮次）：当前第几轮（最多 3 轮）。
@@ -180,7 +179,7 @@ Agent 模式下**不执行**的库内提示词共 8 条（它们仍留在库中�
 ### 4. clarification_summary — 澄清总结提示词
 
 - 用途：多轮追问结束后的总结：完整分析回复 + 路由 JSON 元数据。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**Agent 模式只在兜底路径执行**（Agent 图返回 fallback 或抛错 → `runAgentFallbackSummary`）；Agent 关闭时是追问结束后的正常总结。
 - 占位符：
   - {{scoresContext}}（上一轮模块评分）：用于汇总最终占比；首轮无评分为空。
@@ -225,7 +224,7 @@ Agent 模式下**不执行**的库内提示词共 8 条（它们仍留在库中�
 ### 5. module_router — 模块路由提示词
 
 - 用途：首页分诊的路由决策：从未命中关键词路由的输入中判断主模块。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**【Agent 模式不执行】** 只在 Agent 关闭时执行：经典分诊路由（`routeWithDeepSeek`）；Agent 模式由确定性的 `module_route` 工具替代，该工具不调用模型。
 - 占位符：
   - {{userText}}（脱敏后的教师输入）：已脱敏的原始文本。
@@ -246,7 +245,7 @@ JSON示例：{"primaryModule":"home_school","secondaryModules":[],"confidence":0
 ### 6. semantic_safety — 语义安全信号识别提示词
 
 - 用途：安全链路的辅助信号识别：自杀/自伤/暴力/虐待/威胁。小超时（1500ms）由代码固定。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**Agent 模式与经典链路都会执行**：本地危机关键词未命中时调用；数据模式为 `local` 时强制不调用模型。
 - 占位符：
   - {{userText}}（脱敏后的教师输入）：已脱敏（电话/邮箱/人名）的原始文本。
@@ -265,7 +264,7 @@ JSON示例：{"primaryModule":"home_school","secondaryModules":[],"confidence":0
 ### 7. plan_update_extractor — 方案更新提取提示词
 
 - 用途：从 AI 回复中提取方案执行状态更新意图（非阻塞，失败静默返回空）。小超时（3000ms）由代码固定。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**【Agent 模式不执行，且当前无调用点】** `extractPlanUpdates` 已定义但全仓库无人调用；前端在等 `plan_suggestions` 事件、服务端也没有任何地方发送，方案更新建议链路目前是断开的。改了不生效。
 - 占位符：
   - {{plansSummary}}（当前方案状态 JSON）：教师名下方案标题/状态/动作摘要。
@@ -304,7 +303,7 @@ AI 助手回复：
 ### 1. assessment_report — 评估报告润色提示词
 
 - 用途：确定性规则结果生成正式评估报告 JSON（AI 仅润色，约束字段不得改变）。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**【Agent 模式不执行】** 评估提交后的异步报告生成（`server/domain/plan-enhancement.ts` → `generateAssessmentReport`），属于评估后链路，与首页对话无关。
 - 占位符：
   - {{facts}}（规则事实 JSON）：规则执行结果：模块、等级、归因名称/强弱、原因、行动等（不含占比小数）。
@@ -332,7 +331,7 @@ JSON结构示例：{{jsonFormat}}
 ### 2. tool_step_polish — 工具步骤人话改写提示词
 
 - 用途：把工具库机械的结构化步骤与归因建议/分级干预的一句话建议改写成教师可直接执行的口语化步骤；知识库检索片段（knowledgeChunks）为共同输入，只用于把专业术语解释成教师能懂的白话。tools 非空时工具名与步骤数量/顺序/关键事实不变、只优化表达；tools 为空且知识片段非空时仅依据知识片段自拟 1-3 条新工具，两者都为空时 tools 输出空数组。actions 逐条按「何时做 → 怎么做 → 话术示例 → 频率/周期 → 达标标准」扩写为可执行步骤，title 与条数必须与输入一致、保留原建议要点，为空时输出空数组。后台调用，格式校验失败自动重试（最多 3 次），未覆盖全部条目时不写入部分结果。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**【Agent 模式不执行】** 评估后方案动作与工具步骤改写（`server/domain/plan-action-enhancement.ts` → `polishToolSteps`），属于评估后链路，与首页对话无关。
 - 占位符：
   - {{facts}}（规则事实 JSON）：模块、严重度、归因名称/强弱/原因、匹配工具标题与原文内容；另含 actions：归因建议/分级干预的一句话建议数组（每项含 title 与 content，title 须原样保留、content 为需扩写的一句话建议）。
@@ -372,7 +371,7 @@ JSON结构示例：{{jsonFormat}}
 ### 3. rule_expression — 规则结论改写提示词
 
 - 用途：把确定性规则结论改写成温和的教师支持表达（不改等级/规则/行动）。小超时（1500ms）由代码固定。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**【Agent 模式不执行，且当前无调用点】** `expressRuleResult` 已定义但无调用方。改了不生效。
 - 占位符：
   - {{facts}}（规则执行结果 JSON）：模块、等级、原因、动作标题。
@@ -392,7 +391,7 @@ JSON结构示例：{{jsonFormat}}
 ### 4. instrument_recommendation — 量表分诊提示词
 
 - 用途：从模块量表白名单中推荐一张（AI 只挑入口，归因/分级仍确定性；边界与兜底规则在代码中）。
-- 正文来源：数据库 `ai_prompt_templates`（已发布）
+- 正文来源：代码 `server/domain/ai-prompt-baselines.ts`（随版本发布）
 - 调用情况：**【Agent 模式不执行】** 模块页量表推荐接口（`server/api/v1/assessments/[module]/recommend.post.ts` → `recommendInstrument`）仍在用；Agent 模式的 `recommend_assessment` 工具是确定性量表白名单实现，不使用本条。
 - 占位符：
   - {{instrumentOptions}}（可选量表清单 JSON）：含业务触发条件判断（该做/暂不需要/已做过）的白名单。
@@ -420,21 +419,22 @@ JSON结构示例：{{jsonFormat}}
 
 
 
-## 四、仍写在代码里、AI 中心改不到的内容
+## 四、不来自提示词模板、由代码固定的内容
 
-以下内容不经过 `ai_prompt_templates`，无法在 AI 中心修改；如产品需要调整，请标注修改意见后交开发。
+提示词正文已全部随代码发布；以下内容同样只存在于代码里，AI 中心改不到。如产品需要调整，请标注修改意见后交开发。
 
 ### 1. Agent 回答先行的行为要点（formatInstruction）
 
 - 位置：`server/agent/prompts.ts` 的 `buildFormatInstruction`（运行时替换进 assistant_chat 模板的 {{formatInstruction}}，按教师画像前缀拼接）
+- 说明：原 AI 中心「运行时配置」里的 `agent_behavior_notes` 文字（回答先行、量表优先、不得输出「选项：」列表）已合并进本要点，数据库字段不再读取。
 
 ```text
-回答先行：根据教师描述与已装载的上下文直接给出当下可执行的回应，不要先发起多轮澄清追问；确有必要补充关键信息时，最多自然地追问一个最影响建议方向的问题。
-只输出给班主任看的自然语言回答，不输出 JSON、不输出字段名。回答温和简洁，一般 500 字以内，优先给出 1-3 个可执行动作。
+回答先行：基于现有信息直接给出当下可执行的初步判断，并注明这是初步理解，不诊断、不承诺效果、不替代量表结论；不要先发起多轮澄清追问，信息不足时可在回答末尾自然附带一句简短澄清。
+只输出给班主任看的自然语言回答，不输出 JSON、不输出代码块、不输出"选项："列表；回答温和简洁，一般 500 字以内，优先给出 1-3 个可执行动作。
+量表结果优先于初步判断：当信息足以判断方向时，通过 action 事件输出 recommend_assessment 量表推荐卡（module/assessmentCode/title/reason/ctaLabel）引导教师完成量表，不要生成看似正式的量表原文。
 不做精神、医学、法律诊断，不承诺效果，不替代心理专员、医生、警方或校方制度。
 不计算量表分数，不确定六色预警、四阶、P×A、L1-L3，不决定熔断；这些由代码规则执行。
 已审核知识与工具结果是业务依据而非逐字答案：引用知识片段与工具返回结果时必须基于实际内容并标注来源；未命中时只能给通用沟通与行动建议，不得编造平台手册、量表、SOP、等级、制度、数据或来源。
-需要引导量表评估时通过 action 事件输出 recommend_assessment 量表推荐卡（module/assessmentCode/title/reason/ctaLabel），不要生成看似正式的工具原文。
 不复述姓名、电话、邮箱等个人信息，不扩大到其他教师或学生数据。
 ```
 
@@ -515,13 +515,13 @@ entity_memory（实体记忆）：读取当前咨询对象（学生/班级/家�
 
 
 
-## 五、库内运行时配置（不是提示词模板，但影响 Agent 行为）
+## 五、运行时配置（不是提示词模板，但影响 Agent 行为）
 
-- `agentBehaviorNotes`（Agent 行为附加说明）：存在 `ai_runtime_settings.agent_behavior_notes`，可在 AI 中心「运行时配置」页修改；未配置时不追加任何附加说明。默认值由迁移 `drizzle/0050_prompt_template_baseline.sql` 写入：
+本节内容已全部改为代码 / 环境变量提供，数据库 `ai_runtime_settings` 已弃用、不再读取；AI 中心「运行时配置」页只做只读展示。
 
-```text
-回答先行：基于现有信息直接给出初步判断（注明为初步理解，不诊断、不承诺、不替代量表结果）；信息不足时可在回答末尾自然附带一句简短澄清；当信息足以判断方向时调用 recommend_assessment 工具推荐量表；量表结果优先于初步判断。不得输出 '选项：' 列表，不得输出 JSON 代码块。
-```
-
-- Agent 开关、工具轮次上限、采样温度、启用工具集同样在 AI 中心「运行时配置」页维护（`ai_runtime_settings`），未配置时回落到代码默认值：轮次上限 6（`server/agent/graph.ts` 的 `MAX_TOOL_ROUNDS`）、温度由模型默认、工具集为全部内置工具。
+- Agent 开关：由环境变量 `AGENT_ENABLED` / `NUXT_AGENT_ENABLED` 决定，当前 `.env`、`.env.example` 与正式/测试 compose 统一为 `AGENT_ENABLED=true`（所有环境开启）。
+- 工具轮次上限：代码默认 6（`server/agent/graph.ts` 的 `MAX_TOOL_ROUNDS`）。
+- 采样温度：代码默认 0.35（`server/integrations/models.ts`）。
+- 启用工具集：全部内置工具（`server/agent/tools/index.ts`），按上下文裁剪——未接入业务对象时只暴露 `knowledge_search` 与 `module_route`。
+- Agent 行为附加说明（`agentBehaviorNotes`）：已合并进 `server/agent/prompts.ts` 的 `buildFormatInstruction`（回答先行、量表优先、不得输出「选项：」列表），数据库字段不再读取。
 

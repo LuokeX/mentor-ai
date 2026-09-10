@@ -3,7 +3,6 @@ definePageMeta({ layout: 'default' })
 
 interface ModelEntry {
   env: string | number | boolean
-  override: string | number | boolean | null
   effective: string | number | boolean
 }
 interface RecentCall {
@@ -61,7 +60,7 @@ function effectiveText(value: ModelEntry | undefined) {
 
     <!-- 模型配置 -->
     <h2 class="mt-6 text-lg font-semibold text-gray-900">模型配置</h2>
-    <p class="mt-1 text-sm text-gray-500">DB 覆盖值热生效（缓存 30 秒内），未覆盖时使用环境变量默认。</p>
+    <p class="mt-1 text-sm text-gray-500">运行时参数只来自环境变量与代码默认值，改配置需调整环境变量并重启应用进程。</p>
     <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       <div
         v-for="row in modelRows"
@@ -70,12 +69,9 @@ function effectiveText(value: ModelEntry | undefined) {
       >
         <div class="flex items-center justify-between gap-2">
           <p class="text-sm font-medium text-gray-700">{{ row.label }}</p>
-          <UBadge v-if="row.value?.override !== null && row.value?.override !== undefined" variant="soft" color="primary" size="xs">DB 覆盖</UBadge>
         </div>
         <p class="mt-2 text-xl font-bold tracking-tight text-gray-900">{{ effectiveText(row.value) }}</p>
-        <p v-if="row.value?.override !== null && row.value?.override !== undefined" class="mt-1 text-xs text-gray-400">
-          环境变量默认：{{ row.value?.override === row.value?.env ? row.value?.env : row.value?.env }}
-        </p>
+        <p class="mt-1 text-xs text-gray-400">环境变量：{{ row.value?.env ?? '—' }}</p>
       </div>
     </div>
 
