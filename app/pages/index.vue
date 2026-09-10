@@ -60,8 +60,14 @@ interface TimelineItem {
 }
 
 const { user } = useAuth()
-const { updateScores, moduleScores } = useModuleScores()
+const { updateScores } = useModuleScores()
 const { data: sessions, refresh: refreshSessions } = await useFetch<any[]>('/api/v1/chat/sessions')
+// 侧栏「进行中的方案」：沿用方案列表接口，status=active 即待确认/进行中/待复盘/需调整/需协同，
+// 只取总数展示，点击计数箭头进入完整方案列表。
+const { data: pendingPlanResult } = await useFetch<{ total: number }>('/api/v1/plans', {
+  query: { status: 'active', pageSize: 1, sort: 'nextReviewAt', order: 'asc' }
+})
+const pendingPlanTotal = computed(() => pendingPlanResult.value?.total || 0)
 const { data: governance, refresh: refreshGovernance } = await useFetch<any>('/api/v1/chat/data-governance')
 const { data: contextOptions } = await useFetch<any>('/api/v1/chat/context-options')
 const input = ref('')
@@ -649,8 +655,23 @@ watch(sessions, autoRestoreLatestSession, { once: true })
   <div class="mx-auto max-w-7xl px-5 pb-8 pt-4 sm:pb-12 sm:pt-6">
     <section id="chat-section" class="grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
       <aside class="panel hidden h-[18rem] flex-col overflow-hidden lg:flex lg:h-[calc(100dvh-8.5rem)] lg:min-h-[34rem]">
-        <div class="border-b border-slate-100 p-4">
-          <button type="button" class="w-full flex items-center justify-center gap-2 rounded-lg bg-[var(--ui-primary)] px-4 py-3 text-base font-medium text-white" @click="newConversation"><UIcon name="i-lucide-message-square-plus" class="size-5" />新对话</button>
+        <div class="border-b border-slate-100 p-3">
+          <button type="button" class="w-full flex items-center justify-center gap-1.5 rounded-lg bg-[var(--ui-primary)] px-3 py-2 text-sm font-medium text-white" @click="newConversation"><UIcon name="i-lucide-message-square-plus" class="size-4" />新对话</button>
+        </div>
+        <div class="border-b border-slate-100 px-3 py-3">
+          <NuxtLink
+            to="/plans"
+            class="group flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2 transition hover:border-emerald-200 hover:bg-emerald-50"
+          >
+            <span class="flex items-center gap-1.5 text-sm font-medium text-emerald-900">
+              <UIcon name="i-lucide-list-checks" class="size-4 text-emerald-600" />
+              进行中的方案
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="min-w-5 rounded-full bg-emerald-600 px-1.5 py-0.5 text-center text-[11px] font-semibold text-white">{{ pendingPlanTotal }}</span>
+              <UIcon name="i-lucide-arrow-right" class="size-4 text-emerald-600 transition group-hover:translate-x-0.5" />
+            </span>
+          </NuxtLink>
         </div>
         <div class="flex items-center justify-between px-4 pb-2 pt-4">
           <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">最近对话</p>
@@ -667,9 +688,6 @@ watch(sessions, autoRestoreLatestSession, { once: true })
             </button>
           </div>
           <div v-if="!sessions?.length" class="grid place-items-center px-3 py-16 text-center"><UIcon name="i-lucide-messages-square" class="size-7 text-slate-300" /><p class="mt-2 text-xs text-slate-400">暂无历史对话</p></div>
-        </div>
-        <div class="border-t border-slate-100 p-3">
-          <ModuleProportionPanel />
         </div>
       </aside>
 
@@ -690,7 +708,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white/90 px-5 py-3.5 sm:px-6">
           <div class="flex min-w-0 items-center gap-3">
             <div class="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-4.5" /></div>
-            <div class="min-w-0"><div class="flex items-center gap-2"><strong class="text-sm">AI 分诊助手</strong><span class="size-1.5 rounded-full bg-emerald-500" /></div></div>
+            <div class="min-w-0"><div class="flex items-center gap-2"><strong class="text-sm">AI 助手</strong><span class="size-1.5 rounded-full bg-emerald-500" /></div></div>
           </div>
           <div class="flex min-w-0 flex-wrap items-center gap-2">
             <div v-if="selectedContext" class="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800"><UIcon :name="selectedContext.type === 'student' ? 'i-lucide-user-round' : selectedContext.type === 'class' ? 'i-lucide-users' : 'i-lucide-user-round-check'" class="size-3.5" /><span>{{ mentionTypeLabel(selectedContext.type) }} · {{ selectedContext.label }}</span></div>
