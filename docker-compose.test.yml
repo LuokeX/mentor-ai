@@ -34,6 +34,9 @@ x-app-environment: &app-environment
   DEEPSEEK_AGREEMENT_VERSION: ${DEEPSEEK_AGREEMENT_VERSION:-}
   NUXT_DEEPSEEK_AGREEMENT_VERSION: ${DEEPSEEK_AGREEMENT_VERSION:-}
   NUXT_DEEPSEEK_TIMEOUT_MS: ${DEEPSEEK_TIMEOUT_MS:-8000}
+  # 测试环境默认开启 Agent（回答先行）：由 .env 的 AGENT_ENABLED 统一控制
+  AGENT_ENABLED: ${AGENT_ENABLED:-true}
+  NUXT_AGENT_ENABLED: ${AGENT_ENABLED:-true}
   EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-false}
   NUXT_EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-false}
   EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
@@ -103,8 +106,6 @@ services:
     restart: unless-stopped
     environment:
       <<: *app-environment
-      # 仅测试环境：开启 Agent（回答先行）灰度；正式环境（docker-compose.yml）不设置
-      AGENT_ENABLED: "true"
     depends_on:
       migrate:
         condition: service_completed_successfully
