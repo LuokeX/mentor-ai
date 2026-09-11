@@ -51,14 +51,18 @@ DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Ag
 
 超时说明：`DEEPSEEK_TIMEOUT_MS` 是全局默认（建议 30000）。评估报告润色是最长输出（完整报告 JSON），走专用逻辑：不低于 360000ms，不受全局短超时影响。运行时参数（模型名、超时、embedding）只来自环境变量与代码默认值。
 
-Embedding 只服务模块资源文档分块，不再服务旧知识库：
+Embedding 只服务模块资源文档分块，不再服务旧知识库。当前部署环境使用百炼 DashScope：
 
 ```env
 EMBEDDING_ENABLED=true
-OLLAMA_BASE_URL=http://localhost:11434
-EMBEDDING_MODEL=qwen3-embedding:0.6b
+EMBEDDING_PROVIDER=dashscope
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_API_KEY=
+EMBEDDING_MODEL=text-embedding-v4
 EMBEDDING_TIMEOUT_MS=8000
 ```
+
+代码仍支持 `EMBEDDING_PROVIDER=ollama`（配 `OLLAMA_BASE_URL`），但正式 compose 已不再内置 ollama 服务，需要自备。切换 provider 后存量向量语义空间不兼容，必须重建。
 
 如需重建模块资源向量，使用 `pnpm resources:reindex`。
 

@@ -75,7 +75,7 @@ pnpm dev
 ```bash
 docker compose -f docker-compose.local.yml ps
 docker compose -f docker-compose.local.yml logs --tail=100 postgres
-docker compose logs --tail=100 ollama-pull embedding-index
+docker compose logs --tail=100 migrate app
 ```
 
 停止开发应用使用终端中的 `Ctrl+C`。停止数据库但保留数据卷：

@@ -49,7 +49,7 @@ AI 提示词与运行时配置的事实来源补充：提示词正文的唯一�
 - PostgreSQL 18 + pgvector 0.8.5，Drizzle ORM；数据库结构集中在 `server/db/schema.ts`（当前 51 张表）。
 - Zod 用于请求、模型输出和共享契约校验。
 - 敏感字段使用 AES-256-GCM 应用层加密；密码使用 Argon2id。
-- DeepSeek 用于受限的 Agent 助手回答与语义辅助；Ollama `qwen3-embedding:0.6b` 生成 `vector(1024)` 向量，当前只用于 `module_resource_chunks`，且需要 `EMBEDDING_ENABLED=true`。
+- DeepSeek 用于受限的 Agent 助手回答与语义辅助；向量化当前走百炼 DashScope（`text-embedding-v4`，`vector(1024)`），只用于 `module_resource_chunks`，且需要 `EMBEDDING_ENABLED=true`。代码仍支持 `EMBEDDING_PROVIDER=ollama`，但正式 compose 已不再内置 ollama。
 - `xlsx@0.18.5` 用于三库模板解析（`scripts/import-business-data/xlsx-reader.ts` 与平台后台文件导入）。
 - Vitest 是单元测试框架（`tests/*.test.ts`）。Playwright E2E 已有真实用例：`tests/e2e/core-flows.spec.ts`，覆盖 `desktop-chromium` 和 `mobile-chromium` 两个 project，`webServer` 会以 `pnpm dev --port 3100` 拉起应用，因此需要可用数据库和种子数据。
 
@@ -321,7 +321,7 @@ pnpm test                 # Vitest 单元测试
 pnpm test:watch           # Vitest 监听模式
 pnpm test:e2e             # Playwright；会自行拉起 3100 端口的 dev server，需要数据库和种子数据
 pnpm env:init             # 仅本地首次初始化/补全 .env
-pnpm db:up                # 启动 postgres、ollama、模型拉取、迁移和向量补全
+pnpm db:up                # 启动 postgres 并执行迁移（正式 compose；向量化走 DashScope，不再拉取本地模型）
 pnpm db:generate          # 从 Schema 生成 migration
 pnpm db:migrate           # 执行未运行的 migration
 pnpm db:seed              # 仅本地或获批测试环境的演示数据
