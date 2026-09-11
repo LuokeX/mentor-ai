@@ -16,7 +16,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "env:init": "tsx scripts/init-env.ts",
-    "db:up": "docker compose up -d postgres ollama ollama-pull migrate embedding-index",
+    "db:up": "docker compose up -d postgres migrate",
     "db:up:local": "docker compose -f docker-compose.local.yml up -d postgres",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",

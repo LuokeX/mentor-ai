@@ -2,7 +2,8 @@
 #
 # 与正式环境的 docker-compose.yml 使用完全独立的 project 名、数据卷和端口：
 # - 本地 postgres: 127.0.0.1:5434，库名 mentor_ai_dev，数据卷 mentor-ai-local_postgres-data
-# - Ollama 复用正式实例（http://localhost:11434，Embedding 模型已就位），不重复拉取
+# - 向量化默认走百炼 DashScope（EMBEDDING_PROVIDER=dashscope）；正式 compose 已不再内置 ollama，
+#   如需本地 ollama，请自行启动并设置 OLLAMA_BASE_URL
 #
 # 本地日常命令：pnpm db:up:local（等价 docker compose -f docker-compose.local.yml up -d postgres）
 # 禁止在开发机上执行 `pnpm db:up`，它会操作正式环境的 compose 与正式数据库。

@@ -24,8 +24,6 @@ x-app-environment: &app-environment
   NUXT_EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-true}
   EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
   NUXT_EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
-  OLLAMA_BASE_URL: http://ollama:11434
-  NUXT_OLLAMA_BASE_URL: http://ollama:11434
   DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
   NUXT_DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
   DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
@@ -80,31 +78,6 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  ollama:
-    image: ollama/ollama:0.31.2
-    restart: unless-stopped
-    volumes:
-      - ollama-data:/root/.ollama
-    ports:
-      - "0.0.0.0:${OLLAMA_PORT:-11434}:11434"
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    security_opt:
-      - no-new-privileges:true
-
-  ollama-pull:
-    image: ollama/ollama:0.31.2
-    environment:
-      OLLAMA_HOST: http://ollama:11434
-    command: ["pull", "${EMBEDDING_MODEL:-qwen3-embedding:0.6b}"]
-    depends_on:
-      ollama:
-        condition: service_healthy
-    restart: "no"
-
   migrate:
     build: .
     environment:
@@ -135,17 +108,6 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  embedding-index:
-    build: .
-    environment: *app-environment
-    command: ["./node_modules/.bin/tsx", "scripts/reindex-module-resource-embeddings.ts"]
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      ollama-pull:
-        condition: service_completed_successfully
-    restart: "no"
-
   nginx:
     image: nginx:1.29-alpine
     restart: unless-stopped
@@ -166,4 +128,3 @@ services:
 
 volumes:
   postgres-data:
-  ollama-data:
