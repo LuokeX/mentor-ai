@@ -7,7 +7,7 @@
 - 校内域名解析到部署服务器，TLS 证书和私钥权限正确。
 - `.env` 中数据库、会话和加密密钥均为独立强随机值；不得使用示例值。
 - `SMS_PROVIDER=webhook` 已配置真实网关，网关按 `Idempotency-Key` 去重。
-- DeepSeek Base URL、模型名、超时和出口白名单已联调；故障时已验证本地路由降级。
+- DeepSeek Base URL、模型名、超时和出口白名单已联调；故障时已验证 Agent 自动重试与失败提示，且安全熔断仍由本地规则先行执行。
 - 学校已配置默认心理专员、求助电话、危机文案和短信接收人。
 - 已删除演示账号。
 
@@ -24,7 +24,8 @@ git push origin vX.Y.Z
 ./scripts/backup.sh
 
 # 3) 构建镜像（一次只跑一个 build，禁止并发 build 互相排队阻塞）
-docker compose build app
+#    必须同时重建 migrate：迁移 SQL 烘焙在镜像里，只建 app 会导致新迁移不执行
+docker compose build app migrate
 
 # 4) docker 镜像打与 git 相同的版本标签
 docker tag mentor-ai-app:latest mentor-ai-app:vX.Y.Z

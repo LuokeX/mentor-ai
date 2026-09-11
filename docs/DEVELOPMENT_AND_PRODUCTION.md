@@ -167,7 +167,7 @@ pnpm build
 - 权限或管理员访问：验证四角色越权、授权过期、只读限制和审计日志。
 - 危机规则：验证风险事件、转介、Outbox 和审计在同一事务中生成，并通过 App 日志验证通知。
 - 数据库：从空库执行全部 migration，再从现有备份副本执行增量 migration。
-- AI：验证 DeepSeek 正常、超时、非法 JSON 和无密钥降级场景。
+- AI：验证 DeepSeek 正常、超时、非法 JSON、无密钥，以及 Agent 自动重试与重试耗尽后的 `error` 事件。
 - 敏感页面：验证 `Cache-Control: no-store`、水印和禁止导出。
 
 通知消费者是 Nitro 插件，与 App 使用同一进程和数据库契约；正式发布只部署一个 App 镜像，禁止再配置重复的独立 Worker。
@@ -219,6 +219,7 @@ docker compose logs --tail=100 app nginx
 ```bash
 BACKUP_RETENTION_DAYS=14 ./scripts/backup.sh          # 正式库备份（演练与部署共用）
 bash scripts/refresh-test-db.sh                        # 恢复最新备份进测试库（5435）
+docker compose -f docker-compose.test.yml build app migrate  # 迁移 SQL 在镜像内，migrate 必须一起重建
 docker compose -f docker-compose.test.yml up -d        # 测试环境执行 migrate + app
 curl -s http://127.0.0.1:3400/health/ready             # 期望 200
 # 用正式账号在测试环境登录，并核对 users 等关键表数据量

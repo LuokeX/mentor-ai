@@ -9,7 +9,7 @@
 - 技术形态：Nuxt 4 + Vue 3 + Nitro 单仓全栈应用。
 - 角色：`teacher`、`psychologist`、`school_admin`、`platform_admin`。
 - 五个可执行模块：`self_growth`、`class_system`、`home_school`、`student_case`、`learning_problem`。
-- 核心能力：首页 AI 澄清分诊、确定性量表与归因规则、三库资源运营（XLSX 模板导入 + 版本发布）、信息中心、方案跟踪、安全熔断、心理转介、学校后台、平台后台、统一管理框架。
+- 核心能力：首页 AI 助手（回答先行）、确定性量表与归因规则、三库资源运营（XLSX 模板导入 + 版本发布）、信息中心、方案跟踪、安全熔断、心理转介、学校后台、平台后台、统一管理框架。
 - 业务边界和当前未实现范围见 `README.md`；它是实现说明，不是完整 PRD。
 
 不要新增第六业务模块、医疗/心理诊断、自动替代人工处置或新的管理员数据权限，除非任务有明确业务依据和授权。
@@ -26,7 +26,7 @@
 4. 专题文档：`docs/ROLE_MATRIX.md`、`docs/MANAGEMENT_FRAMEWORK.md`、`docs/AI_ASSISTANT_AND_KNOWLEDGE.md`、`docs/DEVELOPMENT_AND_PRODUCTION.md`、`docs/OPERATIONS.md`、`docs/PILOT_ROLLOUT.md`、`docs/business/**`。
 5. `README.md` 和本文件中的概览性描述。
 
-AI 提示词与运行时配置的事实来源补充：提示词正文的唯一代码事实来源是 `server/domain/ai-prompt-baselines.ts`（编码/名称/占位符元数据在 `server/domain/ai-config.ts` 的 `PROMPT_REGISTRY`）；运行时参数来自环境变量与代码默认值。数据库 `ai_prompt_templates`、`ai_runtime_settings` 已弃用、不再参与运行时，只作历史留存，不要再依据其中的行判断行为。
+AI 提示词与运行时配置的事实来源补充：提示词正文的唯一代码事实来源是 `server/domain/ai-prompt-baselines.ts`（编码/名称/占位符元数据在 `server/domain/ai-config.ts` 的 `PROMPT_REGISTRY`）；运行时参数来自环境变量与代码默认值。数据库 `ai_prompt_templates`、`ai_runtime_settings` 已随迁移 `drizzle/0051_sour_hellfire_club.sql` 删除，不要再依据这两张表判断行为。
 
 如果文档、脚本和实现不一致：
 
@@ -49,7 +49,7 @@ AI 提示词与运行时配置的事实来源补充：提示词正文的唯一�
 - PostgreSQL 18 + pgvector 0.8.5，Drizzle ORM；数据库结构集中在 `server/db/schema.ts`（当前 51 张表）。
 - Zod 用于请求、模型输出和共享契约校验。
 - 敏感字段使用 AES-256-GCM 应用层加密；密码使用 Argon2id。
-- DeepSeek 用于受限的澄清分诊和语义辅助；Ollama `qwen3-embedding:0.6b` 生成 `vector(1024)` 向量，当前只用于 `module_resource_chunks`，且需要 `EMBEDDING_ENABLED=true`。
+- DeepSeek 用于受限的 Agent 助手回答与语义辅助；Ollama `qwen3-embedding:0.6b` 生成 `vector(1024)` 向量，当前只用于 `module_resource_chunks`，且需要 `EMBEDDING_ENABLED=true`。
 - `xlsx@0.18.5` 用于三库模板解析（`scripts/import-business-data/xlsx-reader.ts` 与平台后台文件导入）。
 - Vitest 是单元测试框架（`tests/*.test.ts`）。Playwright E2E 已有真实用例：`tests/e2e/core-flows.spec.ts`，覆盖 `desktop-chromium` 和 `mobile-chromium` 两个 project，`webServer` 会以 `pnpm dev --port 3100` 拉起应用，因此需要可用数据库和种子数据。
 
@@ -244,7 +244,7 @@ export default defineEventHandler(async (event) => {
 
 完整权限矩阵以 `docs/ROLE_MATRIX.md` 为准。
 
-## 8. AI 分诊、三库和安全熔断
+## 8. AI 助手、三库和安全熔断
 
 ### 8.1 安全与模型边界
 
@@ -256,11 +256,12 @@ export default defineEventHandler(async (event) => {
 - 模型调用日志（`aiModelCalls`）只记录必要元数据，不记录完整 Prompt 或教师原文。
 - DeepSeek 或 Ollama 不可用时保留现有本地/关键词降级路径，不得让安全规则依赖外部服务可用性。
 
-### 8.2 首页澄清分诊
+### 8.2 首页 AI 助手（回答先行）
 
-- 首页 AI 只做澄清与分诊：多轮澄清问题、给出模块占比、说明理由和评估准备事项；不能生成正式方案，不能跳过量表，不能替代归因规则。
-- 会话状态机在 `server/api/v1/chat/messages.post.ts` 与 `server/domain/chat-clarification.ts`：`clarificationState.phase` 为 `clarifying | summarizing | done`，`moduleScores` 记录模块占比。
-- SSE 事件当前为：`ack`、`answer_start`、`answer_delta`、`answer`、`clarification_round`、`clarification_summary`、`module_proportions`（Agent 回答先行模式下回传最终模块评估占比）、`route`、`fuse`、`error`、`done`。改动事件名必须同时更新前端消费方。
+- 首页 AI 只做分析与建议：先给出当下可执行的初步判断，信息不足时在回答末尾附带简短澄清，必要时推荐量表或建议进入模块；不能生成正式方案，不能跳过量表，不能替代归因规则。
+- 所有消息统一走 Agent 图（`server/agent/graph.ts`），没有 Agent 开关。Agent 本轮无产出时自动整轮重试一次（传输层另有 SDK 自动重试）；重试仍失败由入口发 `error` 事件，不生成兜底回答、不回退其它提示词。
+- SSE 事件当前为：`ack`、`answer_start`、`thinking`、`tool_call`、`tool_result`、`sources`、`action_card`、`answer_delta`、`module_proportions`、`answer`、`fuse`、`error`、`done`。改动事件名必须同时更新前端消费方。
+- 历史消息仍可能带旧的 `route`、`clarification_round`、`clarification_summary` 元数据，前端只作只读回看渲染，不再产生新数据。
 
 ### 8.3 三库资源
 
@@ -276,8 +277,8 @@ export default defineEventHandler(async (event) => {
 ### 8.4 AI 中心与三库向导
 
 - 平台后台 AI 中心（`server/api/v1/platform-admin/ai-center/` + `server/domain/ai-config.ts`）：提示词正文随代码发布（`prompts` 只读列表，正文唯一来源是 `server/domain/ai-prompt-baselines.ts`，改文案走代码评审与发版）、模型调用审计（`model-calls`，只记元数据）、运行时配置只读展示与联调测试（`runtime`，参数来自环境变量与代码默认值）。
-- 提示词与运行时配置不再读写数据库：`ai_prompt_templates`、`ai_runtime_settings` 已弃用（表与历史行保留，schema 注释已标注），不要再为 AI 中心新增写接口或依赖这两张表。
-- Agent（回答先行）开关由环境变量 `AGENT_ENABLED` / `NUXT_AGENT_ENABLED` 决定；`.env`、`.env.example` 与 `docker-compose.yml`、`docker-compose.test.yml` 当前统一为 `AGENT_ENABLED=true`。
+- 提示词与运行时配置都不再有库内来源：`ai_prompt_templates`、`ai_runtime_settings` 已随迁移 `drizzle/0051_sour_hellfire_club.sql` 删除，不要再为 AI 中心新增写接口或依赖这两张表。
+- 没有 Agent 开关：所有消息一律走 Agent 图；新增 AI 能力时不要再引入「经典 / Agent」双模式分支。
 - 三库向导（`server/api/v1/platform-admin/module-resources/wizard-*` + `server/domain/business-wizard*.ts`）：以 `business-libraries/wizard-inputs/` 为输入，走编译 → 校验/预览 → 模拟 → 导入链路，与 XLSX 导入共用同一套校验与投影，禁止绕过校验直接写明细表。
 
 涉及这部分的修改应同时阅读 `docs/AI_ASSISTANT_AND_KNOWLEDGE.md`、`server/domain/safety.ts`、`server/domain/rules-executor.ts` 和相关测试。
@@ -345,7 +346,7 @@ pnpm scaffold:management  # 生成管理模块骨架 --area <area> --entity <ent
 - 权限变更：验证四角色、跨学校、跨教师、过期授权、只读限制、状态冲突和审计。
 - 管理框架变更：额外验证分页上限、排序白名单、`EDIT_CONFLICT` 并发冲突、归档/恢复状态流转和能力驱动的按钮显隐。
 - 危机变更：验证常规路径和熔断路径，并确认四类记录在同一事务中生成。
-- AI 变更：验证正常模型、无密钥、超时/非法响应、澄清多轮状态机和降级路径。
+- AI 变更：验证正常模型、无密钥、超时/非法响应、Agent 自动重试与重试耗尽后的 `error` 路径。不使用「澄清多轮状态机」验证项，该状态机已删除。
 - 三库变更：`--dry-run` 导入 + 校验/预览/投影相关测试 + golden fixture 比对。
 
 交付时说明：
