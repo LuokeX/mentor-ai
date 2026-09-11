@@ -14,7 +14,6 @@ const { data, refresh, pending } = await useFetch<{
     timeoutMs: RuntimeEntry
     embeddingModel: RuntimeEntry
     embeddingEnabled: RuntimeEntry
-    agentEnabled: RuntimeEntry
     agentMaxRounds: RuntimeEntry
     agentTemperature: RuntimeEntry
     agentTools: RuntimeEntry
@@ -143,16 +142,6 @@ async function testConnection() {
     <h2 class="mt-8 text-lg font-semibold text-gray-900">Agent 回答模式（只读）</h2>
     <p class="mt-1 text-sm text-gray-500">Agent 行为要点已随代码发布（回答先行、量表优先等），这里只展示生效参数。</p>
     <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <div class="flex items-center justify-between">
-          <p class="text-sm font-medium text-gray-700">Agent 启用</p>
-          <UBadge variant="soft" color="neutral" size="xs">环境变量</UBadge>
-        </div>
-        <p class="mt-0.5 text-xs text-gray-400">开启后所有消息走「回答先行 Agent」；关闭回落澄清分诊流程</p>
-        <p class="mt-2 text-lg font-semibold tracking-tight text-gray-900">{{ effectiveText(data?.values.agentEnabled) }}</p>
-        <p class="mt-1 text-xs text-gray-400">来源：环境变量 AGENT_ENABLED</p>
-      </div>
-
       <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <div class="flex items-center justify-between">
           <p class="text-sm font-medium text-gray-700">工具轮次上限</p>

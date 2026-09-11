@@ -23,7 +23,6 @@ export default defineEventHandler(async (event) => {
 
   const timeoutMs = Number(config.deepseekTimeoutMs) || 30000
   const embeddingEnabled = Boolean(config.embeddingEnabled)
-  const agentEnabled = process.env.AGENT_ENABLED === 'true' || config.agentEnabled === true
 
   return {
     values: {
@@ -32,7 +31,6 @@ export default defineEventHandler(async (event) => {
       timeoutMs: { env: timeoutMs, effective: timeoutMs, source: 'env' },
       embeddingModel: { env: config.embeddingModel, effective: config.embeddingModel, source: 'env' },
       embeddingEnabled: { env: embeddingEnabled, effective: embeddingEnabled, source: 'env' },
-      agentEnabled: { env: agentEnabled, effective: agentEnabled, source: 'env' },
       agentMaxRounds: { env: AGENT_MAX_ROUNDS, effective: AGENT_MAX_ROUNDS, source: 'code' },
       agentTemperature: { env: AGENT_TEMPERATURE, effective: AGENT_TEMPERATURE, source: 'code' },
       agentTools: { env: null, effective: null, source: 'code' }

@@ -30,9 +30,6 @@ export default defineNuxtConfig({
     // 完整上下文只有登记供应商协议版本后才允许启用。
     deepseekAgreementVersion: process.env.DEEPSEEK_AGREEMENT_VERSION || '',
     deepseekTimeoutMs: Number(process.env.DEEPSEEK_TIMEOUT_MS || 30000),
-    // Agent（回答先行）开关：进程环境变量 AGENT_ENABLED=true（或 NUXT_AGENT_ENABLED=true）。
-    // 当前 .env / .env.example / 两个 compose 文件在所有环境都设为 true；数据库运行时配置已弃用。
-    agentEnabled: process.env.AGENT_ENABLED === 'true',
     embeddingEnabled: process.env.EMBEDDING_ENABLED === 'true',
     // ollama | dashscope：向量化供应商，切换后存量向量需全量重建（语义空间不兼容）
     embeddingProvider: process.env.EMBEDDING_PROVIDER || 'ollama',

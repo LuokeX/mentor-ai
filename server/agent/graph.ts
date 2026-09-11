@@ -21,7 +21,6 @@ import { DynamicStructuredTool } from '@langchain/core/tools'
 import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
 import type { ActionCard, AgentMessage, AgentState, AgentTool, AgentToolContext, AgentUserContext } from './types'
 import { AGENT_SSE_EVENTS } from './types'
-import { getAiRuntimeConfig } from '../domain/ai-config'
 import { sanitizeHistoryForSummary } from '../domain/chat-clarification'
 import { createAgentLlm } from '../integrations/models'
 import { buildAgentTools } from './tools/index'
@@ -30,8 +29,8 @@ import type { ModuleId } from '../../shared/contracts'
 /** 模型/工具默认轮次上限（P0 默认 6 轮）。 */
 const MAX_TOOL_ROUNDS = 6
 
-/** 模型结束后仍无可用文本时的兜底回答。 */
-const FALLBACK_ANSWER = '抱歉，暂时没能生成合适的回答。您可以换个说法再描述一次，或先进入对应模块查看可用的评估量表。'
+/** 无产出时的自动重试次数：总尝试次数 = 1 + AGENT_RETRY_TIMES。 */
+const AGENT_RETRY_TIMES = 1
 
 export interface RunAgentGraphInput {
   /** 对话消息（含本轮用户输入），入口组装。 */
@@ -48,7 +47,6 @@ export interface RunAgentGraphResult {
   answer: string
   actionCards: ActionCard[]
   exitReason: AgentState['exitReason']
-  fallbackUsed: boolean
   /** 本轮工具调用过程（供入口持久化到消息 metadata，切换会话后仍可展示） */
   toolCalls?: Array<{ name: string; title: string; args: string }>
   /** 本轮知识库引用来源（供入口持久化到消息 metadata） */
@@ -276,44 +274,44 @@ function extractRoutedModule(output: unknown): { module: ModuleId; confidence?: 
 /**
  * 运行「回答先行 Agent」图，返回最终答案、推荐卡与终止原因。
  *
+ * 失败处理：本轮无任何产出时自动整轮重试（最多 AGENT_RETRY_TIMES 次）；重试仍无产出、
+ * 或已向客户端发过内容后失败，一律返回 answer='' + exitReason='error'，由入口发 error 事件。
+ * 不回退到其它提示词，也不生成兜底回答。
+ *
  * 终止语义：
  *  - done       正常结束且已有模型文本；
- *  - max_rounds 工具轮次达到上限（默认 6）或超过总时长（DB 运行时配置或 60s），
- *               把已生成文本作为答案返回；
- *  - fallback   无模型文本（含未配置 DeepSeek），返回内置兜底文本；
- *  - error      任何异常，fallbackUsed=true、answer 为空，由 AGENT-C 决定回退或提示。
+ *  - max_rounds 工具轮次达到上限（MAX_TOOL_ROUNDS）或超过总时长，把已生成文本作为答案返回；
+ *  - error      重试后仍无模型文本，或异常导致无产出。
  */
 export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): Promise<RunAgentGraphResult> {
   const { messages, userCtx, systemPrompt, onEvent } = input
   const config = useRuntimeConfig(event)
-  const rt = await getAiRuntimeConfig(event)
-  const totalTimeoutMs = rt.timeoutMs ?? 60_000
-  // Agent 运行参数取代码默认值（运行时配置已改为环境变量，见 domain/ai-config.ts）
-  const maxToolRounds = rt.agentMaxRounds ?? MAX_TOOL_ROUNDS
-  const temperature = rt.agentTemperature ?? undefined
-  const actionCards: ActionCard[] = []
-  /** 工具/引用过程记录（用于展示：工具调用与知识库引用来源）。 */
-  const contextEvents: Array<unknown> = []
-  /** 工具调用记录（供持久化）：与 contextEvents 同步收集 */
-  const toolCallRecords: Array<{ name: string; title: string; args: string }> = []
-  /** 知识库引用来源（供持久化） */
-  const sourceRecords: Array<{ chunkId: string; documentTitle: string; heading?: string | null; excerpt?: string; module?: string | null; libraryType?: string }> = []
-  /** 模块评估占比：由 module_route / recommend_assessment 工具路由结果累加推导。 */
-  const moduleProportions = seedModuleProportions(userCtx.lastModuleScores)
-
-  // 未接入模型：直接返回本地兜底文本（由入口补发 answer_start 后整体推送）
-  if (!config.deepseekApiKey) {
-    onEvent(AGENT_SSE_EVENTS.ANSWER_DELTA, { text: FALLBACK_ANSWER })
-    return { answer: FALLBACK_ANSWER, actionCards, exitReason: 'fallback', fallbackUsed: true }
-  }
-
+  const totalTimeoutMs = Number(config.deepseekTimeoutMs) || 60_000
+  const deadline = Date.now() + totalTimeoutMs
   let exitReason: AgentState['exitReason'] = null
   let answerText = ''
-  let fallbackUsed = false
-  const deadline = Date.now() + totalTimeoutMs
-  try {
-    const llm = await createAgentLlm(event, { temperature })
-    const agentTools = await loadAgentTools(userCtx, rt.agentTools)
+  let actionCards: ActionCard[] = []
+  /** 工具/引用过程记录（用于展示：工具调用与知识库引用来源）。 */
+  let contextEvents: Array<unknown> = []
+  /** 工具调用记录（供持久化）：与 contextEvents 同步收集 */
+  let toolCallRecords: Array<{ name: string; title: string; args: string }> = []
+  /** 知识库引用来源（供持久化） */
+  let sourceRecords: Array<{ chunkId: string; documentTitle: string; heading?: string | null; excerpt?: string; module?: string | null; libraryType?: string }> = []
+  /** 模块评估占比：由 module_route / recommend_assessment 工具路由结果累加推导。 */
+  let moduleProportions = seedModuleProportions(userCtx.lastModuleScores)
+  /** 是否已向客户端发过内容类事件（回答增量/工具过程/卡片/引用）：发过即不再重试，避免重复展示 */
+  let emittedContent = false
+
+  // 未配置模型：不生成兜底回答，返回空答案由入口发 error 事件
+  if (!config.deepseekApiKey) {
+    console.error('[agent/graph] 未配置 DEEPSEEK_API_KEY，Agent 无法运行')
+    return { answer: '', actionCards: [], exitReason: 'error', toolCalls: [], sources: [] }
+  }
+
+  /** 执行一轮 Agent：内部只抛异常、不做兜底；累计变量由外层按轮次重置。 */
+  const runOnce = async (): Promise<void> => {
+    const llm = await createAgentLlm(event)
+    const agentTools = await loadAgentTools(userCtx)
     const tools = agentTools.map(def => toLangChainTool(def, { event, user: userCtx }))
     const agent = createReactAgent({ llm, tools })
 
@@ -328,13 +326,13 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     onEvent(AGENT_SSE_EVENTS.THINKING, { phase: 'planning' })
     const stream = await agent.streamEvents(
       { messages: langMessages },
-      { version: 'v2', recursionLimit: maxToolRounds + 4 }
+      { version: 'v2', recursionLimit: MAX_TOOL_ROUNDS + 4 }
     )
     let toolRounds = 0
     for await (const rawChunk of stream) {
       if (!isStreamChunk(rawChunk)) continue
       // 轮次/总时长上限：把已生成文本作为答案返回
-      if (toolRounds >= maxToolRounds || Date.now() >= deadline) {
+      if (toolRounds >= MAX_TOOL_ROUNDS || Date.now() >= deadline) {
         exitReason = 'max_rounds'
         break
       }
@@ -344,6 +342,7 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
         const toolCall = { name: toolName, title: TOOL_TITLES[toolName] || toolName, args: truncate(stringify(rawChunk.data.input), 300) }
         contextEvents.push(toolCall)
         toolCallRecords.push(toolCall)
+        emittedContent = true
         onEvent(AGENT_SSE_EVENTS.THINKING, { phase: 'tool', name: toolName, title: TOOL_TITLES[toolName] || toolName })
         onEvent(AGENT_SSE_EVENTS.TOOL_CALL, contextEvents[contextEvents.length - 1])
         continue
@@ -373,40 +372,59 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
           onEvent('sources', { items: sourceItems })
         }
         onEvent(AGENT_SSE_EVENTS.TOOL_RESULT, { name: toolName, result: truncate(stringify(output), 500) })
+        emittedContent = true
         continue
       }
       if (rawChunk.event === 'on_chat_model_stream') {
         const text = extractStreamedText(rawChunk)
         if (text) {
           answerText += text
+          emittedContent = true
           onEvent(AGENT_SSE_EVENTS.ANSWER_DELTA, { text })
         }
       }
     }
+  }
 
-    // 结束收尾：有文本 → done（max_rounds 保留已生成文本）；无文本 → 兜底文本
-    if (!answerText.trim()) {
-      fallbackUsed = true
-      answerText = FALLBACK_ANSWER
-      onEvent(AGENT_SSE_EVENTS.ANSWER_DELTA, { text: FALLBACK_ANSWER })
-      if (exitReason !== 'max_rounds') exitReason = 'fallback'
-    } else if (exitReason === null) {
-      exitReason = 'done'
+  for (let attempt = 0; attempt <= AGENT_RETRY_TIMES; attempt += 1) {
+    // 每次尝试重置累计，避免重试导致卡片/工具过程/引用重复
+    actionCards = []
+    contextEvents = []
+    toolCallRecords = []
+    sourceRecords = []
+    moduleProportions = seedModuleProportions(userCtx.lastModuleScores)
+    answerText = ''
+    exitReason = null
+    emittedContent = false
+    try {
+      await runOnce()
+    } catch (error) {
+      console.error(`[agent/graph] runAgentGraph 第 ${attempt + 1} 次尝试失败:`, error instanceof Error ? error.message : error)
     }
+    // 已产出文本、已向客户端发过内容、或已到轮次/时长上限：不再重试
+    if (answerText.trim()) break
+    if (emittedContent) break
+    if (exitReason === 'max_rounds') break
+    if (attempt < AGENT_RETRY_TIMES) {
+      console.warn(`[agent/graph] 本轮无回答产出，自动重试（第 ${attempt + 2} 次）`)
+    }
+  }
 
-    // 有路由判定时，把最终模块评估占比以共享事件推给前端（供「模块评估占比」面板展示）
-    const hasProportion = Object.values(moduleProportions).some(v => v > 0)
-    if (hasProportion) {
-      onEvent(AGENT_SSE_EVENTS.MODULE_PROPORTIONS, { moduleProportions })
-    }
+  // 重试后仍无产出：不回退到其它提示词，返回空答案由入口发 error 事件
+  if (!answerText.trim()) {
+    return { answer: '', actionCards: [], exitReason: 'error', toolCalls: [], sources: [] }
+  }
+  if (exitReason === null) exitReason = 'done'
 
-    return {
-      answer: answerText.trim(), actionCards, exitReason, fallbackUsed,
-      toolCalls: toolCallRecords, sources: sourceRecords,
-      moduleProportions: hasProportion ? moduleProportions : undefined
-    }
-  } catch (error) {
-    console.error('[agent/graph] runAgentGraph 失败:', error instanceof Error ? error.message : error)
-    return { answer: '', actionCards, exitReason: 'error', fallbackUsed: true }
+  // 有路由判定时，把最终模块评估占比以共享事件推给前端（供「模块评估占比」面板展示）
+  const hasProportion = Object.values(moduleProportions).some(v => v > 0)
+  if (hasProportion) {
+    onEvent(AGENT_SSE_EVENTS.MODULE_PROPORTIONS, { moduleProportions })
+  }
+
+  return {
+    answer: answerText.trim(), actionCards, exitReason,
+    toolCalls: toolCallRecords, sources: sourceRecords,
+    moduleProportions: hasProportion ? moduleProportions : undefined
   }
 }

@@ -33,6 +33,8 @@ export async function createAgentLlm(
     temperature: opts.temperature ?? 0.35,
     ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
     streaming: true,
-    timeout: timeoutMs
+    timeout: timeoutMs,
+    // 传输层自动重试（网络抖动、429、5xx）：Agent 无法自愈的临时故障在 SDK 内重试
+    maxRetries: 2
   })
 }

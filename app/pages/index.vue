@@ -86,7 +86,6 @@ const pendingAssistantBubble = computed(() => {
 })
 const messageViewport = ref<HTMLElement | null>(null)
 const copiedMessage = ref<number | null>(null)
-const confirmingModule = ref<ModuleId | null>(null)
 /** 最后一条教师发言。进入模块时带给量表推荐用，让 AI 知道教师在说什么。 */
 const lastUserMessage = computed(() => {
   for (let i = timeline.value.length - 1; i >= 0; i--) {
@@ -95,10 +94,7 @@ const lastUserMessage = computed(() => {
   }
   return ''
 })
-const routeConfirmError = ref('')
 const selectedOptions = ref<Record<number, string>>({})
-const pendingPlanSuggestion = ref<{ item: TimelineItem, index: number } | null>(null)
-const planExecForm = reactive({ executedAt: '', executionNote: '' })
 const selectedContextKey = ref('none')
 const suppressContextWatch = ref(false)
 const contextPreview = ref<any>(null)
@@ -169,7 +165,6 @@ function newConversation() {
   timeline.value = []
   route.value = null
   fuse.value = null
-  routeConfirmError.value = ''
   selectedOptions.value = {}
   selectedContextKey.value = 'none'
   mentionOpen.value = false
@@ -198,7 +193,6 @@ async function loadSession(id: string) {
     suppressContextWatch.value = false
     route.value = null
     fuse.value = null
-    routeConfirmError.value = ''
     timeline.value = result.messages.map((item: any) => {
       const base: TimelineItem = {
         messageId: item.id,
@@ -273,10 +267,9 @@ async function ask() {
   const text = input.value.trim()
   input.value = ''
   pending.value = true
-  pendingLabel.value = '正在澄清问题并判断推荐模块'
+  pendingLabel.value = 'Agent 正在分析问题…'
   route.value = null
   fuse.value = null
-  routeConfirmError.value = ''
   timeline.value.push({ role: 'user', text })
   await scrollToLatest()
   let assistantIndex = -1
@@ -345,23 +338,6 @@ async function ask() {
             assistantIndex = timeline.value.length - 1
           }
           await scrollToLatest()
-        }
-        if (event === 'plan_update_suggestions' && assistantIndex >= 0) {
-          timeline.value[assistantIndex]!.messageId = data.messageId
-          timeline.value[assistantIndex]!.planUpdateSuggestions = data.suggestions
-        }
-        if (event === 'route') route.value = data
-        if (event === 'clarification_round') {
-          if (assistantIndex >= 0) {
-            timeline.value[assistantIndex]!.clarification = data
-          }
-          updateScores(data.moduleScores)
-        }
-        if (event === 'clarification_summary') {
-          if (assistantIndex >= 0) {
-            timeline.value[assistantIndex]!.summary = data
-          }
-          updateScores(data.moduleProportions)
         }
         if (event === 'module_proportions') {
           // Agent 回答先行模式：模块分诊路由结果回传，驱动「模块评估占比」面板
@@ -480,7 +456,6 @@ function applyMention(type: string, id: string) {
     timeline.value = []
     route.value = null
     fuse.value = null
-    routeConfirmError.value = ''
     selectedOptions.value = {}
     nextTick(() => scrollToLatest('auto'))
   }
@@ -532,43 +507,8 @@ async function submitFeedback(item: TimelineItem, rating: 'helpful' | 'not_helpf
   } catch (error: any) { toast.add({ title: '反馈提交失败', description: error?.data?.message || '请稍后重试', color: 'error' }) }
 }
 
-async function confirmPlanSuggestion(item: TimelineItem, index: number) {
-  if (!item.messageId) return
-  pendingPlanSuggestion.value = { item, index }
-  planExecForm.executedAt = ''
-  planExecForm.executionNote = ''
-}
-
-async function submitPlanExecution() {
-  const pending = pendingPlanSuggestion.value
-  if (!pending) return
-  const { item, index } = pending
-  if (!item.messageId) return
-  try {
-    await $fetch(`/api/v1/chat/messages/${item.messageId}/plan-suggestions/${index}/confirm`, {
-      method: 'POST',
-      body: {
-        executedAt: parseBeijingInput(planExecForm.executedAt)?.toISOString() ?? undefined,
-        executionNote: planExecForm.executionNote.trim() || undefined,
-      }
-    })
-    item.planUpdateSuggestions![index].appliedAt = new Date().toISOString()
-    pendingPlanSuggestion.value = null
-    toast.add({ title: '方案已更新', color: 'success' })
-  } catch (error: any) { toast.add({ title: '方案更新失败', description: error?.data?.message || '请稍后重试', color: 'error' }) }
-}
-
-async function confirmModule(module: ModuleId) {
-  if (!route.value || confirmingModule.value) return
-  confirmingModule.value = module
-  routeConfirmError.value = ''
-  try {
-    await $fetch(`/api/v1/chat/routes/${route.value.id}/confirm`, { method: 'POST', body: { module } })
-  } catch (error: any) {
-    routeConfirmError.value = error?.data?.message || error?.message || '处理方向确认记录保存失败，已继续进入模块。'
-  } finally {
-    confirmingModule.value = null
-  }
+/** 历史分诊卡跳转：只做导航，不再写入处理方向确认记录 */
+async function goToModule(module: ModuleId) {
   // 带上分诊建议的量表编码和教师原话：模块页据此推荐并直接定位到该量表
   await navigateTo({
     path: `/module/${module}`,
@@ -798,7 +738,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                     </div>
                   </div>
                 </details>
-                <div v-if="item.role === 'assistant' && item.planUpdateSuggestions?.length" class="mt-7 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><p class="font-semibold text-amber-900">AI 建议更新方案（尚未写入）</p><div v-for="(suggestion, suggestionIndex) in item.planUpdateSuggestions" :key="suggestionIndex" class="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><span class="text-slate-600">{{ suggestion.actionTitle || '新增复盘' }}<template v-if="suggestion.newStatus"> → {{ actionStatusLabel(suggestion.newStatus) }}</template><span v-if="suggestion.progressNote" class="mt-1 block text-slate-400">{{ suggestion.progressNote }}</span></span><UButton size="xs" :disabled="Boolean(suggestion.appliedAt)" @click="confirmPlanSuggestion(item, suggestionIndex)">{{ suggestion.appliedAt ? '已确认' : '确认应用' }}</UButton></div></div>
+                <div v-if="item.role === 'assistant' && item.planUpdateSuggestions?.length" class="mt-7 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><p class="font-semibold text-amber-900">AI 曾建议更新方案（历史记录）</p><div v-for="(suggestion, suggestionIndex) in item.planUpdateSuggestions" :key="suggestionIndex" class="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><span class="text-slate-600">{{ suggestion.actionTitle || '新增复盘' }}<template v-if="suggestion.newStatus"> → {{ actionStatusLabel(suggestion.newStatus) }}</template><span v-if="suggestion.progressNote" class="mt-1 block text-slate-400">{{ suggestion.progressNote }}</span></span><span class="text-[11px] text-slate-400">{{ suggestion.appliedAt ? '已应用' : '未应用' }}</span></div></div>
                 <div v-if="item.role === 'assistant' && item.messageId" class="mt-7 flex items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton></div>
               </div>
             </div>
@@ -806,7 +746,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
             <div v-if="pending && !pendingAssistantBubble" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div><div><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="flex items-center gap-1.5 rounded-2xl rounded-tl-md border border-slate-100 bg-white px-4 py-4 shadow-sm"><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.3s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.15s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400" /><span class="ml-2 text-xs text-slate-400">{{ pendingLabel }}</span></div></div></div>
 
             <div v-if="fuse" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-red-200 bg-red-50 text-red-600 shadow-sm"><UIcon name="i-lucide-siren" class="size-4" /></div><div class="min-w-0 max-w-[88%] sm:max-w-[82%]"><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="rounded-2xl rounded-tl-md border-2 border-red-200 bg-red-50 p-5"><div class="flex gap-3"><UIcon name="i-lucide-siren" class="mt-1 size-6 shrink-0 text-red-600" /><div><h3 class="font-semibold text-red-900">常规建议已暂停</h3><p class="mt-2 text-sm text-red-800">{{ fuse.message }}</p><p class="mt-3 rounded-xl bg-white/70 p-3 text-sm text-red-900">{{ fuse.guide }}</p></div></div></div></div></div>
-            <div v-if="route && !fuse" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div><div class="min-w-0 max-w-[88%] sm:max-w-[82%]"><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="rounded-2xl rounded-tl-md border border-emerald-100 bg-emerald-50/70 p-5"><div class="flex items-center gap-2 text-xs font-semibold text-emerald-700"><UIcon name="i-lucide-route" class="size-4" />建议处理方向</div><p class="mt-2 text-sm leading-6 text-slate-600">{{ route.rationale }}</p><UAlert v-if="routeConfirmError" class="mt-3" color="warning" variant="soft" :description="routeConfirmError" /><div class="mt-4 flex flex-wrap items-center gap-2"><UButton color="primary" :loading="confirmingModule === route.primaryModule" :disabled="Boolean(confirmingModule)" @click="confirmModule(route.primaryModule)">{{ moduleMeta[route.primaryModule].title }} · {{ Math.round(route.confidence * 100) }}%</UButton><UButton v-for="item in route.secondaryModules" :key="item.module" color="neutral" variant="soft" :loading="confirmingModule === item.module" :disabled="Boolean(confirmingModule)" @click="confirmModule(item.module)">{{ moduleMeta[item.module].title }} · {{ Math.round(item.confidence * 100) }}%</UButton></div><p class="mt-3 text-xs text-slate-500">由您确认处理方向；进入模块后再由规则引擎完成评估与分级。</p></div></div></div>
+            <div v-if="route && !fuse" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div><div class="min-w-0 max-w-[88%] sm:max-w-[82%]"><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="rounded-2xl rounded-tl-md border border-emerald-100 bg-emerald-50/70 p-5"><div class="flex items-center gap-2 text-xs font-semibold text-emerald-700"><UIcon name="i-lucide-route" class="size-4" />历史分诊方向</div><p class="mt-2 text-sm leading-6 text-slate-600">{{ route.rationale }}</p><div class="mt-4 flex flex-wrap items-center gap-2"><UButton color="primary" @click="goToModule(route.primaryModule)">{{ moduleMeta[route.primaryModule].title }} · {{ Math.round(route.confidence * 100) }}%</UButton><UButton v-for="item in route.secondaryModules" :key="item.module" color="neutral" variant="soft" @click="goToModule(item.module)">{{ moduleMeta[item.module].title }} · {{ Math.round(item.confidence * 100) }}%</UButton></div><p class="mt-3 text-xs text-slate-500">历史分诊记录，仅作回看；当前版本由 AI 助手直接给出分析与建议。</p></div></div></div>
           </div>
 
           <div v-else class="mx-auto flex h-full max-w-2xl flex-col items-center justify-center py-8 text-center">
@@ -847,22 +787,6 @@ watch(sessions, autoRestoreLatestSession, { once: true })
 
   </div>
 
-  <UModal :open="!!pendingPlanSuggestion" @update:open="(val) => { if (!val) pendingPlanSuggestion = null }" title="执行反馈" description="请填写本次方案执行的具体情况。">
-    <template #body>
-      <form class="space-y-4" @submit.prevent="submitPlanExecution">
-        <UFormField label="执行日期">
-          <UInput v-model="planExecForm.executedAt" type="datetime-local" class="w-full" />
-        </UFormField>
-        <UFormField label="执行结果">
-          <UTextarea v-model="planExecForm.executionNote" :rows="4" class="w-full" placeholder="这次行动的具体执行情况和取得的效果" />
-        </UFormField>
-        <div class="flex justify-end gap-2 pt-2">
-          <UButton color="neutral" variant="ghost" @click="() => { pendingPlanSuggestion = null }">取消</UButton>
-          <UButton type="submit" :loading="pending" :disabled="!planExecForm.executionNote.trim()">确认并保存</UButton>
-        </div>
-      </form>
-    </template>
-  </UModal>
 </template>
 
 <style>

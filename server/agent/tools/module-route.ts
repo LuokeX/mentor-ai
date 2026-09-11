@@ -4,10 +4,8 @@ import { topModuleFromScores } from '../../domain/chat-clarification'
 import type { AgentTool, AgentToolContext } from '../types'
 
 /**
- * 关键词路由表：与 server/integrations/deepseek.ts 的 localRoute 内部 keywordRoutes
- * 同源复制（该表当前未导出，且工具层不应因此拉入整条 DeepSeek 依赖链）。
- * P1 接入 routeWithDeepSeek 时，建议把该表提升为共享导出并统一两处口径，
- * 避免两套关键词表漂移。
+ * 关键词路由表：Agent 分诊工具的唯一一份关键词口径（原经典链路 localRoute 已删除）。
+ * 调整关键词只改这里，不再需要在多处同步。
  */
 const keywordRoutes: Array<[ModuleId, RegExp]> = [
   ['home_school', /(家长|投诉|家长群|家校|沟通)/i],
@@ -30,11 +28,11 @@ const moduleRouteSchema = z.object({
 })
 
 /**
- * 模块分诊（P0 确定性实现）：
- * 1) 上一轮澄清模块评分（topModuleFromScores）最高模块优先；
+ * 模块分诊（确定性实现）：
+ * 1) 上一轮模块评分（topModuleFromScores）最高模块优先；
  * 2) 无评分时命中关键词路由；
  * 3) 仍无命中则兜底 self_growth。
- * 本阶段不调用 DeepSeek（routeWithDeepSeek 留待 P1 接入，控制成本与不确定行为）。
+ * 不调用模型，成本与结果确定。
  */
 export const moduleRouteTool: AgentTool = {
   name: 'module_route',
@@ -60,7 +58,7 @@ export const moduleRouteTool: AgentTool = {
       return {
         module: keywordModule,
         confidence: 0.6,
-        rationale: '命中内置关键词路由（与消息分诊 localRoute 同一口径），建议先进入该模块评估。'
+        rationale: '命中内置关键词路由，建议先进入该模块评估。'
       }
     }
     return {

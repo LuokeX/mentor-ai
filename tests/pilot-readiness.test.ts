@@ -79,12 +79,18 @@ describe('校内试用核心不变量', () => {
     expect(JSON.stringify(result.snapshot)).not.toContain('never-send')
   })
 
-  it('首页聊天只做分诊，通知 Worker 不扩散学生信息', () => {
+  it('首页聊天统一走 Agent 且保留安全熔断，通知 Worker 不扩散学生信息', () => {
     const chat = readFileSync(new URL('../server/api/v1/chat/messages.post.ts', import.meta.url), 'utf8')
     const worker = readFileSync(new URL('../server/plugins/notification-worker.ts', import.meta.url), 'utf8')
-    expect(chat).toContain("emit(controller, 'route'")
-    expect(chat).toContain('AI 只推荐模块，不生成工具、方案或知识库引用')
+    // 经典分诊链路已删除：不再推送 route / clarification_* 事件
+    expect(chat).not.toContain("emit(controller, 'route'")
+    expect(chat).not.toContain("emit(controller, 'clarification_round'")
+    expect(chat).not.toContain("emit(controller, 'clarification_summary'")
     expect(chat).not.toContain("emit(controller, 'plan_update_suggestions'")
+    // 所有消息统一走 Agent，且保留安全熔断与失败提示
+    expect(chat).toContain('runAgentGraph(')
+    expect(chat).toContain("emit(controller, 'fuse'")
+    expect(chat).toContain('AGENT_UNAVAILABLE_MESSAGE')
     expect(worker).toContain('INSERT INTO notifications')
     expect(worker).not.toContain('studentNameEnc')
     expect(worker).not.toContain('decryptSensitive')

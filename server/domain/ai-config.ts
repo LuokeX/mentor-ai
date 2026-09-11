@@ -4,11 +4,10 @@
  * 提示词正文的唯一来源是代码 `server/domain/ai-prompt-baselines.ts`：
  *  - 运行时读取代码基线（本文件只做渲染与降级），AI 中心仅做只读展示；
  *  - 本文件保留编码、名称、说明与占位符清单（PROMPT_REGISTRY）；
- *  - 某条正文缺失时调用点按「该 AI 能力不可用」降级到确定性路径；
- *  - 数据库 ai_prompt_templates 已弃用，不再读取（表与旧行保留，见 schema 注释）。
+ *  - 某条正文缺失时调用点按「该 AI 能力不可用」降级到确定性路径。
  *
- * 运行时配置（模型名、超时、Agent 开关等）来自环境变量与代码默认值，
- * 数据库 ai_runtime_settings 已弃用，不再读取。
+ * 提示词与运行时配置都没有库内来源：ai_prompt_templates、ai_runtime_settings
+ * 两张历史表已随迁移删除；运行时参数来自环境变量与代码默认值。
  *
  * 模板语法：
  *  以 `###SYSTEM###\n` 开头的模板分为 system 段与 user 段（以 `###USER###\n` 分隔）；
@@ -43,14 +42,6 @@ export interface AiRuntimeConfig {
   timeoutMs: number | null
   embeddingModel: string | null
   embeddingEnabled: boolean | null
-  /** Agent（回答先行）启用：null = 回落环境变量。 */
-  agentEnabled: boolean | null
-  /** Agent 工具轮次上限：null = 回落代码默认。 */
-  agentMaxRounds: number | null
-  /** Agent 采样温度：null = 回落代码默认。 */
-  agentTemperature: number | null
-  /** Agent 启用的工具名数组：null = 回落全部默认工具；空数组 = 禁用全部工具。 */
-  agentTools: string[] | null
 }
 
 const SYSTEM_MARKER = '###SYSTEM###\n'
@@ -65,36 +56,6 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
       { key: 'formatInstruction', label: '输出格式指令', description: '由调用点注入的输出约束（回答先行模式或经典 JSON/自然语言模式）。' },
       { key: 'knowledgeContext', label: '已审核知识片段', description: '检索到的已发布知识片段；无检索结果时为降级提示句。' },
       { key: 'businessContextText', label: '当前业务对象上下文', description: '咨询对象（学生/班级/家长）档案摘要；未指定时为固定提示句。' }
-    ]
-  },
-  {
-    code: 'clarification_judge',
-    name: '首轮信息充分度判定提示词',
-    description: '按需追问的入口判定：教师描述是否已足够清晰，足够则直接总结，不足才进入追问轮。',
-    placeholders: [
-      { key: 'userText', label: '脱敏后的教师输入', description: '已脱敏（电话/邮箱/人名/密钥）的教师描述文本。' },
-      { key: 'historyText', label: '近轮对话历史', description: '本会话最近消息与跨会话实体记忆（可选）。' }
-    ]
-  },
-  {
-    code: 'clarification_round',
-    name: '澄清追问提示词',
-    description: '首页分诊多轮追问：每轮一个问题 + 2~4 个选项 + 内部模块评分。',
-    placeholders: [
-      { key: 'roundNumber', label: '追问轮次', description: '当前第几轮（最多 3 轮）。' },
-      { key: 'previousScores', label: '上一轮模块评分', description: '上一轮内部模块评分；首轮为固定提示句。' },
-      { key: 'knowledgeContext', label: '已审核知识片段', description: '检索到的已发布知识片段（仅了解业务范围）。' },
-      { key: 'teacherProfile', label: '教师身份画像', description: '班主任/学科/任教年级等最小画像；无画像时为空。' }
-    ]
-  },
-  {
-    code: 'clarification_summary',
-    name: '澄清总结提示词',
-    description: '多轮追问结束后的总结：完整分析回复 + 路由 JSON 元数据。',
-    placeholders: [
-      { key: 'scoresContext', label: '上一轮模块评分', description: '用于汇总最终占比；首轮无评分为空。' },
-      { key: 'knowledgeContext', label: '已审核知识片段', description: '检索到的已发布知识片段（仅参考方法论）。' },
-      { key: 'teacherProfile', label: '教师身份画像', description: '班主任/学科/任教年级等最小画像；无画像时为空。' }
     ]
   },
   {
@@ -122,31 +83,6 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
     description: '安全链路的辅助信号识别：自杀/自伤/暴力/虐待/威胁。小超时（1500ms）由代码固定。',
     placeholders: [
       { key: 'userText', label: '脱敏后的教师输入', description: '已脱敏（电话/邮箱/人名）的原始文本。' }
-    ]
-  },
-  {
-    code: 'rule_expression',
-    name: '规则结论改写提示词',
-    description: '把确定性规则结论改写成温和的教师支持表达（不改等级/规则/行动）。小超时（1500ms）由代码固定。',
-    placeholders: [
-      { key: 'facts', label: '规则执行结果 JSON', description: '模块、等级、原因、动作标题。' }
-    ]
-  },
-  {
-    code: 'module_router',
-    name: '模块路由提示词',
-    description: '首页分诊的路由决策：从未命中关键词路由的输入中判断主模块。',
-    placeholders: [
-      { key: 'userText', label: '脱敏后的教师输入', description: '已脱敏的原始文本。' }
-    ]
-  },
-  {
-    code: 'plan_update_extractor',
-    name: '方案更新提取提示词',
-    description: '从 AI 回复中提取方案执行状态更新意图（非阻塞，失败静默返回空）。小超时（3000ms）由代码固定。',
-    placeholders: [
-      { key: 'plansSummary', label: '当前方案状态 JSON', description: '教师名下方案标题/状态/动作摘要。' },
-      { key: 'aiResponse', label: 'AI 助手回复', description: '本次 AI 回答文本（截 2000 字）。' }
     ]
   },
   {
@@ -237,12 +173,11 @@ export function promptAvailable(prompt: RenderedPrompt): boolean {
 }
 
 /**
- * 运行时 AI 配置。
+ * 运行时 AI 配置（当前恒为「无覆盖」）。
  *
- * 数据库 ai_runtime_settings 已弃用，这里不再读取任何库内覆盖值，
- * 一律返回 null 表示「无覆盖」，由调用点回落环境变量与代码默认值：
+ * 一律返回 null，由调用点回落环境变量与代码默认值：
  *  - 模型名/超时/embedding：nuxt.config.ts 的 runtimeConfig（环境变量）；
- *  - Agent 轮次、温度、工具：代码默认（server/agent/graph.ts）；
+ *  - Agent 轮次、温度、工具：代码常量（server/agent/graph.ts、server/integrations/models.ts）；
  *  - Agent 行为要点：已合并进代码（server/agent/prompts.ts 的 buildFormatInstruction）。
  */
 export async function getAiRuntimeConfig(event: H3Event): Promise<AiRuntimeConfig> {
@@ -252,10 +187,6 @@ export async function getAiRuntimeConfig(event: H3Event): Promise<AiRuntimeConfi
     generatorModel: null,
     timeoutMs: null,
     embeddingModel: null,
-    embeddingEnabled: null,
-    agentEnabled: null,
-    agentMaxRounds: null,
-    agentTemperature: null,
-    agentTools: null
+    embeddingEnabled: null
   }
 }
