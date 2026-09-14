@@ -121,7 +121,7 @@ infra/                    PostgreSQL 初始化和 Nginx 配置
 
 默认工作流是「本地 dev 实时查看」，每一步发布动作都需要用户明确授权：
 
-1. 所有改动默认只在本地 dev（3301）热更新生效，改完立即可让用户实时查看；不部署测试、不部署正式。
+1. 所有改动默认只在本地 dev（3301）热更新生效，改完立即可让用户实时查看；不部署测试、不部署正式。本地 dev 统一用 `bash scripts/dev-server.sh start` 启动（systemd 用户单元 `mentor-ai-dev`，cgroup 硬上限 MemoryMax 16G，固定连本地开发库 `localhost:5434/mentor_ai_dev`，指向见 `.env.dev`）。不要用裸 `pnpm dev` 长期运行：`NODE_OPTIONS` 只约束 V8 堆，2026-09-10 曾因非堆内存涨到 34.4 GiB 触发内核全局 OOM；`pnpm dev --port 3100` 只留给 Playwright。
 2. 提交 git：只有用户明确说「提交」时才执行；多个独立改动必须拆分为多个主题提交，一次提交一个主题，不合并提交。
 3. 推送远端：随用户确认的提交执行（用户另有指示时按指示办）。
 4. 部署测试环境（3400）：只有用户明确说「部署测试环境」时才执行。
@@ -317,7 +317,9 @@ export default defineEventHandler(async (event) => {
 ## 11. 常用命令
 
 ```bash
-pnpm dev                  # 本地 Nuxt 开发服务器（devServer 端口 3301）
+bash scripts/dev-server.sh start   # 本地开发服务器（3301）标准启动方式：systemd 单元 + cgroup 内存上限
+bash scripts/dev-server.sh status  # 单元状态、内存上限、健康检查（stop / restart / logs 同理）
+pnpm dev                  # 裸启动 Nuxt（无内存上限，只用于临时调试；见第 5 节说明）
 pnpm build                # 生产构建
 pnpm typecheck            # Nuxt/TypeScript 类型检查
 pnpm test                 # Vitest 单元测试
