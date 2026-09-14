@@ -25,11 +25,15 @@ export default defineNuxtConfig({
     encryptionKey: process.env.ENCRYPTION_KEY || 'development-encryption-key-change-me',
     deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
     deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
-    deepseekRouterModel: process.env.DEEPSEEK_ROUTER_MODEL || 'deepseek-v4-flash',
-    deepseekGeneratorModel: process.env.DEEPSEEK_GENERATOR_MODEL || 'deepseek-v4-pro',
+    deepseekRouterModel: process.env.DEEPSEEK_ROUTER_MODEL || 'deepseek-flash',
+    deepseekGeneratorModel: process.env.DEEPSEEK_GENERATOR_MODEL || 'deepseek-flash',
     // 完整上下文只有登记供应商协议版本后才允许启用。
     deepseekAgreementVersion: process.env.DEEPSEEK_AGREEMENT_VERSION || '',
     deepseekTimeoutMs: Number(process.env.DEEPSEEK_TIMEOUT_MS || 30000),
+    // Agent 对话记忆（P1）：历史 token 预算 / 单轮输出上限 / 压缩触发比例
+    agentHistoryTokenBudget: Number(process.env.AI_AGENT_HISTORY_TOKEN_BUDGET || 24000),
+    agentMaxOutputTokens: Number(process.env.AI_AGENT_MAX_OUTPUT_TOKENS || 4096),
+    agentCompactionKeepRatio: Number(process.env.AI_AGENT_COMPACTION_KEEP_RATIO || 0.5),
     embeddingEnabled: process.env.EMBEDDING_ENABLED === 'true',
     // ollama | dashscope：向量化供应商，切换后存量向量需全量重建（语义空间不兼容）
     embeddingProvider: process.env.EMBEDDING_PROVIDER || 'ollama',
