@@ -11,23 +11,35 @@ const { data } = await useFetch<SurveyFeedbackConfig>('/api/v1/settings/survey-f
 const feedback = computed(() => (data.value?.enabled && data.value?.url)
   ? { url: data.value.url, title: data.value.title || '调研反馈' }
   : null)
+
+/** 默认收起成右侧窄把手，点击箭头展开；不使用悬停，避免鼠标设备上「悬停展开 + 点击收起」互相打架。 */
+const expanded = ref(false)
 </script>
 
 <template>
-  <UTooltip v-if="feedback" :text="feedback.title">
-    <UButton
-      :to="feedback.url"
+  <div
+    v-if="feedback"
+    class="fixed right-0 top-1/2 z-40 flex -translate-y-1/2 items-stretch transition-transform duration-200 print:hidden"
+    :class="expanded ? 'translate-x-0' : 'translate-x-[calc(100%-1.25rem)]'"
+  >
+    <button
+      type="button"
+      class="grid h-14 w-5 shrink-0 self-center place-items-center rounded-l-lg bg-[var(--ui-primary)] text-white"
+      :aria-expanded="expanded"
+      :aria-label="expanded ? '收起调研反馈' : '展开调研反馈'"
+      @click="expanded = !expanded"
+    >
+      <UIcon :name="expanded ? 'i-lucide-chevron-right' : 'i-lucide-chevron-left'" class="size-3.5" />
+    </button>
+    <a
+      :href="feedback.url || undefined"
       target="_blank"
       rel="noopener noreferrer"
-      color="primary"
-      size="xl"
-      class="fixed right-4 top-1/2 z-40 -translate-y-1/2 shadow-xl print:hidden md:right-6 xl:right-[max(3.5rem,calc((100vw_-_80rem)/4))] xl:translate-x-1/2"
+      class="flex flex-col items-center gap-2 bg-[var(--ui-primary)] px-2 py-3 text-white"
       :aria-label="`打开${feedback.title}`"
     >
-      <span class="flex flex-col items-center gap-2 py-2 pr-1 pl-1.5">
-        <UIcon name="i-lucide-clipboard-pen-line" class="size-5" />
-        <span class="text-sm font-medium tracking-widest [writing-mode:vertical-rl]">{{ feedback.title }}</span>
-      </span>
-    </UButton>
-  </UTooltip>
+      <UIcon name="i-lucide-clipboard-pen-line" class="size-5" />
+      <span class="text-sm font-medium tracking-widest [writing-mode:vertical-rl]">{{ feedback.title }}</span>
+    </a>
+  </div>
 </template>
