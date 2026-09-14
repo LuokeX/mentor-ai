@@ -7,12 +7,12 @@
 | 环境 | 用途 | 数据要求 | 允许执行 `db:seed` | 启动方式 |
 |---|---|---|---|---|
 | 本地开发 | 编码、调试、单元测试 | 仅使用虚构或脱敏数据 | 允许 | Node.js + 本地专用 Docker PostgreSQL（5434/mentor_ai_dev） |
-| 测试/UAT | 发布前演练：迁移、功能与数据核对 | 正式库最新备份的完整副本（默认本机回环，经授权可校内局域网） | 禁止 | `docker-compose.test.yml`（5435/mentor_ai，app 3400） |
+| 测试/UAT | 发布前演练：迁移、功能与数据核对 | 测试环境自有数据，跨版本保留，发布时不用正式库覆盖（默认本机回环，经授权可校内局域网） | 禁止 | `docker-compose.test.yml`（5435/mentor_ai，app 3400） |
 | 正式环境 | 校内封闭试用和正式业务 | 真实业务数据 | 禁止 | Docker Compose + Nginx/TLS |
 
 必须保证：
 
-- 三类环境使用不同的数据库；测试环境的数据来自正式备份副本，默认仅 `127.0.0.1` 回环访问，经授权开放局域网时仅限校内网络，禁止将副本外传或截图外发。
+- 三类环境使用不同的数据库；测试环境使用自有数据并在各版本之间保留，发布测试版本时只重建镜像、执行 migration 并重启，**不得用正式库备份覆盖测试库数据**。测试库默认仅 `127.0.0.1` 回环访问，经授权开放局域网时仅限校内网络，禁止将数据外传或截图外发。
 - `.env` 不提交到版本库，文件权限应为 `600`。日志、备份和截图不得包含密钥或业务正文。
 - `mentor_admin` 只用于初始化、迁移、备份和恢复；App 与 Worker 只能使用无建库、建表权限的 `mentor_app`。
 - 正式环境只部署经过测试并冻结的版本，不直接在服务器上修改源码、Schema 或历史 migration。
@@ -23,7 +23,7 @@
 |---|---|---|
 | `pnpm env:init` | 为本地 `.env` 替换占位值并生成随机密钥 | 仅本地首次初始化 |
 | `pnpm db:up:local` | 启动本地开发专用 PostgreSQL（`docker-compose.local.yml`，端口 5434） | 本地开发 |
-| `bash scripts/refresh-test-db.sh` | 将正式库最新备份恢复进测试库（`docker-compose.test.yml`，端口 5435） | 发布演练前 |
+| `bash scripts/refresh-test-db.sh` | 用正式库备份**覆盖**测试库（`docker-compose.test.yml`，端口 5435）。仅限明确的特殊场景手动执行，不属于发布流程；默认发布测试版本禁止使用 | 仅在获授权的特殊场景 |
 | `docker compose -f docker-compose.test.yml up -d` | 启动测试环境（migrate + app 3400） | 发布演练 |
 | `pnpm db:up` | 启动正式环境 compose 的 PostgreSQL、Ollama 并执行 migration | 仅正式环境部署流程 |
 | `pnpm db:generate` | 根据 Drizzle Schema 生成新 migration | 本地开发 |
@@ -214,15 +214,13 @@ docker compose logs --tail=100 app nginx
 
 1. 确认待发布版本、migration 清单、影响范围、负责人和回滚版本。
 2. 执行质量检查，确认无未关闭的 P0 缺陷。
-3. **测试环境演练**：用正式库最新备份恢复测试库，在测试环境执行迁移并冒烟：
+3. **测试环境演练**：在测试库现有数据上执行迁移并冒烟。测试库数据跨版本保留，**不得用正式库备份覆盖**（覆盖操作不属于发布流程，见 8.4）：
 
 ```bash
-BACKUP_RETENTION_DAYS=14 ./scripts/backup.sh          # 正式库备份（演练与部署共用）
-bash scripts/refresh-test-db.sh                        # 恢复最新备份进测试库（5435）
 docker compose -f docker-compose.test.yml build app migrate  # 迁移 SQL 在镜像内，migrate 必须一起重建
-docker compose -f docker-compose.test.yml up -d        # 测试环境执行 migrate + app
+docker compose -f docker-compose.test.yml up -d        # 测试环境执行 migrate + app，保留现有数据
 curl -s http://127.0.0.1:3400/health/ready             # 期望 200
-# 用正式账号在测试环境登录，并核对 users 等关键表数据量
+# 用测试环境已有账号登录，验证迁移后关键功能与数据完整性
 ```
 
 4. 记录备份文件名和校验和，并在隔离环境验证备份可读取。
@@ -270,6 +268,12 @@ docker compose --profile tls up -d
 ```
 
 恢复前必须再次备份当前库，并先在隔离环境验证目标备份。恢复后必须执行 migration、健康检查、抽样数据校验和权限冒烟测试。不得在未验证备份时删除 PostgreSQL 卷。
+
+### 8.4 测试环境数据库
+
+测试库（`docker-compose.test.yml`，5435）使用自有数据并跨版本保留。发布测试版本时只重建镜像、执行 migration 并重启，禁止用正式库备份覆盖测试库，否则会丢掉测试环境上已积累的验证数据。
+
+`scripts/refresh-test-db.sh` 会用正式库备份**清空并覆盖**测试库，属于特殊场景工具（例如需要复现只在正式数据上出现的迁移问题），不属于发布流程：仅当确有需要并经明确授权时手动执行，执行前先确认测试库现有数据可以丢弃。测试库中可能残留早期恢复的正式数据副本（真实人员与业务内容），仍按第 1 节要求限制访问，禁止外传或截图外发。
 
 ## 9. 日常正式环境运维
 
