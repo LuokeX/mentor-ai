@@ -36,12 +36,30 @@ AI 不直接生成正式方案，不跳过量表，不替代规则归因，不�
 ```env
 DEEPSEEK_API_KEY=实际密钥
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_ROUTER_MODEL=deepseek-v4-flash
-DEEPSEEK_GENERATOR_MODEL=deepseek-v4-flash
+DEEPSEEK_ROUTER_MODEL=deepseek-flash
+DEEPSEEK_GENERATOR_MODEL=deepseek-flash
 DEEPSEEK_TIMEOUT_MS=30000
+# Agent 对话记忆（只追加前缀 + token 预算）
+AI_AGENT_HISTORY_TOKEN_BUDGET=24000
+AI_AGENT_MAX_OUTPUT_TOKENS=4096
+AI_AGENT_COMPACTION_KEEP_RATIO=0.5
 ```
 
 DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Agent 在本轮无产出时自动整轮重试一次（传输层另有 SDK 自动重试）；重试后仍失败则本轮向教师返回统一的中文错误提示，安全规则始终由本地关键词与硬规则先行执行。
+
+模型当前默认开启思考模式（effort=high）：实测推理 token 占输出的一半到四分之三，首字延迟数秒，是回答成本的主要来源；`AI_AGENT_MAX_OUTPUT_TOKENS` 用于给输出封顶。若要降本，需先评估回答质量再显式关闭思考或降低 effort（思考模式下 `temperature` 不生效）。
+
+## 3.1 对话记忆与缓存策略
+
+首页助手的对话装载遵循「只追加前缀」：每轮请求的消息序列是上一轮的序列加上新增内容，因此 DeepSeek 的前缀缓存（缓存命中价约为未命中价的 1/30，见官方价目表）能持续命中。实现与约束：
+
+- 历史装载：`server/domain/chat-history.ts` 按 `AI_AGENT_HISTORY_TOKEN_BUDGET`（默认 24000 token）保留尾部，窗口起点对齐到教师提问。**不要再引入按条数滑窗**（历史 `limit(8)` 与 `slice(-12)` 已删除）：滑窗会让每轮前缀从历史开头分叉，实测命中率会从 68% 掉到 30%，且窗口一滑动就整段失效。
+- 超预算压缩：`server/domain/chat-compaction.ts` 在历史超出预算时，把「摘要游标之后、保留边界之前」的消息一次性并入摘要（保留比例 `AI_AGENT_COMPACTION_KEEP_RATIO`，默认 0.5，即保留一半预算的原文）。摘要加密存在 `chat_sessions.context_summary_enc`，游标是 `context_summary_upto_at`，原始消息一律保留不删；摘要调用本身也记 `ai_model_calls`（`purpose=chat_history_summary`）。每次压缩会让缓存前缀断裂一次，因此必须低频、大批量。
+- 工具轨迹回放：`server/agent/tool-trace.ts` 把本轮模型发起的 `tool_calls` 与工具返回加密存在助手消息的 `tool_trace_enc`，下一轮挂在对应提问上原样回放，使上一轮的完整请求（含工具往返）成为本轮的前缀。只回放最近一轮；超过步数/字符上限的轨迹直接丢弃；不保存思维链（实测回放不带 `reasoning_content` 也被服务端接受）。
+- system 前缀稳定：咨询对象只保留「类型 + 名称」指针，档案细节由 `record_snapshot` 工具按需查询；教师画像与会话摘要都放在 system 段，只在变化时（改画像、压缩）才打断前缀。
+- 只读工具集（`server/agent/tools/index.ts` 按上下文裁剪）：`knowledge_search` 三库检索、`module_route` 确定性分诊、`recommend_assessment` 量表推荐卡、`entity_memory` 同一对象的跨会话摘要、`record_snapshot` 当前会话绑定的咨询对象档案、`student_search` 按姓名或班级检索当前教师负责的在册学生（只返回 id/姓名/班级；姓名 AES 加密存储，只能精确匹配，不支持模糊检索）、`student_snapshot` 按 `student_search` 得到的 id 读取该学生档案。全部只读、按 `schoolId + ownerUserId` 收口、按数据模式脱敏；`record_snapshot` 与 `student_snapshot` 共用 `server/agent/tools/record-context.ts` 的读取与治理路径。**写操作不进工具层**：教师业务正文的修改仍由既有 REST 路由执行（带 `expectedUpdatedAt` 并发校验、归属条件与审计）；若日后要接入，只允许「模型起草动作卡 → 教师确认 → 前端调用既有接口」的形式，不给模型直接的写工具或 SQL。
+- 外发脱敏与本地模式：`redactOutboundText` 对所有外发文本（提问、历史、轨迹、档案、画像、摘要）按学校数据模式脱敏；`local` 模式直接不调用外部模型并向教师返回提示。
+- 可观测性：`ai_model_calls` 记录每次模型往返（含工具往返）的输入/输出与缓存命中/未命中 token；AI 中心「调用审计」按「缓存命中」列展示命中量与占比。基线对比脚本：`pnpm ai:cache-probe --run`（合成对话，仅手动运行，默认不执行）。
 
 提示词与运行时参数：
 

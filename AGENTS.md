@@ -262,6 +262,9 @@ export default defineEventHandler(async (event) => {
 - 所有消息统一走 Agent 图（`server/agent/graph.ts`），没有 Agent 开关。Agent 本轮无产出时自动整轮重试一次（传输层另有 SDK 自动重试）；重试仍失败由入口发 `error` 事件，不生成兜底回答、不回退其它提示词。
 - SSE 事件当前为：`ack`、`answer_start`、`thinking`、`tool_call`、`tool_result`、`sources`、`action_card`、`answer_delta`、`module_proportions`、`answer`、`fuse`、`error`、`done`。改动事件名必须同时更新前端消费方。
 - 历史消息仍可能带旧的 `route`、`clarification_round`、`clarification_summary` 元数据，前端只作只读回看渲染，不再产生新数据。
+- 对话记忆按「只追加前缀 + token 预算」装载（`server/domain/chat-history.ts`，预算见 `AI_AGENT_HISTORY_TOKEN_BUDGET`）：不要重新引入按条数滑窗（历史 `limit(8)` 与图内 `slice(-12)` 已删除），否则每轮请求前缀都会分叉，DeepSeek 前缀缓存全部落空。超预算时由 `server/domain/chat-compaction.ts` 做低频大块压缩（摘要加密落库，原始消息保留不删），再用 `server/agent/tool-trace.ts` 回放最近一轮工具轨迹。
+- 咨询对象档案不进 system prompt（保持前缀稳定），由 `record_snapshot` 工具按需查询；外发内容按学校数据模式脱敏（`server/domain/ai-governance.ts` 的 `redactOutboundText`），`local` 模式不调用外部模型。
+- 模型调用（含每次工具往返与摘要调用）写 `ai_model_calls`：只记元数据与输入/输出/缓存命中 token，不记 Prompt 与正文；AI 中心「调用审计」按缓存命中列观察命中率。
 
 ### 8.3 三库资源
 

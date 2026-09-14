@@ -26,12 +26,17 @@ export async function createAgentLlm(
   const model = rt.generatorModel || String(config.deepseekGeneratorModel || '')
   // 无库内覆盖时回落环境变量 DEEPSEEK_TIMEOUT_MS，仍为空给 45s。
   const timeoutMs = rt.timeoutMs ?? (Number(config.deepseekTimeoutMs) || 45000)
+  // 输出上限：缺省取运行时配置 AI_AGENT_MAX_OUTPUT_TOKENS（默认 4096），防止长思考链无界计费。
+  const maxTokens = opts.maxTokens ?? (Number(config.agentMaxOutputTokens) || 4096)
   return new ChatOpenAI({
     model,
     apiKey: String(config.deepseekApiKey || ''),
     configuration: { baseURL: String(config.deepseekBaseUrl || 'https://api.deepseek.com') },
+    // 注意：DeepSeek 思考模式下 temperature 会被静默忽略（默认思考模式开启、effort=high）。
+    // 这里保留参数以便将来显式切到非思考模式时生效；当前不发送 thinking/reasoning_effort，
+    // 即沿用服务端默认行为（思考开启）。若要降本，应先评估回答质量再显式关闭或降低 effort。
     temperature: opts.temperature ?? 0.35,
-    ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+    maxTokens,
     streaming: true,
     timeout: timeoutMs,
     // 传输层自动重试（网络抖动、429、5xx）：Agent 无法自愈的临时故障在 SDK 内重试

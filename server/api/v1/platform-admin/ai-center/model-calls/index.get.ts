@@ -38,6 +38,8 @@ export default defineEventHandler(async (event) => {
       latencyMs: schema.aiModelCalls.latencyMs,
       promptTokens: schema.aiModelCalls.promptTokens,
       completionTokens: schema.aiModelCalls.completionTokens,
+      cacheHitTokens: schema.aiModelCalls.cacheHitTokens,
+      cacheMissTokens: schema.aiModelCalls.cacheMissTokens,
       errorCode: schema.aiModelCalls.errorCode,
       dataMode: schema.aiModelCalls.dataMode,
       createdAt: schema.aiModelCalls.createdAt

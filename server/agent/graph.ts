@@ -18,8 +18,8 @@
 import type { H3Event } from 'h3'
 import { createReactAgent } from '@langchain/langgraph/prebuilt'
 import { DynamicStructuredTool } from '@langchain/core/tools'
-import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
-import type { ActionCard, AgentMessage, AgentState, AgentTool, AgentToolContext, AgentUserContext } from './types'
+import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages'
+import type { ActionCard, AgentMessage, AgentState, AgentTool, AgentToolContext, AgentToolTraceStep, AgentUserContext } from './types'
 import { AGENT_SSE_EVENTS } from './types'
 import { sanitizeHistoryForSummary } from '../domain/chat-clarification'
 import { createAgentLlm } from '../integrations/models'
@@ -28,6 +28,12 @@ import type { ModuleId } from '../../shared/contracts'
 
 /** 模型/工具默认轮次上限（P0 默认 6 轮）。 */
 const MAX_TOOL_ROUNDS = 6
+
+/** 历史消息防御上限（真正的裁剪由入口的 token 预算负责，这里只防止异常输入）。 */
+const MAX_HISTORY_MESSAGES = 400
+
+/** 单次工具返回的字符上限（防止工具结果把 in-turn 前缀撑大，进而抬高成本与延迟）。 */
+const TOOL_RESULT_CHAR_CAP = 8000
 
 /** 无产出时的自动重试次数：总尝试次数 = 1 + AGENT_RETRY_TIMES。 */
 const AGENT_RETRY_TIMES = 1
@@ -53,6 +59,25 @@ export interface RunAgentGraphResult {
   sources?: Array<{ chunkId: string; documentTitle: string; heading?: string | null; excerpt?: string; module?: string | null; libraryType?: string }>
   /** 模块评估占比（0~1）。由 module_route / recommend_assessment 工具最终路由结果推导，供前端「模块评估占比」面板展示。 */
   moduleProportions?: Record<ModuleId, number>
+  /** 本轮每一次模型往返的用量元数据（供入口写入 ai_model_calls，只记元数据不记正文）。 */
+  modelCalls?: AgentModelCallRecord[]
+  /**
+   * 本轮工具轨迹（P3）：模型发起的 tool_calls 与工具返回，供入口加密落库并在下一轮回放，
+   * 以恢复「上一轮的请求序列是这一轮前缀」的缓存不变量。无工具调用时为空。
+   */
+  toolTrace?: AgentToolTraceStep[]
+}
+
+/** 单次模型往返的用量元数据（缓存字段缺失时为 undefined，不猜测）。 */
+export interface AgentModelCallRecord {
+  model: string
+  status: 'success' | 'failed'
+  latencyMs: number
+  promptTokens?: number
+  completionTokens?: number
+  cacheHitTokens?: number
+  cacheMissTokens?: number
+  errorCode?: string
 }
 
 /** 工具层由 AGENT-B 提供；加载失败时不抛错，本轮以“无工具”运行保证可降级。 */
@@ -89,7 +114,11 @@ function toLangChainTool(def: AgentTool, ctx: AgentToolContext): DynamicStructur
     func: async (args: unknown) => {
       try {
         const result = await def.execute(args, ctx)
-        return typeof result === 'string' ? result : JSON.stringify(result)
+        const serialized = typeof result === 'string' ? result : JSON.stringify(result)
+        // 工具返回限长：超长结果只保留前缀，避免单次工具结果把上下文撑大
+        return serialized.length > TOOL_RESULT_CHAR_CAP
+          ? `${serialized.slice(0, TOOL_RESULT_CHAR_CAP)}…（结果过长已截断）`
+          : serialized
       } catch (error) {
         // 工具执行失败回传模型自愈（文本描述错误），不中断整个 agent 运行
         console.error(`[agent/graph] 工具 ${def.name} 执行失败:`, error instanceof Error ? error.message : error)
@@ -145,18 +174,43 @@ function extractKnowledgeSources(output: unknown): Array<{
 }
 
 /** v2 streamEvents chunk 形状窄化（event/name/data 均为可选字段，运行时逐个校验）。 */
-function isStreamChunk(value: unknown): value is { event: string; name?: string; data: Record<string, unknown> } {
+function isStreamChunk(value: unknown): value is { event: string; name?: string; run_id?: string; data: Record<string, unknown> } {
   if (!value || typeof value !== 'object') return false
-  const chunk = value as { event?: unknown; name?: unknown; data?: unknown }
+  const chunk = value as { event?: unknown, name?: unknown, run_id?: unknown, data?: unknown }
   if (typeof chunk.event !== 'string') return false
   if (chunk.name !== undefined && typeof chunk.name !== 'string') return false
+  if (chunk.run_id !== undefined && typeof chunk.run_id !== 'string') return false
   if (chunk.data === undefined || chunk.data === null || typeof chunk.data !== 'object') return false
   return true
 }
 
+/**
+ * 从模型消息的 usage_metadata 读取 token 用量（含 DeepSeek 缓存命中字段）。
+ * LangChain 把 OpenAI 风格的 prompt_tokens_details.cached_tokens 映射为
+ * input_token_details.cache_read；未返回该字段时保持 undefined，不猜测。
+ */
+function readUsageMetadata(message: unknown): Pick<AgentModelCallRecord, 'promptTokens' | 'completionTokens' | 'cacheHitTokens' | 'cacheMissTokens'> | null {
+  if (!message || typeof message !== 'object') return null
+  const meta = (message as { usage_metadata?: unknown }).usage_metadata
+  if (!meta || typeof meta !== 'object') return null
+  const usage = meta as {
+    input_tokens?: unknown
+    output_tokens?: unknown
+    input_token_details?: { cache_read?: unknown } | null
+  }
+  const record: Pick<AgentModelCallRecord, 'promptTokens' | 'completionTokens' | 'cacheHitTokens' | 'cacheMissTokens'> = {}
+  if (typeof usage.input_tokens === 'number' && Number.isFinite(usage.input_tokens)) record.promptTokens = usage.input_tokens
+  if (typeof usage.output_tokens === 'number' && Number.isFinite(usage.output_tokens)) record.completionTokens = usage.output_tokens
+  const cacheRead = usage.input_token_details?.cache_read
+  if (typeof cacheRead === 'number' && Number.isFinite(cacheRead) && cacheRead >= 0) {
+    record.cacheHitTokens = cacheRead
+    if (typeof record.promptTokens === 'number') record.cacheMissTokens = Math.max(0, record.promptTokens - cacheRead)
+  }
+  return Object.keys(record).length ? record : null
+}
+
 /** 从 on_chat_model_stream 的 AIMessageChunk 中提取纯文本（兼容 string 与 content block 数组两种形态）。 */
-function extractStreamedText(chunk: { data: Record<string, unknown> }): string {
-  const modelChunk = chunk.data.chunk
+function extractStreamedText(chunk: { data: Record<string, unknown> }): string {  const modelChunk = chunk.data.chunk
   if (!modelChunk || typeof modelChunk !== 'object') return ''
   const content = (modelChunk as { content?: unknown }).content
   if (typeof content === 'string') return content
@@ -236,6 +290,57 @@ function renderToolMessageContent(content: unknown): string | null {
   return null
 }
 
+/** 从模型输出中提取工具调用（工具轨迹用，字段逐个校验）。 */
+function extractToolCalls(message: unknown): Array<{ id: string, name: string, args: string }> | null {
+  if (!message || typeof message !== 'object') return null
+  const raw = (message as { tool_calls?: unknown }).tool_calls
+  if (!Array.isArray(raw) || !raw.length) return null
+  const calls: Array<{ id: string, name: string, args: string }> = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const call = item as { id?: unknown, name?: unknown, args?: unknown }
+    const name = typeof call.name === 'string' ? call.name : ''
+    if (!name) continue
+    const id = typeof call.id === 'string' && call.id ? call.id : `call_${calls.length}`
+    const args = typeof call.args === 'string' ? call.args : JSON.stringify(call.args ?? {})
+    calls.push({ id, name, args })
+  }
+  return calls.length ? calls : null
+}
+
+/** JSON 参数串 → 对象（回放时还原 tool_call 参数；解析失败按空对象处理）。 */
+function safeParseArgs(args: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(args)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+/** 工具轨迹步骤 → LangChain 消息（P3 回放，顺序与模型当时所见一致）。 */
+function traceToLangChainMessages(steps: AgentToolTraceStep[]): BaseMessage[] {
+  const messages: BaseMessage[] = []
+  for (const step of steps) {
+    if (step.type === 'assistant') {
+      messages.push(new AIMessage({
+        content: step.content,
+        tool_calls: (step.toolCalls ?? []).map(call => ({
+          name: call.name,
+          id: call.id,
+          type: 'tool_call' as const,
+          args: safeParseArgs(call.args)
+        }))
+      }))
+      continue
+    }
+    if (step.toolCallId) {
+      messages.push(new ToolMessage({ content: step.content, tool_call_id: step.toolCallId }))
+    }
+  }
+  return messages
+}
+
 /** 五个业务模块 ID（模块占比兜底/归一化用）。 */
 const MODULE_IDS: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
 
@@ -304,26 +409,48 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
   let moduleProportions = seedModuleProportions(userCtx.lastModuleScores)
   /** 是否已向客户端发过内容类事件（回答增量/工具过程/卡片/引用）：发过即不再重试，避免重复展示 */
   let emittedContent = false
+  /**
+   * 每次模型往返的用量元数据。跨重试累计：重试同样产生计费调用，
+   * 只记元数据不记正文，由入口写入 ai_model_calls。
+   */
+  const modelCallRecords: AgentModelCallRecord[] = []
+  /** 本轮工具轨迹（P3）：每次尝试重置，只有产出回答的那次会被入口落库。 */
+  let toolTraceRecords: AgentToolTraceStep[] = []
 
   // 未配置模型：不生成兜底回答，返回空答案由入口发 error 事件
   if (!config.deepseekApiKey) {
     console.error('[agent/graph] 未配置 DEEPSEEK_API_KEY，Agent 无法运行')
-    return { answer: '', actionCards: [], exitReason: 'error', toolCalls: [], sources: [] }
+    return { answer: '', actionCards: [], exitReason: 'error', toolCalls: [], sources: [], modelCalls: [] }
   }
 
   /** 执行一轮 Agent：内部只抛异常、不做兜底；累计变量由外层按轮次重置。 */
   const runOnce = async (): Promise<void> => {
     const llm = await createAgentLlm(event)
+    const modelName = typeof llm.model === 'string' && llm.model ? llm.model : 'unknown'
+    /** 本轮内每个模型调用的开始时间（run_id → 时间戳） */
+    const modelCallStarts = new Map<string, number>()
     const agentTools = await loadAgentTools(userCtx)
     const tools = agentTools.map(def => toLangChainTool(def, { event, user: userCtx }))
     const agent = createReactAgent({ llm, tools })
 
-    // system（代码基线 assistant_chat 模板 + 代码行为要点）+ 历史（sanitize 后截断，避免“选项：”列表被模型模仿）
+    // system（代码基线 assistant_chat 模板 + 代码行为要点）
+    // + 历史（只追加：由入口按 token 预算裁剪，这里不再做条数截断，只保留防御性上限）
     if (!systemPrompt.trim()) throw new Error('系统提示词未提供（assistant_chat 正文缺失）')
     const systemText = systemPrompt.trim()
-    const historyMessages: BaseMessage[] = sanitizeHistoryForSummary(messages)
-      .slice(-12)
-      .map(item => (item.role === 'user' ? new HumanMessage(item.content) : new AIMessage(item.content)))
+    if (messages.length > MAX_HISTORY_MESSAGES) {
+      console.warn(`[agent/graph] 历史消息 ${messages.length} 条超过防御上限 ${MAX_HISTORY_MESSAGES}，本轮截断（入口的 token 预算应已裁剪）`)
+    }
+    const historyMessages: BaseMessage[] = []
+    for (const item of sanitizeHistoryForSummary(messages.slice(-MAX_HISTORY_MESSAGES))) {
+      if (item.role === 'user') {
+        historyMessages.push(new HumanMessage(item.content))
+        // P3：把上一轮的工具轨迹按原顺序回放，使上一轮的请求序列成为本轮的前缀
+        const trace = (item as AgentMessage).toolTrace
+        if (trace?.length) historyMessages.push(...traceToLangChainMessages(trace))
+        continue
+      }
+      historyMessages.push(new AIMessage(item.content))
+    }
     const langMessages: BaseMessage[] = [new SystemMessage(systemText), ...historyMessages]
 
     onEvent(AGENT_SSE_EVENTS.THINKING, { phase: 'planning' })
@@ -375,7 +502,48 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
           onEvent('sources', { items: sourceItems })
         }
         onEvent(AGENT_SSE_EVENTS.TOOL_RESULT, { name: toolName, result: truncate(stringify(output), 500) })
+        // P3：工具返回进入轨迹（按模型当时看到的完整内容回放，展示用的截断不影响落库）
+        const toolCallId = (output as { tool_call_id?: unknown } | null)?.tool_call_id
+        if (typeof toolCallId === 'string' && toolCallId) {
+          toolTraceRecords.push({
+            type: 'tool',
+            content: renderToolMessageContent((output as { content?: unknown } | null)?.content) ?? stringify(output),
+            toolCallId
+          })
+        }
         emittedContent = true
+        continue
+      }
+      if (rawChunk.event === 'on_chat_model_start') {
+        if (rawChunk.run_id) modelCallStarts.set(rawChunk.run_id, Date.now())
+        continue
+      }
+      if (rawChunk.event === 'on_chat_model_end') {
+        const usage = readUsageMetadata(rawChunk.data.output)
+        const startedAt = rawChunk.run_id ? modelCallStarts.get(rawChunk.run_id) : undefined
+        modelCallRecords.push({
+          model: modelName,
+          status: 'success',
+          latencyMs: startedAt ? Math.max(0, Date.now() - startedAt) : 0,
+          ...(usage || {})
+        })
+        // P3：模型发起的工具调用进入轨迹（含 id，用于与工具返回配对）
+        const modelOutput = rawChunk.data.output
+        const calls = extractToolCalls(modelOutput)
+        if (calls) {
+          const text = renderToolMessageContent((modelOutput as { content?: unknown } | null)?.content) ?? ''
+          toolTraceRecords.push({ type: 'assistant', content: text, toolCalls: calls })
+        }
+        continue
+      }
+      if (rawChunk.event === 'on_chat_model_error') {
+        const startedAt = rawChunk.run_id ? modelCallStarts.get(rawChunk.run_id) : undefined
+        modelCallRecords.push({
+          model: modelName,
+          status: 'failed',
+          latencyMs: startedAt ? Math.max(0, Date.now() - startedAt) : 0,
+          errorCode: 'model_error'
+        })
         continue
       }
       if (rawChunk.event === 'on_chat_model_stream') {
@@ -395,6 +563,7 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     contextEvents = []
     toolCallRecords = []
     sourceRecords = []
+    toolTraceRecords = []
     moduleProportions = seedModuleProportions(userCtx.lastModuleScores)
     answerText = ''
     exitReason = null
@@ -415,7 +584,7 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
 
   // 重试后仍无产出：不回退到其它提示词，返回空答案由入口发 error 事件
   if (!answerText.trim()) {
-    return { answer: '', actionCards: [], exitReason: 'error', toolCalls: [], sources: [] }
+    return { answer: '', actionCards: [], exitReason: 'error', toolCalls: [], sources: [], modelCalls: modelCallRecords, toolTrace: [] }
   }
   if (exitReason === null) exitReason = 'done'
 
@@ -428,6 +597,8 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
   return {
     answer: answerText.trim(), actionCards, exitReason,
     toolCalls: toolCallRecords, sources: sourceRecords,
-    moduleProportions: hasProportion ? moduleProportions : undefined
+    moduleProportions: hasProportion ? moduleProportions : undefined,
+    modelCalls: modelCallRecords,
+    toolTrace: toolTraceRecords
   }
 }

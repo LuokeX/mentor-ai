@@ -26,6 +26,7 @@
     "backfill:chat-titles": "tsx scripts/backfill-chat-titles.ts",
     "backfill:tool-action-steps": "tsx scripts/backfill-tool-action-steps.ts",
     "resources:reindex": "tsx scripts/reindex-module-resource-embeddings.ts",
+    "ai:cache-probe": "tsx scripts/ai-cache-probe.ts",
     "import:business-data": "tsx scripts/import-business-data/index.ts",
     "template:build": "tsx scripts/build-template-v4.mjs",
     "template:split": "tsx scripts/generate-templates.ts",

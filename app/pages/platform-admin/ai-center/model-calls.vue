@@ -12,6 +12,8 @@ interface ModelCallRow {
   latencyMs: number | null
   promptTokens: number | null
   completionTokens: number | null
+  cacheHitTokens: number | null
+  cacheMissTokens: number | null
   errorCode: string | null
   dataMode: string | null
   createdAt: string
@@ -22,9 +24,18 @@ const purposeLabels: Record<string, string> = {
   clarification_summary: '澄清总结',
   assistant_answer: '聊天回答',
   assistant_answer_stream: '聊天流式回答',
+  assistant_chat: '首页助手指答',
   assessment_report: '评估报告润色',
   instrument_recommendation: '量表分诊',
   plan_update_extraction: '方案更新提取',
+}
+
+/** 缓存命中占比文案：命中/输入总量（未返回缓存字段时显示占位符）。 */
+function cacheHitLabel(row: ModelCallRow): string {
+  if (row.cacheHitTokens === null) return '—'
+  const total = row.promptTokens ?? (row.cacheHitTokens + (row.cacheMissTokens ?? 0))
+  if (!total) return `${row.cacheHitTokens}`
+  return `${row.cacheHitTokens}/${total} · ${Math.round((row.cacheHitTokens / total) * 100)}%`
 }
 
 const page = ref(1)
@@ -113,7 +124,8 @@ const purposeOptions = [
             <th class="px-4 py-3 font-medium">模型</th>
             <th class="px-4 py-3 font-medium">状态</th>
             <th class="px-4 py-3 font-medium">延迟</th>
-            <th class="px-4 py-3 font-medium">Token</th>
+            <th class="px-4 py-3 font-medium">Token（输入/输出）</th>
+            <th class="px-4 py-3 font-medium">缓存命中</th>
             <th class="px-4 py-3 font-medium">错误码</th>
           </tr>
         </thead>
@@ -133,6 +145,7 @@ const purposeOptions = [
             <td class="px-4 py-3 text-xs text-gray-400">
               {{ row.promptTokens !== null ? `${row.promptTokens}/${row.completionTokens ?? 0}` : '—' }}
             </td>
+            <td class="px-4 py-3 text-xs text-gray-500">{{ cacheHitLabel(row) }}</td>
             <td class="px-4 py-3 text-xs text-red-500">{{ row.errorCode || '—' }}</td>
           </tr>
         </tbody>

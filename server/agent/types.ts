@@ -17,6 +17,21 @@ import type { AiDataMode } from '../domain/ai-governance'
 export interface AgentMessage {
   role: 'user' | 'assistant'
   content: string
+  /**
+   * 该条教师提问之后发生的工具轨迹（P3，仅最近一轮回放）。
+   * 用于让本轮的请求序列与上一轮模型实际看到的序列保持一致，恢复前缀缓存命中。
+   */
+  toolTrace?: AgentToolTraceStep[]
+}
+
+/** 工具轨迹步骤：assistant = 模型发起的工具调用；tool = 工具返回。 */
+export interface AgentToolTraceStep {
+  type: 'assistant' | 'tool'
+  content: string
+  /** assistant 步骤：工具调用列表（id/name/args）。 */
+  toolCalls?: Array<{ id: string, name: string, args: string }>
+  /** tool 步骤：对应的 tool_call_id。 */
+  toolCallId?: string
 }
 
 /** 教师上下文（业务对象/记忆/画像），由 guard 节点装载，工具可读。 */

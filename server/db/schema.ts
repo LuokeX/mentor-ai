@@ -388,6 +388,13 @@ export const chatSessions = pgTable('chat_sessions', {
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   archivedBy: uuid('archived_by').references(() => users.id),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  /** 更早对话的加密摘要（P2 压缩；覆盖到 contextSummaryUptoAt 为止的消息）。 */
+  contextSummaryEnc: text('context_summary_enc'),
+  /** 摘要已覆盖到的消息时间游标：该时间之前（含）的消息进入摘要，不再进提示词。 */
+  contextSummaryUptoAt: timestamp('context_summary_upto_at', { withTimezone: true }),
+  contextSummaryUpdatedAt: timestamp('context_summary_updated_at', { withTimezone: true }),
+  /** 摘要正文的估算 token 数（用于预算与观测）。 */
+  contextSummaryTokens: integer('context_summary_tokens'),
   ...timestamps
 }, table => [
   index('chat_sessions_owner_idx').on(table.ownerUserId),
@@ -401,6 +408,11 @@ export const chatMessages = pgTable('chat_messages', {
   sessionId: uuid('session_id').notNull().references(() => chatSessions.id, { onDelete: 'restrict' }),
   role: varchar('role', { length: 20 }).notNull(),
   contentEnc: text('content_enc').notNull(),
+  /**
+   * 该轮工具调用轨迹（P3）：加密保存模型发起的 tool_calls 与工具返回，
+   * 下一轮回放以恢复「上一轮请求是这一轮前缀」的缓存不变量。
+   */
+  toolTraceEnc: text('tool_trace_enc'),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -909,6 +921,9 @@ export const aiModelCalls = pgTable('ai_model_calls', {
   latencyMs: integer('latency_ms'),
   promptTokens: integer('prompt_tokens'),
   completionTokens: integer('completion_tokens'),
+  /** 缓存命中/未命中输入 tokens（DeepSeek 前缀缓存；未返回时为 null）。 */
+  cacheHitTokens: integer('cache_hit_tokens'),
+  cacheMissTokens: integer('cache_miss_tokens'),
   errorCode: varchar('error_code', { length: 80 }),
   dataMode: varchar('data_mode', { length: 20 }),
   contextType: varchar('context_type', { length: 30 }),
