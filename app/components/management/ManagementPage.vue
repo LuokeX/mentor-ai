@@ -170,6 +170,8 @@ const contextualNav = computed(() => route.path.startsWith('/information')
         </details>
       </template>
     </nav>
+    <!-- 页面级「标题前置」区域：允许页面把今日待办等行动区块放在标题之前，标题与描述仍由本组件统一渲染 -->
+    <slot name="before-header" />
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
       <div>
         <h1 class="text-2xl font-semibold text-gray-900">{{ title }}</h1>
