@@ -21,6 +21,22 @@ describe('Agent 行为要点（formatInstruction）', () => {
     expect(text).toContain('不输出代码块')
   })
 
+  it('正文不写初步理解/免责声明，也不写来源标注与卡片内部标识', () => {
+    const text = buildFormatInstruction({})
+    expect(text).toContain('不要在回答开头加')
+    expect(text).toContain('先说我的初步理解')
+    expect(text).toContain('不要在正文里写来源标注')
+    expect(text).toContain('模块英文 ID')
+    expect(text).toContain('约 N 分钟')
+  })
+
+  it('共情开场：先具体回应情绪与难处，再进入判断与动作，禁止指责性表达', () => {
+    const text = buildFormatInstruction({})
+    expect(text).toContain('共情开场')
+    expect(text).toContain('您不对')
+    expect(text.indexOf('共情开场')).toBeLessThan(text.indexOf('回答先行'))
+  })
+
   it('保留不做诊断、不碰确定性规则结论等既有约束', () => {
     const text = buildFormatInstruction({})
     expect(text).toContain('不做精神、医学、法律诊断')

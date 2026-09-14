@@ -9,13 +9,14 @@ const AI_CENTER_CODES = [
   'tool_step_polish',
   'semantic_safety',
   'instrument_recommendation',
+  'chat_history_summary',
 ]
 
 /** 代码基线读取不查库，事件对象仅用于保持调用签名一致。 */
 const fakeEvent = {} as H3Event
 
 describe('PROMPT_REGISTRY 提示词注册表', () => {
-  it('覆盖全部 5 个 AI 调用点且 code 唯一', () => {
+  it('覆盖全部 6 个 AI 调用点且 code 唯一', () => {
     const codes = PROMPT_REGISTRY.map(item => item.code)
     expect(codes).toEqual(AI_CENTER_CODES)
     expect(new Set(codes).size).toBe(codes.length)
@@ -30,13 +31,22 @@ describe('PROMPT_REGISTRY 提示词注册表', () => {
 })
 
 describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () => {
-  it('5 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
+  it('6 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
     expect(Object.keys(AI_PROMPT_BASELINES).sort()).toEqual([...AI_CENTER_CODES].sort())
     for (const code of AI_CENTER_CODES) {
       const text = getPromptBaseline(code)
       expect(text, `${code} 缺少代码基线`).toBeTruthy()
       expect(text!.trim().length).toBeGreaterThan(0)
     }
+  })
+
+  it('assistant_chat 纳入角色定位与双向共情，且不出现临床心理学身份表述', () => {
+    const text = getPromptBaseline('assistant_chat')!
+    expect(text).toContain('【角色定位】')
+    expect(text).toContain('双向共情')
+    expect(text).toContain('共情班主任')
+    expect(text).not.toContain('临床')
+    expect(text).not.toContain('心理顾问')
   })
 
   it('未登记的编码返回 null（调用点据此降级）', () => {

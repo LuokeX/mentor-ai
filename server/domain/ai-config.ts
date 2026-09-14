@@ -93,6 +93,15 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
       { key: 'instrumentOptions', label: '可选量表清单 JSON', description: '含业务触发条件判断（该做/暂不需要/已做过）的白名单。' },
       { key: 'userText', label: '脱敏后的教师描述', description: '已脱敏的教师困扰描述。' }
     ]
+  },
+  {
+    code: 'chat_history_summary',
+    name: '对话历史摘要提示词',
+    description: '把较早的对话压缩成交接备忘（P2 压缩；摘要加密落库，原始消息保留不删）。',
+    placeholders: [
+      { key: 'previousSummary', label: '已有摘要', description: '上一版摘要正文；首次压缩时为空。' },
+      { key: 'newMessages', label: '待并入的较早对话', description: '已按数据模式脱敏的历史消息文本。' }
+    ]
   }
 ]
 
