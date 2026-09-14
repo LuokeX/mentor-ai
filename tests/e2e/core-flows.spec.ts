@@ -1,4 +1,10 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page, type TestInfo } from '@playwright/test'
+
+/** 小屏顶栏与底部菜单默认收起为浮层，需要其中的入口（顶部退出、底部导航）时先点悬浮按钮滑出。 */
+async function revealMobileNav(page: Page, testInfo: TestInfo) {
+  if (testInfo.project.name !== 'mobile-chromium') return
+  await page.getByRole('button', { name: '显示顶部导航和底部菜单' }).click()
+}
 
 async function login(page: import('@playwright/test').Page, phone: string, options: { password?: string } = {}) {
   const response = await page.request.post('/api/v1/auth/login', {
@@ -24,7 +30,11 @@ test.describe('四角色核心路径', () => {
   test('教师登录、移动导航与 AI 咨询', async ({ page }, testInfo) => {
     await login(page, '16688096890')
     await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()
-    if (testInfo.project.name === 'mobile-chromium') await expect(page.getByRole('link', { name: '我的方案', exact: true })).toBeVisible()
+    if (testInfo.project.name === 'mobile-chromium') {
+      // 小屏导航默认收起，点悬浮按钮滑出后才能校验底部菜单入口
+      await revealMobileNav(page, testInfo)
+      await expect(page.getByRole('link', { name: '我的方案', exact: true })).toBeVisible()
+    }
     await page.getByLabel('向 AI 赋能助手提问').fill('我想先梳理一下班级纪律反复的问题。')
     await page.getByRole('button', { name: '发送消息' }).click()
     await expect(page.getByText('这条回答有帮助吗？').last()).toBeVisible({ timeout: 30_000 })
@@ -161,7 +171,7 @@ test.describe('四角色核心路径', () => {
     await expect(page.locator('section').filter({ has: page.getByRole('heading', { name: '行动方案建议' }) })).toBeVisible()
   })
 
-  test('学校管理员直接添加并激活教师账号', async ({ page }) => {
+  test('学校管理员直接添加并激活教师账号', async ({ page }, testInfo) => {
     await login(page, '13800000001')
     await expect(page.getByRole('heading', { name: '学校管理后台' })).toBeVisible()
     const phone = `139${String(Date.now()).slice(-8)}`
@@ -174,6 +184,8 @@ test.describe('四角色核心路径', () => {
     expect(created.id).toBeTruthy()
     expect(created.generatedPassword).toBeUndefined()
     expect(created.activationToken).toBeUndefined()
+    // 小屏顶栏默认收起：先点悬浮按钮滑出顶栏，再点退出
+    await revealMobileNav(page, testInfo)
     await page.getByRole('button', { name: '退出' }).click()
     await login(page, phone, { password: 'PilotTeacher@2026' })
     await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()

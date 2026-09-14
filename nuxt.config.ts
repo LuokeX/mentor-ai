@@ -64,5 +64,15 @@ export default defineNuxtConfig({
   typescript: {
     strict: true,
     typeCheck: true
+  },
+  app: {
+    head: {
+      meta: [
+        // resizes-content：Android 上键盘直接压缩布局视口，100dvh 同步收缩，输入框自然停在键盘上方；
+        // 同时避免浏览器为露出输入框平移可视视口，把 fixed 的底部菜单拖到键盘上方。iOS 不支持该声明，
+        // 由 useKeyboardInset 用可视视口差值补偿；底部菜单在键盘弹出时统一隐藏。
+        { name: 'viewport', content: 'width=device-width, initial-scale=1, interactive-widget=resizes-content' }
+      ]
+    }
   }
 })

@@ -10,6 +10,11 @@
 
 html, body, #__nuxt { min-height: 100%; }
 
+/* 手机端禁止整窗回弹与下拉刷新：滚动只发生在内容区内部，页面本身不跟着上下滑动 */
+html, body {
+  overscroll-behavior-y: none;
+}
+
 body {
   margin: 0;
   color: #1e2926;
@@ -47,6 +52,16 @@ body {
    （如 z-[60]），production 构建时 :ui 里的任意值类可能不被扫描生成，普通 CSS 类不受影响。 */
 .select-content-over-modal {
   z-index: 60;
+}
+
+/* 隐藏滚动条但保留滚动能力（对话消息区等，鼠标滚轮/触摸仍可滚动） */
+.hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 @media print {

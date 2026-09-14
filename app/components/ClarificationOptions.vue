@@ -17,12 +17,17 @@ const isLocked = computed(() => Boolean(props.selectedOption))
 </script>
 
 <template>
-  <div class="mt-4 flex items-start gap-3">
-    <div class="grid size-8 shrink-0 place-items-center rounded-xl border border-violet-100 bg-white text-violet-700 shadow-sm">
-      <UIcon name="i-lucide-help-circle" class="size-4" />
+  <div class="mt-4 flex items-start gap-3 max-sm:flex-col max-sm:gap-2">
+    <div class="flex items-center gap-2 sm:block sm:shrink-0">
+      <div class="grid size-8 shrink-0 place-items-center rounded-xl border border-violet-100 bg-white text-violet-700 shadow-sm">
+        <UIcon name="i-lucide-help-circle" class="size-4" />
+      </div>
+      <p class="text-[11px] text-slate-400 sm:hidden">
+        赋能助手 · 追问第{{ round }}轮<span v-if="isLocked" class="ml-1 text-emerald-600">· 已选择</span>
+      </p>
     </div>
-    <div class="min-w-0 max-w-[88%] sm:max-w-[82%]">
-      <p class="mb-1.5 text-[11px] text-slate-400">
+    <div class="min-w-0 max-w-full sm:max-w-[82%]">
+      <p class="mb-1.5 hidden text-[11px] text-slate-400 sm:block">
         赋能助手 · 追问第{{ round }}轮
         <span v-if="isLocked" class="ml-1 text-emerald-600">· 已选择</span>
       </p>

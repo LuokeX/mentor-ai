@@ -5,6 +5,16 @@ const route = useRoute()
 const { user, refresh, logout } = useAuth()
 await refresh()
 
+// 小屏导航（顶栏 + 底部菜单）是浮层：默认收起，点悬浮按钮才滑出，滚动或到点自动收起（桌面端恒显示）
+const { hidden: headerHidden, reveal: revealNav, hide: hideNav, bindAutoHideHeader } = useAutoHideHeader()
+bindAutoHideHeader()
+// 页面切换后收起浮层导航，保持内容优先
+watch(() => route.fullPath, () => hideNav())
+// 手机端键盘状态：covered 表示底部被键盘挡住，此时底部菜单必须藏在键盘后面，
+// 不能让浏览器把它拖到键盘上方（inset 供对话页把面板底部对齐到键盘上沿）
+const { covered: keyboardCovered, bindKeyboardInset } = useKeyboardInset()
+bindKeyboardInset()
+
 const roleHome = computed(() => {
   if (user.value?.role === 'school_admin') return '/school-admin'
   if (user.value?.role === 'platform_admin') return '/platform-admin'
@@ -47,7 +57,7 @@ function closeDropdown(event: Event) {
 
 <template>
   <div class="min-h-screen">
-    <header v-if="user" class="sticky top-0 z-40 border-b border-emerald-950/5 bg-[#f8faf6]/90 backdrop-blur-xl">
+    <header v-if="user" class="fixed inset-x-0 top-0 z-40 border-b border-emerald-950/5 bg-[#f8faf6] shadow-[0_12px_32px_-24px_rgba(15,42,35,0.55)] backdrop-blur-xl transition-transform duration-200 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-gradient-to-b after:from-[#f8faf6]/95 after:to-transparent lg:sticky lg:bg-[#f8faf6]/90 lg:shadow-none lg:after:hidden" :class="headerHidden ? '-translate-y-full' : ''">
       <div class="mx-auto flex max-w-7xl items-center justify-between px-5 py-3">
         <NuxtLink :to="roleHome" class="flex items-center gap-3">
           <span class="grid size-10 place-items-center rounded-2xl bg-emerald-800 text-lg text-white">六</span>
@@ -89,15 +99,26 @@ function closeDropdown(event: Event) {
         </div>
       </div>
     </header>
-    <main class="pb-20 md:pb-0">
+    <main class="pb-[4.5rem] lg:pb-0">
       <slot />
     </main>
-    <footer v-if="user && route.path !== '/'" class="mx-auto max-w-7xl px-5 pb-6 pt-2 print:block">
+    <footer v-if="user && route.path !== '/'" class="mx-auto max-w-7xl px-5 pt-2 pb-[calc(4.5rem+env(safe-area-inset-bottom))] print:block lg:pb-6">
       <p class="text-center text-xs text-slate-400">AI 辅助建议，需人工专业判断</p>
     </footer>
     <SurveyFeedbackButton v-if="user" />
-    <nav v-if="user" class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 px-[max(1rem,env(safe-area-inset-left))] pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
-      <div class="mx-auto grid max-w-md" :class="user.role === 'teacher' ? 'grid-cols-5' : 'grid-cols-2'">
+    <!-- 小屏导航默认收起，点右侧这个悬浮按钮才滑出顶栏与底部菜单；滚动或 6 秒后自动收起 -->
+    <button
+      v-if="user"
+      type="button"
+      class="fixed right-3 bottom-[calc(env(safe-area-inset-bottom)+7rem)] z-50 grid size-10 place-items-center rounded-full border border-slate-200/80 bg-white/90 text-slate-500 shadow-lg shadow-slate-900/10 backdrop-blur-xl transition-all duration-200 active:scale-95 lg:hidden"
+      :class="headerHidden && !keyboardCovered ? 'opacity-100' : 'pointer-events-none translate-x-3 opacity-0'"
+      aria-label="显示顶部导航和底部菜单"
+      @click="revealNav()"
+    >
+      <UIcon name="i-lucide-menu" class="size-4" />
+    </button>
+    <nav v-if="user" class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 px-[max(1rem,env(safe-area-inset-left))] pb-[env(safe-area-inset-bottom)] backdrop-blur-xl transition-transform duration-200 md:hidden" :class="[headerHidden || keyboardCovered ? 'translate-y-full' : '', keyboardCovered ? 'invisible' : '']">
+      <div class="mx-auto grid w-full max-w-md" :style="{ gridTemplateColumns: `repeat(${mobileItems.length || 1}, minmax(0, 1fr))` }">
         <template v-for="item in mobileItems" :key="item.to">
           <details v-if="item.to === '/growth'" class="relative">
             <summary :class="['flex min-h-16 min-w-0 cursor-pointer list-none select-none flex-col items-center justify-center gap-1 px-0.5 text-[10px]', route.path.startsWith('/growth') || route.path.startsWith('/notifications') ? '!text-emerald-700' : 'text-slate-500']">

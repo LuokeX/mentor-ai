@@ -103,21 +103,101 @@ const withoutRecord = ref(false)
 const deleteCandidate = ref<string>()
 const toast = useToast()
 const { moduleLabel, libraryTypeLabel, actionStatusLabel } = useDisplayLabels()
-const quickPrompts = [
-  '小明上课经常走神，作业拖拉到半夜，数学计算经常看错符号，考前紧张到手抖，说自己就是学不好。我该如何处理？',
-  '我们班最近死气沉沉的，学生不愿意来学校，班委也形同虚设，制定了班级公约没人执行，我每天都在救火。我该如何处理？',
-  '有个家长经常越级投诉到校长，说我没管好，还联合其他家长在群里攻击我，沟通渠道基本断了。我该如何处理？',
-  '我真的快扛不住了，每天都像打仗一样，回家就瘫在沙发上什么都不想干，学生犯错我现在连气都懒得生了。我该如何处理？'
-]
+// 对话页把消息区滚动上报给导航浮层：滚动即收起顶栏与底部菜单（小屏生效）
+// 小屏顶栏浮层滑出时会盖住面板标题行、露出被裁半截的图标：此时把标题行一并淡出；顶栏收起或桌面端恒显示
+const { hidden: headerHidden, enabled: headerAutoHide, reportScroll: reportHeaderScroll } = useAutoHideHeader()
+const panelHeaderFaded = computed(() => headerAutoHide.value && !headerHidden.value)
+// 键盘遮挡高度：键盘以浮层覆盖，面板主动缩短，输入框才不会被盖住
+const { inset: keyboardInset, covered: keyboardCovered } = useKeyboardInset()
+// 手机端浏览器有时会为了露出输入框平移可视视口，键盘收起后必须归零，否则整窗看起来上移了
+watch([keyboardCovered, keyboardInset], () => { if (typeof window !== 'undefined' && window.scrollY !== 0) window.scrollTo(0, 0) })
+/** 是否手机窄屏（<640px，与 Tailwind 的 sm 断点一致）：手机上面板四周只留 2px。 */
+const phoneLayout = ref(false)
+let phoneMedia: MediaQueryList | null = null
+function syncPhoneLayout(event?: MediaQueryListEvent) {
+  phoneLayout.value = event ? event.matches : Boolean(phoneMedia?.matches)
+}
+/** 是否有底部菜单（<768px，与 Tailwind 的 md 断点一致）：它默认收起，只有滑出时才需要抬高输入框。 */
+const bottomNavLayout = ref(false)
+let bottomNavMedia: MediaQueryList | null = null
+function syncBottomNavLayout(event?: MediaQueryListEvent) {
+  bottomNavLayout.value = event ? event.matches : Boolean(bottomNavMedia?.matches)
+}
+/** 对话面板高度：默认用 class 里的高度；键盘弹出时用内联高度补偿，其余情况高度恒定（导航显隐不挤压内容）。 */
+const panelHeightStyle = computed(() => {
+  if (!keyboardCovered.value) return undefined
+  // 键盘弹出时底部菜单已经藏到键盘后面，面板底部直接贴到键盘上沿。
+  // 手机窄屏面板只留 2px 顶边距；≥sm 沿用原有基准。
+  const base = phoneLayout.value ? '2px' : '1.9rem'
+  const inset = keyboardInset.value > 0 ? ` - ${keyboardInset.value}px` : ''
+  return { height: `calc(100dvh - ${base}${inset})` }
+})
+
+/** 底部菜单浮层滑出时输入框上移：菜单悬浮在聊天窗口之上，但不盖住输入框（≥md 没有底部菜单，不需要抬高）。 */
+const inputLifted = computed(() => bottomNavLayout.value && !headerHidden.value && !keyboardCovered.value)
+
+// 对话页按视口高度布局、滚动只发生在消息区内：锁掉窗口滚动，手机端手势不会把整个窗口拖走
+useHead({ htmlAttrs: { class: 'overflow-hidden' }, bodyAttrs: { class: 'overflow-hidden' } })
 const greetingName = computed(() => {
   const name = user.value?.name?.trim()
   if (!name) return '老师'
   return name.endsWith('老师') ? name : `${name}老师`
 })
-const mobileSessionItems = computed(() => (sessions.value || []).map((item: any) => ({
-  label: item.title,
-  value: item.id
-})))
+
+/** 空态问候语的打字效果（模仿 SSE 流式输出：逐字出现，输出完收起光标）。 */
+const typedGreeting = ref('')
+const greetingTyping = ref(false)
+let greetingTimer: ReturnType<typeof setInterval> | null = null
+
+function stopGreetingTyping() {
+  if (greetingTimer) {
+    clearInterval(greetingTimer)
+    greetingTimer = null
+  }
+  greetingTyping.value = false
+}
+
+function playGreetingTyping() {
+  stopGreetingTyping()
+  const full = `${greetingName.value}，今天遇到了什么？`
+  // 用户系统设置了「减少动态效果」时直接整段显示，不做逐字动画
+  if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    typedGreeting.value = full
+    return
+  }
+  typedGreeting.value = ''
+  greetingTyping.value = true
+  let index = 0
+  greetingTimer = setInterval(() => {
+    index += 1
+    typedGreeting.value = full.slice(0, index)
+    if (index >= full.length) stopGreetingTyping()
+  }, 70)
+}
+/** 手机/平板端会话抽屉开关（≥lg 时左侧栏常驻，不使用此状态）。 */
+const sidebarOpen = ref(false)
+/** 是否处于「左侧栏常驻」的宽屏（与 Tailwind 的 lg 断点一致）。 */
+const isDesktopSidebar = ref(false)
+let sidebarMedia: MediaQueryList | null = null
+function syncDesktopSidebar(event?: MediaQueryListEvent) {
+  isDesktopSidebar.value = event ? event.matches : Boolean(sidebarMedia?.matches)
+}
+/** 当前会话标题；无会话时显示「新对话」。 */
+const activeSessionTitle = computed(() => {
+  const current = (sessions.value || []).find((item: { id: string, title?: string }) => item.id === sessionId.value)
+  return current?.title?.trim() || '新对话'
+})
+
+function startNewConversation() {
+  sidebarOpen.value = false
+  newConversation()
+}
+
+function selectSession(id: string) {
+  sidebarOpen.value = false
+  void loadSession(id)
+}
+
 const allContextOptions = computed(() => [
   ...((contextOptions.value?.students || []).map((item: any) => ({ ...item, type: 'student' }))),
   ...((contextOptions.value?.classes || []).map((item: any) => ({ ...item, type: 'class' }))),
@@ -135,8 +215,10 @@ async function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
   messageViewport.value?.scrollTo({ top: messageViewport.value.scrollHeight, behavior })
 }
 
-function usePrompt(prompt: string) {
-  input.value = prompt
+/** 消息区滚动 → 顶栏自动收起/滑出（小屏生效）。 */
+function onMessageViewportScroll(event: Event) {
+  const el = event.target as HTMLElement
+  reportHeaderScroll(el.scrollTop, el.scrollHeight - el.clientHeight)
 }
 
 function sendClarificationSelection(option: string) {
@@ -169,12 +251,8 @@ function newConversation() {
   selectedContextKey.value = 'none'
   mentionOpen.value = false
   mentionQuery.value = ''
+  playGreetingTyping()
   nextTick(() => scrollToLatest('auto'))
-}
-
-function handleMobileSessionSelect(value: string | undefined) {
-  if (!value || value === sessionId.value) return
-  void loadSession(value)
 }
 
 // 会话内允许随时 @ 切换咨询对象：切换后保留当前对话，后续消息由后端更新会话绑定（跟随最新对象）
@@ -585,6 +663,29 @@ onMounted(async () => {
     if (!timeline.value.length) loadContextPreview()
   }
   if (prefill?.prompt) input.value = prefill.prompt
+  if (!timeline.value.length) playGreetingTyping()
+  // 左侧栏在 ≥lg 常驻，小屏收起时用 inert 把它移出键盘 Tab 顺序
+  sidebarMedia = window.matchMedia('(min-width: 1024px)')
+  syncDesktopSidebar()
+  sidebarMedia.addEventListener('change', syncDesktopSidebar)
+  phoneMedia = window.matchMedia('(max-width: 639px)')
+  syncPhoneLayout()
+  phoneMedia.addEventListener('change', syncPhoneLayout)
+  bottomNavMedia = window.matchMedia('(max-width: 767px)')
+  syncBottomNavLayout()
+  bottomNavMedia.addEventListener('change', syncBottomNavLayout)
+})
+
+// 教师姓名晚于首屏到达时重新播放一次，避免标题停留在默认称呼
+watch(greetingName, () => {
+  if (!timeline.value.length) playGreetingTyping()
+})
+
+onBeforeUnmount(() => {
+  stopGreetingTyping()
+  sidebarMedia?.removeEventListener('change', syncDesktopSidebar)
+  phoneMedia?.removeEventListener('change', syncPhoneLayout)
+  bottomNavMedia?.removeEventListener('change', syncBottomNavLayout)
 })
 
 // 客户端 useFetch 可能晚于 onMounted 完成，列表就绪后再兜底恢复一次
@@ -592,11 +693,16 @@ watch(sessions, autoRestoreLatestSession, { once: true })
 </script>
 
 <template>
-  <div class="mx-auto max-w-7xl px-5 pb-8 pt-4 sm:pb-12 sm:pt-6">
-    <section id="chat-section" class="grid items-stretch gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
-      <aside class="panel hidden h-[18rem] flex-col overflow-hidden lg:flex lg:h-[calc(100dvh-8.5rem)] lg:min-h-[34rem]">
+  <div class="mx-auto max-w-7xl px-0.5 pb-0 pt-0.5 sm:px-6 sm:pb-6 sm:pt-6 lg:px-8">
+    <section id="chat-section" class="grid items-stretch gap-5 sm:gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
+      <div v-if="sidebarOpen" class="fixed inset-0 z-[55] bg-slate-900/30 backdrop-blur-sm lg:hidden" @click="sidebarOpen = false" />
+      <aside
+        class="panel fixed inset-y-2 left-2 z-[60] flex w-72 max-w-[85vw] flex-col overflow-hidden shadow-2xl transition-transform duration-200 lg:static lg:inset-auto lg:h-[calc(100dvh-7.5rem)] lg:w-auto lg:max-w-none lg:shadow-none"
+        :class="sidebarOpen ? 'translate-x-0' : '-translate-x-[120%] lg:translate-x-0'"
+        :inert="!sidebarOpen && !isDesktopSidebar"
+      >
         <div class="border-b border-slate-100 p-3">
-          <button type="button" class="w-full flex items-center justify-center gap-1.5 rounded-lg bg-[var(--ui-primary)] px-3 py-2 text-sm font-medium text-white" @click="newConversation"><UIcon name="i-lucide-message-square-plus" class="size-4" />新对话</button>
+          <button type="button" class="w-full flex items-center justify-center gap-1.5 rounded-lg bg-[var(--ui-primary)] px-3 py-2 text-sm font-medium text-white" @click="startNewConversation"><UIcon name="i-lucide-message-square-plus" class="size-4" />新对话</button>
         </div>
         <div class="border-b border-slate-100 px-3 py-3">
           <NuxtLink
@@ -619,7 +725,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         </div>
         <div class="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
           <div v-for="item in sessions" :key="item.id" class="group relative rounded-xl text-left text-sm transition" :class="sessionId===item.id?'bg-emerald-50 text-emerald-950 ring-1 ring-inset ring-emerald-100':'text-slate-600 hover:bg-slate-50'">
-            <button class="w-full px-3 py-2 text-left" @click="loadSession(item.id)">
+            <button class="w-full px-3 py-2 text-left" @click="selectSession(item.id)">
               <span class="flex items-start gap-2"><UIcon name="i-lucide-message-circle" class="mt-0.5 size-4 shrink-0" :class="sessionId===item.id?'text-emerald-600':'text-slate-300 group-hover:text-slate-500'" /><span class="line-clamp-2 block leading-5">{{ item.title }}</span></span>
               <span class="mt-1 block pl-6 text-[11px] text-slate-400">{{ formatDateTime(item.updatedAt) }}</span>
             </button>
@@ -631,28 +737,23 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         </div>
       </aside>
 
-      <div class="panel flex h-[calc(100dvh-10rem)] min-h-[26rem] min-w-0 flex-col overflow-hidden lg:h-[calc(100dvh-8.5rem)] lg:min-h-[34rem]">
-        <div class="border-b border-slate-100 bg-white/95 px-4 py-3 lg:hidden">
-          <div class="flex items-center gap-2">
-            <UButton icon="i-lucide-message-square-plus" size="sm" @click="newConversation">新对话</UButton>
-            <USelect
-              :model-value="sessionId || ''"
-              :items="mobileSessionItems"
-              :disabled="!mobileSessionItems.length || pending"
-              placeholder="最近对话"
-              class="min-w-0 flex-1"
-              @update:model-value="handleMobileSessionSelect"
-            />
-          </div>
+      <div
+        class="panel relative flex h-[calc(100dvh-env(safe-area-inset-bottom)-4px)] min-w-0 flex-col overflow-hidden transition-[height] duration-200 sm:h-[calc(100dvh-3rem)] lg:h-[calc(100dvh-7.5rem)]"
+        :style="panelHeightStyle"
+      >
+        <div class="flex items-center gap-2 border-b border-slate-100 bg-white/95 px-3 py-1.5 lg:hidden">
+          <UButton icon="i-lucide-panel-left" color="neutral" variant="ghost" size="sm" aria-label="打开对话列表" @click="sidebarOpen = true" />
+          <p class="min-w-0 flex-1 truncate text-sm font-medium text-slate-700">{{ activeSessionTitle }}</p>
+          <UButton icon="i-lucide-message-square-plus" color="primary" variant="soft" size="sm" aria-label="新对话" @click="newConversation" />
         </div>
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white/90 px-5 py-3.5 sm:px-6">
+        <div class="flex items-center justify-between gap-3 border-b border-slate-100 bg-white/90 px-3 py-1.5 transition-opacity duration-200 sm:px-6 sm:py-3" :class="panelHeaderFaded ? 'opacity-0' : ''" :aria-hidden="panelHeaderFaded">
           <div class="flex min-w-0 items-center gap-3">
-            <div class="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-4.5" /></div>
+            <div class="grid size-7 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700 sm:size-9 sm:rounded-xl"><UIcon name="i-lucide-sparkles" class="size-4.5" /></div>
             <div class="min-w-0"><div class="flex items-center gap-2"><strong class="text-sm">AI 助手</strong><span class="size-1.5 rounded-full bg-emerald-500" /></div></div>
           </div>
-          <div class="flex min-w-0 flex-wrap items-center gap-2">
-            <div v-if="selectedContext" class="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800"><UIcon :name="selectedContext.type === 'student' ? 'i-lucide-user-round' : selectedContext.type === 'class' ? 'i-lucide-users' : 'i-lucide-user-round-check'" class="size-3.5" /><span>{{ mentionTypeLabel(selectedContext.type) }} · {{ selectedContext.label }}</span></div>
-            <span v-else class="text-xs text-slate-400">未指定对象 · 输入框输入 @ 可关联</span>
+          <div class="flex min-w-0 flex-1 items-center justify-end gap-2">
+            <div v-if="selectedContext" class="flex min-w-0 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 sm:py-1.5"><UIcon :name="selectedContext.type === 'student' ? 'i-lucide-user-round' : selectedContext.type === 'class' ? 'i-lucide-users' : 'i-lucide-user-round-check'" class="size-3.5 shrink-0" /><span class="truncate">{{ mentionTypeLabel(selectedContext.type) }} · {{ selectedContext.label }}</span></div>
+            <span v-else class="min-w-0 truncate text-xs text-slate-500 sm:text-sm"><span class="sm:hidden"><span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长</span><span class="hidden sm:inline">未指定对象 · 输入框输入 <span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长</span></span>
           </div>
         </div>
         <div v-if="selectedContext" class="border-b border-emerald-100 bg-emerald-50/70 px-5 py-3 text-sm sm:px-6">
@@ -660,14 +761,18 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
 
-        <div ref="messageViewport" class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/70 to-white px-4 py-6 sm:px-6" :class="{'opacity-60':loadingSession}">
-          <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-7">
-            <div v-for="(item, index) in timeline" :key="index" class="flex items-start gap-3" :class="item.role === 'user' ? 'flex-row-reverse' : ''">
-              <div class="grid size-8 shrink-0 place-items-center rounded-xl text-xs font-semibold" :class="item.role === 'user' ? 'bg-emerald-800 text-white' : 'border border-emerald-100 bg-white text-emerald-700 shadow-sm'">
-                <UIcon v-if="item.role === 'assistant'" name="i-lucide-sparkles" class="size-4" /><span v-else>{{ user?.name?.slice(0, 1) }}</span>
+        <div ref="messageViewport" class="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-slate-50/70 to-white px-3 pt-4 sm:px-6 sm:pt-6" :class="[inputLifted ? 'pb-40 sm:pb-44' : 'pb-40 sm:pb-36', {'opacity-60':loadingSession}]" @scroll="onMessageViewportScroll">
+          <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-5 sm:space-y-7">
+            <div v-for="(item, index) in timeline" :key="index" class="flex items-start gap-3" :class="item.role === 'user' ? 'flex-row-reverse' : 'max-sm:flex-col max-sm:gap-2'">
+              <!-- 手机端：头像与「赋能助手」标签单独占一行，回答气泡在下方通栏，不再被头像列和 88% 宽度挤压 -->
+              <div class="flex items-center gap-2 sm:block sm:shrink-0">
+                <div class="grid size-8 shrink-0 place-items-center rounded-xl text-xs font-semibold" :class="item.role === 'user' ? 'bg-emerald-800 text-white' : 'border border-emerald-100 bg-white text-emerald-700 shadow-sm'">
+                  <UIcon v-if="item.role === 'assistant'" name="i-lucide-sparkles" class="size-4" /><span v-else>{{ user?.name?.slice(0, 1) }}</span>
+                </div>
+                <div v-if="item.role === 'assistant'" class="flex items-center gap-2 text-[11px] text-slate-400 sm:hidden"><span>赋能助手</span><span v-if="item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
               </div>
-              <div class="min-w-0 max-w-[88%] sm:max-w-[82%]">
-                <div class="mb-1.5 flex items-center gap-2 text-[11px] text-slate-400" :class="item.role === 'user' ? 'justify-end' : ''"><span>{{ item.role === 'user' ? '我' : '赋能助手' }}</span><span v-if="item.role === 'assistant' && item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
+              <div class="min-w-0" :class="item.role === 'user' ? 'max-w-[88%] sm:max-w-[82%]' : 'max-w-full sm:max-w-[82%]'">
+                <div class="mb-1.5 items-center gap-2 text-[11px] text-slate-400" :class="item.role === 'user' ? 'flex justify-end' : 'hidden sm:flex'"><span>{{ item.role === 'user' ? '我' : '赋能助手' }}</span><span v-if="item.role === 'assistant' && item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
                 <div class="group relative rounded-2xl px-4 py-3 text-sm leading-7 shadow-sm" :class="item.role === 'user' ? 'rounded-tr-md bg-emerald-800 text-white' : 'rounded-tl-md border border-slate-100 bg-white text-slate-700'">
                   <div v-if="item.role === 'user'" class="whitespace-pre-wrap" v-text="item.text" />
                   <!-- 空气泡内部动画：answer_start 已建立气泡但文本未流入时，动画显示在气泡内，避免与底部独立状态条重复 -->
@@ -680,7 +785,8 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   <div v-else class="markdown-body" v-html="useMarkdown(item.text)" />
                   <button v-if="item.role === 'assistant'" type="button" class="absolute bottom-2 right-2 flex items-center gap-1 rounded-md bg-white/95 px-1.5 py-1 text-[11px] text-slate-400 opacity-0 shadow-sm transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
                 </div>
-                <details v-if="item.role === 'assistant' && item.answerCompleted && item.toolCalls?.length" class="group mt-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-xs text-slate-600">
+                <!-- 工具调用过程（「调用过 N 个工具」）：暂时隐藏，保留代码待确认后再决定去留 -->
+                <details v-if="item.role === 'assistant' && item.answerCompleted && item.toolCalls?.length" hidden class="group mt-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-xs text-slate-600">
                   <summary class="flex cursor-pointer list-none items-center justify-between px-3.5 py-2 font-medium text-slate-500">
                     <span class="flex items-center gap-2"><UIcon name="i-lucide-wrench" class="size-4" />调用过 {{ item.toolCalls.length }} 个工具</span>
                     <UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" />
@@ -739,24 +845,44 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   </div>
                 </details>
                 <div v-if="item.role === 'assistant' && item.planUpdateSuggestions?.length" class="mt-7 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><p class="font-semibold text-amber-900">AI 曾建议更新方案（历史记录）</p><div v-for="(suggestion, suggestionIndex) in item.planUpdateSuggestions" :key="suggestionIndex" class="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><span class="text-slate-600">{{ suggestion.actionTitle || '新增复盘' }}<template v-if="suggestion.newStatus"> → {{ actionStatusLabel(suggestion.newStatus) }}</template><span v-if="suggestion.progressNote" class="mt-1 block text-slate-400">{{ suggestion.progressNote }}</span></span><span class="text-[11px] text-slate-400">{{ suggestion.appliedAt ? '已应用' : '未应用' }}</span></div></div>
-                <div v-if="item.role === 'assistant' && item.messageId" class="mt-7 flex items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton></div>
+                <div v-if="item.role === 'assistant' && item.messageId" class="mt-3 flex items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton></div>
               </div>
             </div>
 
-            <div v-if="pending && !pendingAssistantBubble" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div><div><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="flex items-center gap-1.5 rounded-2xl rounded-tl-md border border-slate-100 bg-white px-4 py-4 shadow-sm"><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.3s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.15s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400" /><span class="ml-2 text-xs text-slate-400">{{ pendingLabel }}</span></div></div></div>
+            <div v-if="pending && !pendingAssistantBubble" class="flex items-start gap-3 max-sm:flex-col max-sm:gap-2">
+              <div class="flex items-center gap-2 sm:block sm:shrink-0">
+                <div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div>
+                <span class="text-[11px] text-slate-400 sm:hidden">赋能助手</span>
+              </div>
+              <div class="min-w-0 max-w-full sm:max-w-[82%]">
+                <p class="mb-1.5 hidden text-[11px] text-slate-400 sm:block">赋能助手</p>
+                <div class="flex w-fit items-center gap-1.5 rounded-2xl rounded-tl-md border border-slate-100 bg-white px-4 py-4 shadow-sm"><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.3s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-.15s]" /><span class="size-1.5 animate-bounce rounded-full bg-emerald-400" /><span class="ml-2 text-xs text-slate-400">{{ pendingLabel }}</span></div></div></div>
 
-            <div v-if="fuse" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-red-200 bg-red-50 text-red-600 shadow-sm"><UIcon name="i-lucide-siren" class="size-4" /></div><div class="min-w-0 max-w-[88%] sm:max-w-[82%]"><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="rounded-2xl rounded-tl-md border-2 border-red-200 bg-red-50 p-5"><div class="flex gap-3"><UIcon name="i-lucide-siren" class="mt-1 size-6 shrink-0 text-red-600" /><div><h3 class="font-semibold text-red-900">常规建议已暂停</h3><p class="mt-2 text-sm text-red-800">{{ fuse.message }}</p><p class="mt-3 rounded-xl bg-white/70 p-3 text-sm text-red-900">{{ fuse.guide }}</p></div></div></div></div></div>
-            <div v-if="route && !fuse" class="flex items-start gap-3"><div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div><div class="min-w-0 max-w-[88%] sm:max-w-[82%]"><p class="mb-1.5 text-[11px] text-slate-400">赋能助手</p><div class="rounded-2xl rounded-tl-md border border-emerald-100 bg-emerald-50/70 p-5"><div class="flex items-center gap-2 text-xs font-semibold text-emerald-700"><UIcon name="i-lucide-route" class="size-4" />历史分诊方向</div><p class="mt-2 text-sm leading-6 text-slate-600">{{ route.rationale }}</p><div class="mt-4 flex flex-wrap items-center gap-2"><UButton color="primary" @click="goToModule(route.primaryModule)">{{ moduleMeta[route.primaryModule].title }} · {{ Math.round(route.confidence * 100) }}%</UButton><UButton v-for="item in route.secondaryModules" :key="item.module" color="neutral" variant="soft" @click="goToModule(item.module)">{{ moduleMeta[item.module].title }} · {{ Math.round(item.confidence * 100) }}%</UButton></div><p class="mt-3 text-xs text-slate-500">历史分诊记录，仅作回看；当前版本由 AI 助手直接给出分析与建议。</p></div></div></div>
+            <div v-if="fuse" class="flex items-start gap-3 max-sm:flex-col max-sm:gap-2">
+              <div class="flex items-center gap-2 sm:block sm:shrink-0">
+                <div class="grid size-8 shrink-0 place-items-center rounded-xl border border-red-200 bg-red-50 text-red-600 shadow-sm"><UIcon name="i-lucide-siren" class="size-4" /></div>
+                <span class="text-[11px] text-slate-400 sm:hidden">赋能助手</span>
+              </div>
+              <div class="min-w-0 max-w-full sm:max-w-[82%]">
+                <p class="mb-1.5 hidden text-[11px] text-slate-400 sm:block">赋能助手</p>
+                <div class="rounded-2xl rounded-tl-md border-2 border-red-200 bg-red-50 p-5"><div class="flex gap-3"><UIcon name="i-lucide-siren" class="mt-1 size-6 shrink-0 text-red-600" /><div><h3 class="font-semibold text-red-900">常规建议已暂停</h3><p class="mt-2 text-sm text-red-800">{{ fuse.message }}</p><p class="mt-3 rounded-xl bg-white/70 p-3 text-sm text-red-900">{{ fuse.guide }}</p></div></div></div></div></div>
+            <div v-if="route && !fuse" class="flex items-start gap-3 max-sm:flex-col max-sm:gap-2">
+              <div class="flex items-center gap-2 sm:block sm:shrink-0">
+                <div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div>
+                <span class="text-[11px] text-slate-400 sm:hidden">赋能助手</span>
+              </div>
+              <div class="min-w-0 max-w-full sm:max-w-[82%]">
+                <p class="mb-1.5 hidden text-[11px] text-slate-400 sm:block">赋能助手</p>
+                <div class="rounded-2xl rounded-tl-md border border-emerald-100 bg-emerald-50/70 p-5"><div class="flex items-center gap-2 text-xs font-semibold text-emerald-700"><UIcon name="i-lucide-route" class="size-4" />历史分诊方向</div><p class="mt-2 text-sm leading-6 text-slate-600">{{ route.rationale }}</p><div class="mt-4 flex flex-wrap items-center gap-2"><UButton color="primary" @click="goToModule(route.primaryModule)">{{ moduleMeta[route.primaryModule].title }} · {{ Math.round(route.confidence * 100) }}%</UButton><UButton v-for="item in route.secondaryModules" :key="item.module" color="neutral" variant="soft" @click="goToModule(item.module)">{{ moduleMeta[item.module].title }} · {{ Math.round(item.confidence * 100) }}%</UButton></div><p class="mt-3 text-xs text-slate-500">历史分诊记录，仅作回看；当前版本由 AI 助手直接给出分析与建议。</p></div></div></div>
           </div>
 
           <div v-else class="mx-auto flex h-full max-w-2xl flex-col items-center justify-center py-8 text-center">
-            <div class="grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-6" /></div><h2 class="mt-4 text-lg font-semibold">{{ greetingName }}，今天遇到了什么？</h2><p class="mt-2 text-sm leading-6 text-slate-500">自然描述真实情况即可，助手会帮您判断先进入哪个模块评估。</p>
-            <div class="mt-6 grid w-full gap-2 sm:grid-cols-2"><button v-for="prompt in quickPrompts" :key="prompt" type="button" class="rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm leading-5 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800" @click="usePrompt(prompt)">{{ prompt }}<UIcon name="i-lucide-arrow-up-right" class="ml-1 inline size-3.5 text-slate-300" /></button></div>
+            <div class="grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-6" /></div><h2 class="mt-4 text-xl font-semibold sm:text-2xl" :aria-label="`${greetingName}，今天遇到了什么？`"><span>{{ typedGreeting }}</span><span v-if="greetingTyping" class="ml-0.5 inline-block h-5 w-[2px] animate-pulse rounded-full bg-emerald-500 align-[-3px] sm:h-6" aria-hidden="true" /></h2>
           </div>
         </div>
 
-        <form class="sticky bottom-0 border-t border-slate-100 bg-white px-4 py-3.5 sm:px-6" @submit.prevent="ask">
-          <div class="relative">
+        <form class="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pt-4 transition-[padding] duration-200 sm:px-6 lg:pb-6" :class="inputLifted ? 'pb-[4.5rem]' : 'pb-5'" @submit.prevent="ask">
+          <div class="pointer-events-auto relative">
             <div v-if="mentionOpen" class="fixed inset-0 z-20" @click="closeMention" />
             <div v-if="mentionOpen" class="absolute bottom-full left-0 right-0 z-30 mb-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
               <div class="flex items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs text-slate-400">
@@ -775,12 +901,14 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                 </button>
               </div>
             </div>
-            <div class="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100">
-              <UTextarea v-model="input" :rows="2" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" placeholder="请详细描述您的问题，包括：问题表现、涉及对象、发生频率、您的感受。系统将自动匹配关键词进行智能识别。" aria-label="向 AI 赋能助手提问" @input="handleMentionInput" @keydown.enter.exact.prevent="ask" @keydown.esc="closeMention" />
-              <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
+            <div class="rounded-2xl border border-slate-300 bg-white/30 p-1.5 shadow-lg shadow-slate-900/5 backdrop-blur-xl [-webkit-backdrop-filter:blur(24px)] transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100 sm:p-2">
+              <div class="flex items-center gap-2">
+                <UTextarea v-model="input" :rows="2" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" aria-label="向 AI 赋能助手提问" @input="handleMentionInput" @keydown.enter.exact.prevent="ask" @keydown.esc="closeMention" />
+                <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
+              </div>
+              <div class="mt-1 hidden items-center justify-between gap-2 px-1 text-[11px] sm:flex"><span class="text-slate-500">AI 辅助建议，需人工专业判断 · 输入 @ 关联对象</span><span class="shrink-0 text-slate-500">Enter 发送 · Shift + Enter 换行 {{ input.length }}/4000</span></div>
             </div>
           </div>
-          <div class="mt-1 flex items-center justify-between px-1 text-[11px]"><span class="text-slate-300">AI 辅助建议，需人工专业判断 · 输入 @ 关联对象</span><span class="text-slate-400">Enter 发送 · Shift + Enter 换行 {{ input.length }}/4000</span></div>
         </form>
       </div>
     </section>
