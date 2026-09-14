@@ -199,33 +199,94 @@ export function createTemplateAssessmentReport(input: {
       disclaimer: nonDiagnosticNote
     }
   }
-  return assessmentReportSchema.parse(report)
+  // 与模型输出走同一套长度归一化：模板正文来自业务填写的输出模板，
+  // 旧模板里出现超长归因名或依据时，不能让它把确定性报告整份打失败。
+  return assessmentReportSchema.parse(normalizeReportOutput(report))
+}
+
+/** 报告 schema 的长度与条数上限（必须与 shared/reports.ts 的 assessmentReportSchema 保持一致）。 */
+const REPORT_LIMITS = {
+  profile: { title: 80, summary: 700, primaryConcern: 120 },
+  risk: { level: 40, label: 80, description: 500, nonDiagnosticNote: 300 },
+  attribution: { name: 120, reason: 500, maxAttributions: 5, maxReasons: 12 },
+  printMeta: { moduleTitle: 80, assessmentVersion: 80, ruleId: 120, maxRuleIds: 40, disclaimer: 400 }
+} as const
+
+/** 按 schema 的 trim + max 语义收敛单个字符串（非字符串原样返回，交由 schema 判类型）。 */
+function clampText(value: unknown, max: number): unknown {
+  if (typeof value !== 'string') return value
+  const text = value.trim()
+  return text.length > max ? text.slice(0, max) : text
+}
+
+/** 按 schema 的 max 语义收敛字符串数组。 */
+function clampTextArray(value: unknown, maxItems: number, maxItemLength: number): unknown {
+  if (!Array.isArray(value)) return value
+  return value.slice(0, maxItems).map(item => clampText(item, maxItemLength))
+}
+
+/** 按字段上限收敛对象里的字符串字段，保留其余字段原样（未知字段由 schema 丢弃）。 */
+function clampFields(value: unknown, limits: Record<string, number>): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const out: Record<string, unknown> = { ...(value as Record<string, unknown>) }
+  for (const [key, max] of Object.entries(limits)) {
+    if (key in out) out[key] = clampText(out[key], max)
+  }
+  return out
+}
+
+function clampReportObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
 }
 
 /**
- * 把模型/外部报告对象里的数组截断到 schema 上限，作为严格校验前的归一化。
- * 背景：多信号案例（如学生个案「橙色-高响应」单条归因命中 8 条以上依据）模型
- * 展开成依据时经常超过 schema 上限，直接 parse 会抛 too_big → 回退模板报告。
- * 模板报告用 slice 截断能过、模型输出没截断却判失败，属于同源不同处理的不一致。
- * 这里在 parse 前统一截断：attributions ≤5、单条归因 reasons ≤12。
- * 只截断不新增，不削弱后续的安全校验（等级/模块/规则 ID/归因名/违禁词）。
+ * 模型输出的报告在严格校验前的归一化：把「写得太长」收敛到 schema 上限。
+ *
+ * 背景：模板报告用 slice 截断、模型输出没截断却直接 parse 判失败，属于同源不同处理。
+ * 线上实测（2026-08-19 ~ 09-07）报告生成约 19% 失败，绝大多数是 too_big：模型把归因依据、
+ * 规则 ID、免责声明写超长，重试三次仍失败，教师要多等一分多钟才看到「深度报告暂不可用」。
+ * 这里把长度与条数上限一次性收敛，让「写太啰嗦」不再等于「生成失败」。
+ *
+ * 边界：只截断，不新增、不改写、不补默认值。等值、枚举、必填、最小长度这些语义校验，
+ * 以及后续的等级 / 模块 / 规则 ID / 归因名 / 违禁词断言，都仍然原样生效。
  */
-function clampReportArrays(input: unknown): unknown {
-  if (!input || typeof input !== 'object') return input
-  const obj = input as Record<string, unknown>
-  const attributions = Array.isArray(obj.attributions)
-    ? obj.attributions.slice(0, 5).map(item => {
-        if (!item || typeof item !== 'object') return item
-        const attr = item as Record<string, unknown>
-        if (Array.isArray(attr.reasons)) attr.reasons = attr.reasons.slice(0, 12)
-        return attr
-      })
-    : obj.attributions
-  return { ...obj, attributions }
+function normalizeReportOutput(input: unknown): unknown {
+  const obj = clampReportObject(input)
+  if (!obj) return input
+  const out: Record<string, unknown> = { ...obj }
+
+  out.profile = clampFields(out.profile, REPORT_LIMITS.profile)
+  out.risk = clampFields(out.risk, REPORT_LIMITS.risk)
+
+  if (Array.isArray(out.attributions)) {
+    out.attributions = out.attributions.slice(0, REPORT_LIMITS.attribution.maxAttributions).map(item => {
+      const attribution = clampReportObject(clampFields(item, { name: REPORT_LIMITS.attribution.name }))
+      if (attribution) {
+        attribution.reasons = clampTextArray(
+          attribution.reasons,
+          REPORT_LIMITS.attribution.maxReasons,
+          REPORT_LIMITS.attribution.reason
+        )
+      }
+      return attribution ?? item
+    })
+  }
+
+  const printMeta = clampReportObject(clampFields(out.printMeta, {
+    moduleTitle: REPORT_LIMITS.printMeta.moduleTitle,
+    assessmentVersion: REPORT_LIMITS.printMeta.assessmentVersion,
+    disclaimer: REPORT_LIMITS.printMeta.disclaimer
+  }))
+  if (printMeta) {
+    printMeta.ruleIds = clampTextArray(printMeta.ruleIds, REPORT_LIMITS.printMeta.maxRuleIds, REPORT_LIMITS.printMeta.ruleId)
+  }
+  out.printMeta = printMeta ?? out.printMeta
+
+  return out
 }
 
 export function validateAssessmentReport(input: unknown, module: ModuleId, result: ReportResult): AssessmentReport {
-  const parsed = assessmentReportSchema.parse(clampReportArrays(input))
+  const parsed = assessmentReportSchema.parse(normalizeReportOutput(input))
   if (parsed.risk.level !== result.level) throw new Error('AI report changed rule level')
   // severity 是确定性结果，AI 润色时经常整字段丢掉。它决定前端等级徽章的颜色，
   // 丢了就恒为灰，所以这里无条件用引擎的值覆盖，而不是校验后放行。

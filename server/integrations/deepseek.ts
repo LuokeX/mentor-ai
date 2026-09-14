@@ -8,6 +8,27 @@ import { getAiRuntimeConfig, promptAvailable, renderPrompt } from '../domain/ai-
 import { resolvePublishedModuleResource } from '../domain/module-resources'
 import { schema, useDb } from '../utils/db'
 
+/**
+ * 校验失败信息：Zod 报错只保留「原因 + 字段路径 + 上限」，路径排在前面。
+ *
+ * 背景：error_code 列宽 80，原先写的是 `error.message`（整段 Zod issues JSON），
+ * 被截断后只剩一段花括号，2026-08 的报告生成失败因此一直查不出是哪个字段超限。
+ * 同样的字符串也会作为「上次输出未通过校验」回喂给模型重试，结构化短文本比 JSON 更好修。
+ * 导出供测试固定格式：路径必须排在截断之前的位置。
+ */
+export function compactValidationError(error: unknown): string {
+  if (error instanceof z.ZodError) {
+    return error.issues.slice(0, 3).map((issue) => {
+      const path = issue.path.length ? issue.path.join('.') : '(root)'
+      const limit = 'maximum' in issue && typeof issue.maximum === 'number' ? ` max=${issue.maximum}`
+        : 'minimum' in issue && typeof issue.minimum === 'number' ? ` min=${issue.minimum}`
+          : ''
+      return `${issue.code} ${path}${limit}`
+    }).join('; ')
+  }
+  return error instanceof Error ? error.message : 'unknown'
+}
+
 export interface KnowledgeCitation {
   chunkId: string
   documentTitle: string
@@ -149,7 +170,7 @@ export async function generateAssessmentReport(event: H3Event, input: {
     if (previousError) {
       attemptMessages.push({
         role: 'user',
-        content: `\n\n上次输出未通过校验：${previousError}\n\n请修正后重新输出严格 JSON，字段结构必须与示例完全一致，并把超限字段（归因依据列表、单条依据长度等）收敛到示例允许的数量。`
+        content: `\n\n上次输出未通过校验：${previousError}\n\n请修正后重新输出严格 JSON，字段结构必须与示例完全一致，并把未通过的字段收敛到示例允许的数量或长度。`
       })
     }
     try {
@@ -201,9 +222,9 @@ export async function generateAssessmentReport(event: H3Event, input: {
         purpose: 'assessment_report',
         status: 'failed',
         latencyMs: Date.now() - startedAt,
-        errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown'
+        errorCode: compactValidationError(error).slice(0, 80)
       }).catch(() => undefined)
-      previousError = error instanceof Error ? error.message : '未知错误'
+      previousError = compactValidationError(error)
       if (attempt < MAX_REPORT_ATTEMPTS) {
         await new Promise(resolve => setTimeout(resolve, REPORT_RETRY_DELAY_MS))
       }
