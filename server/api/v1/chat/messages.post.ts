@@ -144,10 +144,15 @@ export default defineEventHandler(async (event) => {
     async start(controller) {
       // ---- Agent（回答先行）：所有消息走图驱动回答，SSE 事件由 onEvent 原样转发 ----
       const runAgentAnswer = async (): Promise<void> => {
-        // 复用已装载上下文：history / businessContext / entityMemory / teacherProfileText
-        const businessContextText = businessContext && !body.withoutRecord
-          ? `当前咨询对象：${businessContext.type} / ${businessContext.label}\n${businessContext.prompt}`
+        // 咨询对象只以「类型 + 名称」指针进 system 段，档案细节由 record_snapshot 工具按需查询
+        const recordBinding = businessContext && !body.withoutRecord
+          ? { type: businessContext.type, id: businessContext.id, label: businessContext.label }
           : null
+        const businessContextText = recordBinding
+          ? `当前咨询对象：${recordBinding.type === 'student' ? '学生' : recordBinding.type === 'class' ? '班级' : '家长'}「${recordBinding.label}」。涉及该对象的具体事实（基本信息、家长关系、最近沟通、在跟方案与复盘）必须先调用 record_snapshot 工具查询，未查询时不要凭印象描述。`
+          : businessContext && body.withoutRecord
+            ? '本轮教师选择不引入档案数据：不要查询或引用学生/班级/家长档案细节。'
+            : null
         // 知识检索由 Agent 运行时工具完成：模板知识段只承载引用边界，避免与工具检索重复
         const knowledgeContext = '知识检索由运行时工具完成：仅当工具返回已发布的资源片段时才可引用并标注来源；未命中时只能基于通用班主任工作方法回答，不得编造平台手册、量表、SOP、等级、制度、数据或来源。'
         const systemPrompt = await buildAgentSystemPrompt(event, { knowledgeContext, businessContextText, teacherProfileText })
@@ -156,9 +161,11 @@ export default defineEventHandler(async (event) => {
           userId: user.id,
           sessionId: ownedSessionId,
           businessContextText,
+          businessContext: recordBinding,
           entityMemory,
           teacherProfileText,
-          lastModuleScores
+          lastModuleScores,
+          dataMode: governance.effectiveMode
         }
         const agentMessages: AgentMessage[] = [
           ...entityMemory,

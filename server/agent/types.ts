@@ -11,6 +11,7 @@ import type { H3Event } from 'h3'
 import type { z } from 'zod'
 import type { ModuleId } from '../../shared/contracts'
 import type { KnowledgeCitation } from '../integrations/deepseek'
+import type { AiDataMode } from '../domain/ai-governance'
 
 /** 对话消息（与 chatMessages 存储一致的角色视图）。 */
 export interface AgentMessage {
@@ -25,6 +26,11 @@ export interface AgentUserContext {
   sessionId: string
   /** 咨询对象（学生/班级/家长）上下文摘要，可为 null。 */
   businessContextText?: string | null
+  /**
+   * 当前会话绑定的咨询对象标识（只含类型/ID/展示名，不含档案正文）。
+   * 供 record_snapshot 等按需查档工具使用；未绑定或教师选择不引入档案时为 null。
+   */
+  businessContext?: { type: 'student' | 'class' | 'guardian', id: string, label: string } | null
   /** 跨会话实体记忆（按需拉取）。 */
   entityMemory?: AgentMessage[]
   /** 教师画像。 */
@@ -33,6 +39,11 @@ export interface AgentUserContext {
   citations?: KnowledgeCitation[]
   /** 上一轮模块评分（模块分诊依据）。 */
   lastModuleScores?: Record<ModuleId, number>
+  /**
+   * 学校生效的数据模式。工具与入口按它决定外发内容是否脱敏：
+   * full_context 原样外发，redacted 过 redactPii（local 模式不会进入 Agent）。
+   */
+  dataMode?: AiDataMode
 }
 
 /** 工具执行上下文：权限过滤后的只读数据，执行器可安全使用。 */

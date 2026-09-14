@@ -68,3 +68,12 @@ export function governBusinessContext(context: AssistantBusinessContext | null, 
     snapshot
   }
 }
+
+/**
+ * 外发文本按数据模式脱敏：full_context 原样发送，redacted / local 一律过 redactPii。
+ * 必须是确定性纯函数（同一输入同一输出），否则会破坏 DeepSeek 前缀缓存的前缀稳定性。
+ */
+export function redactOutboundText(text: string, mode: AiDataMode): string {
+  if (mode === 'full_context') return text
+  return redactPii(text)
+}

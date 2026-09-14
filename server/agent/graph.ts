@@ -107,7 +107,10 @@ const TOOL_TITLES: Record<string, string> = {
   knowledge_search: '知识库检索',
   module_route: '问题分诊',
   recommend_assessment: '推荐量表',
-  entity_memory: '实体记忆'
+  entity_memory: '实体记忆',
+  record_snapshot: '读取咨询对象档案',
+  student_search: '查找学生',
+  student_snapshot: '读取学生档案'
 }
 
 /** 从 ToolMessage content 里提取知识库来源片段（knowledge_search 结果 → SourceItem[]）。 */

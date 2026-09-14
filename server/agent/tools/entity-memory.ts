@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { AuthUser } from '../../../app/composables/useAuth'
 import { fetchEntityMemory } from '../../domain/assistant-context'
+import { redactOutboundText } from '../../domain/ai-governance'
 import type { AgentTool, AgentToolContext } from '../types'
 
 const entityMemorySchema = z.object({
@@ -42,10 +43,12 @@ export const entityMemoryTool: AgentTool = {
     }
     try {
       const raw = await fetchEntityMemory(ctx.event, user, dbContextType, contextId, ctx.user.sessionId, 8)
+      // 外发脱敏：full_context 原样，其余模式过 redactPii（与入口历史脱敏保持同一套规则）
+      const outbound = (text: string) => redactOutboundText(text, ctx.user.dataMode ?? 'redacted')
       return {
         memories: raw.map(item => ({
           role: item.role,
-          content: truncateText(item.content),
+          content: truncateText(outbound(item.content)),
           createdAt: item.createdAt
         }))
       }
