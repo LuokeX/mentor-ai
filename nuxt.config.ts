@@ -34,6 +34,12 @@ export default defineNuxtConfig({
     agentHistoryTokenBudget: Number(process.env.AI_AGENT_HISTORY_TOKEN_BUDGET || 24000),
     agentMaxOutputTokens: Number(process.env.AI_AGENT_MAX_OUTPUT_TOKENS || 4096),
     agentCompactionKeepRatio: Number(process.env.AI_AGENT_COMPACTION_KEEP_RATIO || 0.5),
+    // Agent 工具治理：单轮工具轮次上限、启用的工具名清单（逗号分隔；空 = 按上下文裁剪后全部启用）
+    agentMaxToolRounds: Number(process.env.AI_AGENT_MAX_TOOL_ROUNDS || 8),
+    agentEnabledTools: process.env.AI_AGENT_ENABLED_TOOLS || '',
+    // strict tool calling 试点（DeepSeek Beta）：逗号分隔的 purpose 列表；
+    // 空 = 全部走 json_object（与既有行为一致），启用后 strict 不可用会自动回退
+    aiStrictJsonPurposes: process.env.AI_STRICT_JSON_PURPOSES || '',
     embeddingEnabled: process.env.EMBEDDING_ENABLED === 'true',
     // ollama | dashscope：向量化供应商，切换后存量向量需全量重建（语义空间不兼容）
     embeddingProvider: process.env.EMBEDDING_PROVIDER || 'ollama',
