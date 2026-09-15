@@ -35,9 +35,26 @@ test.describe('四角色核心路径', () => {
       await revealMobileNav(page, testInfo)
       await expect(page.getByRole('link', { name: '我的方案', exact: true })).toBeVisible()
     }
+    // 空态：今日建议卡与快捷提问（若账号已有历史会话被自动恢复，空态不渲染，跳过该校验）
+    const quickPrompt = page.getByRole('button', { name: '这周先做什么' })
+    if (await quickPrompt.count()) {
+      await expect(quickPrompt).toBeVisible()
+      await expect(page.getByText('今日建议')).toBeVisible()
+    }
     await page.getByLabel('向 AI 赋能助手提问').fill('我想先梳理一下班级纪律反复的问题。')
     await page.getByRole('button', { name: '发送消息' }).click()
     await expect(page.getByText('这条回答有帮助吗？').last()).toBeVisible({ timeout: 30_000 })
+    // 回答完成后：最后一条回答可「重新生成」
+    await expect(page.getByRole('button', { name: '重新生成' }).last()).toBeVisible({ timeout: 15_000 })
+    // 追问建议：始终至少有兜底一条（动作卡/引用来源/模块占比三种来源命中时会替换为对应建议）
+    await expect(
+      page.locator('button:has-text("拆成这周的三步"), button:has-text("这条建议怎么在我们班落地"), button:has-text("开始做《")').first()
+    ).toBeVisible({ timeout: 15_000 })
+    // 工具过程面板：模型调用了工具时应可见且可展开（未调用工具时不渲染）
+    const toolPanel = page.locator('details:has-text("调用过")')
+    if (await toolPanel.count()) {
+      await expect(toolPanel.first()).toBeVisible()
+    }
   })
 
   test('教师从模块说明进入评估、确认方案并完成执行闭环', async ({ page }) => {

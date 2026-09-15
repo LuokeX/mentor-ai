@@ -1,6 +1,7 @@
 import type { H3Event } from 'h3'
 import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm'
 import type { AuthUser } from '../../app/composables/useAuth'
+import { isMessageAfterBindingSwitch, readContextSwitches } from './chat-context-switch'
 import { decryptSensitive } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
 
@@ -284,7 +285,7 @@ export async function fetchEntityMemory(
   const secret = useRuntimeConfig(event).encryptionKey
 
   // 1. 找到所有绑定到同一实体的会话
-  const sessions = await db.select({ id: schema.chatSessions.id })
+  const sessions = await db.select({ id: schema.chatSessions.id, metadata: schema.chatSessions.metadata })
     .from(schema.chatSessions)
     .where(and(
       eq(schema.chatSessions.contextType, contextType),
@@ -295,6 +296,7 @@ export async function fetchEntityMemory(
     .orderBy(desc(schema.chatSessions.updatedAt))
     .limit(20)
 
+  const switchesBySession = new Map(sessions.map(item => [item.id, readContextSwitches(item.metadata)]))
   const sessionIds = sessions
     .map(s => s.id)
     .filter(id => id !== excludeSessionId)
@@ -302,7 +304,9 @@ export async function fetchEntityMemory(
   if (!sessionIds.length) return []
 
   // 2. 从这些会话中拉取最近的 user/assistant 消息
+  // 多取一批再过滤：会话中途换绑过对象时，换绑前的消息属于旧对象，不能算作当前对象的记忆
   const messages = await db.select({
+    sessionId: schema.chatMessages.sessionId,
     role: schema.chatMessages.role,
     contentEnc: schema.chatMessages.contentEnc,
     createdAt: schema.chatMessages.createdAt
@@ -315,12 +319,17 @@ export async function fetchEntityMemory(
       isNull(schema.chatMessages.deletedAt)
     ))
     .orderBy(desc(schema.chatMessages.createdAt))
-    .limit(limit)
+    .limit(Math.min(Math.max(limit * 4, limit), 60))
 
-  // 3. 解密并按时间正序排列
-  return messages.reverse().map(item => ({
-    role: item.role as 'user' | 'assistant',
-    content: decryptSensitive(item.contentEnc, secret),
-    createdAt: item.createdAt
-  }))
+  // 3. 过滤掉换绑前的旧对象消息，解密并按时间正序排列
+  const binding = { type: contextType, id: contextId }
+  return messages
+    .filter(item => isMessageAfterBindingSwitch(switchesBySession.get(item.sessionId) || [], binding, item.createdAt))
+    .slice(0, limit)
+    .reverse()
+    .map(item => ({
+      role: item.role as 'user' | 'assistant',
+      content: decryptSensitive(item.contentEnc, secret),
+      createdAt: item.createdAt
+    }))
 }

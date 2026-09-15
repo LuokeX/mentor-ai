@@ -81,14 +81,18 @@ describe('校内试用核心不变量', () => {
 
   it('首页聊天统一走 Agent 且保留安全熔断，通知 Worker 不扩散学生信息', () => {
     const chat = readFileSync(new URL('../server/api/v1/chat/messages.post.ts', import.meta.url), 'utf8')
+    const stream = readFileSync(new URL('../server/domain/chat-stream.ts', import.meta.url), 'utf8')
     const worker = readFileSync(new URL('../server/plugins/notification-worker.ts', import.meta.url), 'utf8')
     // 经典分诊链路已删除：不再推送 route / clarification_* 事件
     expect(chat).not.toContain("emit(controller, 'route'")
     expect(chat).not.toContain("emit(controller, 'clarification_round'")
     expect(chat).not.toContain("emit(controller, 'clarification_summary'")
     expect(chat).not.toContain("emit(controller, 'plan_update_suggestions'")
-    // 所有消息统一走 Agent，且保留安全熔断与失败提示
-    expect(chat).toContain('runAgentGraph(')
+    // 所有消息统一走 Agent：入口只做认证/装配，图执行与落库在共享流水线里（重新生成复用同一份）
+    expect(chat).toContain('runAssistantTurn(')
+    expect(chat).toContain("from '../../../domain/chat-stream'")
+    expect(stream).toContain('runAgentGraph(')
+    // 安全熔断与失败提示
     expect(chat).toContain("emit(controller, 'fuse'")
     expect(chat).toContain('AGENT_UNAVAILABLE_MESSAGE')
     expect(worker).toContain('INSERT INTO notifications')

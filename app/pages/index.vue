@@ -43,7 +43,7 @@ interface AgentActionCard {
 
 interface TimelineItem {
   messageId?: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   text: string
   sources?: SourceItem[]
   mode?: 'deepseek' | 'local_fallback' | 'agent'
@@ -57,11 +57,60 @@ interface TimelineItem {
   actionCards?: AgentActionCard[]
   /** 回答是否已完成（answer 事件到达）：完成前不展示工具/引用/量表过程块，避免抢在流式答案前出现 */
   answerCompleted?: boolean
+  /** 教师中途停止生成：保留已流入的部分文本并显示「已停止」标记 */
+  stopped?: boolean
+  /** 会话内换绑咨询对象的分隔条（role=system）：标记这条之后谈的是另一个对象 */
+  contextSwitch?: { type: string, label: string }
+}
+
+/** 空态「今日建议」条目（服务端确定性生成，不经过模型）。 */
+interface AssistantBriefItem {
+  kind: 'plan_review_due' | 'action_overdue' | 'draft_assessment' | 'notifications' | 'risk_communication'
+  title: string
+  detail: string
+  prompt: string
+  targetPath?: string
+}
+
+interface AssistantBrief {
+  items: AssistantBriefItem[]
+  generatedAt: string
+}
+
+/** 工具过程面板的展示项：同名工具合并计数（模型常对多个模块重复调用同一工具）。 */
+interface ToolCallDisplay {
+  key: string
+  title: string
+  count: number
+}
+
+/** 回答后的追问建议：确定性生成，只做「填入并发送」。 */
+interface FollowUpChip {
+  label: string
+  prompt: string
 }
 
 const { user } = useAuth()
 const { updateScores } = useModuleScores()
 const { data: sessions, refresh: refreshSessions } = await useFetch<any[]>('/api/v1/chat/sessions')
+/**
+ * 今日建议卡开关：暂时隐藏（2026-09-14 按产品反馈下线展示）。
+ * 服务端接口（GET /api/v1/chat/assistant-brief）与数据结构保留；改回 true 即恢复展示与请求。
+ */
+const SHOW_ASSISTANT_BRIEF = false
+// 空态「今日建议」：服务端按教师自己的数据确定性生成，不调用模型（local 数据模式同样可用）
+const { data: briefData } = await useFetch<AssistantBrief>('/api/v1/chat/assistant-brief', {
+  immediate: SHOW_ASSISTANT_BRIEF
+})
+const briefItems = computed<AssistantBriefItem[]>(() => (briefData.value?.items || []).slice(0, 3))
+/** 空态快捷提问：与「今日建议」并存，覆盖最常用的三类开场 */
+const QUICK_PROMPTS: FollowUpChip[] = [
+  { label: '这周先做什么', prompt: '结合我手上的方案、待办和评估记录，告诉我这周应该先做哪几件事。' },
+  { label: '班级纪律反复怎么办', prompt: '我们班的课堂纪律总是反复，帮我想想该从哪一步入手。' },
+  { label: '怎么跟家长开口', prompt: '我需要跟一位家长沟通孩子的近况，但担心对方情绪激动，帮我准备一下怎么说。' }
+]
+/** 生成中请求的中断控制器：停止生成按钮据此中断本轮 SSE */
+const abortController = ref<AbortController | null>(null)
 // 侧栏「进行中的方案」：沿用方案列表接口，status=active 即待确认/进行中/待复盘/需调整/需协同，
 // 只取总数展示，点击计数箭头进入完整方案列表。
 const { data: pendingPlanResult } = await useFetch<{ total: number }>('/api/v1/plans', {
@@ -75,7 +124,15 @@ const pending = ref(false)
 const loadingSession = ref(false)
 const sessionId = ref<string>()
 const route = ref<(RouteDecision & { id: string }) | null>(null)
-const fuse = ref<{ message: string, guide: string } | null>(null)
+const fuse = ref<{
+  message: string
+  guide: string
+  helpPhone?: string | null
+  ackMinutes?: number
+  escalationMinutes?: number
+  psychologistAssigned?: boolean
+  eventId?: string
+} | null>(null)
 const timeline = ref<TimelineItem[]>([])
 /** 等待中状态条文案（Agent 灰度下由 thinking 事件更新为「Agent 思考中…」） */
 const pendingLabel = ref('正在澄清问题并判断推荐模块')
@@ -271,7 +328,7 @@ async function loadSession(id: string) {
     suppressContextWatch.value = false
     route.value = null
     fuse.value = null
-    timeline.value = result.messages.map((item: any) => {
+    const mapped: TimelineItem[] = result.messages.map((item: any) => {
       const base: TimelineItem = {
         messageId: item.id,
         role: item.role,
@@ -315,6 +372,25 @@ async function loadSession(id: string) {
       return base
     })
 
+    // 会话内的咨询对象换绑：把分隔条插到换绑后第一条消息之前（换绑后还没发消息时追加到末尾）
+    const switches: any[] = Array.isArray(result.session?.metadata?.contextSwitches) ? result.session.metadata.contextSwitches : []
+    const validSwitches = switches.filter((entry: any) => entry && typeof entry.at === 'string' && entry.to?.type)
+    const withDividers: TimelineItem[] = []
+    let switchIndex = 0
+    result.messages.forEach((raw: any, index: number) => {
+      const createdAt = Date.parse(raw?.createdAt)
+      while (switchIndex < validSwitches.length && Date.parse(validSwitches[switchIndex].at) <= createdAt) {
+        withDividers.push(contextSwitchItem(validSwitches[switchIndex].to.type, validSwitches[switchIndex].to.label))
+        switchIndex += 1
+      }
+      withDividers.push(mapped[index]!)
+    })
+    while (switchIndex < validSwitches.length) {
+      withDividers.push(contextSwitchItem(validSwitches[switchIndex].to.type, validSwitches[switchIndex].to.label))
+      switchIndex += 1
+    }
+    timeline.value = withDividers
+
     // 重建 selectedOptions：每个追问轮次后的第一条用户消息即为所选选项
     selectedOptions.value = {}
     let pendingClarificationRound: number | null = null
@@ -340,26 +416,21 @@ async function deleteSession(id: string) {
   await refreshSessions()
 }
 
-async function ask() {
-  if (!input.value.trim() || pending.value) return
-  const text = input.value.trim()
-  input.value = ''
-  pending.value = true
-  pendingLabel.value = 'Agent 正在分析问题…'
-  route.value = null
-  fuse.value = null
-  timeline.value.push({ role: 'user', text })
-  await scrollToLatest()
-  let assistantIndex = -1
-  try {
-    const response = await fetch('/api/v1/chat/messages', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: sessionId.value, message: text, withoutRecord: withoutRecord.value, ...contextPayload.value })
-    })
-    if (!response.ok || !response.body) throw new Error('助手暂时不可用')
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
+/** 判断异常是否来自「停止生成」（AbortController）。 */
+function isAbortError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError')
+}
+
+/**
+ * 消费一轮回答的 SSE 流（普通提问与重新生成共用）。
+ * reuseIndex：重新生成时复用已有的助手气泡；默认 -1 表示等 answer_start 新建气泡。
+ * 返回最终写入的助手气泡下标（-1 表示本轮没有产生气泡）。
+ */
+async function readAssistantStream(response: Response, reuseIndex = -1): Promise<number> {
+  let assistantIndex = reuseIndex
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -381,9 +452,12 @@ async function ask() {
           }
         }
         if (event === 'answer_start') {
-          // Agent 模式：保持 pending 状态条（文案随 thinking 变化），气泡先建立供工具/引用/卡片挂载
-          timeline.value.push({ role: 'assistant', text: '', mode: data.mode, sources: [] })
-          assistantIndex = timeline.value.length - 1
+          // Agent 模式：保持 pending 状态条（文案随 thinking 变化），气泡先建立供工具/引用/卡片挂载。
+          // 重新生成时复用已有气泡（reuseIndex），不再新建。
+          if (assistantIndex < 0) {
+            timeline.value.push({ role: 'assistant', text: '', mode: data.mode, sources: [] })
+            assistantIndex = timeline.value.length - 1
+          }
           if (data.mode === 'agent') {
             pending.value = true
             pendingLabel.value = 'Agent 正在分析问题…'
@@ -427,7 +501,7 @@ async function ask() {
           pendingLabel.value = phase === 'tool' ? '正在调用工具…' : 'Agent 正在分析问题…'
         }
         if (event === 'tool_call') {
-          // 记入当前 assistant 气泡的工具调用过程（结构化：name/title/args）
+          // 记入当前 assistant 气泡的工具调用过程（只保留工具名与中文标题，参数不进入界面）
           if (assistantIndex >= 0 && timeline.value[assistantIndex]) {
             const payload = data && typeof data === 'object' ? (data as any) : undefined
             const toolName = typeof payload?.name === 'string' ? payload.name
@@ -437,11 +511,8 @@ async function ask() {
             const item = timeline.value[assistantIndex]!
             if (!item.toolCalls) item.toolCalls = []
             if (typeof payload?.title === 'string') {
-              item.toolCalls.push({
-                name: toolName || 'tool',
-                title: payload.title,
-                args: typeof payload?.args === 'string' ? payload.args.slice(0, 80) : undefined
-              })
+              // 只保留工具名与中文标题：参数属于内部结构（含模块 ID 等标识），不进入前端状态与界面
+              item.toolCalls.push({ name: toolName || 'tool', title: payload.title })
             } else {
               item.toolCalls.push(`[工具] ${toolName || '工具'}`)
             }
@@ -489,13 +560,166 @@ async function ask() {
         if (event === 'error') throw new Error(data.message)
       }
     }
+  return assistantIndex
+}
+
+/** 停止生成：中断本轮 SSE；服务端检测到客户端断开后不落库、不发 answer 事件。 */
+function stopGeneration() {
+  abortController.value?.abort()
+}
+
+/** 标记气泡为「已停止」：保留已流入的部分文本；空气泡直接移除。 */
+function markStopped(index: number) {
+  if (index < 0 || !timeline.value[index]) {
+    const last = timeline.value[timeline.value.length - 1]
+    if (last && last.role === 'assistant' && !last.text) timeline.value.pop()
+    return
+  }
+  const item = timeline.value[index]!
+  item.stopped = true
+  item.answerCompleted = Boolean(item.text)
+}
+
+async function ask() {
+  if (!input.value.trim() || pending.value) return
+  const text = input.value.trim()
+  input.value = ''
+  pending.value = true
+  pendingLabel.value = 'Agent 正在分析问题…'
+  route.value = null
+  fuse.value = null
+  timeline.value.push({ role: 'user', text })
+  await scrollToLatest()
+  const controller = new AbortController()
+  abortController.value = controller
+  let assistantIndex = -1
+  try {
+    const response = await fetch('/api/v1/chat/messages', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: sessionId.value, message: text, withoutRecord: withoutRecord.value, ...contextPayload.value }),
+      signal: controller.signal
+    })
+    if (!response.ok || !response.body) throw new Error('助手暂时不可用')
+    assistantIndex = await readAssistantStream(response)
     await refreshSessions()
   } catch (error: any) {
-    timeline.value.push({ role: 'assistant', text: error?.message || '处理失败，请稍后重试。' })
+    if (isAbortError(error)) markStopped(assistantIndex)
+    else timeline.value.push({ role: 'assistant', text: error?.message || '处理失败，请稍后重试。' })
   } finally {
     pending.value = false
+    abortController.value = null
     await scrollToLatest()
   }
+}
+
+/** 重新生成：服务端软删旧回答并以同一条教师提问重跑，前端复用原气泡接收新内容。 */
+async function regenerateAnswer(item: TimelineItem, index: number) {
+  const messageId = item.messageId
+  if (!messageId || pending.value) return
+  pending.value = true
+  pendingLabel.value = 'Agent 正在重新生成…'
+  fuse.value = null
+  item.text = ''
+  item.messageId = undefined
+  item.actionCards = []
+  item.sources = []
+  item.toolCalls = []
+  item.answerCompleted = false
+  item.stopped = false
+  await scrollToLatest()
+  const controller = new AbortController()
+  abortController.value = controller
+  try {
+    const response = await fetch(`/api/v1/chat/messages/${messageId}/regenerate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ withoutRecord: withoutRecord.value }),
+      signal: controller.signal
+    })
+    if (!response.ok || !response.body) throw new Error('助手暂时不可用')
+    await readAssistantStream(response, index)
+    await refreshSessions()
+  } catch (error: any) {
+    if (isAbortError(error)) markStopped(index)
+    else {
+      item.text = error?.message || '重新生成失败，请稍后重试。'
+      item.answerCompleted = true
+    }
+  } finally {
+    pending.value = false
+    abortController.value = null
+    await scrollToLatest()
+  }
+}
+
+/** 工具过程面板的展示项：同名工具合并计数（模型常对多个模块重复调用同一工具）。 */
+function toolCallDisplay(item: TimelineItem): ToolCallDisplay[] {
+  const calls = item.toolCalls || []
+  const grouped = new Map<string, ToolCallDisplay>()
+  for (const call of calls) {
+    const title = typeof call === 'string'
+      ? call.replace(/^\[工具\]\s*/, '')
+      : (call.title || call.name)
+    const key = typeof call === 'string' ? title : (call.name || title)
+    const existing = grouped.get(key)
+    if (existing) existing.count += 1
+    else grouped.set(key, { key, title, count: 1 })
+  }
+  return [...grouped.values()]
+}
+
+/** 当前这条回答涉及的模块：只取本条回答的动作卡与知识来源，不用会话级旧占比（否则每条回答都会重复同一个建议）。 */
+function answerModules(item: TimelineItem): ModuleId[] {
+  const modules: ModuleId[] = []
+  const push = (module?: ModuleId | null) => {
+    if (module && module in moduleMeta && !modules.includes(module)) modules.push(module)
+  }
+  for (const card of item.actionCards || []) push(card.module)
+  const sourceCounts = new Map<ModuleId, number>()
+  for (const source of item.sources || []) {
+    const module = source.module
+    if (!module || !(module in moduleMeta)) continue
+    sourceCounts.set(module, (sourceCounts.get(module) || 0) + 1)
+  }
+  const topSource = [...sourceCounts.entries()].sort((a, b) => b[1] - a[1])[0]
+  if (topSource) push(topSource[0])
+  return modules
+}
+
+/**
+ * 追问建议开关：暂时隐藏（2026-09-14 按产品反馈下线展示）。
+ * 生成逻辑与数据结构保留；改回 true 即恢复展示。
+ */
+const SHOW_FOLLOW_UP_CHIPS = false
+/** 回答后的追问建议：全部确定性生成（动作卡 / 引用来源 / 本条回答的模块 / 兜底），不调用模型。 */
+function followUpChips(item: TimelineItem): FollowUpChip[] {
+  if (item.role !== 'assistant' || !item.answerCompleted || item.stopped) return []
+  const chips: FollowUpChip[] = []
+  for (const card of item.actionCards || []) {
+    if (!card.title) continue
+    chips.push({
+      label: card.kind === 'recommend_assessment' ? `开始做《${card.title}》` : card.title,
+      prompt: card.kind === 'recommend_assessment'
+        ? `我想做「${card.title}」这张量表，做之前先提醒我需要注意什么。`
+        : `关于「${card.title}」，再展开说说具体怎么做。`
+    })
+  }
+  if (item.sources?.length) {
+    chips.push({ label: '这条建议怎么在我们班落地', prompt: '把上面的建议结合我们班的实际情况，拆成这周可以做的步骤。' })
+  }
+  const related = answerModules(item)[0]
+  if (related) {
+    chips.push({ label: `继续聊${moduleMeta[related].title}`, prompt: `我想继续聊${moduleMeta[related].title}方面的问题。` })
+  }
+  if (!chips.length) chips.push({ label: '拆成这周的三步', prompt: '把上面的分析拆成我这周可以先做的三步。' })
+  return chips.slice(0, 3)
+}
+
+/** 点击建议：填入输入框并直接发送。 */
+function sendPrompt(prompt: string) {
+  if (pending.value) return
+  input.value = prompt
+  void ask()
 }
 
 // ---- 输入框 @ 关联咨询对象 ----
@@ -528,16 +752,24 @@ function applyMention(type: string, id: string) {
   const key = `${type}:${id}`
   mentionOpen.value = false
   mentionQuery.value = ''
-  // 在已有会话中切换到另一个咨询对象：自动新建会话并绑定新对象，避免上下文混搭
-  if (key !== selectedContextKey.value && sessionId.value) {
-    sessionId.value = undefined
-    timeline.value = []
-    route.value = null
-    fuse.value = null
-    selectedOptions.value = {}
-    nextTick(() => scrollToLatest('auto'))
-  }
+  if (key === selectedContextKey.value) return
+  const option = allContextOptions.value.find((item: any) => item.type === type && item.id === id)
   selectedContextKey.value = key
+  // 会话内换对象：保留当前对话（历史由服务端保留、下一条消息换绑），只插入分隔条说明从这条起谈的是新对象
+  if (!sessionId.value || !timeline.value.length) return
+  // 还没发消息就连着切换时，只保留最后一条分隔条
+  if (timeline.value[timeline.value.length - 1]?.contextSwitch) timeline.value.pop()
+  timeline.value.push(contextSwitchItem(type, option?.label))
+  nextTick(() => scrollToLatest())
+}
+
+/** 换绑咨询对象的时间线分隔条（role=system，仅用于展示，不落库）。 */
+function contextSwitchItem(type: string, label?: string | null): TimelineItem {
+  return {
+    role: 'system',
+    text: '',
+    contextSwitch: { type, label: label || '该对象' }
+  }
 }
 function closeMention() {
   mentionOpen.value = false
@@ -554,6 +786,13 @@ const mentionOptions = computed(() => {
   )
 })
 const mentionTypeLabel = (type: string) => type === 'student' ? '学生' : type === 'class' ? '班级' : '家长'
+
+/** 会话列表里显示每条对话当前绑定的咨询对象（列表接口已返回 contextType/contextId）。 */
+function sessionContextLabel(item: any) {
+  if (!item?.contextId || !item?.contextType || item.contextType === 'none') return ''
+  const matched = allContextOptions.value.find((option: any) => option.type === item.contextType && option.id === item.contextId)
+  return (item.contextType === 'student' ? '学生' : item.contextType === 'class' ? '班级' : '家长') + ' · ' + (matched?.label || '已关联对象')
+}
 
 async function loadContextPreview() {
   if (!selectedContext.value) { contextPreview.value = null; return }
@@ -704,7 +943,8 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         <div class="border-b border-slate-100 p-3">
           <button type="button" class="w-full flex items-center justify-center gap-1.5 rounded-lg bg-[var(--ui-primary)] px-3 py-2 text-sm font-medium text-white" @click="startNewConversation"><UIcon name="i-lucide-message-square-plus" class="size-4" />新对话</button>
         </div>
-        <div class="border-b border-slate-100 px-3 py-3">
+        <!-- 没有进行中的方案时整块隐藏，避免出现「进行中的方案 0」的空入口 -->
+        <div v-if="pendingPlanTotal > 0" class="border-b border-slate-100 px-3 py-3">
           <NuxtLink
             to="/plans"
             class="group flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2 transition hover:border-emerald-200 hover:bg-emerald-50"
@@ -727,7 +967,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
           <div v-for="item in sessions" :key="item.id" class="group relative rounded-xl text-left text-sm transition" :class="sessionId===item.id?'bg-emerald-50 text-emerald-950 ring-1 ring-inset ring-emerald-100':'text-slate-600 hover:bg-slate-50'">
             <button class="w-full px-3 py-2 text-left" @click="selectSession(item.id)">
               <span class="flex items-start gap-2"><UIcon name="i-lucide-message-circle" class="mt-0.5 size-4 shrink-0" :class="sessionId===item.id?'text-emerald-600':'text-slate-300 group-hover:text-slate-500'" /><span class="line-clamp-2 block leading-5">{{ item.title }}</span></span>
-              <span class="mt-1 block pl-6 text-[11px] text-slate-400">{{ formatDateTime(item.updatedAt) }}</span>
+              <span class="mt-1 flex items-center gap-1.5 pl-6 text-[11px] text-slate-400"><span>{{ formatDateTime(item.updatedAt) }}</span><span v-if="sessionContextLabel(item)" class="truncate rounded-full bg-slate-100 px-1.5 py-0.5 text-slate-500">{{ sessionContextLabel(item) }}</span></span>
             </button>
             <button class="absolute right-1.5 top-2 grid size-6 place-items-center rounded-md text-slate-400 transition hover:bg-red-50 hover:text-red-500" :class="deleteCandidate===item.id?'bg-red-50 text-red-600':'opacity-0 group-hover:opacity-100'" :title="deleteCandidate===item.id?'再次点击确认删除':'删除对话'" @click.stop="deleteSession(item.id)">
               <UIcon name="i-lucide-x" class="size-3.5" />
@@ -763,7 +1003,14 @@ watch(sessions, autoRestoreLatestSession, { once: true })
 
         <div ref="messageViewport" class="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-slate-50/70 to-white px-3 pt-4 sm:px-6 sm:pt-6" :class="[inputLifted ? 'pb-40 sm:pb-44' : 'pb-40 sm:pb-36', {'opacity-60':loadingSession}]" @scroll="onMessageViewportScroll">
           <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-5 sm:space-y-7">
-            <div v-for="(item, index) in timeline" :key="index" class="flex items-start gap-3" :class="item.role === 'user' ? 'flex-row-reverse' : 'max-sm:flex-col max-sm:gap-2'">
+            <template v-for="(item, index) in timeline" :key="index">
+            <!-- 会话内换绑咨询对象：分隔条标明从这条起谈的是另一个对象（历史消息保留） -->
+            <div v-if="item.contextSwitch" class="flex items-center gap-3 py-1 text-[11px] text-slate-400">
+              <span class="h-px flex-1 bg-slate-200" />
+              <span class="flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50/70 px-3 py-1 font-medium text-emerald-700"><UIcon name="i-lucide-link" class="size-3" />以下开始谈：{{ mentionTypeLabel(item.contextSwitch.type) }} · {{ item.contextSwitch.label }}</span>
+              <span class="h-px flex-1 bg-slate-200" />
+            </div>
+            <div v-else class="flex items-start gap-3" :class="item.role === 'user' ? 'flex-row-reverse' : 'max-sm:flex-col max-sm:gap-2'">
               <!-- 手机端：头像与「赋能助手」标签单独占一行，回答气泡在下方通栏，不再被头像列和 88% 宽度挤压 -->
               <div class="flex items-center gap-2 sm:block sm:shrink-0">
                 <div class="grid size-8 shrink-0 place-items-center rounded-xl text-xs font-semibold" :class="item.role === 'user' ? 'bg-emerald-800 text-white' : 'border border-emerald-100 bg-white text-emerald-700 shadow-sm'">
@@ -783,18 +1030,22 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                     <span class="ml-2 text-xs text-slate-400">{{ pendingLabel }}</span>
                   </div>
                   <div v-else class="markdown-body" v-html="useMarkdown(item.text)" />
+                  <p v-if="item.role === 'assistant' && item.stopped" class="mt-2 flex items-center gap-1 text-[11px] text-slate-400"><UIcon name="i-lucide-circle-stop" class="size-3" />已停止生成</p>
                   <button v-if="item.role === 'assistant'" type="button" class="absolute bottom-2 right-2 flex items-center gap-1 rounded-md bg-white/95 px-1.5 py-1 text-[11px] text-slate-400 opacity-0 shadow-sm transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
                 </div>
-                <!-- 工具调用过程（「调用过 N 个工具」）：暂时隐藏，保留代码待确认后再决定去留 -->
-                <details v-if="item.role === 'assistant' && item.answerCompleted && item.toolCalls?.length" hidden class="group mt-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-xs text-slate-600">
+                <!-- 工具调用过程：默认收起；同名工具合并计数；不展示内部参数（含模块 ID 等标识） -->
+                <details v-if="item.role === 'assistant' && item.toolCalls?.length" class="group mt-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-xs text-slate-600">
                   <summary class="flex cursor-pointer list-none items-center justify-between px-3.5 py-2 font-medium text-slate-500">
-                    <span class="flex items-center gap-2"><UIcon name="i-lucide-wrench" class="size-4" />调用过 {{ item.toolCalls.length }} 个工具</span>
+                    <span class="flex items-center gap-2">
+                      <UIcon :name="item.answerCompleted ? 'i-lucide-wrench' : 'i-lucide-loader-circle'" class="size-4" :class="!item.answerCompleted ? 'animate-spin text-emerald-600' : ''" />
+                      {{ item.answerCompleted ? `调用过 ${item.toolCalls.length} 次工具` : `正在调用工具（已完成 ${item.toolCalls.length} 次）` }}
+                    </span>
                     <UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" />
                   </summary>
                   <div class="space-y-1.5 border-t border-slate-200 px-3 py-2.5">
-                    <div v-for="(call, callIndex) in item.toolCalls" :key="`tool-${callIndex}`" class="rounded-lg bg-white/80 p-2.5">
-                      <p class="flex items-center gap-1.5 font-medium text-slate-700"><UIcon name="i-lucide-wrench" class="size-3 shrink-0 text-slate-400" /><span>{{ typeof call === 'string' ? call.replace(/^\[工具\]\s*/, '') : (call.title || call.name) }}</span></p>
-                      <p v-if="typeof call === 'object' && call.args" class="mt-1 break-all text-[11px] leading-4 text-slate-400">{{ call.args }}</p>
+                    <div v-for="entry in toolCallDisplay(item)" :key="`tool-${entry.key}`" class="flex items-center justify-between gap-3 rounded-lg bg-white/80 p-2.5">
+                      <p class="flex items-center gap-1.5 font-medium text-slate-700"><UIcon name="i-lucide-wrench" class="size-3 shrink-0 text-slate-400" /><span>{{ entry.title }}</span></p>
+                      <span v-if="entry.count > 1" class="shrink-0 text-[11px] text-slate-400">×{{ entry.count }}</span>
                     </div>
                   </div>
                 </details>
@@ -845,9 +1096,21 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   </div>
                 </details>
                 <div v-if="item.role === 'assistant' && item.planUpdateSuggestions?.length" class="mt-7 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><p class="font-semibold text-amber-900">AI 曾建议更新方案（历史记录）</p><div v-for="(suggestion, suggestionIndex) in item.planUpdateSuggestions" :key="suggestionIndex" class="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><span class="text-slate-600">{{ suggestion.actionTitle || '新增复盘' }}<template v-if="suggestion.newStatus"> → {{ actionStatusLabel(suggestion.newStatus) }}</template><span v-if="suggestion.progressNote" class="mt-1 block text-slate-400">{{ suggestion.progressNote }}</span></span><span class="text-[11px] text-slate-400">{{ suggestion.appliedAt ? '已应用' : '未应用' }}</span></div></div>
-                <div v-if="item.role === 'assistant' && item.messageId" class="mt-3 flex items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton></div>
+                <div v-if="item.role === 'assistant' && item.messageId" class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton><UButton v-if="item.answerCompleted && !pending && index === timeline.length - 1" size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" @click="regenerateAnswer(item, index)">重新生成</UButton></div>
+                <!-- 追问建议：暂时隐藏（SHOW_FOLLOW_UP_CHIPS=false）；生成逻辑保留，改回开关即恢复 -->
+                <div v-if="SHOW_FOLLOW_UP_CHIPS && item.role === 'assistant' && item.answerCompleted" class="mt-3 flex flex-wrap gap-2">
+                  <button
+                    v-for="chip in followUpChips(item)"
+                    :key="chip.label"
+                    type="button"
+                    class="rounded-full border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-xs text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50"
+                    :disabled="pending"
+                    @click="sendPrompt(chip.prompt)"
+                  >{{ chip.label }}</button>
+                </div>
               </div>
             </div>
+            </template>
 
             <div v-if="pending && !pendingAssistantBubble" class="flex items-start gap-3 max-sm:flex-col max-sm:gap-2">
               <div class="flex items-center gap-2 sm:block sm:shrink-0">
@@ -865,7 +1128,15 @@ watch(sessions, autoRestoreLatestSession, { once: true })
               </div>
               <div class="min-w-0 max-w-full sm:max-w-[82%]">
                 <p class="mb-1.5 hidden text-[11px] text-slate-400 sm:block">赋能助手</p>
-                <div class="rounded-2xl rounded-tl-md border-2 border-red-200 bg-red-50 p-5"><div class="flex gap-3"><UIcon name="i-lucide-siren" class="mt-1 size-6 shrink-0 text-red-600" /><div><h3 class="font-semibold text-red-900">常规建议已暂停</h3><p class="mt-2 text-sm text-red-800">{{ fuse.message }}</p><p class="mt-3 rounded-xl bg-white/70 p-3 text-sm text-red-900">{{ fuse.guide }}</p></div></div></div></div></div>
+                <CrisisReferralCard
+                  :message="fuse.message"
+                  :guide="fuse.guide"
+                  :help-phone="fuse.helpPhone"
+                  :ack-minutes="fuse.ackMinutes"
+                  :escalation-minutes="fuse.escalationMinutes"
+                  :psychologist-assigned="fuse.psychologistAssigned"
+                  :event-id="fuse.eventId"
+                /></div></div>
             <div v-if="route && !fuse" class="flex items-start gap-3 max-sm:flex-col max-sm:gap-2">
               <div class="flex items-center gap-2 sm:block sm:shrink-0">
                 <div class="grid size-8 shrink-0 place-items-center rounded-xl border border-emerald-100 bg-white text-emerald-700 shadow-sm"><UIcon name="i-lucide-sparkles" class="size-4" /></div>
@@ -878,6 +1149,31 @@ watch(sessions, autoRestoreLatestSession, { once: true })
 
           <div v-else class="mx-auto flex h-full max-w-2xl flex-col items-center justify-center py-8 text-center">
             <div class="grid size-14 place-items-center rounded-2xl bg-emerald-100 text-emerald-700"><UIcon name="i-lucide-sparkles" class="size-6" /></div><h2 class="mt-4 text-xl font-semibold sm:text-2xl" :aria-label="`${greetingName}，今天遇到了什么？`"><span>{{ typedGreeting }}</span><span v-if="greetingTyping" class="ml-0.5 inline-block h-5 w-[2px] animate-pulse rounded-full bg-emerald-500 align-[-3px] sm:h-6" aria-hidden="true" /></h2>
+            <div class="mt-6 w-full space-y-3 text-left">
+              <!-- 今日建议：暂时隐藏（SHOW_ASSISTANT_BRIEF=false）；接口与数据结构保留，改回开关即恢复 -->
+              <div v-if="SHOW_ASSISTANT_BRIEF && briefItems.length" class="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                <p class="flex items-center gap-2 text-xs font-semibold text-amber-900"><UIcon name="i-lucide-calendar-check" class="size-4" />今日建议</p>
+                <div class="mt-2 space-y-2">
+                  <div v-for="entry in briefItems" :key="`${entry.kind}-${entry.title}`" class="flex items-start justify-between gap-3 rounded-xl bg-white/80 p-3">
+                    <button type="button" class="min-w-0 flex-1 text-left disabled:opacity-50" :disabled="pending" @click="sendPrompt(entry.prompt)">
+                      <span class="block truncate text-sm font-medium text-slate-700">{{ entry.title }}</span>
+                      <span class="mt-0.5 block text-xs leading-5 text-slate-500">{{ entry.detail }}</span>
+                    </button>
+                    <NuxtLink v-if="entry.targetPath" :to="entry.targetPath" class="shrink-0 text-xs text-emerald-700 hover:underline">去看看</NuxtLink>
+                  </div>
+                </div>
+              </div>
+              <div class="flex flex-wrap justify-center gap-2">
+                <button
+                  v-for="chip in QUICK_PROMPTS"
+                  :key="chip.label"
+                  type="button"
+                  class="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50"
+                  :disabled="pending"
+                  @click="sendPrompt(chip.prompt)"
+                >{{ chip.label }}</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -904,7 +1200,8 @@ watch(sessions, autoRestoreLatestSession, { once: true })
             <div class="rounded-2xl border border-slate-300 bg-white/30 p-1.5 shadow-lg shadow-slate-900/5 backdrop-blur-xl [-webkit-backdrop-filter:blur(24px)] transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100 sm:p-2">
               <div class="flex items-center gap-2">
                 <UTextarea v-model="input" :rows="2" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" aria-label="向 AI 赋能助手提问" @input="handleMentionInput" @keydown.enter.exact.prevent="ask" @keydown.esc="closeMention" />
-                <UButton type="submit" icon="i-lucide-arrow-up" size="lg" square :loading="pending" :disabled="!input.trim()" aria-label="发送消息" />
+                <UButton v-if="pending" type="button" icon="i-lucide-square" size="lg" square color="neutral" variant="soft" aria-label="停止生成" @click="stopGeneration" />
+                <UButton v-else type="submit" icon="i-lucide-arrow-up" size="lg" square :disabled="!input.trim()" aria-label="发送消息" />
               </div>
               <div class="mt-1 hidden items-center justify-between gap-2 px-1 text-[11px] sm:flex"><span class="text-slate-500">AI 辅助建议，需人工专业判断 · 输入 @ 关联对象</span><span class="shrink-0 text-slate-500">Enter 发送 · Shift + Enter 换行 {{ input.length }}/4000</span></div>
             </div>
