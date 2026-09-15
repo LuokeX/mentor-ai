@@ -93,6 +93,32 @@ describe('runAgentGraph 自动重试', () => {
     expect(result.exitReason).toBe('error')
   })
 
+  it('重试时追加临时提示要求直接产出回答，且该提示只作用于重试轮', async () => {
+    const attemptInputs: Array<{ messages: Array<{ content?: unknown }> }> = []
+    streamEvents
+      .mockImplementationOnce((input: { messages: Array<{ content?: unknown }> }) => {
+        attemptInputs.push(input)
+        return chunks([])
+      })
+      .mockImplementationOnce((input: { messages: Array<{ content?: unknown }> }) => {
+        attemptInputs.push(input)
+        return chunks([textChunk('直接给出回答')])
+      })
+
+    const result = await invoke()
+
+    expect(result.answer).toBe('直接给出回答')
+    expect(attemptInputs).toHaveLength(2)
+    const firstAttempt = attemptInputs[0]!.messages
+    const secondAttempt = attemptInputs[1]!.messages
+    // 第一次尝试不含临时提示，重试轮才追加
+    expect(firstAttempt[firstAttempt.length - 1]!.content).not.toContain('上一轮没有产出任何回答内容')
+    expect(secondAttempt[secondAttempt.length - 1]!.content).toContain('上一轮没有产出任何回答内容')
+    // 历史前缀未被改写：重试轮的前 N 条与首轮一致
+    expect(secondAttempt.slice(0, firstAttempt.length).map(item => item.content))
+      .toEqual(firstAttempt.map(item => item.content))
+  })
+
   it('已推送过工具过程后失败不重试，避免重复展示工具卡片', async () => {
     const events: string[] = []
     streamEvents.mockImplementationOnce(() => chunks([

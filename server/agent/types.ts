@@ -73,6 +73,11 @@ export interface AgentTool {
   description: string
   /** 参数 JSON Schema（zod），用于校验与传递给模型。 */
   schema: z.ZodTypeAny
+  /**
+   * 单次执行超时（毫秒）。缺省由 graph 的 DEFAULT_TOOL_TIMEOUT_MS 兜底。
+   * 超时按「工具失败」回传给模型自愈，不中断整轮回答。
+   */
+  timeoutMs?: number
   /** 执行器：只允许读自己的数据；写操作由 P1 的 HITL confirm 节点接管。 */
   execute(args: unknown, ctx: AgentToolContext): Promise<unknown>
 }

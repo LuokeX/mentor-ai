@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { ModuleId } from '../../../shared/contracts'
 import { topModuleFromScores } from '../../domain/chat-clarification'
+import { getModulePlaybookText } from '../module-playbooks'
 import type { AgentTool, AgentToolContext } from '../types'
 
 /**
@@ -33,16 +34,24 @@ const moduleRouteSchema = z.object({
  * 2) 无评分时命中关键词路由；
  * 3) 仍无命中则兜底 self_growth。
  * 不调用模型，成本与结果确定。
+ *
+ * 返回值带该模块的静态专业指导（playbook）：它属于当轮工具结果，既能引导模型按模块组织回答，
+ * 又不会改动 system 前缀（system 每轮变化会让前缀缓存整段失效）。
  */
 export const moduleRouteTool: AgentTool = {
   name: 'module_route',
-  description: '判定当前困扰最相关的业务模块（自我成长/班级系统/家校沟通/学生个体/学习问题），返回模块与置信度，供回答先行 Agent 选取后续只读动作。',
+  description: '判定当前困扰最相关的业务模块（自我成长/班级系统/家校沟通/学生个体/学习问题），返回模块、置信度与该模块的分析与行动框架（playbook），供回答先行 Agent 选取后续只读动作并按模块组织回答。',
   schema: moduleRouteSchema,
   async execute(args: unknown, ctx: AgentToolContext): Promise<unknown> {
     const parsed = moduleRouteSchema.safeParse(args)
     if (!parsed.success) {
       console.warn('[agent:module_route] 参数无效:', parsed.error.issues[0]?.message)
-      return { module: 'self_growth', confidence: 0.4, rationale: '输入无法解析，默认进入自我成长模块。' }
+      return {
+        module: 'self_growth',
+        confidence: 0.4,
+        rationale: '输入无法解析，默认进入自我成长模块。',
+        playbook: getModulePlaybookText('self_growth')
+      }
     }
     const text = parsed.data.text
     const scoreModule = topModuleFromScores(ctx.user.lastModuleScores)
@@ -50,7 +59,8 @@ export const moduleRouteTool: AgentTool = {
       return {
         module: scoreModule,
         confidence: 0.75,
-        rationale: '结合上一轮澄清的模块评分，该模块占比最高，建议先进入对应评估。'
+        rationale: '结合上一轮澄清的模块评分，该模块占比最高，建议先进入对应评估。',
+        playbook: getModulePlaybookText(scoreModule)
       }
     }
     const keywordModule = pickModuleByKeywords(text)
@@ -58,13 +68,15 @@ export const moduleRouteTool: AgentTool = {
       return {
         module: keywordModule,
         confidence: 0.6,
-        rationale: '命中内置关键词路由，建议先进入该模块评估。'
+        rationale: '命中内置关键词路由，建议先进入该模块评估。',
+        playbook: getModulePlaybookText(keywordModule)
       }
     }
     return {
       module: 'self_growth',
       confidence: 0.4,
-      rationale: '未命中明确模块关键词，默认进入自我成长模块评估；必要时先向教师澄清困扰重点。'
+      rationale: '未命中明确模块关键词，默认进入自我成长模块评估；必要时先向教师澄清困扰重点。',
+      playbook: getModulePlaybookText('self_growth')
     }
   }
 }

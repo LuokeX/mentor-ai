@@ -1,7 +1,20 @@
 import type { AuthUser } from '../../../app/composables/useAuth'
 import { buildAssistantBusinessContext, type AssistantContextType } from '../../domain/assistant-context'
 import { governBusinessContext } from '../../domain/ai-governance'
+import type { AssistantReaderUser } from '../../domain/assistant-readers'
 import type { AgentToolContext } from '../types'
+
+/**
+ * 把工具上下文收窄成只读读取层需要的调用者视图（归属 + 数据模式）。
+ * 读取层（server/domain/assistant-readers.ts）只认这三个字段，避免把整个工具上下文透传进数据层。
+ */
+export function toAssistantReaderUser(ctx: AgentToolContext): AssistantReaderUser {
+  return {
+    schoolId: ctx.user.schoolId,
+    userId: ctx.user.userId,
+    dataMode: ctx.user.dataMode
+  }
+}
 
 /**
  * 读取咨询对象档案快照（受归属校验与数据模式治理）。
