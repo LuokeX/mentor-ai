@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-首页 AI 是"回答先行"助手：先给出当下可执行的初步分析与建议，信息不足时在回答末尾附带简短澄清，必要时推荐量表或建议进入某个模块。
+首页 AI 是"回答先行"助手：先给出当下可执行的初步分析与建议，信息不足时在回答末尾问一个能改变判断的具体问题（哪个学生或哪类班级、最近一次发生的时间与场合、家长原话、教师已试过的做法），不用方向二选一或泛泛的感受题代替追问，必要时推荐量表或建议进入某个模块。
 
 AI 不直接生成正式方案，不跳过量表，不替代规则归因，不自由决定等级、工具或风险判断。老师进入五模块之一后，再按固定流程执行：
 
@@ -43,9 +43,12 @@ DEEPSEEK_TIMEOUT_MS=30000
 AI_AGENT_HISTORY_TOKEN_BUDGET=24000
 AI_AGENT_MAX_OUTPUT_TOKENS=4096
 AI_AGENT_COMPACTION_KEEP_RATIO=0.5
+# Agent 工具治理：单轮工具轮次上限、启用的工具名清单（逗号分隔，留空 = 按上下文裁剪后全部启用）
+AI_AGENT_MAX_TOOL_ROUNDS=8
+AI_AGENT_ENABLED_TOOLS=
 ```
 
-DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Agent 在本轮无产出时自动整轮重试一次（传输层另有 SDK 自动重试）；重试后仍失败则本轮向教师返回统一的中文错误提示，安全规则始终由本地关键词与硬规则先行执行。
+DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Agent 在本轮无产出时自动整轮重试一次（传输层另有 SDK 自动重试），重试轮会追加一条不落库的临时提示要求模型直接产出回答；重试后仍失败则本轮向教师返回统一的中文错误提示，安全规则始终由本地关键词与硬规则先行执行。
 
 模型当前默认开启思考模式（effort=high）：实测推理 token 占输出的一半到四分之三，首字延迟数秒，是回答成本的主要来源；`AI_AGENT_MAX_OUTPUT_TOKENS` 用于给输出封顶。若要降本，需先评估回答质量再显式关闭思考或降低 effort（思考模式下 `temperature` 不生效）。
 
@@ -57,7 +60,12 @@ DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Ag
 - 超预算压缩：`server/domain/chat-compaction.ts` 在历史超出预算时，把「摘要游标之后、保留边界之前」的消息一次性并入摘要（保留比例 `AI_AGENT_COMPACTION_KEEP_RATIO`，默认 0.5，即保留一半预算的原文）。摘要加密存在 `chat_sessions.context_summary_enc`，游标是 `context_summary_upto_at`，原始消息一律保留不删；摘要调用本身也记 `ai_model_calls`（`purpose=chat_history_summary`）。每次压缩会让缓存前缀断裂一次，因此必须低频、大批量。
 - 工具轨迹回放：`server/agent/tool-trace.ts` 把本轮模型发起的 `tool_calls` 与工具返回加密存在助手消息的 `tool_trace_enc`，下一轮挂在对应提问上原样回放，使上一轮的完整请求（含工具往返）成为本轮的前缀。只回放最近一轮；超过步数/字符上限的轨迹直接丢弃；不保存思维链（实测回放不带 `reasoning_content` 也被服务端接受）。
 - system 前缀稳定：咨询对象只保留「类型 + 名称」指针，档案细节由 `record_snapshot` 工具按需查询；教师画像与会话摘要都放在 system 段，只在变化时（改画像、压缩）才打断前缀。
-- 只读工具集（`server/agent/tools/index.ts` 按上下文裁剪）：`knowledge_search` 三库检索、`module_route` 确定性分诊、`recommend_assessment` 量表推荐卡、`entity_memory` 同一对象的跨会话摘要、`record_snapshot` 当前会话绑定的咨询对象档案、`student_search` 按姓名或班级检索当前教师负责的在册学生（只返回 id/姓名/班级；姓名 AES 加密存储，只能精确匹配，不支持模糊检索）、`student_snapshot` 按 `student_search` 得到的 id 读取该学生档案。全部只读、按 `schoolId + ownerUserId` 收口、按数据模式脱敏；`record_snapshot` 与 `student_snapshot` 共用 `server/agent/tools/record-context.ts` 的读取与治理路径。**写操作不进工具层**：教师业务正文的修改仍由既有 REST 路由执行（带 `expectedUpdatedAt` 并发校验、归属条件与审计）；若日后要接入，只允许「模型起草动作卡 → 教师确认 → 前端调用既有接口」的形式，不给模型直接的写工具或 SQL。
+- 会话内换绑咨询对象（`server/domain/chat-context-switch.ts`）：一个会话默认绑定一个对象，教师可以在会话中途用 `@` 换对象——既有消息保留（不新建会话、不清空记录），入口把 `chat_sessions.context_type/context_id` 改到新对象，并在元数据 `contextSwitches` 里留痕（前端据此在时间线画分隔条）。换绑后 system 段持续带同一段提示，声明「历史消息属于旧对象、当前对象以工具返回为准」；提示只由元数据推导，逐轮逐字一致，因此不会打断前缀缓存。`chat_sessions.metadata` 的模块占比写回必须是 jsonb 合并（`||`），不能整块覆盖，否则会抹掉换绑记录。
+- 只读工具集（`server/agent/tools/index.ts` 按上下文裁剪，共 13 个）：`knowledge_search` 三库混合检索（向量 + pg_trgm 关键词，RRF 融合；零命中时返回该模块已发布资源目录）、`module_route` 确定性分诊（返回模块与该模块的静态分析与行动框架 playbook）、`recommend_assessment` 量表推荐卡（走与模块页同一套门禁：已发布、红线量表仅在触发时可见、被前置锁住则改推前置，并返回候选量表清单）、`entity_memory` 同一对象**跨会话**的最近 8 条沟通摘要（排除当前会话；未传参数时读当前会话绑定的对象，未绑定对象时返回空与提示），`record_snapshot` 当前会话绑定的咨询对象档案、`student_search` 按姓名或班级检索当前教师负责的在册学生（只返回 id/姓名/班级；姓名 AES 加密存储，只能精确匹配，不支持模糊检索）、`student_snapshot` 按 `student_search` 得到的 id 读取该学生档案、`plan_lookup` 进行中方案与行动项（含逾期标记）与最近复盘、`assessment_history` 已提交量表结论与未完成草稿与开放评估组、`communication_lookup` 沟通记录、`class_overview` 班级与学生聚合概览（沟通数/在跟方案数/最近方案等级）、`teacher_brief` 教师待办简报（逾期行动项、待复盘方案、未完成草稿、未读通知数、需关注的沟通）、`resource_lookup` 三库资源目录（只给名称与摘要，不给正文与结论）。全部只读、按 `schoolId + ownerUserId` 收口、按数据模式脱敏；`record_snapshot` 与 `student_snapshot` 共用 `server/agent/tools/record-context.ts` 的读取与治理路径，业务数据的读取集中在 `server/domain/assistant-readers.ts`。**写操作不进工具层**：教师业务正文的修改仍由既有 REST 路由执行（带 `expectedUpdatedAt` 并发校验、归属条件与审计）；若日后要接入，只允许「模型起草动作卡 → 教师确认 → 前端调用既有接口」的形式，不给模型直接的写工具或 SQL。
+- 运行期防护（`server/agent/graph.ts`）：同轮内相同 (工具, 参数) 的重复调用直接复用上次结果；单次工具执行有超时上限（`AgentTool.timeoutMs`，默认 10 秒），超时按工具失败回传模型自愈；模块分诊结论与量表推荐模块不一致时以量表推荐为准并写 `assistant_tool_conflict` 产品事件。工具启用清单与轮次上限来自 `AI_AGENT_ENABLED_TOOLS` / `AI_AGENT_MAX_TOOL_ROUNDS`，AI 中心「运行时配置」只读展示生效值。
+- 回答后确定性校验（`server/agent/answer-guard.ts`，落库前调用）：清理类规则直接修正正文——删除 `（来源：《…》）` 式标注、「约 N 分钟」时长信息、把模块英文 ID 换成中文模块名、删除 `module/reason/ctaLabel` 等内部字段名标注；告警类规则只记录不改写——诊断性表述、无引用来源却出现「平台规定/工具库要求/学校要求」、疑似密钥或哈希串。清理后若只剩标点则回退原文，绝不把回答清空。命中项写入产品事件 `assistant_answer_flagged` 并保留在消息 metadata，便于在 AI 中心观察。
+- 停止与重新生成：教师可中断本轮（前端 `AbortController`）；服务端在 `ReadableStream.cancel()` 与响应 `close` 两处置中断标记，落库与发事件前检查，中断则不写库并记 `assistant_answer_aborted`。`POST /api/v1/chat/messages/[id]/regenerate` 复用该回答对应的教师提问重跑一轮，旧回答软删（`chat_messages.deleted_at`），事件流与普通提问完全一致；普通提问与重新生成共用 `server/domain/chat-stream.ts` 的同一份流水线。
+- 主动简报：`GET /api/v1/chat/assistant-brief` 返回空态「今日建议」（逾期行动项、待复盘方案、未完成量表草稿、需关注的沟通、未读通知），确定性生成、不调用模型，因此 `local` 数据模式同样可用；点击一条即以该问句发起提问，由 `teacher_brief` 工具在回答里读取真实数据。
 - 外发脱敏与本地模式：`redactOutboundText` 对所有外发文本（提问、历史、轨迹、档案、画像、摘要）按学校数据模式脱敏；`local` 模式直接不调用外部模型并向教师返回提示。
 - 可观测性：`ai_model_calls` 记录每次模型往返（含工具往返）的输入/输出与缓存命中/未命中 token；AI 中心「调用审计」按「缓存命中」列展示命中量与占比。基线对比脚本：`pnpm ai:cache-probe --run`（合成对话，仅手动运行，默认不执行）。
 
@@ -65,7 +73,8 @@ DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Ag
 
 - 提示词正文随代码发布，唯一来源是 `server/domain/ai-prompt-baselines.ts`；平台后台 AI 中心的提示词页只读展示，改文案走代码评审与发版。
 - 数据库 `ai_prompt_templates`（提示词）与 `ai_runtime_settings`（运行时配置）已随迁移 `drizzle/0051_sour_hellfire_club.sql` 删除，不再存在库内来源。
-- 没有 Agent 开关：所有消息一律走 Agent 图；Agent 行为要点（回答先行、量表优先、不得输出「选项：」列表）在 `server/agent/prompts.ts` 的 `buildFormatInstruction`。
+- 没有 Agent 开关：所有消息一律走 Agent 图；Agent 行为要点（回答先行、先检索再回答、量表优先、不得输出「选项：」列表）在 `server/agent/prompts.ts` 的 `buildFormatInstruction`。「先检索再回答」要求：除寒暄与能力询问外，涉及班主任具体做法、平台量表/工具/SOP/制度的问题必须先调用 `knowledge_search`（必要时再补 `resource_lookup`），回答只能基于工具实际返回的内容——这既保证回答有平台知识依据，也让界面上的「参考了 N 条知识内容」面板有内容可展示。
+- 用语红线：面向教师的文本不得出现「危机、红线、预警、立即、110、120」这些字样（含空格、谐音或拆字写法），已在 `assistant_chat`、`assessment_report`、`tool_step_polish`、`instrument_recommendation`、`chat_history_summary` 五条提示词里约束（同类含义改用「安全事项 / 重点关注、安全底线、关注提示、尽快 / 第一时间」；紧急处置只引导联系校内心理专员或学校值班负责人，不写报警或急救电话号码）。当前是提示词层的软约束，`server/agent/answer-guard.ts` 尚未对回答做词级清洗兜底，若观测到漏出再考虑加一层替换。
 
 超时说明：`DEEPSEEK_TIMEOUT_MS` 是全局默认（建议 30000）。评估报告润色是最长输出（完整报告 JSON），走专用逻辑：不低于 360000ms，不受全局短超时影响。运行时参数（模型名、超时、embedding）只来自环境变量与代码默认值。
 
@@ -157,6 +166,8 @@ pnpm import:business-data --dry-run --require-complete
 
 推荐接口（`POST /api/v1/assessments/[module]/recommend`）由 AI 按教师描述挑一张，并受业务规则约束：只能从已发布且未锁定的量表中选；选中的那张被前置量表锁住时改推前置量表（redirected）；DeepSeek 不可用、超时或非法输出时退到规则兜底（优先 suggested → 必做且可做 → 第一张可做的）。红线检查量表只在高危阈值命中（suggested）时才对教师和 LLM 可见，避免安全清单被当成常规问卷做掉。
 
+触发条件的求值口径按「量表是不是对象级」区分（`server/domain/assessment-instruments.ts`）：对象级量表＝`frequency=per_case`、红线检查，以及所在模块的评估对象是班级/学生/家长的量表（口径与模块页的对象选择器同源，见 `shared/assessments.ts` 的 `MODULE_ASSESSMENT_CONTEXT_TYPES`，班级系统的「五系统自评表」就属于这一类）。这类量表的**完成状态、前置/互斥门禁与触发条件**都只认**同一咨询对象**的提交——当前对话/模块页没有关联班级、学生或家长时，这些量表一律按「未对该对象做过」处理，不拿别的班级或家庭、以及没有关联对象的模块级提交当依据；self_growth 这类教师级量表仍按教师历史提交判定。触发条件命中时，给模型的依据是**实测事实**（哪张量表、何时完成、均分与结论等级，见 `InstrumentTriggerEvidence`），不是触发条件原文——规则原文是条件式描述，被转述后容易变成「平台查到你存在风险」这类对教师数据的断言。推荐请求可带 `contextType`/`contextId`（模块页与 AI 对话都会带），方案详情的深度诊断建议同样按方案自身的咨询对象求值。
+
 ### 提交、评估组与统一出方案
 
 - 教师提交量表时前端带 `deferPlan: true`：服务端（`POST /api/v1/assessments/[module]/submit`）只把结果落入评估组 `assessment_sessions`，不生成方案，返回 `deferred: true` 与 `assessmentSessionId`。首次提交也会先建组。
@@ -167,7 +178,7 @@ pnpm import:business-data --dry-run --require-complete
 
 ### 熔断例外
 
-高危（熔断）结果不走连续流程：提交时立即创建风险事件与心理转介、冻结评估组内待确认的普通方案并关闭评估组，教师端停留在转介指引页。`deferPlan` 只在非熔断且组可聚合时生效；无组时结果无法聚合，仍按单张直接出方案。
+高危（熔断）结果不走连续流程：提交时立即创建风险事件与心理转介、冻结评估组内待确认的普通方案并关闭评估组，教师端停留在转介指引页。转介卡片（`app/components/CrisisReferralCard.vue`）展示学校危机指引、校内求助电话（学校设置 `helpPhone`）与心理专员响应时限，首页助手的熔断提示复用同一套组件与规则；面向教师的文案不得出现「危机 / 红线 / 预警 / 立即 / 110 / 120」字样，学校配置的指引在保存时校验、读取时回退默认指引。`deferPlan` 只在非熔断且组可聚合时生效；无组时结果无法聚合，仍按单张直接出方案。
 
 ## 7. 方案与复盘
 
