@@ -3,10 +3,9 @@ import { requireUser } from '../../../../utils/auth'
 
 /**
  * Agent 代码默认值（与环境变量一并构成运行时配置的唯一来源）：
- *  - 轮次上限与 server/agent/graph.ts 的 MAX_TOOL_ROUNDS 一致；
- *  - 采样温度与 server/integrations/models.ts 的默认温度一致。
+ *  - 采样温度与 server/integrations/models.ts 的默认温度一致；
+ *  - 轮次上限与启用工具清单来自 AI_AGENT_MAX_TOOL_ROUNDS / AI_AGENT_ENABLED_TOOLS（见 nuxt.config.ts）。
  */
-const AGENT_MAX_ROUNDS = 6
 const AGENT_TEMPERATURE = 0.35
 
 /**
@@ -23,6 +22,15 @@ export default defineEventHandler(async (event) => {
 
   const timeoutMs = Number(config.deepseekTimeoutMs) || 30000
   const embeddingEnabled = Boolean(config.embeddingEnabled)
+  const maxToolRounds = Number(config.agentMaxToolRounds) || 8
+  const enabledToolsRaw = String(config.agentEnabledTools || '').trim()
+  const enabledToolNames = enabledToolsRaw
+    ? enabledToolsRaw.split(',').map(name => name.trim()).filter(Boolean)
+    : null
+  const allToolNames = agentTools.map(tool => tool.name)
+  const effectiveToolNames = enabledToolNames
+    ? allToolNames.filter(name => enabledToolNames.includes(name))
+    : allToolNames
 
   return {
     values: {
@@ -31,12 +39,14 @@ export default defineEventHandler(async (event) => {
       timeoutMs: { env: timeoutMs, effective: timeoutMs, source: 'env' },
       embeddingModel: { env: config.embeddingModel, effective: config.embeddingModel, source: 'env' },
       embeddingEnabled: { env: embeddingEnabled, effective: embeddingEnabled, source: 'env' },
-      agentMaxRounds: { env: AGENT_MAX_ROUNDS, effective: AGENT_MAX_ROUNDS, source: 'code' },
+      agentMaxRounds: { env: maxToolRounds, effective: maxToolRounds, source: 'env' },
       agentTemperature: { env: AGENT_TEMPERATURE, effective: AGENT_TEMPERATURE, source: 'code' },
-      agentTools: { env: null, effective: null, source: 'code' }
+      agentTools: { env: enabledToolNames, effective: effectiveToolNames, source: enabledToolNames ? 'env' : 'code' }
     },
     /** 代码注册的全部只读工具：不配置启用清单时按上下文裁剪后全部生效。 */
-    agentToolNames: agentTools.map(tool => tool.name),
+    agentToolNames: allToolNames,
+    /** 启用清单生效后实际可用的工具（按上下文裁剪前的全集口径）。 */
+    agentEnabledToolNames: effectiveToolNames,
     envOnly: {
       deepseekApiKey: { configured: Boolean(config.deepseekApiKey) },
       deepseekBaseUrl: config.deepseekBaseUrl,

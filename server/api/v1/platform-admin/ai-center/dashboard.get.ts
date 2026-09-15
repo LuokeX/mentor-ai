@@ -1,4 +1,4 @@
-import { gte, sql } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
 
@@ -46,6 +46,20 @@ export default defineEventHandler(async (event) => {
   }).from(schema.schoolSettings)
     .groupBy(schema.schoolSettings.aiDataMode)
 
+  // 近 7 天工具调用统计：只按事件里的工具名/状态聚合，不含参数与返回正文
+  const toolStats = await db.select({
+    name: sql<string>`coalesce(${schema.productEvents.metadata}->>'tool', 'unknown')`,
+    total: sql<number>`count(*)::int`,
+    failed: sql<number>`count(*) filter (where coalesce(${schema.productEvents.metadata}->>'status', 'success') <> 'success')::int`
+  }).from(schema.productEvents)
+    .where(and(
+      eq(schema.productEvents.eventName, 'assistant_tool_called'),
+      gte(schema.productEvents.createdAt, since)
+    ))
+    .groupBy(sql`coalesce(${schema.productEvents.metadata}->>'tool', 'unknown')`)
+    .orderBy(sql`count(*) desc`)
+    .limit(20)
+
   return {
     models: {
       routerModel: { env: config.deepseekRouterModel, effective: config.deepseekRouterModel },
@@ -59,7 +73,7 @@ export default defineEventHandler(async (event) => {
       deepseekBaseUrl: config.deepseekBaseUrl,
       agreementVersion: config.deepseekAgreementVersion || '未登记协议版本（full_context 门禁关闭）'
     },
-    stats7d: { ...summary, byPurpose },
+    stats7d: { ...summary, byPurpose, tools: toolStats },
     recentCalls,
     governance: { byDataMode }
   }

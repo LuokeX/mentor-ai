@@ -19,20 +19,49 @@ interface RecentCall {
 const { data, pending, refresh } = await useFetch<{
   models: Record<string, ModelEntry>
   keys: { deepseekApiKey: { configured: boolean, note: string }, deepseekBaseUrl: string, agreementVersion: string }
-  stats7d: { total: number, success: number, failed: number, avgLatencyMs: number, byPurpose: Array<{ purpose: string, total: number, failed: number }> }
+  stats7d: {
+    total: number
+    success: number
+    failed: number
+    avgLatencyMs: number
+    byPurpose: Array<{ purpose: string, total: number, failed: number }>
+    tools?: Array<{ name: string, total: number, failed: number }>
+  }
   recentCalls: RecentCall[]
   governance: { byDataMode: Array<{ dataMode: string | null, total: number }> }
 }>('/api/v1/platform-admin/ai-center/dashboard')
 
 const purposeLabels: Record<string, string> = {
+  assistant_chat: '首页助手回答',
+  chat_history_summary: '对话历史摘要',
+  assessment_report: '评估报告润色',
+  instrument_recommendation: '量表分诊',
+  semantic_safety: '安全信号识别',
+  tool_step_polish: '工具步骤改写',
   clarification_round: '澄清追问',
   clarification_summary: '澄清总结',
   assistant_answer: '聊天回答',
   assistant_answer_stream: '聊天流式回答',
-  assessment_report: '评估报告润色',
-  instrument_recommendation: '量表分诊',
   plan_update_extraction: '方案更新提取',
 }
+/** 工具英文名 → 中文标题（与 server/agent/graph.ts 的 TOOL_TITLES 对齐） */
+const toolLabels: Record<string, string> = {
+  knowledge_search: '知识库检索',
+  module_route: '问题分诊',
+  recommend_assessment: '推荐量表',
+  entity_memory: '实体记忆',
+  record_snapshot: '读取咨询对象档案',
+  student_search: '查找学生',
+  student_snapshot: '读取学生档案',
+  plan_lookup: '查询方案与复盘',
+  assessment_history: '查询评估历史',
+  communication_lookup: '查询沟通记录',
+  class_overview: '班级学生概览',
+  teacher_brief: '读取教师待办',
+  resource_lookup: '查询三库资源'
+}
+const toolStats = computed(() => data.value?.stats7d.tools || [])
+const toolStatsTotal = computed(() => toolStats.value.reduce((sum, item) => sum + item.total, 0))
 const dataModeLabels: Record<string, string> = {
   local: '本地处理',
   redacted: '脱敏模式',
@@ -132,6 +161,22 @@ function effectiveText(value: ModelEntry | undefined) {
         </div>
       </div>
     </div>
+
+    <!-- Agent 工具使用（近 7 天，按 assistant_tool_called 产品事件聚合） -->
+    <h2 class="mt-8 text-lg font-semibold text-gray-900">Agent 工具使用</h2>
+    <p class="mt-1 text-sm text-gray-500">近 7 天首页助手调用过的只读工具；失败含超时与执行错误。</p>
+    <div v-if="toolStats.length" class="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div class="divide-y divide-gray-50">
+        <div v-for="item in toolStats" :key="item.name" class="flex items-center gap-4 px-5 py-3">
+          <span class="w-40 shrink-0 truncate text-sm text-gray-700">{{ toolLabels[item.name] || item.name }}</span>
+          <div class="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-100">
+            <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${Math.max(2, toolStatsTotal ? (item.total / toolStatsTotal) * 100 : 0)}%` }" />
+          </div>
+          <span class="w-24 shrink-0 text-right text-xs text-gray-500">{{ item.total }} 次 / 失败 {{ item.failed }}</span>
+        </div>
+      </div>
+    </div>
+    <div v-else-if="!pending" class="mt-3 rounded-xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">近 7 天暂无工具调用记录</div>
 
     <!-- 治理概览 -->
     <h2 class="mt-8 text-lg font-semibold text-gray-900">AI 数据治理</h2>
