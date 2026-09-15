@@ -20,7 +20,7 @@ import { enhancePlanInBackground } from '../../../../domain/plan-enhancement'
 import { findInvalidAnswers } from '../../../../domain/assessment-answers'
 import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
 import { mergeGroupResults } from '../../../../domain/plan-merge'
-import { resolveNextInstrumentSuggestion } from '../../../../domain/assessment-instruments'
+import { resolveNextInstrumentSuggestion, toAssessmentContextRef } from '../../../../domain/assessment-instruments'
 import { createTemplateAssessmentReport } from '../../../../domain/reports'
 
 const bodySchema = z.object({
@@ -360,7 +360,15 @@ export default defineEventHandler(async (event) => {
       eq(schema.assessmentAttempts.schoolId, schoolId)
     ))
 
-    let fuse: { eventId: string, referralId: string, crisisGuide: string } | null = null
+    let fuse: {
+      eventId: string
+      referralId: string
+      crisisGuide: string
+      helpPhone: string | null
+      ackMinutes: number
+      escalationMinutes: number
+      psychologistAssigned: boolean
+    } | null = null
     let planId: string | null = null
     let planUpdatedAt: Date | null = null
     let planReport: Record<string, unknown> | null = null
@@ -371,7 +379,15 @@ export default defineEventHandler(async (event) => {
         schoolId: schoolId, ownerUserId: user.id, sourceType: 'assessment', sourceId: attempt.id,
         text: `${definition.title}触发高风险规则：${result.reasons.join('；')}`, matchedRules: result.matchedRuleIds
       }, client)
-      fuse = { eventId: referral.safety.id, referralId: referral.referral.id, crisisGuide: referral.crisisGuide }
+      fuse = {
+        eventId: referral.safety.id,
+        referralId: referral.referral.id,
+        crisisGuide: referral.crisisGuide,
+        helpPhone: referral.helpPhone,
+        ackMinutes: referral.ackMinutes,
+        escalationMinutes: referral.escalationMinutes,
+        psychologistAssigned: referral.psychologistAssigned
+      }
       // 安全闭环：危机熔断时冻结本评估组关联的待确认普通方案并关闭评估组，
       // 教师不能再打开旧方案接受执行——执行路径已切换为转介处置。
       if (assessmentSessionId) {
@@ -417,8 +433,10 @@ export default defineEventHandler(async (event) => {
           noPlanNeeded = true
         } else {
           // 深度诊断建议：满足触发条件但未完成的量表，作为待办行动项写入方案
+          // 对象级量表（per_case）的触发只看同一咨询对象，这里把本次评估的关联对象一并传入
+          const suggestionContext = toAssessmentContextRef(contextType, contextId)
           const nextInstrumentSuggestion = await resolveNextInstrumentSuggestion(
-            event, module, { id: user.id, schoolId }, new Set([definition.code])
+            event, module, { id: user.id, schoolId }, new Set([definition.code]), suggestionContext
           )
           const generated = await generateOrMergeSessionPlan({
           event,

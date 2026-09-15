@@ -14,14 +14,20 @@ import type { H3Event } from 'h3'
 import type { ModuleId } from '../../shared/contracts'
 import { INSTRUMENT_ROLE_LABELS } from '../../shared/contracts'
 import { moduleMeta } from '../../shared/assessments'
-import { schema, useDb } from '../utils/db'
 import { redactPii } from '../integrations/deepseek'
+import {
+  callJsonChat,
+  isStrictJsonPurpose,
+  type JsonChatToolSpec
+} from '../integrations/json-chat'
 import { getAiRuntimeConfig, promptAvailable, renderPrompt } from './ai-config'
 import {
+  describeTriggerEvidence,
   fallbackInstrument,
   filterTeacherVisibleInstruments,
   listInstrumentOptions,
   resolveReachableInstrument,
+  type AssessmentContextRef,
   type InstrumentOption,
   type InstrumentRef
 } from './assessment-instruments'
@@ -65,7 +71,9 @@ function describeForPrompt(options: InstrumentOption[]) {
     isRequired: option.isRequired,
     usageTiming: option.usageTiming || undefined,
     description: option.description,
-    // 业务侧的确定性判断，由 ③ 的「触发条件」按该教师历史作答算出
+    // 业务侧的确定性判断，由 ③ 的「触发条件」按该教师历史作答算出。
+    // 「现在该做这张」用实测依据说明（分数/结论/时间），不给模型触发条件原文——
+    // 规则原文是条件式描述，模型转述后容易变成对教师数据的断言。
     businessAdvice: option.status === 'suggested'
       ? '业务规则判定：现在该做这张'
       : option.status === 'not_needed'
@@ -73,7 +81,9 @@ function describeForPrompt(options: InstrumentOption[]) {
         : option.status === 'completed'
           ? '该教师已经做过这张'
           : '无特定条件，随时可做',
-    businessAdviceReason: option.triggerConditionNote || undefined,
+    businessAdviceReason: option.status === 'suggested'
+      ? describeTriggerEvidence(option) || '触发条件已命中'
+      : option.triggerConditionNote || undefined,
     lastLevel: option.lastLevelName || option.lastLevel || undefined
   }))
 }
@@ -93,6 +103,37 @@ function fallbackResult(options: InstrumentOption[], reason: string): Instrument
 }
 
 /**
+ * 输出上限：编码 + 一句话理由（≤120 字）。思考模式默认开启且 reasoning token 同计入
+ * 上限，因此不能按正文长度估算；4K 覆盖思考与答案，同时避免异常调用长时间挂起。
+ */
+const INSTRUMENT_RECOMMENDATION_MAX_TOKENS = 4096
+
+/**
+ * strict 结构化输出试点定义（仅当 AI_STRICT_JSON_PURPOSES 含 instrument_recommendation 时启用）。
+ * 开启后自动关思考（tool_choice 具名形式在思考模式下会 400），strict 不可用时回退 json_object。
+ */
+const instrumentRecommendationTool: JsonChatToolSpec = {
+  name: 'recommend_instrument',
+  description: '从候选量表清单里挑一张最该先做的，并给出一句话理由。',
+  parameters: {
+    type: 'object',
+    properties: {
+      code: { type: 'string', description: '候选清单里的量表编码' },
+      rationale: { type: 'string', description: '一句话说明为什么先做这张，40 字以内' }
+    },
+    required: ['code', 'rationale'],
+    additionalProperties: false
+  }
+}
+
+/** 模型输出的原始候选 + 与白名单核对后的结果（核对仍由确定性代码完成）。 */
+interface RecommendationCandidate {
+  code: string
+  rationale: string
+  resolved: ReturnType<typeof resolveReachableInstrument>
+}
+
+/**
  * 按教师描述推荐一张量表。
  * text 为空（例如教师直接点进模块而不是从对话进来）时直接走兜底，不调模型。
  */
@@ -103,12 +144,20 @@ export async function recommendInstrument(
     text?: string
     user: { id: string, schoolId?: string | null }
     sessionId?: string | null
+    /** 当前咨询对象：对象级量表（per_case）的触发条件只认同一对象的提交 */
+    context?: AssessmentContextRef | null
     /** 提交前预演：本次作答覆盖该量表的历史提交后再算推荐与状态 */
     overrideLatest?: { code: string, answers: Record<string, number> }
   }
 ): Promise<InstrumentRecommendation> {
   // 红线检查量表只对教师和 LLM 在「高危阈值已命中」时可见，详见该函数注释
-  const options = filterTeacherVisibleInstruments(await listInstrumentOptions(event, input.module, input.user, input.overrideLatest))
+  const options = filterTeacherVisibleInstruments(await listInstrumentOptions(
+    event,
+    input.module,
+    input.user,
+    input.overrideLatest,
+    input.context ?? null
+  ))
   if (!options.length) return fallbackResult(options, '')
 
   const selectable = options.filter(option => option.status !== 'locked')
@@ -126,7 +175,6 @@ export async function recommendInstrument(
     return fallbackResult(options, '按量表库的必做标记推荐，未启用 AI 推荐。')
   }
 
-  const startedAt = Date.now()
   const rt = await getAiRuntimeConfig(event)
   const generatorModel = rt.generatorModel || config.deepseekGeneratorModel
   const prompt = await renderPrompt(event, 'instrument_recommendation', {
@@ -136,83 +184,82 @@ export async function recommendInstrument(
   // 提示词未配置或未发布：AI 能力不可用，按量表库的必做标记推荐
   if (!promptAvailable(prompt)) return fallbackResult(options, '量表分诊提示词未配置，按量表库的必做标记推荐。')
 
-  const audit = (status: 'success' | 'fallback') => useDb(event).insert(schema.aiModelCalls).values({
-    schoolId: input.user.schoolId || null,
-    ownerUserId: input.user.id,
-    sessionId: input.sessionId || null,
-    provider: 'deepseek',
-    model: generatorModel,
+  // 单次调用（不重试）：推荐是教师等结果的同步路径，失败直接规则兜底。
+  // strict 试点开启时自动关思考——tool_choice 具名形式在思考模式下会 400。
+  const strictPilot = isStrictJsonPurpose(event, 'instrument_recommendation')
+  const outcome = await callJsonChat<RecommendationCandidate>({
+    event,
     purpose: 'instrument_recommendation',
-    status,
-    latencyMs: Date.now() - startedAt
-  }).catch(() => undefined)
-
-  try {
-    const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
-      body: JSON.stringify({
-        model: generatorModel,
-        messages: [{ role: 'user', content: prompt.user || '' }],
-        response_format: { type: 'json_object' },
-        temperature: 0.2
-      }),
-      signal: AbortSignal.timeout(rt.timeoutMs || Number(config.deepseekTimeoutMs) || 8000)
-    })
-    if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
-    const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
-    const content = json.choices?.[0]?.message?.content
-    if (!content) throw new Error('Empty model output')
-
-    const parsed = JSON.parse(content) as { code?: unknown, rationale?: unknown }
-    const code = typeof parsed.code === 'string' ? parsed.code.trim() : ''
-    const rationale = typeof parsed.rationale === 'string' ? parsed.rationale.trim().slice(0, 120) : ''
-
-    // 约束 2：编码必须真实存在。模型编造编码时不能把错误往下传。
-    const resolved = code ? resolveReachableInstrument(options, code) : null
-    if (!resolved) {
-      await audit('fallback')
-      return fallbackResult(options, '未能匹配到更合适的量表，按必做标记推荐这张。')
-    }
-
-    await audit('success')
-    if (resolved.redirectedFrom) {
+    model: generatorModel,
+    messages: [{ role: 'user', content: prompt.user || '' }],
+    // 输出只有编码 + 一句话理由，但思考模式默认开启且 reasoning token 同计入上限，留足余量
+    maxTokens: INSTRUMENT_RECOMMENDATION_MAX_TOKENS,
+    timeoutMs: rt.timeoutMs || Number(config.deepseekTimeoutMs) || 8000,
+    temperature: 0.2,
+    thinking: strictPilot ? 'disabled' : undefined,
+    tool: instrumentRecommendationTool,
+    audit: {
+      schoolId: input.user.schoolId || null,
+      ownerUserId: input.user.id,
+      sessionId: input.sessionId || null
+    },
+    parse: (content) => {
+      const parsed = JSON.parse(content) as { code?: unknown, rationale?: unknown }
+      const code = typeof parsed.code === 'string' ? parsed.code.trim() : ''
+      const rationale = typeof parsed.rationale === 'string' ? parsed.rationale.trim().slice(0, 120) : ''
+      // 约束 2：编码必须真实存在。模型编造编码时不能把错误往下传。
+      const resolved = code ? resolveReachableInstrument(options, code) : null
       return {
-        instrumentCode: resolved.instrument.code,
-        instrumentTitle: resolved.instrument.title,
-        rationale: `你的情况更适合做「${resolved.redirectedFrom.title}」，但它需要先完成这张量表。`,
-        source: 'redirected',
-        originalCode: resolved.redirectedFrom.code,
-        overriddenSuggestion: null,
-        pickedNotNeeded: false,
-        options
+        value: { code, rationale, resolved },
+        errors: resolved ? [] : ['未能匹配到可用量表'],
+        auditStatus: resolved ? 'success' : 'fallback'
       }
     }
+  })
 
-    // LLM 的选择与业务触发条件冲突时要留痕：要么它挑了业务标为「当前不需要」的，
-    // 要么业务标了「该做这张」而它挑了别的。两种都记成 ai_override，前端会标注出来。
-    const businessSuggestion = options.find(option => option.status === 'suggested') || null
-    const pickedNotNeeded = resolved.instrument.status === 'not_needed'
-    const skippedSuggestion = Boolean(businessSuggestion) && businessSuggestion!.code !== resolved.instrument.code
-    const overridden = pickedNotNeeded || skippedSuggestion
+  const resolved = outcome.data?.resolved ?? null
+  if (!resolved) {
+    // 区分「模型挑了一张不存在的量表」与「调用/解析本身失败」，两者对教师的说法不同
+    if (outcome.failure && outcome.failure.kind !== 'schema') {
+      console.warn(`[instrument_recommendation] 推荐调用失败：${outcome.failure.errorCode}`)
+      return fallbackResult(options, 'AI 推荐暂时不可用，按量表库的必做标记推荐这张。')
+    }
+    return fallbackResult(options, '未能匹配到更合适的量表，按必做标记推荐这张。')
+  }
+  const rationale = outcome.data?.rationale || ''
 
+  if (resolved.redirectedFrom) {
     return {
       instrumentCode: resolved.instrument.code,
       instrumentTitle: resolved.instrument.title,
-      rationale: rationale || `${moduleMeta[input.module].title}模块建议先完成这张量表。`,
-      source: overridden ? 'ai_override' : 'ai',
-      originalCode: null,
-      // 只在「业务另有建议」时才填，指向业务建议的那张，供教师一键改选。
-      // 之前这里在没有业务建议时错填成了推荐的那张本身，导致提示语说反。
-      overriddenSuggestion: skippedSuggestion && businessSuggestion
-        ? { code: businessSuggestion.code, title: businessSuggestion.title }
-        : null,
-      pickedNotNeeded,
+      rationale: `你的情况更适合做「${resolved.redirectedFrom.title}」，但它需要先完成这张量表。`,
+      source: 'redirected',
+      originalCode: resolved.redirectedFrom.code,
+      overriddenSuggestion: null,
+      pickedNotNeeded: false,
       options
     }
-  } catch (error) {
-    console.error('[instrument_recommendation] DeepSeek 调用失败:', error instanceof Error ? error.message : error)
-    await audit('fallback')
-    return fallbackResult(options, 'AI 推荐暂时不可用，按量表库的必做标记推荐这张。')
+  }
+
+  // LLM 的选择与业务触发条件冲突时要留痕：要么它挑了业务标为「当前不需要」的，
+  // 要么业务标了「该做这张」而它挑了别的。两种都记成 ai_override，前端会标注出来。
+  const businessSuggestion = options.find(option => option.status === 'suggested') || null
+  const pickedNotNeeded = resolved.instrument.status === 'not_needed'
+  const skippedSuggestion = Boolean(businessSuggestion) && businessSuggestion!.code !== resolved.instrument.code
+  const overridden = pickedNotNeeded || skippedSuggestion
+
+  return {
+    instrumentCode: resolved.instrument.code,
+    instrumentTitle: resolved.instrument.title,
+    rationale: rationale || `${moduleMeta[input.module].title}模块建议先完成这张量表。`,
+    source: overridden ? 'ai_override' : 'ai',
+    originalCode: null,
+    // 只在「业务另有建议」时才填，指向业务建议的那张，供教师一键改选。
+    // 之前这里在没有业务建议时错填成了推荐的那张本身，导致提示语说反。
+    overriddenSuggestion: skippedSuggestion && businessSuggestion
+      ? { code: businessSuggestion.code, title: businessSuggestion.title }
+      : null,
+    pickedNotNeeded,
+    options
   }
 }

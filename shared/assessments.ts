@@ -31,6 +31,11 @@ export interface AssessmentDefinition {
   isRequired?: boolean
   /** 使用时机，自由文本，展示给教师作参考 */
   usageTiming?: string
+  /**
+   * 量表使用频率（③「量表使用频率」列）：`per_case` 表示结果描述的是某个学生/家长/班级
+   * （对象级量表，触发条件只看同一对象的提交）；weekly/monthly/once 等为教师级。
+   */
+  frequency?: 'once' | 'daily' | 'weekly' | 'monthly' | 'per_case' | 'semester'
   /** 前置量表编码。未完成时该量表锁定；留空视为放行。 */
   prerequisiteCodes?: string[]
   /** 互斥量表编码。已完成其中任一张时该量表锁定。 */
@@ -43,6 +48,20 @@ export interface AssessmentDefinition {
   triggerCondition?: string
   /** 触发条件说明，给业务和教师看的一句话 */
   triggerConditionNote?: string
+}
+
+/**
+ * 各模块的评估对象口径（与模块页的对象选择器一致）：
+ * 空数组表示教师级（结果属于教师本人），其余表示结果属于某一类咨询对象。
+ * 服务端据此判定「对象级量表」——完成状态、前置/互斥门禁与触发条件都只按
+ * 同一对象的提交计算，避免拿 A 班（或另一个家庭）的评估当成当前个案的依据。
+ */
+export const MODULE_ASSESSMENT_CONTEXT_TYPES: Record<ModuleId, ReadonlyArray<'student' | 'class' | 'guardian'>> = {
+  self_growth: [],
+  class_system: ['class'],
+  home_school: ['guardian', 'student'],
+  student_case: ['student'],
+  learning_problem: ['student']
 }
 
 const fivePoint: AssessmentOption[] = [
@@ -193,7 +212,7 @@ export const moduleMeta: Record<ModuleId, { title: string, short: string, color:
   },
   student_case: {
     title: '学生个体问题', short: '快速编码，分级支持', color: 'violet', icon: 'i-lucide-user-round-search',
-    intro: '本模块量表聚焦解决学生情绪困扰、行为偏差、人际适应困难等个案问题。开展状态评估并输出归因依据分析，给到教师个案干预行动方法，配套学生疏导、家长协同与学校个案预警干预参考。',
+    intro: '本模块量表聚焦解决学生情绪困扰、行为偏差、人际适应困难等个案问题。开展状态评估并输出归因依据分析，给到教师个案干预行动方法，配套学生疏导、家长协同与学校个案关注干预参考。',
     planAudiences: MODULE_PLAN_AUDIENCES.student_case
   },
   learning_problem: {

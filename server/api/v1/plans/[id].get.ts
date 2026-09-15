@@ -202,7 +202,15 @@ export default defineEventHandler(async (event) => {
   let nextInstrumentSuggestion: { code: string, title: string, note: string | null } | null = null
   const suggestionByActionTitle = new Map<string, { instrumentCode: string }>()
   try {
-    const options = await listInstrumentOptions(event, plan.module as ModuleId, { id: user.id, schoolId: user.schoolId })
+    // 方案自身的咨询对象：对象级量表（per_case / 红线检查）的触发条件只认同一对象的提交
+    const planContext = plan.studentId
+      ? { type: 'student' as const, id: plan.studentId }
+      : plan.guardianId
+        ? { type: 'guardian' as const, id: plan.guardianId }
+        : plan.classId
+          ? { type: 'class' as const, id: plan.classId }
+          : null
+    const options = await listInstrumentOptions(event, plan.module as ModuleId, { id: user.id, schoolId: user.schoolId }, undefined, planContext)
     const snapshots = (plan.actions || []) as Array<Record<string, unknown>>
     for (const snapshot of snapshots) {
       if (snapshot.kind !== 'instrument_suggestion') continue

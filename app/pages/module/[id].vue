@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { moduleIdSchema } from '#shared/contracts'
 import { INSTRUMENT_ROLE_LABELS, type InstrumentRole } from '#shared/contracts'
-import { moduleMeta, type AssessmentDefinition } from '#shared/assessments'
+import { MODULE_ASSESSMENT_CONTEXT_TYPES, moduleMeta, type AssessmentDefinition } from '#shared/assessments'
 
 /** 模块主题色图标底色；写成完整 class 字面量以便 Tailwind 扫描生成 */
 const moduleIconTone: Record<string, string> = {
@@ -64,11 +64,18 @@ const fromChat = computed(() => Boolean(sourceChatSessionId.value || routedText.
 const recommendBody = reactive<{
   text: string | undefined
   sourceChatSessionId: string | undefined
+  /** 当前关联对象：对象级量表的触发条件只认同一对象的提交 */
+  contextType?: 'student' | 'class' | 'guardian'
+  contextId?: string
   answers?: Record<string, number>
   instrumentCode?: string
 }>({
   text: routedText.value,
-  sourceChatSessionId: sourceChatSessionId.value
+  sourceChatSessionId: sourceChatSessionId.value,
+  ...(typeof route.query.contextType === 'string' && typeof route.query.contextId === 'string'
+    && (route.query.contextType === 'student' || route.query.contextType === 'class' || route.query.contextType === 'guardian')
+    ? { contextType: route.query.contextType, contextId: route.query.contextId }
+    : {})
 })
 
 const {
@@ -268,15 +275,10 @@ function goNext() {
   if (current.value < definition.value.questions.length - 1) current.value++
 }
 
-const contextRules: Record<string, Array<ContextOption['type']>> = {
-  self_growth: [],
-  class_system: ['class'],
-  home_school: ['guardian', 'student'],
-  student_case: ['student'],
-  learning_problem: ['student']
-}
+// 评估对象口径与服务端同一份来源（shared/assessments）：模块页的对象选择器与服务端的
+// 对象级量表判定（完成状态、触发条件）必须一致，否则页面上能选的对象和判定口径会对不上。
 const requiredContext = computed(() => moduleId === 'student_case' || moduleId === 'learning_problem')
-const allowedContextTypes = computed(() => contextRules[moduleId] || [])
+const allowedContextTypes = computed<Array<ContextOption['type']>>(() => [...(MODULE_ASSESSMENT_CONTEXT_TYPES[moduleId] || [])])
 const allContextOptions = computed<ContextOption[]>(() => [
   ...((contextOptions.value?.students || []).map((item: any) => ({ ...item, type: 'student' as const }))),
   ...((contextOptions.value?.classes || []).map((item: any) => ({ ...item, type: 'class' as const }))),
@@ -368,6 +370,12 @@ async function saveDraft() {
 watch(selectedContextKey, (value) => {
   allowUnlinked.value = false
   if (import.meta.client) localStorage.setItem(`assessment-context:${moduleId}`, value)
+  // 关联对象变化后按新对象重新推荐：对象级量表（per_case / 红线检查）的触发条件
+  // 只看同一对象的提交，没有关联对象时这些触发条件不参与推荐。
+  const [type, id] = value.split(':')
+  const validContext = (type === 'student' || type === 'class' || type === 'guardian') && Boolean(id)
+  recommendBody.contextType = validContext ? type as 'student' | 'class' | 'guardian' : undefined
+  recommendBody.contextId = validContext ? id : undefined
 })
 
 /**
@@ -495,7 +503,15 @@ async function submit() {
     const res = await $fetch<{
       attemptId: string
       planId?: string | null
-      fuse?: { eventId: string, referralId: string, crisisGuide: string } | null
+      fuse?: {
+        eventId: string
+        referralId: string
+        crisisGuide: string
+        helpPhone: string | null
+        ackMinutes: number
+        escalationMinutes: number
+        psychologistAssigned: boolean
+      } | null
       noPlanNeeded?: boolean
       levelName?: string
       deferred?: boolean
@@ -831,7 +847,15 @@ async function submit() {
 
     <section v-if="output" class="report-page mt-6 space-y-6">
       <!-- 安全熔断：必须停留在当前页展示转介指引，不跳方案页 -->
-      <div v-if="output.fuse" class="panel border-2 border-red-200 bg-red-50 p-7"><div class="flex gap-4"><UIcon name="i-lucide-siren" class="size-7 text-red-600" /><div><h1 class="text-xl font-semibold text-red-900">已启动安全转介</h1><p class="mt-2 text-sm text-red-800">{{ output.fuse.crisisGuide }}</p><p class="mt-3 text-xs text-red-600">事件编号：{{ output.fuse.eventId }}</p></div></div></div>
+      <CrisisReferralCard
+        v-if="output.fuse"
+        :guide="output.fuse.crisisGuide"
+        :help-phone="output.fuse.helpPhone"
+        :ack-minutes="output.fuse.ackMinutes"
+        :escalation-minutes="output.fuse.escalationMinutes"
+        :psychologist-assigned="output.fuse.psychologistAssigned"
+        :event-id="output.fuse.eventId"
+      />
       <!-- 绿色兜底：状态良好，无需生成方案 -->
       <div v-else-if="output.noPlanNeeded" class="panel border-2 border-emerald-200 bg-emerald-50 p-7">
         <div class="flex gap-4">
@@ -858,7 +882,7 @@ async function submit() {
       <div v-else class="panel p-7 text-center text-sm text-slate-500">
         <p>评估完成，正在进入方案详情…</p>
       </div>
-      <div class="print-actions flex gap-3"><UButton to="/">返回工作台</UButton><UButton to="/plans" color="neutral" variant="soft">查看方案记录</UButton></div>
+      <div class="print-actions flex gap-3"><UButton to="/">返回工作台</UButton><UButton v-if="!output.fuse" to="/plans" color="neutral" variant="soft">查看方案记录</UButton></div>
     </section>
   </div>
 </template>

@@ -160,7 +160,8 @@ function parseAssessmentSheetsV3(
         targetAudience: read(row, ['施测对象']),
         formType: read(row, ['施测形式']),
         triggerMethod: read(row, ['触发方式']),
-        frequency: read(row, ['作答频次']),
+        // 作答频次是 XLSX 自由文本，运行时只用于区分对象级（per_case）与教师级量表，这里与 transformer 口径一致直接透传
+        frequency: read(row, ['作答频次']) as AssessmentDefinition['frequency'],
         isRequired: read(row, ['是否必做']) === '是' || undefined,
         timeLimitMinutes: Number(read(row, ['作答时限分钟'])) || undefined,
         minQuestions: Number(read(row, ['最低题数'])) || undefined,
@@ -227,7 +228,7 @@ function parseAssessmentSheetsLegacy(sheets: SheetData[], module: ModuleId): Ass
         targetAudience: read(first, ['施测对象']),
         formType: read(first, ['施测形式']),
         triggerMethod: read(first, ['触发方式']),
-        frequency: read(first, ['作答频次']),
+        frequency: read(first, ['作答频次']) as AssessmentDefinition['frequency'],
         isRequired: read(first, ['是否必做']) === '是' || undefined,
         timeLimitMinutes: Number(read(first, ['作答时限分钟'])) || undefined,
         minQuestions: Number(read(first, ['最低题数'])) || undefined,

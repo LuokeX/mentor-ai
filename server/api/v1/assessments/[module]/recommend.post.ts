@@ -12,6 +12,9 @@ import { recommendInstrument } from '../../../../domain/instrument-recommendatio
 const bodySchema = z.object({
   text: z.string().trim().max(2000).optional(),
   sourceChatSessionId: z.string().uuid().optional(),
+  // 当前咨询对象：对象级量表（per_case / 红线检查）的触发条件只认同一对象的提交
+  contextType: z.enum(['student', 'class', 'guardian']).optional(),
+  contextId: z.string().uuid().optional(),
   // 提交前预演：带本次作答时，服务端把该量表的最新提交视为这套答案再算推荐与状态，
   // 供「提交前选择卡」基于本次答案判断下一张是否命中触发条件。
   answers: z.record(z.string(), z.number().int()).optional(),
@@ -28,6 +31,7 @@ export default defineEventHandler(async (event) => {
     text: body.text,
     user,
     sessionId: body.sourceChatSessionId ?? null,
+    context: body.contextType && body.contextId ? { type: body.contextType, id: body.contextId } : null,
     overrideLatest: body.answers && body.instrumentCode
       ? { code: body.instrumentCode, answers: body.answers }
       : undefined

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { buildInstrumentOptions, fallbackInstrument, filterTeacherVisibleInstruments, resolveReachableInstrument } from '../server/domain/assessment-instruments'
+import {
+  buildInstrumentOptions,
+  describeTriggerEvidence,
+  fallbackInstrument,
+  filterTeacherVisibleInstruments,
+  isAttemptEligibleForTrigger,
+  isObjectScopedInstrument,
+  resolveReachableInstrument
+} from '../server/domain/assessment-instruments'
 import type { AssessmentDefinition } from '../shared/assessments'
 
 const instrument = (code: string, over: Partial<AssessmentDefinition> = {}): AssessmentDefinition => ({
@@ -196,6 +204,127 @@ describe('instrument gating（前置/互斥锁定与完成状态优先级）', (
     // 无触发条件的量表：triggerHit 恒为 false（不属于「命中触发条件」）
     const free = buildInstrumentOptions([instrument('HS_FREE', {})], new Map([['HS_FREE', done()]]))
     expect(free[0]?.triggerHit).toBe(false)
+  })
+})
+
+describe('对象级量表的触发只看同一咨询对象', () => {
+  // 家校沟通：六维评估（per_case）→ 红线检查（红线 + 前置六维）
+  const library = [
+    instrument('HS_SIX', { instrumentRole: 'screening', isRequired: true, frequency: 'per_case' }),
+    instrument('HS_RED', {
+      instrumentRole: 'red_line',
+      frequency: 'per_case',
+      prerequisiteCodes: ['HS_SIX'],
+      triggerCondition: '量表[HS_SIX].均分 <= 4',
+      triggerConditionNote: '六维评估均分低于 4.0（出现风险迹象）时建议做红线检查'
+    })
+  ]
+  const sixAttempt = (answers: Record<string, number>) => ({
+    submittedAt: new Date('2026-09-04T08:01:47.926Z'),
+    level: 'yellow',
+    levelName: '3级·中度（定向干预）',
+    severity: 'medium',
+    dimensions: {},
+    answers
+  })
+
+  it('六维评估完成时，后续模块级的提交/其它家庭的提交都进不了判定', () => {
+    const teacherLevel = sixAttempt({ q1: 2 })
+    // 教师级视图里有六维提交，但对象视图为空（当前对话没有关联这位家长）
+    const options = buildInstrumentOptions(library, new Map([['HS_SIX', teacherLevel]]), new Map())
+    // 完成状态按对象算：对该对象还没做过
+    const six = options.find(option => option.code === 'HS_SIX')
+    expect(six?.status).toBe('available')
+    expect(six?.lastSubmittedAt).toBeNull()
+    // 前置不满足 → 红线检查锁定（拿不到别的提交当依据）
+    const red = options.find(option => option.code === 'HS_RED')
+    expect(red?.status).toBe('locked')
+    expect(red?.triggerHit).toBe(false)
+    // 教师端因此看不到这张红线清单（未命中高危阈值时不可见）
+    expect(filterTeacherVisibleInstruments(options).map(option => option.code)).toEqual(['HS_SIX'])
+  })
+
+  it('同一对象下六维低于阈值 → 红线清单建议做，并带实测依据（分数/结论/时间）', () => {
+    const six = sixAttempt({ q1: 2 })
+    const options = buildInstrumentOptions(library, new Map([['HS_SIX', six]]), new Map([['HS_SIX', six]]))
+    const red = options.find(option => option.code === 'HS_RED')
+    expect(red?.status).toBe('suggested')
+    expect(red?.triggerEvidence).toEqual([{
+      code: 'HS_SIX',
+      title: 'HS_SIX',
+      average: 2,
+      levelName: '3级·中度（定向干预）',
+      submittedAt: '2026-09-04T08:01:47.926Z'
+    }])
+    const text = describeTriggerEvidence(red!)
+    expect(text).toContain('2026-09-04')
+    expect(text).toContain('均分 2.0')
+    expect(text).toContain('3级·中度（定向干预）')
+    // 说明里不复述触发条件原文（「均分低于 4.0（出现风险迹象）」这类条件式描述）
+    expect(text).not.toContain('出现风险迹象')
+    expect(text).not.toContain('4.0')
+    // 六维均分健康（5 分）时不建议做
+    const healthy = sixAttempt({ q1: 5 })
+    const healthyOptions = buildInstrumentOptions(library, new Map([['HS_SIX', healthy]]), new Map([['HS_SIX', healthy]]))
+    expect(healthyOptions.find(option => option.code === 'HS_RED')?.status).toBe('not_needed')
+    expect(describeTriggerEvidence(healthyOptions.find(option => option.code === 'HS_RED')!)).toBeNull()
+  })
+
+  it('对象级与教师级量表的判定口径互不影响', () => {
+    const selfLibrary = [
+      instrument('SG_Q', { instrumentRole: 'screening', isRequired: true, frequency: 'monthly' }),
+      instrument('SG_D', { instrumentRole: 'deep_dive', triggerCondition: '量表[SG_Q].均分 >= 3' })
+    ]
+    const attempt = {
+      submittedAt: new Date('2026-09-04T08:01:47.926Z'),
+      level: 'B', levelName: null, severity: 'medium', dimensions: {}, answers: { q1: 4 }
+    }
+    // 教师级量表：即使当前对话没有绑定对象，历史提交照样参与触发求值
+    const options = buildInstrumentOptions(selfLibrary, new Map([['SG_Q', attempt]]), new Map([['SG_Q', attempt]]))
+    expect(options.find(option => option.code === 'SG_D')?.status).toBe('suggested')
+  })
+
+  it('isObjectScopedInstrument：per_case、红线检查，以及评估对象是班级/学生的模块', () => {
+    expect(isObjectScopedInstrument(instrument('A', { frequency: 'per_case' }))).toBe(true)
+    expect(isObjectScopedInstrument(instrument('B', { instrumentRole: 'red_line' }))).toBe(true)
+    // 班级系统的五系统自评表频率写的是 weekly，但结果属于某一个班，也要按对象判定
+    expect(isObjectScopedInstrument(instrument('CS_S1', { module: 'class_system', frequency: 'weekly' }))).toBe(true)
+    // 自我成长是教师级量表，任何频率都不按对象判定
+    expect(isObjectScopedInstrument(instrument('SG_S1', { module: 'self_growth', frequency: 'weekly' }))).toBe(false)
+    expect(isObjectScopedInstrument(instrument('SG_X', { module: 'self_growth' }))).toBe(false)
+  })
+
+  it('班级系统认班级：A 班的提交不算 B 班的完成，也不触发 B 班的深度量表', () => {
+    const classLibrary = [
+      instrument('CS_S1', { module: 'class_system', instrumentRole: 'screening', isRequired: true, frequency: 'weekly' }),
+      instrument('CS_S2', { module: 'class_system', instrumentRole: 'deep_dive', triggerCondition: '量表[CS_S1].均分 >= 3' })
+    ]
+    const classA = {
+      submittedAt: new Date('2026-09-14T08:00:00.000Z'),
+      level: 'B', levelName: null, severity: 'medium', dimensions: {}, answers: { q1: 4 }
+    }
+    // A 班做过：A 班视图里 S1 已完成、S2 触发命中
+    const optionsA = buildInstrumentOptions(classLibrary, new Map([['CS_S1', classA]]), new Map([['CS_S1', classA]]))
+    expect(optionsA.find(option => option.code === 'CS_S1')?.status).toBe('completed')
+    expect(optionsA.find(option => option.code === 'CS_S2')?.status).toBe('suggested')
+    // B 班没做过：B 班视图里 S1 是可做、S2 无法判断（不把 A 班的结果当依据）
+    const optionsB = buildInstrumentOptions(classLibrary, new Map([['CS_S1', classA]]), new Map())
+    const classB = optionsB.find(option => option.code === 'CS_S1')
+    expect(classB?.status).toBe('available')
+    expect(classB?.lastSubmittedAt).toBeNull()
+    expect(classB?.lastAverage).toBeNull()
+    expect(optionsB.find(option => option.code === 'CS_S2')?.status).toBe('not_needed')
+  })
+
+  it('isAttemptEligibleForTrigger：对象级要求同一对象，教师级任何提交都算', () => {
+    const scoped = new Set(['HS_SIX'])
+    expect(isAttemptEligibleForTrigger({ code: 'HS_SIX', scopedCodes: scoped, attemptBinding: 'guardian:g1', contextKey: 'guardian:g1' })).toBe(true)
+    // 别的家庭的提交、没有对象的模块级提交、以及当前对话未绑定对象时都不算
+    expect(isAttemptEligibleForTrigger({ code: 'HS_SIX', scopedCodes: scoped, attemptBinding: 'guardian:g2', contextKey: 'guardian:g1' })).toBe(false)
+    expect(isAttemptEligibleForTrigger({ code: 'HS_SIX', scopedCodes: scoped, attemptBinding: null, contextKey: 'guardian:g1' })).toBe(false)
+    expect(isAttemptEligibleForTrigger({ code: 'HS_SIX', scopedCodes: scoped, attemptBinding: 'guardian:g1', contextKey: null })).toBe(false)
+    // 教师级量表不受对象限制
+    expect(isAttemptEligibleForTrigger({ code: 'SG_Q', scopedCodes: scoped, attemptBinding: null, contextKey: null })).toBe(true)
   })
 })
 

@@ -35,7 +35,7 @@
 | `isRequired` | 必做标记 |
 | `prerequisiteCodes` | 前置量表编码；前置未完成时本量表锁定（locked） |
 | `exclusiveCodes` | 互斥量表编码；互斥量表已完成时本量表锁定（locked） |
-| `triggerCondition` | 触发条件（如 `量表[SG_S1].总分 >= 15`），引用此前量表的结果；未满足时标「当前不需要做」（not_needed，仍可手动做），满足时标「建议做」（suggested） |
+| `triggerCondition` | 触发条件（如 `量表[SG_S1].总分 >= 15`），引用此前量表的结果；未满足时标「当前不需要做」（not_needed，仍可手动做），满足时标「建议做」（suggested）。引用对象级量表（所在模块的评估对象是班级/学生/家长，或 `frequency=per_case`）时，运行时的完成状态与触发条件都只按**同一咨询对象**的提交判定：没有关联班级/学生/家长一律不推荐，避免把别的班级或家庭的评估当成当前个案的依据 |
 | `triggerConditionNote` | 触发条件说明，教师端展示 |
 
 导入校验强制要求非入口量表填写触发条件（否则要么人人做一遍、要么永远没人做），并对前置/触发条件引用的量表编码做交叉校验。运行时的状态判定（available/suggested/not_needed/locked/completed）、推荐与「提交延后、全部量表做完后统一出方案」的连续流程见 [AI 助手与三库资源说明](../../AI_ASSISTANT_AND_KNOWLEDGE.md)；各模块业务上的量表递进与互补见 [跨模块依赖矩阵](../cross-module-dependencies.md)。

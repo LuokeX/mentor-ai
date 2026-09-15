@@ -14,7 +14,7 @@ import { resolveAssessmentDefinition, resolveAttributionConfig, resolvePublished
 import { collectSessionAttempts, collectSessionSnapshots, generateOrMergeSessionPlan } from '../../../../domain/plan-session'
 import { isNoPlanNeeded } from '../../../../domain/no-plan-needed'
 import { mergeGroupResults } from '../../../../domain/plan-merge'
-import { resolveNextInstrumentSuggestion } from '../../../../domain/assessment-instruments'
+import { resolveNextInstrumentSuggestion, toAssessmentContextRef } from '../../../../domain/assessment-instruments'
 import { writeEntitySnapshot } from '../../../../domain/entity-snapshots'
 import { createTemplateAssessmentReport } from '../../../../domain/reports'
 import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-titles'
@@ -134,8 +134,10 @@ export default defineEventHandler(async (event) => {
     const objectLabel = await resolveObjectLabel(tx, secret, session.contextType, session.contextId)
 
     // 深度诊断建议：满足触发条件但未完成的量表，作为待办行动项写入方案
+    // 对象级量表（per_case）的触发只看同一咨询对象，这里把本次评估的关联对象一并传入
+    const suggestionContext = toAssessmentContextRef(session.contextType, session.contextId)
     const nextInstrumentSuggestion = await resolveNextInstrumentSuggestion(
-      event, module, { id: user.id, schoolId }, new Set(attempts.map(attempt => attempt.assessmentCode))
+      event, module, { id: user.id, schoolId }, new Set(attempts.map(attempt => attempt.assessmentCode)), suggestionContext
     )
 
     const generated = await generateOrMergeSessionPlan({
