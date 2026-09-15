@@ -30,8 +30,9 @@ import type { ModuleId, Severity } from '../../shared/contracts'
 import { moduleMeta } from '../../shared/assessments'
 import { getAiRuntimeConfig, isPromptPublished, promptAvailable, renderPrompt } from './ai-config'
 import { embedModuleResourceQuery } from '../integrations/embeddings'
+import { callJsonChat, type JsonChatMessage } from '../integrations/json-chat'
 import { searchKnowledgeChunks, type KnowledgeSearchResult } from './module-resource-knowledge-search'
-import { schema, useDb } from '../utils/db'
+import { useDb } from '../utils/db'
 
 export type PolishTool = { title: string, content: string, code?: string }
 
@@ -68,6 +69,12 @@ const RETRY_DELAY_MS = 3000
  * 的 360s 下限与澄清等其他小超时调用点）。
  */
 const SINGLE_ATTEMPT_TIMEOUT_FLOOR_MS = 300_000
+/**
+ * 输出上限：实测单次提交含 5-13 个工具 + 建议时改写正文可达 7000+ token；思考模式
+ * 默认开启且 reasoning token 同计入上限，因此显式声明为服务端默认上限（64K），
+ * 让截断由 finish_reason 判定，而不是表现为「JSON 解析失败」再白重试一次。
+ */
+const TOOL_POLISH_MAX_TOKENS = 64_000
 
 // tools 保持必填：缺 tools 字段时按「结构校验失败」处理（历史语义，见单测）；
 // actions 与 tools 同构但可选（输出可只有 tools，actions 缺省为空数组）。
@@ -454,50 +461,47 @@ export async function polishToolSteps<T extends PolishTool>(
 
   const timeoutMs = rt.timeoutMs || Math.max(Number(config.deepseekTimeoutMs) || 0, SINGLE_ATTEMPT_TIMEOUT_FLOOR_MS)
   const callOnce: PolishCallFn = async (attempt, previous) => {
-    const startedAt = Date.now()
-    try {
-      const feedback = previous
-        ? `\n\n上次输出校验未通过：${previous.errors.join('；')}\n上次输出原文（请修正后重新输出）：\n${previous.raw || ''}`
-        : ''
-      const prompt = await renderPrompt(event, 'tool_step_polish', {
-        facts: JSON.stringify(facts),
-        jsonFormat,
-        feedback
-      })
-      if (!promptAvailable(prompt)) throw new Error('工具步骤改写提示词未配置或未发布（tool_step_polish）')
-      const messages: Array<{ role: 'system' | 'user', content: string }> = []
-      if (prompt.system) messages.push({ role: 'system', content: prompt.system })
-      if (prompt.user) messages.push({ role: 'user', content: prompt.user })
-      const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
-        body: JSON.stringify({
-          model,
-          messages,
-          response_format: { type: 'json_object' },
-          temperature: 0.35
-        }),
-        signal: AbortSignal.timeout(timeoutMs)
-      })
-      if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
-      const json = await response.json() as {
-        choices?: Array<{ message?: { content?: string } }>
-        usage?: { prompt_tokens?: number, completion_tokens?: number }
+    const feedback = previous
+      ? `\n\n上次输出校验未通过：${previous.errors.join('；')}\n上次输出原文（请修正后重新输出）：\n${previous.raw || ''}`
+      : ''
+    const prompt = await renderPrompt(event, 'tool_step_polish', {
+      facts: JSON.stringify(facts),
+      jsonFormat,
+      feedback
+    })
+    if (!promptAvailable(prompt)) throw new Error('工具步骤改写提示词未配置或未发布（tool_step_polish）')
+    const messages: JsonChatMessage[] = []
+    if (prompt.system) messages.push({ role: 'system', content: prompt.system })
+    if (prompt.user) messages.push({ role: 'user', content: prompt.user })
+    // 单次尝试交给统一 JSON 调用层（审计、超时、截断判定都在那里）；
+    // 重试编排仍由上面的纯函数循环负责，保持可单测。
+    const outcome = await callJsonChat<PolishAttemptResult>({
+      event,
+      purpose: 'tool_step_polish',
+      model,
+      messages,
+      maxTokens: TOOL_POLISH_MAX_TOKENS,
+      timeoutMs,
+      temperature: 0.35,
+      audit: { schoolId: input.schoolId, ownerUserId: input.ownerUserId },
+      parse: (content) => {
+        // actions 为空时第三参传 undefined：不启用 actions 校验，行为与之前一致
+        const parsed = parsePolishOutput(
+          content,
+          input.tools,
+          inputActions.length > 0 ? inputActions : undefined,
+          { generateTools }
+        )
+        return { value: { ...parsed, raw: content }, errors: parsed.errors }
       }
-      const content = json.choices?.[0]?.message?.content
-      if (!content) throw new Error('Empty model output')
-      // actions 为空时第三参传 undefined：不启用 actions 校验，行为与之前一致
-      const parsed = parsePolishOutput(
-        content,
-        input.tools,
-        inputActions.length > 0 ? inputActions : undefined,
-        { generateTools }
-      )
-      await recordToolPolishCall(event, input, model, parsed.errors.length === 0 ? 'success' : 'failed', Date.now() - startedAt, json.usage?.prompt_tokens, json.usage?.completion_tokens)
-      return { ...parsed, raw: content }
-    } catch (error) {
-      await recordToolPolishCall(event, input, model, 'failed', Date.now() - startedAt, undefined, undefined, error instanceof Error ? error.message.slice(0, 80) : 'unknown')
-      return { matched: new Map(), actionsMatched: new Map(), errors: [error instanceof Error ? error.message : '未知错误'], raw: undefined }
+    })
+    if (outcome.data) return outcome.data
+    // HTTP/超时/截断等无产出失败：本次尝试记空匹配，交由循环决定是否重试
+    return {
+      matched: new Map(),
+      actionsMatched: new Map(),
+      errors: [outcome.failure?.message || '模型调用失败'],
+      raw: undefined
     }
   }
 
@@ -544,31 +548,7 @@ function toolPolishFormatExample() {
   }
 }
 
-/** 每次尝试各记一条审计（与 assessment_report 同模式：失败不阻断调用链）。 */
-async function recordToolPolishCall(
-  event: H3Event,
-  input: ToolPolishInput,
-  model: string,
-  status: 'success' | 'failed',
-  latencyMs: number,
-  promptTokens?: number,
-  completionTokens?: number,
-  errorCode?: string
-) {
-  await useDb(event).insert(schema.aiModelCalls).values({
-    schoolId: input.schoolId,
-    ownerUserId: input.ownerUserId,
-    provider: 'deepseek',
-    model,
-    purpose: 'tool_step_polish',
-    status,
-    latencyMs,
-    promptTokens,
-    completionTokens,
-    errorCode
-  }).catch(() => undefined)
-}
-
+/** 每次尝试各记一条审计：2026-09 起由统一 JSON 调用层（json-chat.ts）负责。 */
 function sleep(ms: number) {
   return new Promise<void>(resolve => setTimeout(resolve, ms))
 }

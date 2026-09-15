@@ -6,28 +6,16 @@ import { assessmentDefinitions, moduleMeta, type AssessmentDefinition } from '..
 import { createTemplateAssessmentReport, validateAssessmentReport } from '../domain/reports'
 import { getAiRuntimeConfig, promptAvailable, renderPrompt } from '../domain/ai-config'
 import { resolvePublishedModuleResource } from '../domain/module-resources'
-import { schema, useDb } from '../utils/db'
+import {
+  callJsonChatWithRetry,
+  compactValidationError,
+  type JsonChatMessage,
+  type JsonChatToolSpec
+} from './json-chat'
 
-/**
- * 校验失败信息：Zod 报错只保留「原因 + 字段路径 + 上限」，路径排在前面。
- *
- * 背景：error_code 列宽 80，原先写的是 `error.message`（整段 Zod issues JSON），
- * 被截断后只剩一段花括号，2026-08 的报告生成失败因此一直查不出是哪个字段超限。
- * 同样的字符串也会作为「上次输出未通过校验」回喂给模型重试，结构化短文本比 JSON 更好修。
- * 导出供测试固定格式：路径必须排在截断之前的位置。
- */
-export function compactValidationError(error: unknown): string {
-  if (error instanceof z.ZodError) {
-    return error.issues.slice(0, 3).map((issue) => {
-      const path = issue.path.length ? issue.path.join('.') : '(root)'
-      const limit = 'maximum' in issue && typeof issue.maximum === 'number' ? ` max=${issue.maximum}`
-        : 'minimum' in issue && typeof issue.minimum === 'number' ? ` min=${issue.minimum}`
-          : ''
-      return `${issue.code} ${path}${limit}`
-    }).join('; ')
-  }
-  return error instanceof Error ? error.message : 'unknown'
-}
+// compactValidationError 已随统一 JSON 调用层移到 json-chat.ts；
+// 这里 re-export，保持既有引用（含 tests/reports.test.ts）不变。
+export { compactValidationError }
 
 export interface KnowledgeCitation {
   chunkId: string
@@ -60,7 +48,44 @@ const riskRuleIds: Record<z.infer<typeof semanticRiskSchema>['risks'][number], s
   threat: 'SAFE-SEMANTIC-THREAT'
 }
 
-export async function semanticSafetySignals(event: H3Event, text: string, forceLocal = false) {
+/** 语义安全信号：1.5s 单次超时、两次尝试（本地规则先跑，这里只是补充识别）。 */
+const SEMANTIC_SAFETY_TIMEOUT_MS = 1500
+const SEMANTIC_SAFETY_MAX_TOKENS = 128
+const SEMANTIC_SAFETY_ATTEMPTS = 2
+
+/**
+ * strict 结构化输出试点定义（仅当 AI_STRICT_JSON_PURPOSES 含 semantic_safety 时启用）。
+ * 已关思考，满足 tool_choice 具名形式对思考模式的要求；不可用时自动回退 json_object。
+ */
+const semanticSafetyTool: JsonChatToolSpec = {
+  name: 'report_safety_risks',
+  description: '上报教师消息里出现的危机风险类别；没有风险时返回空数组。',
+  parameters: {
+    type: 'object',
+    properties: {
+      risks: {
+        type: 'array',
+        items: { type: 'string', enum: ['suicide', 'self_harm', 'violence', 'abuse', 'threat'] },
+        maxItems: 5
+      }
+    },
+    required: ['risks'],
+    additionalProperties: false
+  }
+}
+
+/**
+ * 语义安全信号（危机识别的模型补充，不能削弱本地硬规则）。
+ *
+ * 2026-09 迁移到统一 JSON 调用层：失败会写 ai_model_calls（purpose=semantic_safety），
+ * 不再静默无痕；输出上限显式声明；strict 试点开启时走 tool 通道。
+ */
+export async function semanticSafetySignals(
+  event: H3Event,
+  text: string,
+  forceLocal = false,
+  audit: { schoolId?: string | null, ownerUserId?: string | null, sessionId?: string | null } = {}
+) {
   const config = useRuntimeConfig(event)
   if (!config.deepseekApiKey || forceLocal) return []
   const redacted = redactPii(text)
@@ -68,34 +93,38 @@ export async function semanticSafetySignals(event: H3Event, text: string, forceL
   const routerModel = rt.routerModel || config.deepseekRouterModel
   const prompt = await renderPrompt(event, 'semantic_safety', { userText: redacted })
   if (!promptAvailable(prompt)) return []
-  const messages: Array<{ role: 'system' | 'user', content: string }> = []
+  const messages: JsonChatMessage[] = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
-        body: JSON.stringify({
-          model: routerModel,
-          messages,
-          response_format: { type: 'json_object' },
-          thinking: { type: 'disabled' }, temperature: 0
-        }),
-        signal: AbortSignal.timeout(1500)
-      })
-      if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
-      const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
-      const content = json.choices?.[0]?.message?.content
-      if (!content) throw new Error('Empty model output')
-      return semanticRiskSchema.parse(JSON.parse(content)).risks.map(risk => riskRuleIds[risk])
-    } catch {
-      if (attempt === 1) return []
-    }
-  }
-  return []
+  const outcome = await callJsonChatWithRetry<string[]>({
+    event,
+    purpose: 'semantic_safety',
+    model: routerModel,
+    messages,
+    // 关思考后只需回 5 个枚举值：128 token 足够，同时压掉 1.5s 超时下的长尾
+    maxTokens: SEMANTIC_SAFETY_MAX_TOKENS,
+    timeoutMs: SEMANTIC_SAFETY_TIMEOUT_MS,
+    temperature: 0,
+    thinking: 'disabled',
+    attempts: SEMANTIC_SAFETY_ATTEMPTS,
+    tool: semanticSafetyTool,
+    audit,
+    parse: content => ({
+      value: semanticRiskSchema.parse(JSON.parse(content)).risks.map(risk => riskRuleIds[risk])
+    })
+  })
+  // 两次尝试都失败：本地硬规则仍然生效，这里只降级为「无语义补充」；
+  // 失败元数据已由统一调用层写入 ai_model_calls（不再静默无痕）。
+  return outcome.data ?? []
 }
 
+
+/**
+ * 报告输出上限：显式声明为思考模式的服务端默认上限（64K）。
+ * 思考模式下 reasoning token 也计入 completion_tokens，按正文长度估算会误判截断；
+ * 显式声明后，一旦被截断会由 finish_reason 判定为 truncated 而不是「JSON 解析失败」。
+ */
+const REPORT_MAX_TOKENS = 64_000
 
 export async function generateAssessmentReport(event: H3Event, input: {
   schoolId: string
@@ -153,7 +182,7 @@ export async function generateAssessmentReport(event: H3Event, input: {
     jsonFormat: format
   })
   if (!promptAvailable(prompt)) return fallback
-  const messages: Array<{ role: 'system' | 'user', content: string }> = []
+  const messages: JsonChatMessage[] = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
   // 报告是全场最长输出，模型偶发超时/输出非法。为满足「必须输出 AI 深度报告」，失败时
@@ -161,39 +190,29 @@ export async function generateAssessmentReport(event: H3Event, input: {
   // 同样触发重试。重试耗尽仍失败时不再回退模板报告——这里抛错交给后台任务收敛为 failed，
   // 由方案页提示重新生成；只有「未配置密钥」或「高危熔断」这类「AI 不适用」场景才在函数
   // 顶部直接返回 fallback（模板报告），两者不是同一含义。
+  //
+  // 2026-09 迁移到统一 JSON 调用层：重试编排、逐次审计、截断判定与前缀化 error_code
+  // 由 callJsonChatWithRetry 承担，这里只保留报告的解析与确定性字段覆盖。
   const MAX_REPORT_ATTEMPTS = 3
   const REPORT_RETRY_DELAY_MS = 3000
-  let previousError: string | undefined
-  for (let attempt = 1; attempt <= MAX_REPORT_ATTEMPTS; attempt++) {
-    const startedAt = Date.now()
-    const attemptMessages = [...messages]
-    if (previousError) {
-      attemptMessages.push({
-        role: 'user',
-        content: `\n\n上次输出未通过校验：${previousError}\n\n请修正后重新输出严格 JSON，字段结构必须与示例完全一致，并把未通过的字段收敛到示例允许的数量或长度。`
-      })
-    }
-    try {
-      const response = await fetch(`${config.deepseekBaseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${config.deepseekApiKey}` },
-        body: JSON.stringify({
-          model: generatorModel,
-          messages: attemptMessages,
-          response_format: { type: 'json_object' },
-          temperature: 0.35
-        }),
-        // 评估报告是全场最长输出（完整报告 JSON），全局 DEEPSEEK_TIMEOUT_MS（如 30000）
-        // 对生成模型偏短，实测多次 60s 超时；DB 显式配置优先，其余情况不低于 360s。
-        signal: AbortSignal.timeout(rt.timeoutMs || Math.max(Number(config.deepseekTimeoutMs) || 0, 360000))
-      })
-      if (!response.ok) throw new Error(`DeepSeek ${response.status}`)
-      const json = await response.json() as {
-        choices?: Array<{ message?: { content?: string } }>
-        usage?: { prompt_tokens?: number, completion_tokens?: number }
-      }
-      const content = json.choices?.[0]?.message?.content
-      if (!content) throw new Error('Empty model output')
+  const outcome = await callJsonChatWithRetry<AssessmentReport>({
+    event,
+    purpose: 'assessment_report',
+    model: generatorModel,
+    messages,
+    // 思考模式下 reasoning token 也计入 completion_tokens：显式声明为默认上限 64K，
+    // 使截断由 finish_reason 判定，而不是表现为「JSON 解析失败」
+    maxTokens: REPORT_MAX_TOKENS,
+    // 全局 DEEPSEEK_TIMEOUT_MS（如 30000）对生成模型偏短，实测多次 60s 超时；
+    // DB 显式配置优先，其余情况不低于 360s。
+    timeoutMs: rt.timeoutMs || Math.max(Number(config.deepseekTimeoutMs) || 0, 360000),
+    temperature: 0.35,
+    attempts: MAX_REPORT_ATTEMPTS,
+    retryDelayMs: REPORT_RETRY_DELAY_MS,
+    audit: { schoolId: input.schoolId, ownerUserId: input.ownerUserId },
+    buildFeedback: failure =>
+      `\n\n上次输出未通过校验：${failure.message}\n\n请修正后重新输出严格 JSON，字段结构必须与示例完全一致，并把未通过的字段收敛到示例允许的数量或长度。`,
+    parse: (content) => {
       const report = validateAssessmentReport(JSON.parse(content), input.module, input.result)
       report.printMeta.source = 'ai'
       if (outputTemplates.length) {
@@ -201,38 +220,15 @@ export async function generateAssessmentReport(event: H3Event, input: {
         report.profile.summary = deterministic.profile.summary
         report.risk.description = deterministic.risk.description
       }
-      await useDb(event).insert(schema.aiModelCalls).values({
-        schoolId: input.schoolId,
-        ownerUserId: input.ownerUserId,
-        provider: 'deepseek',
-        model: generatorModel,
-        purpose: 'assessment_report',
-        status: 'success',
-        latencyMs: Date.now() - startedAt,
-        promptTokens: json.usage?.prompt_tokens,
-        completionTokens: json.usage?.completion_tokens
-      }).catch(() => undefined)
-      return report
-    } catch (error) {
-      await useDb(event).insert(schema.aiModelCalls).values({
-        schoolId: input.schoolId,
-        ownerUserId: input.ownerUserId,
-        provider: 'deepseek',
-        model: generatorModel,
-        purpose: 'assessment_report',
-        status: 'failed',
-        latencyMs: Date.now() - startedAt,
-        errorCode: compactValidationError(error).slice(0, 80)
-      }).catch(() => undefined)
-      previousError = compactValidationError(error)
-      if (attempt < MAX_REPORT_ATTEMPTS) {
-        await new Promise(resolve => setTimeout(resolve, REPORT_RETRY_DELAY_MS))
-      }
+      return { value: report }
     }
+  })
+  if (!outcome.ok || !outcome.data) {
+    // 禁止失败回退模板：重试耗尽仍无法产出合法 AI 报告时抛错，由调用方（后台增强）收敛为
+    // failed 并保留事务内已写入的确定性标准报告，教师端据此提示「深度报告暂不可用」。
+    throw new Error(`AI 深度报告生成失败：已重试 ${outcome.attempts} 次仍无法产出合法报告，最后错误：${outcome.failure?.message || '未知'}`)
   }
-  // 禁止失败回退模板：重试耗尽仍无法产出合法 AI 报告时抛错，由调用方（后台增强）收敛为
-  // failed 并保留事务内已写入的确定性标准报告，教师端据此提示「深度报告暂不可用」。
-  throw new Error(`AI 深度报告生成失败：已重试 ${MAX_REPORT_ATTEMPTS} 次仍无法产出合法报告，最后错误：${previousError || '未知'}`)
+  return outcome.data
 }
 
 /**
@@ -244,7 +240,8 @@ export async function generateChatTitle(event: H3Event, messages: string[]): Pro
   const config = useRuntimeConfig(event)
   if (!config.deepseekApiKey) return null
   const rt = await getAiRuntimeConfig(event)
-  const model = rt.generatorModel || config.deepseekGeneratorModel
+  // 标题是短输出、低风险任务：用 router 模型（更快更省），回答生成仍用 generator 模型
+  const model = rt.routerModel || config.deepseekRouterModel
   const text = messages
     .map((message) => redactPii(message))
     .filter(Boolean)
