@@ -35,7 +35,7 @@ describe('buildChatTitle', () => {
   })
 
   it('无标点长文本同样截断加省略号', () => {
-    const title = buildChatTitle({ messages: ['学生最近上课总是走神作业拖拉成绩下滑家长也不配合班级管理也混乱需要尽快找到解决办法不然问题会越来越严重'] })
+    const title = buildChatTitle({ messages: ['学生最近上课总是走神作业拖拉成绩下滑家长也不配合班级管理也混乱需要立即找到解决办法不然问题会越来越严重'] })
     expect([...title]).toHaveLength(CHAT_TITLE_MAX + 1)
     expect(title.endsWith('…')).toBe(true)
   })

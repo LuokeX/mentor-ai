@@ -59,7 +59,14 @@ const solutionStatusOptions = [
   { label: '已解决', value: 'resolved' }
 ]
 const boardingOptions = ['走读', '住宿', '午托', '暂未确认'].map(value => ({ label: value, value }))
-const attentionOptions = ['常规关注', '需要跟进', '重点关注', '危机/转介中'].map(value => ({ label: value, value }))
+// 关注等级：展示文案做合规映射，value 保持与存量数据一致（历史档案保存的是原值）
+const attentionOptions = [
+  { label: '常规关注', value: '常规关注' },
+  { label: '需要跟进', value: '需要跟进' },
+  { label: '重点关注', value: '重点关注' },
+  // 展示文案做合规映射；value 必须保持与存量档案一致（该字段存在加密档案里，不做数据改写）
+  { label: '转介跟进中', value: '危机/转介中' }
+]
 const academicOptions = ['优势明显', '稳定中等', '波动较大', '需要学习支持', '暂未评估'].map(value => ({ label: value, value }))
 const profileFields = [
   'studentNo', 'birthDate', 'ethnicity', 'residenceType', 'boardingStatus', 'classRole', 'attendanceStatus',

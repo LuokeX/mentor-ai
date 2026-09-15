@@ -98,7 +98,7 @@ export default defineNitroPlugin(() => {
           eventId: referral.safetyEventId,
           referralId: referral.id,
           recipients: referral.recipients || [],
-          message: `教师赋能平台危机事件 ${referral.safetyEventId.slice(0, 8)} 已超时升级，请立即登录处置。`
+          message: `教师赋能平台安全事件 ${referral.safetyEventId.slice(0, 8)} 已超时升级，请尽快登录处置。`
         })])
         await client.query('COMMIT')
         inserted++

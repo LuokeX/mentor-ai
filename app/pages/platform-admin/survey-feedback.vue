@@ -34,7 +34,7 @@ async function save() {
         url: url.value.trim() || null,
       },
     })
-    toast.add({ title: '配置已保存', description: '所有页面右下角反馈按钮将立即生效。', color: 'success' })
+    toast.add({ title: '配置已保存', description: '所有页面右下角反馈按钮将即时生效。', color: 'success' })
     refresh()
   } catch (error: any) {
     toast.add({ title: '保存失败', description: error?.data?.message || '请稍后重试', color: 'error' })

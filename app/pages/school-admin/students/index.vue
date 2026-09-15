@@ -53,7 +53,8 @@ const caseLevelOptions = [
 const learningLevelOptions = [
   { label: '（当前按评估结果）', value: '__auto__' },
   { label: '改回按评估结果', value: '__clear__' },
-  { label: 'LP0 危机转介', value: 'LP0 危机转介' }, { label: 'LP3 系统干预', value: 'LP3 系统干预' }, { label: 'LP2 深入诊断', value: 'LP2 深入诊断' },
+  // LP0 展示文案做合规映射，value 保持与三库等级名一致（存量数据仍按原值存储）
+  { label: 'LP0 安全转介', value: 'LP0 危机转介' }, { label: 'LP3 系统干预', value: 'LP3 系统干预' }, { label: 'LP2 深入诊断', value: 'LP2 深入诊断' },
 ]
 const { data: classData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/classes', {
   query: { page: 1, pageSize: 100, status: 'active' },

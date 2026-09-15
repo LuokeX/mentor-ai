@@ -11,7 +11,7 @@ const severityColor: Record<string, string> = {
   crisis: 'error', high: 'warning', medium: 'info', low: 'success'
 }
 const severityLabel: Record<string, string> = {
-  crisis: '危机', high: '高', medium: '中', low: '低'
+  crisis: '安全关注', high: '高', medium: '中', low: '低'
 }
 /** 五色等级 → 徽标颜色（按等级名匹配常见等级词） */
 function levelColor(name: string | null | undefined): 'error' | 'warning' | 'info' | 'success' | 'neutral' {

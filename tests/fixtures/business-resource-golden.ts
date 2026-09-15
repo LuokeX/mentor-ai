@@ -111,7 +111,7 @@ export const goldenToolPayload = {
     code: 'HS-GOLD-T1',
     name: '三步降温沟通卡',
     form: '话术卡',
-    symptoms: '家长情绪激烈但未触发安全红线',
+    symptoms: '家长情绪激烈但未触发红线',
     expectedEffect: '完成情绪降温、事实澄清和下一步约定',
     level: 'high',
     severity: 'high' as const,
@@ -131,7 +131,7 @@ export const goldenToolPayload = {
     ],
     contraindicationRules: [
       { condition: '家长已升级为公开投诉', type: 'block' as const, description: '已进入公开投诉渠道，不再适用降温沟通', alternativeSuggestion: '转介学校沟通专员或校长室' },
-      { condition: '涉及学生安全事件', type: 'block' as const, description: '安全问题优先启动应急流程', alternativeSuggestion: '启动学校安全应急预案，同步通知分管领导和心理老师' }
+      { condition: '涉及学生危机事件', type: 'block' as const, description: '安全问题优先启动应急流程', alternativeSuggestion: '启动学校安全应急预案，同步通知分管领导和心理老师' }
     ],
     scripts: '我理解您现在很着急，我们先把事实核清楚。',
     prohibitions: '不要承诺未核实事项',

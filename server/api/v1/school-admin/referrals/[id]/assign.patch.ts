@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
     })
     await tx.insert(schema.notifications).values({
       schoolId: admin.schoolId!, userId: psychologist.id, type: 'referral_assigned',
-      title: '危机转介工单已转派给你', body: `危机事件 ${referral.safetyEventId.slice(0, 8)} 待确认，请立即进入工作台。`,
+      title: '安全转介工单已转派给你', body: `安全事件 ${referral.safetyEventId.slice(0, 8)} 待确认，请尽快进入工作台。`,
       targetType: 'referral', targetId: referral.id, deduplicationKey: `referral-reassigned:${referral.id}:${now.getTime()}`
     })
     await writeAudit(event, {

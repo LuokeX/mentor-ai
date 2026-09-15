@@ -11,6 +11,28 @@ const CRISIS_PATTERNS: Array<[string, RegExp]> = [
   ['SAFE-THREAT', /(威胁恐吓|公开抹黑|恶意维权)/i]
 ]
 
+/**
+ * 教师界面文案红线：这些字样不得出现在教师可见文案里。
+ * 覆盖两处入口——量表提交后的转介卡片、首页 AI 助手的熔断提示；
+ * 学校配置的危机指引在保存时校验、读取时兜底（命中即回退默认指引）。
+ */
+export const TEACHER_FORBIDDEN_TEXT = /危机|红线|预警|立即|110|120/
+
+/** 学校未配置危机指引、或配置命中禁用字样时的默认指引（本身不得含禁用字样）。 */
+export const CRISIS_GUIDE_FALLBACK = '请尽快联系校内心理专员，并按学校安全流程跟进。'
+
+/** 判断一段准备展示给教师的文案是否越线。学校后台保存危机指引前先走这里。 */
+export function teacherFacingTextAllowed(text: string) {
+  return !TEACHER_FORBIDDEN_TEXT.test(text)
+}
+
+/** 读取学校危机指引：为空或命中禁用字样时回退默认指引，保证教师界面不出现禁用字样。 */
+export function resolveCrisisGuide(configured?: string | null) {
+  const text = configured?.trim()
+  if (!text || !teacherFacingTextAllowed(text)) return CRISIS_GUIDE_FALLBACK
+  return text
+}
+
 export function detectSafetySignals(text: string) {
   return CRISIS_PATTERNS.filter(([, regex]) => regex.test(text)).map(([id]) => id)
 }
@@ -80,7 +102,7 @@ async function runCreateSafetyReferral(
     if (assignedPsychologistId) {
       await db.insert(schema.notifications).values({
         schoolId: input.schoolId, userId: assignedPsychologistId, type: 'referral_assigned',
-        title: '新的危机转介工单', body: `危机事件 ${safety.id.slice(0, 8)} 待确认，请立即进入工作台。`,
+        title: '新的安全转介工单', body: `安全事件 ${safety.id.slice(0, 8)} 待确认，请尽快进入工作台。`,
         targetType: 'referral', targetId: referral.id, deduplicationKey: `referral-assigned:${referral.id}`
       })
     }
@@ -91,8 +113,8 @@ async function runCreateSafetyReferral(
     for (const admin of schoolAdmins) {
       await db.insert(schema.notifications).values({
         schoolId: input.schoolId, userId: admin.id, type: 'crisis_alert',
-        title: '安全预警：危机事件触发',
-        body: `学校内发生危机事件 ${safety.id.slice(0, 8)}，请进入管理后台查看详情。`,
+        title: '安全提示：安全事件触发',
+        body: `学校内发生安全事件 ${safety.id.slice(0, 8)}，请进入管理后台查看详情。`,
         targetType: 'safety_event', targetId: safety.id,
         deduplicationKey: `crisis-admin:${safety.id}:${admin.id}`
       })
@@ -108,7 +130,7 @@ async function runCreateSafetyReferral(
         eventId: safety.id,
         referralId: referral.id,
         recipients: assignedPsychologistId ? settings?.smsRecipients || [] : escalationRecipients,
-        message: `教师赋能平台危机事件 ${safety.id.slice(0, 8)}，请立即登录转介工作台。`
+        message: `教师赋能平台安全事件 ${safety.id.slice(0, 8)}，请尽快登录转介工作台。`
       }
     })
     await db.insert(schema.auditLogs).values({
@@ -119,5 +141,13 @@ async function runCreateSafetyReferral(
       targetId: safety.id,
       metadata: { matchedRules: input.matchedRules, referralId: referral.id }
     })
-    return { safety, referral, crisisGuide: settings?.crisisGuide || '请立即联系校内心理专员；如存在即时危险，请拨打 110 或 120。' }
+    return {
+      safety,
+      referral,
+      crisisGuide: resolveCrisisGuide(settings?.crisisGuide),
+      helpPhone: settings?.helpPhone || null,
+      ackMinutes: settings?.referralAckMinutes ?? 5,
+      escalationMinutes: settings?.referralEscalationMinutes ?? 15,
+      psychologistAssigned: Boolean(assignedPsychologistId)
+    }
 }

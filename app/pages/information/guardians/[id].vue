@@ -108,7 +108,7 @@ async function createCommunication() {
           <UBadge v-if="commBadgeValue" :color="commRiskLevelColor(commColorValue || commBadgeValue)" variant="soft">
             <UIcon name="i-lucide-messages-square" class="size-3.5" /> 家校沟通 {{ commRiskLevelLabel(commBadgeValue) }}
           </UBadge>
-          <UBadge v-if="commSnapshot?.blocked" color="error" variant="soft"><UIcon name="i-lucide-alert-octagon" class="size-3.5" /> 红线熔断·需危机介入</UBadge>
+          <UBadge v-if="commSnapshot?.blocked" color="error" variant="soft"><UIcon name="i-lucide-alert-octagon" class="size-3.5" /> 安全关注·需人工介入</UBadge>
         </div>
       </div><div class="flex flex-wrap justify-end gap-2"><UButton :to="{ path: '/', query: { contextType: 'guardian', contextId: id } }" icon="i-lucide-sparkles">向 AI 咨询该家长</UButton><UBadge color="neutral" variant="soft">关联 {{ data?.students?.length || 0 }} 名学生</UBadge></div></div>
     <div class="mt-8 grid gap-6 lg:grid-cols-[1fr_1fr]">
@@ -151,7 +151,7 @@ async function createCommunication() {
           </div>
         </div>
         <div class="rounded-2xl border border-slate-100 p-5">
-          <h3 class="font-semibold">分级与危机状态</h3>
+          <h3 class="font-semibold">分级与安全状态</h3>
           <div class="mt-4 space-y-4 text-sm">
             <div class="flex flex-wrap items-center gap-2"><span class="w-24 text-slate-500">综合风险等级</span>
               <UBadge :color="commRiskLevelColor(commColorValue || commBadgeValue)" variant="subtle">{{ commRiskLevelLabel(commBadgeValue) }}</UBadge>
@@ -162,10 +162,10 @@ async function createCommunication() {
               <span v-else class="text-slate-400">—</span>
             </div>
             <div class="rounded-2xl border p-4" :class="commSnapshot?.blocked ? 'border-red-200 bg-red-50/60' : 'border-slate-100'">
-              <p class="flex items-center gap-2 font-semibold" :class="commSnapshot?.blocked ? 'text-red-600' : 'text-slate-600'"><UIcon :name="commSnapshot?.blocked ? 'i-lucide-alert-octagon' : 'i-lucide-shield-check'" class="size-4" /> 红线熔断标记：{{ commSnapshot?.blocked ? '命中红线·极重·需危机介入' : '未命中红线' }}</p>
+              <p class="flex items-center gap-2 font-semibold" :class="commSnapshot?.blocked ? 'text-red-600' : 'text-slate-600'"><UIcon :name="commSnapshot?.blocked ? 'i-lucide-alert-octagon' : 'i-lucide-shield-check'" class="size-4" /> 安全标记：{{ commSnapshot?.blocked ? '已触发安全底线·极重·需人工介入' : '未触发安全底线' }}</p>
               <div v-if="commSnapshot?.matchedRedLines?.length" class="mt-3 space-y-3">
                 <div v-for="(redLine, index) in commSnapshot.matchedRedLines" :key="index" class="rounded-xl bg-white/70 p-3 text-xs leading-5 text-slate-600">
-                  <p class="font-medium text-red-600">红线条件：{{ redLine.condition }}</p>
+                  <p class="font-medium text-red-600">触发条件：{{ redLine.condition }}</p>
                   <p v-if="redLine.description" class="mt-1">{{ redLine.description }}</p>
                   <p v-if="redLine.requiredActions" class="mt-1">处置要求：{{ redLine.requiredActions }}</p>
                 </div>

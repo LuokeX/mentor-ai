@@ -7,7 +7,7 @@ const RISK_LABELS: Record<string, string> = {
   low: '低风险',
   medium: '中风险',
   high: '高风险',
-  crisis: '危机',
+  crisis: '安全关注',
 }
 
 export default defineEventHandler(async (event) => {

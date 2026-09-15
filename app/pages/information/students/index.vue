@@ -28,7 +28,7 @@ const columns = [
   { key: 'name', label: '学生姓名', sortable: true },
   { key: 'className', label: '班级' },
   { key: 'gender', label: '性别', mobileHidden: true },
-  { key: 'caseLevel', label: '预警级别' },
+  { key: 'caseLevel', label: '关注级别' },
   { key: 'caseSolutionStatus', label: '解决状态' },
   { key: 'learningLevel', label: '学习问题' },
   { key: 'status', label: '状态', sortable: true },

@@ -114,7 +114,7 @@ export const schoolSettings = pgTable('school_settings', {
   helpPhone: varchar('help_phone', { length: 40 }),
   smsRecipients: jsonb('sms_recipients').$type<string[]>().default([]).notNull(),
   referralPsychologistId: uuid('referral_psychologist_id').references(() => users.id),
-  crisisGuide: text('crisis_guide').default('请立即联系校内心理专员；如存在即时危险，请拨打 110 或 120。').notNull(),
+  crisisGuide: text('crisis_guide').default('请尽快联系校内心理专员，并按学校安全流程跟进。').notNull(),
   safetyContactRecipients: jsonb('safety_contact_recipients').$type<string[]>().default([]).notNull(),
   aiDataMode: varchar('ai_data_mode', { length: 20 }).default('redacted').notNull(),
   aiApprovalReference: text('ai_approval_reference'),

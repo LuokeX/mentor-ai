@@ -292,7 +292,7 @@ async function copyInitialPassword() {
       <template #header><h3 class="text-lg font-semibold">学校管理员已创建</h3></template>
       <template #body>
         <div v-if="createdResult?.initialPassword" class="space-y-3">
-          <p class="text-sm text-gray-600">账号已创建并可直接登录。系统生成的初始密码<strong>仅展示这一次</strong>，关闭后不可恢复，请立即复制并安全转交。</p>
+          <p class="text-sm text-gray-600">账号已创建并可直接登录。系统生成的初始密码<strong>仅展示这一次</strong>，关闭后不可恢复，请尽快复制并安全转交。</p>
           <UInput :model-value="createdResult.initialPassword" readonly class="w-full font-mono" />
           <UButton icon="i-lucide-copy" variant="outline" @click="copyInitialPassword">{{ copied ? '已复制' : '复制初始密码' }}</UButton>
         </div>

@@ -310,7 +310,7 @@ async function copyGeneratedPassword() {
         <div class="space-y-3">
           <p class="text-sm text-gray-600">账号 <strong>{{ createResult?.name }}</strong>（{{ createResult?.role === 'psychologist' ? '心理专员' : '教师' }}）已创建并可直接登录。</p>
           <div v-if="createResult?.generatedPassword" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <p class="text-sm font-medium text-amber-800">系统生成的初始密码仅展示一次，关闭后不再显示，请立即复制并安全转交。</p>
+            <p class="text-sm font-medium text-amber-800">系统生成的初始密码仅展示一次，关闭后不再显示，请尽快复制并安全转交。</p>
             <code class="mt-2 block break-all rounded bg-white px-3 py-2 font-mono text-sm">{{ createResult.generatedPassword }}</code>
             <UButton size="sm" icon="i-lucide-copy" variant="outline" class="mt-2" @click="copyGeneratedPassword">{{ copied ? '已复制' : '复制密码' }}</UButton>
           </div>

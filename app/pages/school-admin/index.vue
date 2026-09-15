@@ -26,7 +26,7 @@ const stats = computed<StatCard[]>(() => [
   { label: '学校账号', value: metrics.value.users, icon: 'i-lucide-users', color: 'blue' },
   { label: '评估记录', value: metrics.value.assessments, icon: 'i-lucide-clipboard-check', color: 'emerald' },
   {
-    label: '待处理危机', value: metrics.value.activeCrises, icon: 'i-lucide-siren', color: 'red',
+    label: '待处理安全事项', value: metrics.value.activeCrises, icon: 'i-lucide-siren', color: 'red',
     accent: metrics.value.activeCrises > 0, accentColor: 'red',
   },
   {
@@ -217,7 +217,7 @@ const completionStatus = computed(() => {
         </li>
         <li class="flex items-start gap-2">
           <span class="mt-1.5 block size-1.5 shrink-0 rounded-full bg-indigo-400" />
-          危机转介有 SLA 确认时限，超时自动升级
+          安全转介有 SLA 确认时限，超时自动升级
         </li>
       </ul>
     </div>

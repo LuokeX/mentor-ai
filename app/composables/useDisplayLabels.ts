@@ -42,9 +42,9 @@ const labels = {
     in_progress: '进行中',
     resolved: '已解决'
   },
-  /** 班级系统·四阶当前阶段（class_system 评估等级） */
+  /** 班级系统·四阶当前阶段（class_system 评估等级）：key 为三库数据的等级名，展示文案做合规映射 */
   classStage: {
-    '安全危机·立即上报': '安全危机·立即上报',
+    '安全危机·立即上报': '安全关注·优先上报',
     '秩序奠基期': '秩序奠基期',
     '关系激活期': '关系激活期',
     '制度自转期': '制度自转期',
@@ -60,7 +60,7 @@ const labels = {
   },
   /** 家校沟通·沟通风险等级（home_school 评估等级，五色口径） */
   commRiskLevel: {
-    red: '红色·极重·危机',
+    red: '红色·极重·安全关注',
     orange: '橙色·明显问题',
     yellow: '黄色·关注',
     blue: '蓝色·轻微',
@@ -194,7 +194,7 @@ const labels = {
     completed: '已完成'
   },
   riskLevel: {
-    crisis: '危机',
+    crisis: '安全关注',
     high: '高风险',
     medium: '中风险',
     low: '低风险'

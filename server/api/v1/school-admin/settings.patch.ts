@@ -3,13 +3,16 @@ import { z } from 'zod'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { writeAudit } from '../../../utils/audit'
+import { teacherFacingTextAllowed } from '../../../domain/safety'
 
 const bodySchema = z.object({
   helpPhone: z.string().max(40).nullable().optional(),
   smsRecipients: z.array(z.string().max(40)).max(10).optional(),
   safetyContactRecipients: z.array(z.string().max(40)).max(10).optional(),
   referralPsychologistId: z.string().uuid().nullable().optional(),
-  crisisGuide: z.string().min(20).max(1000).optional(),
+  crisisGuide: z.string().min(20).max(1000)
+    .refine(teacherFacingTextAllowed, { message: '危机指引不得出现「危机 / 红线 / 预警 / 立即 / 110 / 120」字样' })
+    .optional(),
   aiDataMode: z.enum(['local', 'redacted', 'full_context']).optional(),
   aiApprovalReference: z.string().trim().min(10).max(1000).nullable().optional(),
   aiNoticeVersion: z.string().trim().min(2).max(50).optional(),

@@ -81,7 +81,7 @@ async function assignReferral() {
 </script>
 
 <template>
-  <ManagementPage title="转介管理" description="监督本校危机转介 SLA，并仅在尚未确认时转派心理专员。">
+  <ManagementPage title="转介管理" description="监督本校安全转介 SLA，并仅在尚未确认时转派心理专员。">
     <TableToolbar :status-filter="list.statusFilter.value" :status-options="statusOptions" :loading="list.loading.value" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange">
       <template #priority-data="{ row }"><UBadge :color="row.priority === 'urgent' ? 'error' : 'warning'" variant="subtle">{{ row.priority }}</UBadge></template>

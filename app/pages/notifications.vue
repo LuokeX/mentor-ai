@@ -66,7 +66,7 @@ const kindMeta: Record<EventKind, { label: string, icon: string, color: any }> =
 }
 
 const priorityMeta: Record<EventPriority, { label: string, color: any, rank: number, description: string }> = {
-  P0: { label: 'P0 紧急', color: 'error', rank: 0, description: '安全或危机相关事件，优先查看并按校内流程处理。' },
+  P0: { label: 'P0 紧急', color: 'error', rank: 0, description: '安全或重点关注事件，优先查看并按校内流程处理。' },
   P1: { label: 'P1 今日', color: 'warning', rank: 1, description: '今日应处理或已逾期事项，建议优先闭环。' },
   P2: { label: 'P2 建议', color: 'info', rank: 2, description: '建议继续推进的工作事项。' },
   P3: { label: 'P3 知悉', color: 'neutral', rank: 3, description: '普通通知或记录性事件，阅读确认即可。' }
