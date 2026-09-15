@@ -103,12 +103,6 @@ const { data: briefData } = await useFetch<AssistantBrief>('/api/v1/chat/assista
   immediate: SHOW_ASSISTANT_BRIEF
 })
 const briefItems = computed<AssistantBriefItem[]>(() => (briefData.value?.items || []).slice(0, 3))
-/** 空态快捷提问：与「今日建议」并存，覆盖最常用的三类开场 */
-const QUICK_PROMPTS: FollowUpChip[] = [
-  { label: '这周先做什么', prompt: '结合我手上的方案、待办和评估记录，告诉我这周应该先做哪几件事。' },
-  { label: '班级纪律反复怎么办', prompt: '我们班的课堂纪律总是反复，帮我想想该从哪一步入手。' },
-  { label: '怎么跟家长开口', prompt: '我需要跟一位家长沟通孩子的近况，但担心对方情绪激动，帮我准备一下怎么说。' }
-]
 /** 生成中请求的中断控制器：停止生成按钮据此中断本轮 SSE */
 const abortController = ref<AbortController | null>(null)
 // 侧栏「进行中的方案」：沿用方案列表接口，status=active 即待确认/进行中/待复盘/需调整/需协同，
@@ -154,9 +148,6 @@ const lastUserMessage = computed(() => {
 const selectedOptions = ref<Record<number, string>>({})
 const selectedContextKey = ref('none')
 const suppressContextWatch = ref(false)
-const contextPreview = ref<any>(null)
-const previewLoading = ref(false)
-const withoutRecord = ref(false)
 const deleteCandidate = ref<string>()
 const toast = useToast()
 const { moduleLabel, libraryTypeLabel, actionStatusLabel } = useDisplayLabels()
@@ -596,7 +587,7 @@ async function ask() {
   try {
     const response = await fetch('/api/v1/chat/messages', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: sessionId.value, message: text, withoutRecord: withoutRecord.value, ...contextPayload.value }),
+      body: JSON.stringify({ sessionId: sessionId.value, message: text, ...contextPayload.value }),
       signal: controller.signal
     })
     if (!response.ok || !response.body) throw new Error('助手暂时不可用')
@@ -633,7 +624,6 @@ async function regenerateAnswer(item: TimelineItem, index: number) {
     const response = await fetch(`/api/v1/chat/messages/${messageId}/regenerate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ withoutRecord: withoutRecord.value }),
       signal: controller.signal
     })
     if (!response.ok || !response.body) throw new Error('助手暂时不可用')
@@ -794,23 +784,10 @@ function sessionContextLabel(item: any) {
   return (item.contextType === 'student' ? '学生' : item.contextType === 'class' ? '班级' : '家长') + ' · ' + (matched?.label || '已关联对象')
 }
 
-async function loadContextPreview() {
-  if (!selectedContext.value) { contextPreview.value = null; return }
-  previewLoading.value = true
-  try {
-    contextPreview.value = await $fetch('/api/v1/chat/context-preview', { query: { type: selectedContext.value.type, id: selectedContext.value.id } })
-  } catch (error: any) {
-    toast.add({ title: '上下文预览加载失败', description: error?.data?.message || '请稍后重试', color: 'error' })
-  } finally { previewLoading.value = false }
-}
-
-watch(selectedContextKey, loadContextPreview, { flush: 'post' })
-
 async function acceptPrivacyNotice() {
   try {
     await $fetch('/api/v1/chat/consent', { method: 'POST', body: { noticeVersion: governance.value.noticeVersion, accepted: true } })
     await refreshGovernance()
-    await loadContextPreview()
     toast.add({ title: '隐私告知已确认', color: 'success' })
   } catch (error: any) { toast.add({ title: '确认失败', description: error?.data?.message || '请稍后重试', color: 'error' }) }
 }
@@ -899,7 +876,6 @@ onMounted(async () => {
   } else {
     // 无深链/上下文/预填时自动恢复最近一次对话：刷新或隔一段时间回来仍能看到历史记录
     await autoRestoreLatestSession()
-    if (!timeline.value.length) loadContextPreview()
   }
   if (prefill?.prompt) input.value = prefill.prompt
   if (!timeline.value.length) playGreetingTyping()
@@ -996,9 +972,6 @@ watch(sessions, autoRestoreLatestSession, { once: true })
             <span v-else class="min-w-0 truncate text-xs text-slate-500 sm:text-sm"><span class="sm:hidden"><span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长</span><span class="hidden sm:inline">未指定对象 · 输入框输入 <span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长</span></span>
           </div>
         </div>
-        <div v-if="selectedContext" class="border-b border-emerald-100 bg-emerald-50/70 px-5 py-3 text-sm sm:px-6">
-          <div class="flex flex-wrap items-center justify-between gap-2"><div class="flex items-center gap-2"><UIcon name="i-lucide-link" class="text-emerald-700" /><strong>{{ selectedContext.type === 'student' ? '咨询学生' : selectedContext.type === 'class' ? '咨询班级' : '咨询家长' }}：{{ selectedContext.label }}</strong></div><div class="flex items-center gap-3"><label class="flex items-center gap-2 text-xs text-slate-600"><USwitch v-model="withoutRecord" size="sm" />不带档案咨询</label><details class="relative"><summary class="cursor-pointer list-none text-xs font-medium text-emerald-700">本次将发送的信息</summary><div class="absolute right-0 top-7 z-30 max-h-80 w-[min(32rem,85vw)] overflow-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"><p class="text-xs leading-5 text-slate-500">数据模式：{{ contextPreview?.mode || governance?.effectiveMode }}；始终排除 {{ contextPreview?.excludedFields?.join('、') }}</p><pre class="mt-3 whitespace-pre-wrap text-xs leading-5 text-slate-600">{{ withoutRecord ? '本次不发送档案信息。' : JSON.stringify(contextPreview?.context?.snapshot || {}, null, 2) }}</pre></div></details></div></div>
-        </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
 
         <div ref="messageViewport" class="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-slate-50/70 to-white px-3 pt-4 sm:px-6 sm:pt-6" :class="[inputLifted ? 'pb-40 sm:pb-44' : 'pb-40 sm:pb-36', {'opacity-60':loadingSession}]" @scroll="onMessageViewportScroll">
@@ -1049,14 +1022,26 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                     </div>
                   </div>
                 </details>
+                <!-- 量表推荐卡：默认收起，与工具过程、引用来源同一交互；展开后给理由与入口 -->
                 <div v-if="item.role === 'assistant' && item.answerCompleted && item.actionCards?.length" class="mt-3 space-y-2">
-                  <div v-for="(card, cardIndex) in item.actionCards" :key="`action-card-${cardIndex}`" class="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
-                    <p class="text-sm font-semibold text-emerald-800">{{ card.title }}</p>
-                    <p class="mt-1 text-sm leading-6 text-slate-600">{{ cardBodyText(card) }}</p>
-                    <div v-if="card.kind === 'recommend_assessment' && card.module" class="mt-3">
-                      <UButton color="primary" size="sm" @click="openAgentActionCard(card)">{{ card.ctaLabel || '进入模块完成评估' }}</UButton>
+                  <details v-for="(card, cardIndex) in item.actionCards" :key="`action-card-${cardIndex}`" class="group overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/70">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+                      <span class="flex min-w-0 items-center gap-2">
+                        <UIcon name="i-lucide-clipboard-list" class="size-4 shrink-0 text-emerald-700" />
+                        <span class="truncate text-sm font-semibold text-emerald-800">{{ card.title }}</span>
+                      </span>
+                      <span class="flex shrink-0 items-center gap-2 text-xs text-emerald-700">
+                        <span class="hidden sm:inline">查看推荐理由</span>
+                        <UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" />
+                      </span>
+                    </summary>
+                    <div class="border-t border-emerald-200/70 px-4 py-3">
+                      <p class="text-sm leading-6 text-slate-600">{{ cardBodyText(card) }}</p>
+                      <div v-if="card.kind === 'recommend_assessment' && card.module" class="mt-3">
+                        <UButton color="primary" size="sm" @click="openAgentActionCard(card)">{{ card.ctaLabel || '进入模块完成评估' }}</UButton>
+                      </div>
                     </div>
-                  </div>
+                  </details>
                 </div>
                 <ClarificationOptions
                   v-if="item.clarification"
@@ -1162,16 +1147,6 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                     <NuxtLink v-if="entry.targetPath" :to="entry.targetPath" class="shrink-0 text-xs text-emerald-700 hover:underline">去看看</NuxtLink>
                   </div>
                 </div>
-              </div>
-              <div class="flex flex-wrap justify-center gap-2">
-                <button
-                  v-for="chip in QUICK_PROMPTS"
-                  :key="chip.label"
-                  type="button"
-                  class="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50"
-                  :disabled="pending"
-                  @click="sendPrompt(chip.prompt)"
-                >{{ chip.label }}</button>
               </div>
             </div>
           </div>

@@ -35,12 +35,6 @@ test.describe('四角色核心路径', () => {
       await revealMobileNav(page, testInfo)
       await expect(page.getByRole('link', { name: '我的方案', exact: true })).toBeVisible()
     }
-    // 空态：今日建议卡与快捷提问（若账号已有历史会话被自动恢复，空态不渲染，跳过该校验）
-    const quickPrompt = page.getByRole('button', { name: '这周先做什么' })
-    if (await quickPrompt.count()) {
-      await expect(quickPrompt).toBeVisible()
-      await expect(page.getByText('今日建议')).toBeVisible()
-    }
     await page.getByLabel('向 AI 赋能助手提问').fill('我想先梳理一下班级纪律反复的问题。')
     await page.getByRole('button', { name: '发送消息' }).click()
     await expect(page.getByText('这条回答有帮助吗？').last()).toBeVisible({ timeout: 30_000 })
