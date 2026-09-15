@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import XLSX from 'xlsx'
 import {
+  buildImportTemplate,
   matchClass,
   parseGrade,
   parseWorkbookRows,
@@ -94,6 +95,48 @@ describe('parseWorkbookRows xlsx 解析', () => {
   it('空文件与超行数报错', () => {
     expect(() => parseWorkbookRows('students', '')).toThrow('EMPTY_FILE')
     expect(() => parseWorkbookRows('students', xlsxBase64([['姓名', '班级']]))).toThrow('EMPTY_FILE')
+  })
+})
+
+describe('模板与解析一致性（回归）', () => {
+  it('下载的学生模板能被直接解析出必填列', () => {
+    const { rows } = parseWorkbookRows('students', buildImportTemplate('students').toString('base64'))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ name: '张三', grade: '7', className: '七年级1班', gender: '男' })
+  })
+  it('下载的家长模板能被直接解析出必填列', () => {
+    const { rows } = parseWorkbookRows('guardians', buildImportTemplate('guardians').toString('base64'))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ studentName: '张三', relation: '母亲', name: '李四', phone: '13800000001' })
+  })
+  it('必填星号写在表头前后、含空格都能识别', () => {
+    const base64 = xlsxBase64([
+      ['*姓名', '班级*', ' 年 级 '],
+      ['张三', '七年级1班', '7'],
+    ])
+    const { rows } = parseWorkbookRows('students', base64)
+    expect(rows[0]).toMatchObject({ name: '张三', className: '七年级1班', grade: '7' })
+  })
+  it('下载模板 → 填写后预检通过（学生）', () => {
+    const { rows } = parseWorkbookRows('students', buildImportTemplate('students').toString('base64'))
+    const { errors, resolved } = validateStudentRows(rows, {
+      classes: [{ id: 'c1', name: '七年级1班', grade: 7 }],
+      existing: [],
+      secret: SECRET,
+    })
+    expect(errors).toHaveLength(0)
+    expect(resolved[0]?.classId).toBe('c1')
+  })
+  it('下载模板 → 填写后预检通过（家长）', () => {
+    const { rows } = parseWorkbookRows('guardians', buildImportTemplate('guardians').toString('base64'))
+    const { errors, resolved } = validateGuardianRows(rows, {
+      students: [{ id: 's1', nameSearch: searchableHash('张三', SECRET) }],
+      linkedByName: [],
+      idCards: [],
+      secret: SECRET,
+    })
+    expect(errors).toHaveLength(0)
+    expect(resolved[0]?.studentId).toBe('s1')
   })
 })
 

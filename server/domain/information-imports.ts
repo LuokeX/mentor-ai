@@ -91,6 +91,18 @@ const HEADER_ALIASES: Record<InformationImportType, Record<string, string>> = {
 /** xlsx 数据 sheet 里跳过名称含「说明/填写/示例/模板」的 sheet（模板说明页，不参与解析） */
 const GUIDE_SHEET_PATTERN = /说明|填写|示例|模板/i
 
+/**
+ * 表头单元格归一化：去掉必填星号（* / ＊）、半角与全角空白后转小写。
+ * 模板生成时必填列为「*姓名」这类前缀写法，用户也可能手动把星号放到名称后面，
+ * 两种写法都要能落到同一列键上。
+ */
+function normalizeHeaderCell(value: unknown): string {
+  return String(value ?? '')
+    .replace(/[*＊]/g, '')
+    .replace(/[\s\u3000]/g, '')
+    .toLowerCase()
+}
+
 function addError(errors: ImportRowError[], row: number, code: string, message: string) {
   // 错误明细最多收集 200 条，防止超大文件撑爆响应
   if (errors.length < 200) errors.push({ row, code, message })
@@ -155,7 +167,9 @@ export function parseWorkbookRows(type: InformationImportType, contentBase64: st
     }
   }
   if (headerIndex < 0) throw new Error('EMPTY_FILE')
-  const headerCells = raw[headerIndex]!.map(value => String(value ?? '').trim().toLowerCase())
+  // 模板里的必填列表头带 * 标记（如「*姓名」「*班级」），这里统一去掉星号与空白再匹配别名，
+  // 否则教师下载模板填写后，必填列会被当成无法识别的列而整批报「必填字段为空」。
+  const headerCells = raw[headerIndex]!.map(value => normalizeHeaderCell(value))
   const aliasMap = HEADER_ALIASES[type]
   const columnKey: Array<string | null> = headerCells.map(cell => aliasMap[cell] || null)
   const rows: Array<Record<string, string>> = []
