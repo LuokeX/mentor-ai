@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { embedModuleResourceQuery } from '../../integrations/embeddings'
-import { searchKnowledgeChunks } from '../../domain/module-resource-knowledge-search'
+import { searchKnowledgeChunksHybrid } from '../../domain/module-resource-knowledge-search'
+import { readPublishedResourceCatalog } from '../../domain/assistant-readers'
 import { useDb } from '../../utils/db'
 import type { AgentTool, AgentToolContext } from '../types'
 
@@ -16,43 +17,58 @@ function truncateText(text: string, max = 300): string {
 }
 
 /**
- * 知识库检索（只读）：embedModuleResourceQuery + searchKnowledgeChunks
- * （limit 5，minSimilarity 0.45，可选 module 过滤）。
- * 向量检索不可用（未启用 embedding/查询向量为空）或任何异常时返回 []，不向上抛错。
+ * 知识库检索（只读）：混合召回（向量 + pg_trgm 关键词，RRF 融合），
+ * limit 5、minSimilarity 0.45、可选 module 过滤，关键词分支在向量不可用时独立生效。
+ *
+ * 零命中时返回已发布资源目录（catalog）而不是空数组：让模型能说明「平台里有这些资源、
+ * 进入模块可查看」，既不编造内容，也不止步于「没查到」。
+ * 检索异常一律返回空结果，不向上抛错——工具失败要由模型自愈，不能打断整轮回答。
  */
 export const knowledgeSearchTool: AgentTool = {
   name: 'knowledge_search',
-  description: '在已发布业务知识库中检索与当前问题相关的操作建议片段（每次最多 5 段），返回片段来源与相似度；无命中或检索不可用时返回空列表。',
+  description: '在已发布业务知识库中检索与当前问题相关的操作建议片段（每次最多 5 段），返回片段来源与相似度；未命中时返回该模块已发布资源目录（量表/归因/工具的名称与摘要），可据此说明平台有哪些资源，但不得编造资源正文。回答涉及班主任具体做法、平台量表/工具/SOP/制度之前应先调用一次，命中什么就按什么说。',
   schema: knowledgeSearchSchema,
   async execute(args: unknown, ctx: AgentToolContext): Promise<unknown> {
     const parsed = knowledgeSearchSchema.safeParse(args)
     if (!parsed.success) {
       console.warn('[agent:knowledge_search] 参数无效:', parsed.error.issues[0]?.message)
-      return []
+      return { items: [], catalog: [], message: '检索参数无效，请提供检索问题文本。' }
     }
     const { query, module } = parsed.data
     try {
       const embedding = await embedModuleResourceQuery(ctx.event, query)
-      if (!embedding || embedding.length === 0) {
-        console.warn('[agent:knowledge_search] 向量检索未启用或查询向量为空，返回空结果')
-        return []
-      }
       const db = useDb(ctx.event)
-      const results = await searchKnowledgeChunks(db, embedding, { module, minSimilarity: 0.45, limit: 5 })
-      return results.map(item => ({
-        chunkId: item.chunkId,
-        documentId: item.documentId,
-        documentTitle: item.documentTitle,
-        heading: item.heading,
-        content: truncateText(item.content),
-        excerpt: truncateText(item.content),
-        module: item.module || null,
-        libraryType: item.libraryType,
-        similarity: Math.round(item.similarity * 10000) / 10000
-      }))
+      const results = await searchKnowledgeChunksHybrid(db, query, embedding, { module, minSimilarity: 0.45, limit: 5 })
+      if (results.length) {
+        return {
+          items: results.map(item => ({
+            chunkId: item.chunkId,
+            documentId: item.documentId,
+            documentTitle: item.documentTitle,
+            heading: item.heading,
+            content: truncateText(item.content),
+            excerpt: truncateText(item.content),
+            module: item.module || null,
+            libraryType: item.libraryType,
+            similarity: Math.round(item.similarity * 10000) / 10000
+          }))
+        }
+      }
+      // 零命中：退到「已发布资源目录」，让回答能落到真实存在的资源上
+      const catalog = await readPublishedResourceCatalog(ctx.event, {
+        schoolId: ctx.user.schoolId,
+        module
+      }).catch(() => [])
+      return {
+        items: [],
+        catalog,
+        message: catalog.length
+          ? '未检索到相关片段；以下为该模块已发布资源的名称与摘要，可据此说明平台有哪些资源，但不要编造其正文、等级或结论。'
+          : '未检索到相关片段，也没有可用的已发布资源；请基于通用班主任工作方法回答，不要编造平台手册、量表、SOP、等级、制度或来源。'
+      }
     } catch (error) {
       console.error('[agent:knowledge_search] 检索失败，返回空结果:', error instanceof Error ? error.message : error)
-      return []
+      return { items: [], catalog: [], message: '知识检索失败，请基于通用班主任工作方法回答，不要编造平台内容或来源。' }
     }
   }
 }
