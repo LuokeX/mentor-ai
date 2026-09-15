@@ -13,9 +13,10 @@
  *     否则工具轨迹会因超限被丢弃，下一轮的请求前缀随之分叉、缓存命中落空。
  */
 import type { H3Event } from 'h3'
-import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import type { ModuleId } from '../../shared/contracts'
 import type { AssessmentDefinition } from '../../shared/assessments'
+import { MODULE_ASSESSMENT_CONTEXT_TYPES } from '../../shared/assessments'
 import { decryptSensitive } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
 import { redactOutboundText, type AiDataMode } from './ai-governance'
@@ -26,6 +27,123 @@ export interface AssistantReaderUser {
   schoolId: string
   userId: string
   dataMode?: AiDataMode
+}
+
+/** 咨询对象引用（会话绑定对象与评估组对象共用同一粒度）。 */
+export interface AssistantObjectRef {
+  type: 'student' | 'guardian' | 'class'
+  id: string
+}
+
+/** 对象标签：工具返回里标出这条记录属于哪个咨询对象，避免跨对象串台。 */
+export interface AssistantObjectLabel extends AssistantObjectRef {
+  label: string
+}
+
+/**
+ * 教师级模块：结果为教师本人所有，不绑定咨询对象。
+ * 由 shared/assessments.ts 的对象口径推导（与模块页对象选择器同源），不在这里另立一份判断。
+ */
+export const TEACHER_LEVEL_MODULES: ModuleId[] = (Object.keys(MODULE_ASSESSMENT_CONTEXT_TYPES) as ModuleId[])
+  .filter(module => MODULE_ASSESSMENT_CONTEXT_TYPES[module].length === 0)
+
+export function isTeacherLevelModule(module: string | null | undefined): boolean {
+  return Boolean(module) && TEACHER_LEVEL_MODULES.includes(module as ModuleId)
+}
+
+/** 对象引用键：类型与 id 都合法时才生成，用于去重与查表。 */
+export function assistantObjectKey(type: string | null | undefined, id: string | null | undefined): string | null {
+  if (!type || !id) return null
+  if (type !== 'student' && type !== 'guardian' && type !== 'class') return null
+  return `${type}:${id}`
+}
+
+/**
+ * 批量解析咨询对象展示名（工具返回给模型的对象标签）。
+ * 学生与家长姓名解密后按数据模式脱敏，班级名明文；查不到的对象不猜名称，由调用方按 null 处理。
+ */
+export async function resolveAssistantObjectLabels(
+  event: H3Event,
+  user: AssistantReaderUser,
+  refs: Array<{ type?: string | null, id?: string | null }>
+): Promise<Map<string, AssistantObjectLabel>> {
+  const labels = new Map<string, AssistantObjectLabel>()
+  const wanted = new Map<string, AssistantObjectRef>()
+  for (const ref of refs) {
+    const key = assistantObjectKey(ref.type, ref.id)
+    if (key && !wanted.has(key)) wanted.set(key, { type: ref.type as AssistantObjectRef['type'], id: ref.id as string })
+  }
+  if (!wanted.size) return labels
+
+  const db = useDb(event)
+  const secret = useRuntimeConfig(event).encryptionKey
+  const values = [...wanted.values()]
+  const studentIds = values.filter(item => item.type === 'student').map(item => item.id)
+  const guardianIds = values.filter(item => item.type === 'guardian').map(item => item.id)
+  const classIds = values.filter(item => item.type === 'class').map(item => item.id)
+
+  const [students, guardians, classes] = await Promise.all([
+    studentIds.length
+      ? db.select({ id: schema.students.id, nameEnc: schema.students.nameEnc }).from(schema.students)
+        .where(and(eq(schema.students.schoolId, user.schoolId), inArray(schema.students.id, studentIds)))
+      : Promise.resolve([] as Array<{ id: string, nameEnc: string }>),
+    guardianIds.length
+      ? db.select({ id: schema.guardians.id, nameEnc: schema.guardians.nameEnc, relation: schema.guardians.relation }).from(schema.guardians)
+        .where(and(eq(schema.guardians.schoolId, user.schoolId), inArray(schema.guardians.id, guardianIds)))
+      : Promise.resolve([] as Array<{ id: string, nameEnc: string, relation: string | null }>),
+    classIds.length
+      ? db.select({ id: schema.classes.id, name: schema.classes.name }).from(schema.classes)
+        .where(and(eq(schema.classes.schoolId, user.schoolId), inArray(schema.classes.id, classIds)))
+      : Promise.resolve([] as Array<{ id: string, name: string }>)
+  ])
+
+  for (const row of students) {
+    labels.set(`student:${row.id}`, {
+      type: 'student',
+      id: row.id,
+      label: truncateAssistantText(outboundAssistantText(decryptSensitive(row.nameEnc, secret), user.dataMode), 40)
+    })
+  }
+  for (const row of guardians) {
+    const name = truncateAssistantText(outboundAssistantText(decryptSensitive(row.nameEnc, secret), user.dataMode), 40)
+    labels.set(`guardian:${row.id}`, {
+      type: 'guardian',
+      id: row.id,
+      label: row.relation ? `${name} · ${row.relation}` : name
+    })
+  }
+  for (const row of classes) {
+    labels.set(`class:${row.id}`, { type: 'class', id: row.id, label: truncateAssistantText(row.name, 40) })
+  }
+  return labels
+}
+
+/** 从方案/评估记录的对象字段取第一个关联对象的标签（学生 → 家长 → 班级）；名称解析不到时返回 null。 */
+export function pickAssistantObjectLabel(
+  row: { studentId?: string | null, guardianId?: string | null, classId?: string | null },
+  labels: Map<string, AssistantObjectLabel>
+): AssistantObjectLabel | null {
+  const candidates: Array<[AssistantObjectRef['type'], string | null | undefined]> = [
+    ['student', row.studentId],
+    ['guardian', row.guardianId],
+    ['class', row.classId]
+  ]
+  // 只认第一个有关联的对象：解析不到名称（越权或记录缺失）时返回 null，不改标到其它对象
+  for (const [type, id] of candidates) {
+    if (!id) continue
+    return labels.get(`${type}:${id}`) || null
+  }
+  return null
+}
+
+/** 评估组的对象标签：context_type / context_id → 标签；教师级或未进组的记录返回 null。 */
+export function pickContextObjectLabel(
+  contextType: string | null | undefined,
+  contextId: string | null | undefined,
+  labels: Map<string, AssistantObjectLabel>
+): AssistantObjectLabel | null {
+  const key = assistantObjectKey(contextType, contextId)
+  return key ? labels.get(key) || null : null
 }
 
 /** 与教师端「进行中的方案」口径一致（accepted/in_progress/review_due/adjustment_needed/escalated）。 */
@@ -140,6 +258,8 @@ export interface AssistantPlanRow {
   status: string
   nextReviewAt: string | null
   updatedAt: string
+  /** 该方案关联的咨询对象；没有关联对象时为 null（不猜） */
+  object: AssistantObjectLabel | null
   actions: Array<{ title: string, status: string, dueAt: string | null, overdue: boolean }>
   lastReview: { reviewAt: string, effectScore: number, progressNote: string, nextAction: string } | null
 }
@@ -152,9 +272,10 @@ export async function readPlansForAssistant(
   event: H3Event,
   user: AssistantReaderUser,
   input: { limit?: number, studentId?: string, classId?: string, guardianId?: string } = {}
-): Promise<{ plans: AssistantPlanRow[] }> {
+): Promise<{ plans: AssistantPlanRow[], unscopedPlanCount: number }> {
   const db = useDb(event)
   const limit = clampAssistantLimit(input.limit, ASSISTANT_READER_LIMITS.plans)
+  const scoped = Boolean(input.studentId || input.classId || input.guardianId)
   const conditions = [
     eq(schema.plans.schoolId, user.schoolId),
     eq(schema.plans.ownerUserId, user.userId),
@@ -169,16 +290,29 @@ export async function readPlansForAssistant(
     module: schema.plans.module,
     title: schema.plans.title,
     status: schema.plans.status,
+    studentId: schema.plans.studentId,
+    guardianId: schema.plans.guardianId,
+    classId: schema.plans.classId,
     nextReviewAt: schema.plans.nextReviewAt,
     updatedAt: schema.plans.updatedAt
   }).from(schema.plans)
     .where(and(...conditions))
     .orderBy(schema.plans.nextReviewAt)
     .limit(limit)
-  if (!plans.length) return { plans: [] }
+  if (!plans.length) {
+    // 按对象收口且该对象没有关联方案时，只给「未关联对象的在跟方案」条数：
+    // 既避免模型把别的对象的方案当作本次对象的，也避免答成「这位教师根本没有方案」。
+    const unscopedPlanCount = scoped ? await countUnscopedActivePlans(event, user) : 0
+    return { plans: [], unscopedPlanCount }
+  }
 
   const planIds = plans.map(plan => plan.id)
-  const [actionRows, reviewRows] = await Promise.all([
+  const objectRefs = plans.flatMap(plan => [
+    { type: 'student' as const, id: plan.studentId },
+    { type: 'guardian' as const, id: plan.guardianId },
+    { type: 'class' as const, id: plan.classId }
+  ])
+  const [actionRows, reviewRows, objectLabels] = await Promise.all([
     db.select({
       planId: schema.planActions.planId,
       title: schema.planActions.title,
@@ -206,7 +340,8 @@ export async function readPlansForAssistant(
         eq(schema.planReviews.ownerUserId, user.userId)
       ))
       .orderBy(desc(schema.planReviews.reviewAt))
-      .limit(planIds.length * 2)
+      .limit(planIds.length * 2),
+    resolveAssistantObjectLabels(event, user, objectRefs)
   ])
 
   const actionsByPlan = new Map<string, AssistantPlanRow['actions']>()
@@ -242,10 +377,27 @@ export async function readPlansForAssistant(
       status: plan.status,
       nextReviewAt: toIsoOrNull(plan.nextReviewAt),
       updatedAt: toIsoOrNull(plan.updatedAt) || '',
+      object: pickAssistantObjectLabel(plan, objectLabels),
       actions: actionsByPlan.get(plan.id) || [],
       lastReview: reviewByPlan.get(plan.id) || null
-    }))
+    })),
+    unscopedPlanCount: 0
   }
+}
+
+/** 统计未关联任何咨询对象的在跟方案条数（只用于说明数据口径，不返回内容）。 */
+async function countUnscopedActivePlans(event: H3Event, user: AssistantReaderUser): Promise<number> {
+  const db = useDb(event)
+  const [row] = await db.select({ total: sql<number>`count(*)::int` }).from(schema.plans)
+    .where(and(
+      eq(schema.plans.schoolId, user.schoolId),
+      eq(schema.plans.ownerUserId, user.userId),
+      inArray(schema.plans.status, [...ASSISTANT_ACTIVE_PLAN_STATUSES]),
+      isNull(schema.plans.studentId),
+      isNull(schema.plans.guardianId),
+      isNull(schema.plans.classId)
+    ))
+  return Number(row?.total) || 0
 }
 
 export interface AssistantAssessmentHistory {
@@ -253,14 +405,16 @@ export interface AssistantAssessmentHistory {
     module: string
     assessmentCode: string
     submittedAt: string | null
+    /** 该结论的咨询对象：教师级模块（自我成长）为 null，对象未知的历史提交也为 null */
+    object: AssistantObjectLabel | null
     level: string | null
     levelName: string | null
     severity: string | null
     dimensions: Record<string, number>
     primaryAttribution: string | null
   }>
-  drafts: Array<{ module: string, assessmentCode: string, answeredCount: number, updatedAt: string }>
-  openSessions: Array<{ module: string, contextType: string, startedAt: string, submittedCount: number }>
+  drafts: Array<{ module: string, assessmentCode: string, answeredCount: number, updatedAt: string, object: AssistantObjectLabel | null }>
+  openSessions: Array<{ module: string, contextType: string, object: AssistantObjectLabel | null, startedAt: string, submittedCount: number }>
 }
 
 /**
@@ -270,10 +424,24 @@ export interface AssistantAssessmentHistory {
 export async function readAssessmentHistoryForAssistant(
   event: H3Event,
   user: AssistantReaderUser,
-  input: { module?: ModuleId, limit?: number } = {}
+  input: { module?: ModuleId, limit?: number, object?: AssistantObjectRef | null } = {}
 ): Promise<AssistantAssessmentHistory> {
   const db = useDb(event)
   const submittedLimit = clampAssistantLimit(input.limit, ASSISTANT_READER_LIMITS.submittedAssessments)
+  const object = input.object || null
+  /**
+   * 对象级量表只认同一咨询对象：开启对象过滤时，教师级模块（结果属于教师本人）照常返回，
+   * 其余模块必须命中评估组的同一对象；对象未知的历史提交在此被排除，不猜归属。
+   */
+  const scopeCondition = object
+    ? or(
+      inArray(schema.assessmentAttempts.module, TEACHER_LEVEL_MODULES),
+      and(
+        eq(schema.assessmentSessions.contextType, object.type),
+        eq(schema.assessmentSessions.contextId, object.id)
+      )
+    )
+    : undefined
   const submittedConditions = [
     eq(schema.assessmentAttempts.schoolId, user.schoolId),
     eq(schema.assessmentAttempts.ownerUserId, user.userId),
@@ -286,22 +454,31 @@ export async function readAssessmentHistoryForAssistant(
       module: schema.assessmentAttempts.module,
       assessmentCode: schema.assessmentAttempts.assessmentCode,
       submittedAt: schema.assessmentAttempts.submittedAt,
-      result: schema.assessmentAttempts.result
+      result: schema.assessmentAttempts.result,
+      contextType: schema.assessmentSessions.contextType,
+      contextId: schema.assessmentSessions.contextId
     }).from(schema.assessmentAttempts)
-      .where(and(...submittedConditions))
+      .leftJoin(schema.assessmentSessionAttempts, eq(schema.assessmentSessionAttempts.assessmentAttemptId, schema.assessmentAttempts.id))
+      .leftJoin(schema.assessmentSessions, eq(schema.assessmentSessions.id, schema.assessmentSessionAttempts.assessmentSessionId))
+      .where(and(...submittedConditions, scopeCondition))
       .orderBy(desc(schema.assessmentAttempts.submittedAt))
       .limit(submittedLimit),
     db.select({
       module: schema.assessmentAttempts.module,
       assessmentCode: schema.assessmentAttempts.assessmentCode,
       answers: schema.assessmentAttempts.answers,
-      updatedAt: schema.assessmentAttempts.updatedAt
+      updatedAt: schema.assessmentAttempts.updatedAt,
+      contextType: schema.assessmentSessions.contextType,
+      contextId: schema.assessmentSessions.contextId
     }).from(schema.assessmentAttempts)
+      .leftJoin(schema.assessmentSessionAttempts, eq(schema.assessmentSessionAttempts.assessmentAttemptId, schema.assessmentAttempts.id))
+      .leftJoin(schema.assessmentSessions, eq(schema.assessmentSessions.id, schema.assessmentSessionAttempts.assessmentSessionId))
       .where(and(
         eq(schema.assessmentAttempts.schoolId, user.schoolId),
         eq(schema.assessmentAttempts.ownerUserId, user.userId),
         eq(schema.assessmentAttempts.status, 'draft'),
-        ...(input.module ? [eq(schema.assessmentAttempts.module, input.module)] : [])
+        ...(input.module ? [eq(schema.assessmentAttempts.module, input.module)] : []),
+        scopeCondition
       ))
       .orderBy(desc(schema.assessmentAttempts.updatedAt))
       .limit(ASSISTANT_READER_LIMITS.drafts),
@@ -309,13 +486,17 @@ export async function readAssessmentHistoryForAssistant(
       id: schema.assessmentSessions.id,
       module: schema.assessmentSessions.module,
       contextType: schema.assessmentSessions.contextType,
+      contextId: schema.assessmentSessions.contextId,
       createdAt: schema.assessmentSessions.createdAt
     }).from(schema.assessmentSessions)
       .where(and(
         eq(schema.assessmentSessions.schoolId, user.schoolId),
         eq(schema.assessmentSessions.ownerUserId, user.userId),
         eq(schema.assessmentSessions.status, 'open'),
-        ...(input.module ? [eq(schema.assessmentSessions.module, input.module)] : [])
+        ...(input.module ? [eq(schema.assessmentSessions.module, input.module)] : []),
+        ...(object
+          ? [eq(schema.assessmentSessions.contextType, object.type), eq(schema.assessmentSessions.contextId, object.id)]
+          : [])
       ))
       .orderBy(desc(schema.assessmentSessions.updatedAt))
       .limit(ASSISTANT_READER_LIMITS.openSessions)
@@ -333,6 +514,13 @@ export async function readAssessmentHistoryForAssistant(
     for (const row of counts) submittedCountBySession.set(row.sessionId, Number(row.total) || 0)
   }
 
+  // 对象标签：把评估组上的 context_type/context_id 解析成可读名，供模型对上是哪个对象
+  const objectLabels = await resolveAssistantObjectLabels(event, user, [
+    ...submittedRows.map(row => ({ type: row.contextType, id: row.contextId })),
+    ...draftRows.map(row => ({ type: row.contextType, id: row.contextId })),
+    ...sessionRows.map(row => ({ type: row.contextType, id: row.contextId }))
+  ])
+
   return {
     submitted: submittedRows.map(row => {
       const result = (row.result || null) as Record<string, unknown> | null
@@ -340,6 +528,7 @@ export async function readAssessmentHistoryForAssistant(
         module: row.module,
         assessmentCode: row.assessmentCode,
         submittedAt: toIsoOrNull(row.submittedAt),
+        object: pickContextObjectLabel(row.contextType, row.contextId, objectLabels),
         level: pickResultString(result, 'level'),
         levelName: pickResultString(result, 'levelName'),
         severity: pickResultString(result, 'severity'),
@@ -351,11 +540,13 @@ export async function readAssessmentHistoryForAssistant(
       module: row.module,
       assessmentCode: row.assessmentCode,
       answeredCount: Object.keys(row.answers || {}).length,
-      updatedAt: toIsoOrNull(row.updatedAt) || ''
+      updatedAt: toIsoOrNull(row.updatedAt) || '',
+      object: pickContextObjectLabel(row.contextType, row.contextId, objectLabels)
     })),
     openSessions: sessionRows.map(row => ({
       module: row.module,
       contextType: row.contextType,
+      object: pickContextObjectLabel(row.contextType, row.contextId, objectLabels),
       startedAt: toIsoOrNull(row.createdAt) || '',
       submittedCount: submittedCountBySession.get(row.id) || 0
     }))
@@ -364,6 +555,8 @@ export async function readAssessmentHistoryForAssistant(
 
 export interface AssistantCommunicationRow {
   occurredAt: string
+  /** 这条沟通属于哪个咨询对象；无关联对象时为 null */
+  object: AssistantObjectLabel | null
   studentLabel: string | null
   guardianRelation: string | null
   parentType: string | null
@@ -414,26 +607,46 @@ export async function readCommunicationsForAssistant(
         .where(and(eq(schema.students.schoolId, user.schoolId), inArray(schema.students.id, studentIds)))
       : Promise.resolve([] as Array<{ id: string, nameEnc: string }>),
     guardianIds.length
-      ? db.select({ id: schema.guardians.id, relation: schema.guardians.relation }).from(schema.guardians)
+      ? db.select({ id: schema.guardians.id, nameEnc: schema.guardians.nameEnc, relation: schema.guardians.relation }).from(schema.guardians)
         .where(and(eq(schema.guardians.schoolId, user.schoolId), inArray(schema.guardians.id, guardianIds)))
-      : Promise.resolve([] as Array<{ id: string, relation: string | null }>)
+      : Promise.resolve([] as Array<{ id: string, nameEnc: string, relation: string | null }>)
   ])
   const studentNameById = new Map(students.map(row => [
     row.id,
     truncateAssistantText(outboundAssistantText(decryptSensitive(row.nameEnc, secret), user.dataMode), 40)
   ]))
   const guardianRelationById = new Map(guardians.map(row => [row.id, row.relation]))
+  const guardianNameById = new Map<string, string>(guardians.map(row => [
+    row.id,
+    truncateAssistantText(outboundAssistantText(decryptSensitive(row.nameEnc, secret), user.dataMode), 40)
+  ]))
 
   return {
-    communications: rows.map(row => ({
-      occurredAt: toIsoOrNull(row.occurredAt) || '',
-      studentLabel: row.studentId ? studentNameById.get(row.studentId) || null : null,
-      guardianRelation: row.guardianId ? guardianRelationById.get(row.guardianId) || null : null,
-      parentType: row.parentType,
-      attitudeType: row.attitudeType,
-      riskLevel: row.riskLevel,
-      summary: readGovernedText(row.summaryEnc, secret, user.dataMode)
-    }))
+    communications: rows.map(row => {
+      const studentLabel = row.studentId ? studentNameById.get(row.studentId) || null : null
+      const guardianRelation = row.guardianId ? guardianRelationById.get(row.guardianId) || null : null
+      const guardianName = row.guardianId ? guardianNameById.get(row.guardianId) || null : null
+      // 对象标签：学生优先，其次家长（姓名 · 关系）；取不到名称时留 null，不用 id 顶替
+      const object: AssistantObjectLabel | null = row.studentId && studentLabel
+        ? { type: 'student', id: row.studentId, label: studentLabel }
+        : row.guardianId && (guardianName || guardianRelation)
+          ? {
+              type: 'guardian',
+              id: row.guardianId,
+              label: [guardianName, guardianRelation].filter(Boolean).join(' · ')
+            }
+          : null
+      return {
+        occurredAt: toIsoOrNull(row.occurredAt) || '',
+        object,
+        studentLabel,
+        guardianRelation,
+        parentType: row.parentType,
+        attitudeType: row.attitudeType,
+        riskLevel: row.riskLevel,
+        summary: readGovernedText(row.summaryEnc, secret, user.dataMode)
+      }
+    })
   }
 }
 

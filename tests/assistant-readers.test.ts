@@ -3,13 +3,19 @@ import {
   ASSISTANT_ACTIVE_PLAN_STATUSES,
   ASSISTANT_ATTENTION_RISK_LEVELS,
   ASSISTANT_READER_LIMITS,
+  TEACHER_LEVEL_MODULES,
+  assistantObjectKey,
   clampAssistantLimit,
+  isTeacherLevelModule,
   outboundAssistantText,
+  pickAssistantObjectLabel,
+  pickContextObjectLabel,
   pickDimensions,
   pickPrimaryAttribution,
   pickResultString,
   toIsoOrNull,
-  truncateAssistantText
+  truncateAssistantText,
+  type AssistantObjectLabel
 } from '../server/domain/assistant-readers'
 
 describe('助手读取层：限额与截断', () => {
@@ -82,5 +88,47 @@ describe('助手读取层：确定性规则结果取值', () => {
     expect([...ASSISTANT_ACTIVE_PLAN_STATUSES]).toContain('in_progress')
     expect([...ASSISTANT_ACTIVE_PLAN_STATUSES]).not.toContain('archived')
     expect([...ASSISTANT_ATTENTION_RISK_LEVELS]).toEqual(['crisis', 'high'])
+  })
+})
+
+describe('助手读取层：咨询对象标签', () => {
+  it('教师级模块与对象级模块按 shared 口径区分', () => {
+    expect(TEACHER_LEVEL_MODULES).toEqual(['self_growth'])
+    expect(isTeacherLevelModule('self_growth')).toBe(true)
+    expect(isTeacherLevelModule('student_case')).toBe(false)
+    expect(isTeacherLevelModule(null)).toBe(false)
+    expect(isTeacherLevelModule(undefined)).toBe(false)
+  })
+
+  it('对象键只接受合法类型与 id，其余返回 null', () => {
+    expect(assistantObjectKey('student', 'a')).toBe('student:a')
+    expect(assistantObjectKey('guardian', 'a')).toBe('guardian:a')
+    expect(assistantObjectKey('class', 'a')).toBe('class:a')
+    expect(assistantObjectKey('teacher', 'a')).toBeNull()
+    expect(assistantObjectKey('student', null)).toBeNull()
+    expect(assistantObjectKey(null, 'a')).toBeNull()
+  })
+
+  it('方案标签取第一个关联对象，解析不到名称时不改标到其它对象', () => {
+    const labels: Map<string, AssistantObjectLabel> = new Map([
+      ['guardian:g1', { type: 'guardian', id: 'g1', label: '张三 · 父亲' }],
+      ['class:c1', { type: 'class', id: 'c1', label: '三班' }]
+    ])
+    // 学生 id 存在但名称解析不到（越权或记录缺失）时返回 null，不改标成家长或班级、也不臆造名称
+    expect(pickAssistantObjectLabel({ studentId: 's1', guardianId: 'g1' }, labels)).toBeNull()
+    expect(pickAssistantObjectLabel({ guardianId: 'g1', classId: 'c1' }, labels)).toEqual({ type: 'guardian', id: 'g1', label: '张三 · 父亲' })
+    expect(pickAssistantObjectLabel({ classId: 'c1' }, labels)).toEqual({ type: 'class', id: 'c1', label: '三班' })
+    expect(pickAssistantObjectLabel({}, labels)).toBeNull()
+    expect(pickAssistantObjectLabel({ studentId: null, guardianId: null, classId: null }, labels)).toBeNull()
+  })
+
+  it('评估组上下文按 context_type/context_id 解析，教师级或未进组返回 null', () => {
+    const labels: Map<string, AssistantObjectLabel> = new Map([
+      ['student:s1', { type: 'student', id: 's1', label: '李四' }]
+    ])
+    expect(pickContextObjectLabel('student', 's1', labels)?.label).toBe('李四')
+    expect(pickContextObjectLabel('student', 's2', labels)).toBeNull()
+    expect(pickContextObjectLabel(null, null, labels)).toBeNull()
+    expect(pickContextObjectLabel('teacher', 's1', labels)).toBeNull()
   })
 })

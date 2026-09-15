@@ -6,6 +6,7 @@ import { entityMemoryTool } from '../server/agent/tools/entity-memory'
 import { planLookupTool } from '../server/agent/tools/plan-lookup'
 import { resourceLookupTool } from '../server/agent/tools/resource-lookup'
 import { teacherBriefTool } from '../server/agent/tools/teacher-brief'
+import { resolveObjectScopedArgs } from '../server/agent/tools/record-context'
 import type { InstrumentOption } from '../server/domain/assessment-instruments'
 import type { AgentToolContext } from '../server/agent/types'
 
@@ -176,5 +177,39 @@ describe('工具参数校验：非法参数返回空结果而不是抛错', () =
     const result = await entityMemoryTool.execute({ contextId: 'not-a-uuid' }, ctx) as { memories: unknown[], message?: string }
     expect(result.memories).toEqual([])
     expect(result.message).toBeTruthy()
+  })
+})
+
+describe('按当前咨询对象收口（resolveObjectScopedArgs）', () => {
+  it('模型未指定对象时用会话绑定的对象兜底', () => {
+    expect(resolveObjectScopedArgs({ type: 'student', id: 's1' }, {})).toEqual({
+      args: { studentId: 's1' },
+      scopedObject: { type: 'student', id: 's1' }
+    })
+    expect(resolveObjectScopedArgs({ type: 'guardian', id: 'g1' }, {}).args).toEqual({ guardianId: 'g1' })
+    expect(resolveObjectScopedArgs({ type: 'class', id: 'c1' }, {}).args).toEqual({ classId: 'c1' })
+  })
+
+  it('模型显式指定对象时不被会话绑定覆盖，也不标记收口', () => {
+    const explicit = resolveObjectScopedArgs({ type: 'student', id: 's1' }, { guardianId: 'g1' })
+    expect(explicit.args).toEqual({ guardianId: 'g1' })
+    expect(explicit.scopedObject).toBeNull()
+    const explicitStudent = resolveObjectScopedArgs({ type: 'guardian', id: 'g1' }, { studentId: 's2' })
+    expect(explicitStudent.args).toEqual({ studentId: 's2' })
+    expect(explicitStudent.scopedObject).toBeNull()
+  })
+
+  it('未绑定对象（含选择不带档案咨询）时不加过滤，其余参数原样保留', () => {
+    const args = { limit: 3 }
+    expect(resolveObjectScopedArgs(null, args)).toEqual({ args, scopedObject: null })
+    expect(resolveObjectScopedArgs(undefined, args)).toEqual({ args, scopedObject: null })
+  })
+
+  it('工具不支持的对象类型不兜底：沟通记录没有班级维度', () => {
+    const dialogOnly = ['student', 'guardian'] as const
+    expect(resolveObjectScopedArgs({ type: 'class', id: 'c1' }, {}, dialogOnly).scopedObject).toBeNull()
+    expect(resolveObjectScopedArgs({ type: 'class', id: 'c1' }, {}, dialogOnly).args).toEqual({})
+    expect(resolveObjectScopedArgs({ type: 'student', id: 's1' }, {}, dialogOnly).scopedObject)
+      .toEqual({ type: 'student', id: 's1' })
   })
 })
