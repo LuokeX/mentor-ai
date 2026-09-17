@@ -398,11 +398,12 @@ onMounted(async () => {
   const queryId = typeof route.query.contextId === 'string' ? route.query.contextId : ''
   const storedContext = localStorage.getItem(`assessment-context:${moduleId}`)
   selectedContextKey.value = queryType && queryId ? `${queryType}:${queryId}` : storedContext || 'none'
-  // 连续量表流程：恢复上次评估组，刷新后继续做同一组的下一张量表。
-  // 服务端会对续接的组做新鲜度校验（24 小时未提交视为过期），过期后自动开新组，
-  // 因此这里即使带着旧 id 也不会把跨天的新问题误并入旧流程。
-  const storedSession = localStorage.getItem(`assessment-session:${moduleId}`)
-  if (storedSession) assessmentSessionId.value = storedSession
+  // 显式续接：只有从方案页「去完成」这类明确入口带 continueSession 进来时才续接评估组。
+  // 不再读取浏览器里残留的评估组 id——静默续接会让新一次作答悄悄并进旧组：旧组里
+  // 待确认的方案可能因此被这次结果冻结，两个不相关的问题也可能被合并成一份方案。
+  // 服务端同样要求 continueSession 标志，并会对组做归属与新鲜度校验，组不可用时新建组。
+  const querySession = typeof route.query.continueSession === 'string' ? route.query.continueSession : ''
+  if (querySession) assessmentSessionId.value = querySession
 
   await loadDraft()
 })
@@ -529,6 +530,9 @@ async function submit() {
         // 连续量表流程：本次提交只落结果不生成方案，全部量表做完后由 finalize 统一生成。
         // 后端仅在非熔断且有评估组可聚合时生效；无组时仍按单张直接出方案。
         sessionId: assessmentSessionId.value,
+        // 显式续接标志：有组 id 就说明是教师主动继续（本轮连续流程或方案页深链进入）。
+        // 服务端缺此标志时会忽略 sessionId 新建组，避免静默并入旧组。
+        continueSession: Boolean(assessmentSessionId.value),
         deferPlan: true
       }
     })
@@ -539,11 +543,9 @@ async function submit() {
     }
     // 绿色兜底：状态良好无需方案，停留当前页展示结论。
     if (res?.noPlanNeeded) {
-      // submit 无条件建组：持久化评估组，供「继续完成建议量表」续接同一组
-      if (res.assessmentSessionId) {
-        assessmentSessionId.value = res.assessmentSessionId
-        if (import.meta.client) localStorage.setItem(`assessment-session:${moduleId}`, res.assessmentSessionId)
-      }
+      // submit 无条件建组：记下组 id，供本轮「继续完成建议量表」续接同一组（只在内存中，
+      // 离开页面后再进入属于新一次评估，由服务端新建组）
+      if (res.assessmentSessionId) assessmentSessionId.value = res.assessmentSessionId
       output.value = res
       return
     }
@@ -555,8 +557,8 @@ async function submit() {
     await refreshRecommendation().catch(() => undefined)
 
     if (res?.deferred && res?.assessmentSessionId) {
+      // 本轮连续流程内续接同一组：组 id 来自本次提交响应，不是浏览器残留值
       assessmentSessionId.value = res.assessmentSessionId
-      if (import.meta.client) localStorage.setItem(`assessment-session:${moduleId}`, res.assessmentSessionId)
       // 已提交：答案锁定，不可再改选项或翻题；若方案生成失败只能重试，不能修改作答。
       submitted.value = true
       // 提交前已由教师选择「先做这张」：先保存本次结果再切入目标量表；
@@ -882,7 +884,7 @@ async function submit() {
       <div v-else class="panel p-7 text-center text-sm text-slate-500">
         <p>评估完成，正在进入方案详情…</p>
       </div>
-      <div class="print-actions flex gap-3"><UButton to="/">返回工作台</UButton><UButton v-if="!output.fuse" to="/plans" color="neutral" variant="soft">查看方案记录</UButton></div>
+      <div class="print-actions flex flex-wrap gap-3"><UButton to="/">返回工作台</UButton><UButton v-if="!output.fuse" to="/plans" color="neutral" variant="soft">查看方案记录</UButton><UButton to="/assessments" color="neutral" variant="soft">查看评估记录</UButton></div>
     </section>
   </div>
 </template>

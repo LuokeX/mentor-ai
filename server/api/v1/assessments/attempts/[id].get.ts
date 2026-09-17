@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { moduleMeta } from '../../../../../shared/assessments'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
+import { buildAttemptItems, resolvePrimaryReport, type SessionAttemptRow } from '../../../../domain/assessment-records'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -33,7 +34,16 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, message: '该评估尚未提交，没有可查看的报告' })
   }
 
-  const result = (attempt.result || {}) as Record<string, any>
+  const attemptRow: SessionAttemptRow = {
+    attemptId: attempt.id,
+    sequence: 0,
+    assessmentCode: attempt.assessmentCode,
+    submittedAt: attempt.submittedAt,
+    result: (attempt.result || null) as Record<string, unknown> | null
+  }
+  // 等级与熔断口径复用评估记录的装配函数：与记录列表/详情、报告徽章保持一致，
+  // 不再各自读一遍 result 字段（两处口径迟早会分叉）。
+  const [summary] = buildAttemptItems([attemptRow])
   // 不回传 answers：回看只需要结论，逐题作答是更敏感的原始数据。
   const [plan] = await db.select({ id: schema.plans.id, title: schema.plans.title, status: schema.plans.status })
     .from(schema.plans)
@@ -49,12 +59,12 @@ export default defineEventHandler(async (event) => {
     assessmentCode: attempt.assessmentCode,
     definitionVersion: attempt.definitionVersion,
     submittedAt: attempt.submittedAt || attempt.createdAt,
-    report: result.report ?? null,
-    level: result.level ?? null,
-    levelName: result.levelName ?? null,
-    severity: result.severity ?? null,
-    blocked: Boolean(result.blocked),
-    tools: Array.isArray(result.tools) ? result.tools : [],
+    report: resolvePrimaryReport([attemptRow]),
+    level: summary?.level ?? null,
+    levelName: summary?.levelName ?? null,
+    severity: summary?.severity ?? null,
+    blocked: summary?.blocked ?? false,
+    tools: Array.isArray(attemptRow.result?.tools) ? attemptRow.result.tools : [],
     plan: plan || null
   }
 })

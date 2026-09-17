@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 import type { OutputTemplateEntry, RuleExecResult } from '../../../../../shared/contracts'
 import { moduleIdSchema } from '../../../../../shared/contracts'
+import { viewerSchoolSections } from '../../../../utils/stage-filter'
 import { requireUser } from '../../../../utils/auth'
 import type { DbClient } from '../../../../utils/db'
 import { useDb, schema } from '../../../../utils/db'
@@ -137,7 +138,7 @@ export default defineEventHandler(async (event) => {
     // 对象级量表（per_case）的触发只看同一咨询对象，这里把本次评估的关联对象一并传入
     const suggestionContext = toAssessmentContextRef(session.contextType, session.contextId)
     const nextInstrumentSuggestion = await resolveNextInstrumentSuggestion(
-      event, module, { id: user.id, schoolId }, new Set(attempts.map(attempt => attempt.assessmentCode)), suggestionContext
+      event, module, { id: user.id, schoolId, teachingGrades: user.teachingGrades }, new Set(attempts.map(attempt => attempt.assessmentCode)), suggestionContext
     )
 
     const generated = await generateOrMergeSessionPlan({
@@ -193,7 +194,8 @@ export default defineEventHandler(async (event) => {
       module,
       result: outcome.mergedResult,
       definition: outcome.definition,
-      expectedPlanUpdatedAt: outcome.planUpdatedAtForWrite
+      expectedPlanUpdatedAt: outcome.planUpdatedAtForWrite,
+      sections: viewerSchoolSections(event, user.teachingGrades)
     })
   }
 

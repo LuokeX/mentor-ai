@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { and, asc, desc, eq, inArray, isNull, max, ne } from 'drizzle-orm'
 import type { OutputTemplateEntry, RuleExecResult } from '../../../../../shared/contracts'
 import { moduleIdSchema } from '../../../../../shared/contracts'
+import { viewerSchoolSections } from '../../../../utils/stage-filter'
 import { requireUser } from '../../../../utils/auth'
 import { type DbClient, useDb, schema } from '../../../../utils/db'
 import { executeRules, evaluateWithFallback } from '../../../../domain/rules-executor'
@@ -22,6 +23,7 @@ import { truncateByChars, type PlanSourceType } from '../../../../domain/plan-ti
 import { mergeGroupResults } from '../../../../domain/plan-merge'
 import { resolveNextInstrumentSuggestion, toAssessmentContextRef } from '../../../../domain/assessment-instruments'
 import { createTemplateAssessmentReport } from '../../../../domain/reports'
+import { shouldContinueRequestedSession } from '../../../../domain/assessment-sessions'
 
 const bodySchema = z.object({
   attemptId: z.string().uuid().optional(),
@@ -36,6 +38,10 @@ const bodySchema = z.object({
   // 连续量表流程：显式指定评估组（前端持有首次提交返回的 assessmentSessionId），
   // 无关联对象、无来源对话的评估也能连续做多张量表并入同一组。
   sessionId: z.string().uuid().optional(),
+  // 显式续接：只有教师主动继续同一评估组时才为 true（本轮连续流程内，或从方案页
+  // 「去完成」深链进入）。缺少该标志时 sessionId 被忽略并新建组，避免浏览器里
+  // 残留的旧组 id 把新一次作答静默并入旧组。
+  continueSession: z.boolean().optional(),
   // 连续量表流程：true 时本次提交只记录量表结果，不生成方案；
   // 全部量表做完后由 finalize 用组内结果统一生成。
   deferPlan: z.boolean().optional()
@@ -258,11 +264,18 @@ export default defineEventHandler(async (event) => {
         ) : undefined
     // 连续量表流程：仅「无来源对话、无评估对象」的评估没有稳定的自动定位标识，
     // 此时前端显式指定评估组来衔接上一张量表；对话/对象场景仍按上下文自动定位，
-    // 避免新问题被并入旧评估组。组不存在或已过期（超过 24 小时未提交）时忽略
-    // 该参数并新建组，防止本地残留的旧组 id 把跨天的新问题误并入旧流程。
-    if (body.sessionId && !body.sourceChatSessionId && !contextId) {
+    // 避免新问题被并入旧评估组。组不存在、已关闭或已过期（超过 24 小时未提交）时
+    // 忽略该参数并新建组，防止残留的旧组 id 把跨天的新问题误并入旧流程。
+    // 必须同时带 continueSession 才算教师主动续接：只有前端带组 id 的旧行为会让
+    // 新的作答静默并入旧组，旧组里待确认的方案可能因此被这次结果冻结。
+    if (shouldContinueRequestedSession({
+      continueSession: body.continueSession,
+      requestedSessionId: body.sessionId,
+      hasChatSource: Boolean(body.sourceChatSessionId),
+      hasContext: Boolean(contextId)
+    })) {
       const [session] = await client.select({ id: schema.assessmentSessions.id }).from(schema.assessmentSessions).where(and(
-        eq(schema.assessmentSessions.id, body.sessionId),
+        eq(schema.assessmentSessions.id, String(body.sessionId)),
         eq(schema.assessmentSessions.ownerUserId, user.id),
         eq(schema.assessmentSessions.schoolId, schoolId),
         eq(schema.assessmentSessions.module, module),
@@ -436,7 +449,7 @@ export default defineEventHandler(async (event) => {
           // 对象级量表（per_case）的触发只看同一咨询对象，这里把本次评估的关联对象一并传入
           const suggestionContext = toAssessmentContextRef(contextType, contextId)
           const nextInstrumentSuggestion = await resolveNextInstrumentSuggestion(
-            event, module, { id: user.id, schoolId }, new Set([definition.code]), suggestionContext
+            event, module, { id: user.id, schoolId, teachingGrades: user.teachingGrades }, new Set([definition.code]), suggestionContext
           )
           const generated = await generateOrMergeSessionPlan({
           event,
@@ -502,7 +515,8 @@ export default defineEventHandler(async (event) => {
       result: outcome.mergedResult,
       definition,
       attemptResult: result,
-      expectedPlanUpdatedAt: outcome.planUpdatedAt
+      expectedPlanUpdatedAt: outcome.planUpdatedAt,
+      sections: viewerSchoolSections(event, user.teachingGrades)
     })
   }
 
