@@ -266,6 +266,42 @@ function isStreamChunk(value: unknown): value is { event: string; name?: string;
 }
 
 /**
+ * 从模型往返结果里读结束原因（非流式 invoke 走 response_metadata，流式路径见采集器）。
+ */
+function readFinishReasonFromResult(message: unknown): string | undefined {
+  const value = (message as { response_metadata?: { finish_reason?: unknown } } | undefined)?.response_metadata?.finish_reason
+  return typeof value === 'string' && value ? value : undefined
+}
+
+/**
+ * 结束原因采集器。LangGraph 的 ReAct 路径下，on_chat_model_end 的 response_metadata 会被
+ * 随后的 usage 分块覆盖，finish_reason 只留在回调 handleLLMEnd 的 generationInfo 里；
+ * 这里按 run_id 关联回来，用于截断判断（length/content_filter）与 ai_model_calls 审计。
+ * 同时兼容非流式 invoke：callbacks 直接挂在调用上，取最近一次往返的结果。
+ */
+function createFinishReasonCollector() {
+  const byRun = new Map<string, string>()
+  const handler = {
+    handleLLMEnd(
+      output: { generations?: Array<Array<{ generationInfo?: Record<string, unknown> }>> } | undefined,
+      runId: string
+    ) {
+      const value = output?.generations?.[0]?.[0]?.generationInfo?.finish_reason
+      if (typeof value === 'string' && value) byRun.set(runId, value)
+    }
+  }
+  return {
+    handler,
+    of(runId?: string) { return runId ? byRun.get(runId) : undefined },
+    latest(): string | undefined {
+      let last: string | undefined
+      for (const value of byRun.values()) last = value
+      return last
+    }
+  }
+}
+
+/**
  * 从模型消息的 usage_metadata 读取 token 用量（含 DeepSeek 缓存命中字段）。
  * LangChain 把 OpenAI 风格的 prompt_tokens_details.cached_tokens 映射为
  * input_token_details.cache_read；未返回该字段时保持 undefined，不猜测。
@@ -461,9 +497,11 @@ function detectToolOutcome(output: unknown): 'success' | 'empty' | 'error' | 'ti
  *  - 同轮内相同 (工具, 参数) 的重复调用直接复用上次结果（省一次查询与一次模型往返）；
  *  - 单次工具执行有超时上限（AgentTool.timeoutMs，默认 10s），超时按工具失败回传模型自愈；
  *  - 重试时追加一条不落库的临时提示，要求模型直接产出回答（无反馈重试容易撞同一个坑）；
- *  - 模型往返记录结束原因（finish_reason）；以空正文结束的异常往返标记为 failed +
- *    empty_round:<finish_reason>，便于在 AI 中心区分上游中断（insufficient_system_resource）
- *    与正常结束的空回答；
+ *  - 模型往返记录结束原因（finish_reason，ReAct 路径经回调采集）；以空正文结束的异常往返标记为
+ *    failed + empty_round:<finish_reason>，输出被截断的标记为 failed + truncated:<finish_reason>，
+ *    便于在 AI 中心区分上游中断（insufficient_system_resource）、截断与正常结束的空回答；
+ *  - 输出被截断且已经流出正文时按异常结束处理（不返回半截回答）；截断但没有正文时按空轮次处理，
+ *    交给收尾补答或整轮重试；
  *  - 模块分诊与量表推荐结论冲突时以量表推荐为准，并把冲突号交给入口写产品事件。
  */
 export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): Promise<RunAgentGraphResult> {
@@ -520,6 +558,8 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     const attemptRecordStart = modelCallRecords.length
     /** 最近一次模型往返是否发起了工具调用（用于识别「以空正文结束」的异常往返） */
     let lastRoundHadToolCalls = false
+    /** 结束原因采集器（ReAct 路径下 response_metadata 拿不到 finish_reason） */
+    const finishReasons = createFinishReasonCollector()
     /** 本轮内每个工具调用的开始时间与记录下标（run_id → …），用于回填耗时与状态 */
     const toolCallStarts = new Map<string, number>()
     const toolCallIndex = new Map<string, number>()
@@ -568,8 +608,8 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
       const final = await llm.invoke([
         ...langMessages, ...traceToLangChainMessages(toolTraceRecords),
         new HumanMessage(instruction)
-      ], { signal })
-      const finishReason = String(final.response_metadata?.finish_reason ?? '')
+      ], { signal, callbacks: [finishReasons.handler] })
+      const finishReason = readFinishReasonFromResult(final) ?? finishReasons.latest() ?? ''
       if (finishReason === 'length' || finishReason === 'content_filter') throw new Error('模型回答未完整结束')
       const content = renderToolMessageContent(final.content)
       const text = content?.trim() ?? ''
@@ -588,7 +628,7 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     }
     const stream = await agent.streamEvents(
       { messages: langMessages },
-      { version: 'v2', recursionLimit: maxToolRounds * 2 + 6, signal }
+      { version: 'v2', recursionLimit: maxToolRounds * 2 + 6, signal, callbacks: [finishReasons.handler] }
     )
     let toolRounds = 0
     const activeTools = new Set<string>()
@@ -683,23 +723,30 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
       }
       if (rawChunk.event === 'on_chat_model_end') {
         const modelOutput = rawChunk.data.output
-        const finishReason = (modelOutput as { response_metadata?: { finish_reason?: string } } | undefined)?.response_metadata?.finish_reason
-        if (finishReason === 'length' || finishReason === 'content_filter') throw new Error('模型回答未完整结束')
+        // ReAct 路径下 response_metadata 不含 finish_reason，从回调采集器按 run_id 取回
+        const finishReason = readFinishReasonFromResult(modelOutput)
+          ?? finishReasons.of(rawChunk.run_id)
         const usage = readUsageMetadata(modelOutput)
         const startedAt = rawChunk.run_id ? modelCallStarts.get(rawChunk.run_id) : undefined
         // P3：模型发起的工具调用进入轨迹（含 id，用于与工具返回配对）；
         // 调用没有真实 id 时不记录工具轨迹，避免回放出现无法配对的 tool_calls 序列
         const extracted = extractToolCalls(modelOutput)
+        const roundText = renderToolMessageContent((modelOutput as { content?: unknown } | null)?.content) ?? ''
         lastRoundHadToolCalls = Boolean(extracted)
+        // 输出被截断（思考吃满预算或命中过滤）且已经流出正文：按异常结束处理，不返回半截回答；
+        // 没有任何正文与工具调用时按「空轮次」处理，交给收尾补答或整轮重试，比直接报错更有用。
+        const truncated = finishReason === 'length' || finishReason === 'content_filter'
         modelCallRecords.push({
           model: modelName,
-          status: 'success',
+          status: truncated ? 'failed' : 'success',
           latencyMs: startedAt ? Math.max(0, Date.now() - startedAt) : 0,
-          ...(finishReason ? { finishReason: String(finishReason) } : {}),
+          ...(finishReason ? { finishReason } : {}),
+          ...(truncated ? { errorCode: `truncated:${finishReason}` } : {}),
           ...(usage || {})
         })
+        if (truncated && roundText.trim()) throw new Error('模型回答未完整结束')
         if (extracted) {
-          const text = renderToolMessageContent((modelOutput as { content?: unknown } | null)?.content) ?? ''
+          const text = roundText
           if (extracted.reliable) {
             for (const call of extracted.calls) pendingToolCalls.add(call.id)
             toolTraceRecords.push({ type: 'assistant', content: text, toolCalls: extracted.calls })

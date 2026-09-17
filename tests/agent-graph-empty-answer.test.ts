@@ -154,4 +154,63 @@ describe('runAgentGraph 空正文收尾补答', () => {
     ])
     expect(llmInvoke).not.toHaveBeenCalled()
   })
+
+  it('ReAct 路径经回调取回结束原因：截断且无正文时按空轮次处理，收尾补答照常', async () => {
+    streamEvents.mockImplementationOnce((_input: unknown, options: {
+      callbacks?: Array<{ handleLLMEnd?: (output: unknown, runId: string) => void }>
+    }) => {
+      // 线上路径：on_chat_model_end 的 response_metadata 拿不到 finish_reason，只在回调里
+      options.callbacks?.[0]?.handleLLMEnd?.({ generations: [[{ generationInfo: { finish_reason: 'length' } }]] }, 'run-2')
+      return chunks([
+        ...toolRound,
+        {
+          event: 'on_chat_model_end',
+          run_id: 'run-2',
+          data: { output: { content: '', usage_metadata: { input_tokens: 800, output_tokens: 4096 } } }
+        }
+      ])
+    })
+    llmInvoke.mockResolvedValueOnce({
+      content: '思考被截断，这里依据已返回的事实作答。',
+      response_metadata: { finish_reason: 'stop' }
+    })
+
+    const result = await invoke()
+
+    expect(result.answer).toBe('思考被截断，这里依据已返回的事实作答。')
+    expect(result.exitReason).toBe('done')
+    expect(result.modelCalls?.[1]).toMatchObject({
+      status: 'failed',
+      finishReason: 'length',
+      errorCode: 'truncated:length'
+    })
+  })
+
+  it('截断且已经流出正文时按异常结束处理，不把半截回答返回给教师', async () => {
+    streamEvents.mockImplementationOnce((_input: unknown, options: {
+      callbacks?: Array<{ handleLLMEnd?: (output: unknown, runId: string) => void }>
+    }) => {
+      options.callbacks?.[0]?.handleLLMEnd?.({ generations: [[{ generationInfo: { finish_reason: 'length' } }]] }, 'run-3')
+      return chunks([
+        textChunk('先说第一点，'),
+        {
+          event: 'on_chat_model_end',
+          run_id: 'run-3',
+          data: { output: { content: '先说第一点，' } }
+        }
+      ])
+    })
+
+    const result = await invoke()
+
+    expect(result.answer).toBe('')
+    expect(result.exitReason).toBe('error')
+    // 已经推过内容，不再整轮重试（避免重复展示），也不返回半截回答
+    expect(streamEvents).toHaveBeenCalledTimes(1)
+    expect(result.modelCalls?.[0]).toMatchObject({
+      status: 'failed',
+      finishReason: 'length',
+      errorCode: 'truncated:length'
+    })
+  })
 })
