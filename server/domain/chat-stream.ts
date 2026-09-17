@@ -417,6 +417,7 @@ export function buildBusinessContextText(input: {
         completionTokens: call.completionTokens ?? null,
         cacheHitTokens: call.cacheHitTokens ?? null,
         cacheMissTokens: call.cacheMissTokens ?? null,
+        finishReason: call.finishReason ?? null,
         errorCode: call.errorCode ?? null,
         dataMode,
         contextType: input.businessContext?.type ?? null,

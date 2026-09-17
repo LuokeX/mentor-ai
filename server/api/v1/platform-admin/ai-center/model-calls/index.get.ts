@@ -40,6 +40,7 @@ export default defineEventHandler(async (event) => {
       completionTokens: schema.aiModelCalls.completionTokens,
       cacheHitTokens: schema.aiModelCalls.cacheHitTokens,
       cacheMissTokens: schema.aiModelCalls.cacheMissTokens,
+      finishReason: schema.aiModelCalls.finishReason,
       errorCode: schema.aiModelCalls.errorCode,
       dataMode: schema.aiModelCalls.dataMode,
       createdAt: schema.aiModelCalls.createdAt

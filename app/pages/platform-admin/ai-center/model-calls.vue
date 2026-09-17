@@ -14,6 +14,7 @@ interface ModelCallRow {
   completionTokens: number | null
   cacheHitTokens: number | null
   cacheMissTokens: number | null
+  finishReason: string | null
   errorCode: string | null
   dataMode: string | null
   createdAt: string
@@ -126,6 +127,7 @@ const purposeOptions = [
             <th class="px-4 py-3 font-medium">延迟</th>
             <th class="px-4 py-3 font-medium">Token（输入/输出）</th>
             <th class="px-4 py-3 font-medium">缓存命中</th>
+            <th class="px-4 py-3 font-medium">结束原因</th>
             <th class="px-4 py-3 font-medium">错误码</th>
           </tr>
         </thead>
@@ -146,6 +148,7 @@ const purposeOptions = [
               {{ row.promptTokens !== null ? `${row.promptTokens}/${row.completionTokens ?? 0}` : '—' }}
             </td>
             <td class="px-4 py-3 text-xs text-gray-500">{{ cacheHitLabel(row) }}</td>
+            <td class="px-4 py-3 font-mono text-xs text-gray-500">{{ row.finishReason || '—' }}</td>
             <td class="px-4 py-3 text-xs text-red-500">{{ row.errorCode || '—' }}</td>
           </tr>
         </tbody>

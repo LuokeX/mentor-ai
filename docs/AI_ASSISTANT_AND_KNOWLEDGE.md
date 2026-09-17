@@ -48,7 +48,7 @@ AI_AGENT_MAX_TOOL_ROUNDS=8
 AI_AGENT_ENABLED_TOOLS=
 ```
 
-DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Agent 在本轮无产出时自动整轮重试一次（传输层另有 SDK 自动重试），重试轮会追加一条不落库的临时提示要求模型直接产出回答；重试后仍失败则本轮向教师返回统一的中文错误提示，安全规则始终由本地关键词与硬规则先行执行。
+DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Agent 在本轮无产出时自动整轮重试一次（传输层另有 SDK 自动重试），重试轮会追加一条不落库的临时提示要求模型直接产出回答；**例外**：模型以空正文结束（模型两次往返都没有输出任何文本，也没有再发起工具调用）或工具轮次预算用尽时，只要本轮已经有工具结果，就先不绑定工具补一次「依据已返回的事实作答」的收尾回答——教师已经看到工具过程，直接报错等于白跑一轮；补答仍为空才向教师返回统一的中文错误提示（审计记 `empty_round:<finish_reason>` / `empty_answer:<finish_reason>`，2026-09-17 线上首次出现该形态，上游 `finish_reason` 是区分「服务端资源不足被中断」与「正常结束的空回答」的唯一线索）。安全规则始终由本地关键词与硬规则先行执行。
 
 模型当前默认开启思考模式（effort=high）：实测推理 token 占输出的一半到四分之三，首字延迟数秒，是回答成本的主要来源；`AI_AGENT_MAX_OUTPUT_TOKENS` 用于给输出封顶。若要降本，需先评估回答质量再显式关闭思考或降低 effort（思考模式下 `temperature` 不生效）。
 
@@ -75,7 +75,7 @@ DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Ag
 - 停止与重新生成：教师可中断本轮（前端 `AbortController`）；服务端在 `ReadableStream.cancel()` 与响应 `close` 两处置中断标记，落库与发事件前检查，中断则不写库并记 `assistant_answer_aborted`。`POST /api/v1/chat/messages/[id]/regenerate` 复用该回答对应的教师提问重跑一轮，旧回答软删（`chat_messages.deleted_at`），事件流与普通提问完全一致；普通提问与重新生成共用 `server/domain/chat-stream.ts` 的同一份流水线（本轮对象识别口径也一致）。
 - 主动简报：`GET /api/v1/chat/assistant-brief` 返回空态「今日建议」（逾期行动项、待复盘方案、未完成量表草稿、需关注的沟通、未读通知），确定性生成、不调用模型，因此 `local` 数据模式同样可用；点击一条即以该问句发起提问，由 `teacher_brief` 工具在回答里读取真实数据。
 - 外发脱敏与本地模式：`redactOutboundText` 对所有外发文本（提问、历史、轨迹、档案、画像、摘要）按学校数据模式脱敏；`local` 模式直接不调用外部模型并向教师返回提示。
-- 可观测性：`ai_model_calls` 记录每次模型往返（含工具往返）的输入/输出与缓存命中/未命中 token；AI 中心「调用审计」按「缓存命中」列展示命中量与占比。基线对比脚本：`pnpm ai:cache-probe --run`（合成对话，仅手动运行，默认不执行）。
+- 可观测性：`ai_model_calls` 记录每次模型往返（含工具往返）的输入/输出、缓存命中/未命中 token 与结束原因（`finish_reason`）；AI 中心「调用审计」按「缓存命中」列展示命中量与占比，并在「结束原因」列区分正常结束与 `insufficient_system_resource` 等上游中断。基线对比脚本：`pnpm ai:cache-probe --run`（合成对话，仅手动运行，默认不执行）。
 
 提示词与运行时参数：
 

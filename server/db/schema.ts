@@ -924,6 +924,12 @@ export const aiModelCalls = pgTable('ai_model_calls', {
   /** 缓存命中/未命中输入 tokens（DeepSeek 前缀缓存；未返回时为 null）。 */
   cacheHitTokens: integer('cache_hit_tokens'),
   cacheMissTokens: integer('cache_miss_tokens'),
+  /**
+   * 该次模型往返的结束原因（DeepSeek：stop / tool_calls / length / content_filter /
+   * insufficient_system_resource 等；服务端未返回时为 null）。用于区分「正常结束的空回答」
+   * 与「上游资源不足被中断」——两者都表现为 content 为空。
+   */
+  finishReason: varchar('finish_reason', { length: 40 }),
   errorCode: varchar('error_code', { length: 80 }),
   dataMode: varchar('data_mode', { length: 20 }),
   contextType: varchar('context_type', { length: 30 }),

@@ -167,7 +167,7 @@ pnpm build
 - 权限或管理员访问：验证四角色越权、授权过期、只读限制和审计日志。
 - 危机规则：验证风险事件、转介、Outbox 和审计在同一事务中生成，并通过 App 日志验证通知。
 - 数据库：从空库执行全部 migration，再从现有备份副本执行增量 migration。
-- AI：验证 DeepSeek 正常、超时、非法 JSON、无密钥，以及 Agent 自动重试与重试耗尽后的 `error` 事件。
+- AI：验证 DeepSeek 正常、超时、非法 JSON、无密钥，以及 Agent 自动重试、空正文收尾补答与重试/补答耗尽后的 `error` 事件。
 - 敏感页面：验证 `Cache-Control: no-store`、水印和禁止导出。
 
 通知消费者是 Nitro 插件，与 App 使用同一进程和数据库契约；正式发布只部署一个 App 镜像，禁止再配置重复的独立 Worker。

@@ -93,6 +93,12 @@ export interface AgentModelCallRecord {
   completionTokens?: number
   cacheHitTokens?: number
   cacheMissTokens?: number
+  /**
+   * 该次往返的结束原因（DeepSeek：stop / tool_calls / length / content_filter /
+   * insufficient_system_resource 等）。上游中断导致空正文时靠它区分「正常结束的空回答」
+   * 与「服务端资源不足被中断」，服务端未返回时缺省。
+   */
+  finishReason?: string
   errorCode?: string
 }
 
@@ -443,6 +449,8 @@ function detectToolOutcome(output: unknown): 'success' | 'empty' | 'error' | 'ti
  * 失败处理：本轮无任何产出时自动整轮重试（最多 AGENT_RETRY_TIMES 次）；重试仍无产出、
  * 或已向客户端发过内容后失败，一律返回 answer='' + exitReason='error'，由入口发 error 事件。
  * 不回退到其它提示词，也不生成兜底回答。
+ * 特例：模型以空正文结束（或工具预算用尽）而本轮已经有工具结果时，先用已返回的事实补一次
+ * 收尾回答（不绑定工具）——教师已经看到工具过程，直接报错等于白跑一轮；补答也空才报错。
  *
  * 终止语义：
  *  - done       正常结束且已有模型文本；
@@ -453,6 +461,9 @@ function detectToolOutcome(output: unknown): 'success' | 'empty' | 'error' | 'ti
  *  - 同轮内相同 (工具, 参数) 的重复调用直接复用上次结果（省一次查询与一次模型往返）；
  *  - 单次工具执行有超时上限（AgentTool.timeoutMs，默认 10s），超时按工具失败回传模型自愈；
  *  - 重试时追加一条不落库的临时提示，要求模型直接产出回答（无反馈重试容易撞同一个坑）；
+ *  - 模型往返记录结束原因（finish_reason）；以空正文结束的异常往返标记为 failed +
+ *    empty_round:<finish_reason>，便于在 AI 中心区分上游中断（insufficient_system_resource）
+ *    与正常结束的空回答；
  *  - 模块分诊与量表推荐结论冲突时以量表推荐为准，并把冲突号交给入口写产品事件。
  */
 export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): Promise<RunAgentGraphResult> {
@@ -505,6 +516,10 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     const modelName = typeof llm.model === 'string' && llm.model ? llm.model : 'unknown'
     /** 本轮内每个模型调用的开始时间（run_id → 时间戳） */
     const modelCallStarts = new Map<string, number>()
+    /** 本次尝试写入 modelCallRecords 的起始下标（记录跨尝试累计，收尾判断只看本次尝试） */
+    const attemptRecordStart = modelCallRecords.length
+    /** 最近一次模型往返是否发起了工具调用（用于识别「以空正文结束」的异常往返） */
+    let lastRoundHadToolCalls = false
     /** 本轮内每个工具调用的开始时间与记录下标（run_id → …），用于回填耗时与状态 */
     const toolCallStarts = new Map<string, number>()
     const toolCallIndex = new Map<string, number>()
@@ -539,6 +554,38 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     }
 
     onEvent(AGENT_SSE_EVENTS.THINKING, { phase: 'planning' })
+    /**
+     * 收尾补答：模型没有产出正文时（工具预算用尽、或模型直接以空正文结束整轮），
+     * 用本轮已返回的工具结果再要一次回答——不绑定工具，只让它依据既有事实作答。
+     * 成败都记一条模型往返（含结束原因），失败不抛错：交给外层按既有重试/报错逻辑处理。
+     */
+    const finalizeFromGatheredFacts = async (
+      instruction: string,
+      source: 'budget_exhausted' | 'empty_answer'
+    ): Promise<void> => {
+      signal.throwIfAborted()
+      const startedAt = Date.now()
+      const final = await llm.invoke([
+        ...langMessages, ...traceToLangChainMessages(toolTraceRecords),
+        new HumanMessage(instruction)
+      ], { signal })
+      const finishReason = String(final.response_metadata?.finish_reason ?? '')
+      if (finishReason === 'length' || finishReason === 'content_filter') throw new Error('模型回答未完整结束')
+      const content = renderToolMessageContent(final.content)
+      const text = content?.trim() ?? ''
+      modelCallRecords.push({
+        model: modelName,
+        status: text ? 'success' : 'failed',
+        latencyMs: Date.now() - startedAt,
+        ...(finishReason ? { finishReason } : {}),
+        ...(text ? {} : { errorCode: `${source}:${finishReason || 'unknown'}` }),
+        ...(readUsageMetadata(final) ?? {})
+      })
+      if (!text) return
+      answerText += content
+      onEvent(AGENT_SSE_EVENTS.ANSWER_DELTA, { text: content })
+      exitReason = 'done'
+    }
     const stream = await agent.streamEvents(
       { messages: langMessages },
       { version: 'v2', recursionLimit: maxToolRounds * 2 + 6, signal }
@@ -635,20 +682,22 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
         continue
       }
       if (rawChunk.event === 'on_chat_model_end') {
-        const finishReason = (rawChunk.data.output as { response_metadata?: { finish_reason?: string } } | undefined)?.response_metadata?.finish_reason
+        const modelOutput = rawChunk.data.output
+        const finishReason = (modelOutput as { response_metadata?: { finish_reason?: string } } | undefined)?.response_metadata?.finish_reason
         if (finishReason === 'length' || finishReason === 'content_filter') throw new Error('模型回答未完整结束')
-        const usage = readUsageMetadata(rawChunk.data.output)
+        const usage = readUsageMetadata(modelOutput)
         const startedAt = rawChunk.run_id ? modelCallStarts.get(rawChunk.run_id) : undefined
+        // P3：模型发起的工具调用进入轨迹（含 id，用于与工具返回配对）；
+        // 调用没有真实 id 时不记录工具轨迹，避免回放出现无法配对的 tool_calls 序列
+        const extracted = extractToolCalls(modelOutput)
+        lastRoundHadToolCalls = Boolean(extracted)
         modelCallRecords.push({
           model: modelName,
           status: 'success',
           latencyMs: startedAt ? Math.max(0, Date.now() - startedAt) : 0,
+          ...(finishReason ? { finishReason: String(finishReason) } : {}),
           ...(usage || {})
         })
-        // P3：模型发起的工具调用进入轨迹（含 id，用于与工具返回配对）；
-        // 调用没有真实 id 时不记录工具轨迹，避免回放出现无法配对的 tool_calls 序列
-        const modelOutput = rawChunk.data.output
-        const extracted = extractToolCalls(modelOutput)
         if (extracted) {
           const text = renderToolMessageContent((modelOutput as { content?: unknown } | null)?.content) ?? ''
           if (extracted.reliable) {
@@ -680,19 +729,27 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
       }
     }
     if (finishWithoutTools) {
-      signal.throwIfAborted()
-      const startedAt = Date.now()
-      const final = await llm.invoke([
-        ...langMessages, ...traceToLangChainMessages(toolTraceRecords),
-        new HumanMessage('工具查询预算已用完。请依据已返回的事实完整回答，说明尚缺的信息；不要声称查询未获得的结论。')
-      ], { signal })
-      if (['length', 'content_filter'].includes(String(final.response_metadata?.finish_reason))) throw new Error('模型回答未完整结束')
-      const content = renderToolMessageContent(final.content)
-      if (!content?.trim()) throw new Error('Agent 无回答产出')
-      modelCallRecords.push({ model: modelName, status: 'success', latencyMs: Date.now() - startedAt, ...(readUsageMetadata(final) ?? {}) })
-      answerText += content
-      onEvent(AGENT_SSE_EVENTS.ANSWER_DELTA, { text: content })
-      exitReason = 'done'
+      await finalizeFromGatheredFacts(
+        '工具查询预算已用完。请依据已返回的事实完整回答，说明尚缺的信息；不要声称查询未获得的结论。',
+        'budget_exhausted'
+      )
+      return
+    }
+    // 模型以空正文结束：没有任何文本产出，也没有再发起工具调用。
+    // 先把这次异常往返标记进审计（教师已看到工具过程，重试会重复展示，所以不整轮重试），
+    // 再用本轮已返回的工具结果补一次收尾回答；补答也空则由入口按既有逻辑发 error 事件。
+    if (!answerText.trim()) {
+      const lastRecord = modelCallRecords.length > attemptRecordStart ? modelCallRecords[modelCallRecords.length - 1] : undefined
+      if (!lastRoundHadToolCalls && lastRecord && lastRecord.status === 'success') {
+        lastRecord.status = 'failed'
+        lastRecord.errorCode = `empty_round:${lastRecord.finishReason || 'unknown'}`
+      }
+      if (toolTraceRecords.some(step => step.type === 'tool')) {
+        await finalizeFromGatheredFacts(
+          '上一轮没有产出回答正文。请依据上面已返回的事实直接给出本轮回答，说明尚缺的信息；不要重复调用工具，也不要声称查询未获得的结论。',
+          'empty_answer'
+        )
+      }
     }
   }
 

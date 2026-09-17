@@ -1,0 +1,1 @@
+ALTER TABLE "ai_model_calls" ADD COLUMN "finish_reason" varchar(40);
