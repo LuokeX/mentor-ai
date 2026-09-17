@@ -10,7 +10,6 @@ vi.mock('../server/utils/db', () => ({
   useDb: () => ({ insert: () => ({ values: (value: unknown) => { writes.push(value); return { returning: async () => [{ id: 'answer' }], catch: async () => {} } } }), update: () => ({ set: () => ({ where: async () => {} }) }) })
 }))
 import { runAssistantTurn } from '../server/domain/chat-stream'
-import { SAFETY_FOLLOW_UP_NOTE } from '../server/domain/safety'
 beforeEach(() => {
   writes.length = 0
   run.mockReset().mockResolvedValue({ answer: '可以先核实发生场景。', exitReason: 'done' })
@@ -38,24 +37,15 @@ it('客户端已经停止时不保存回答', async () => {
   await runAssistantTurn({ ...input, isAborted: () => true })
   expect(writes).toEqual([])
 })
-it('语义命中已后台预警时不打断回答：末尾补中性提示并标记消息', async () => {
+it('回答与消息 metadata 不携带任何安全预警痕迹（教师侧不显示）', async () => {
   const events: Array<[string, unknown]> = []
-  await runAssistantTurn({ ...input, safetyAlert: true, emit: (name, data) => events.push([name, data]) })
-  const message = writes.find((row) => (row as { role?: string }).role === 'assistant') as {
-    contentEnc: string
-    metadata: Record<string, unknown>
-  }
-  expect(message.contentEnc).toContain('可以先核实发生场景。')
-  expect(message.contentEnc.endsWith(SAFETY_FOLLOW_UP_NOTE)).toBe(true)
-  expect(message.metadata.safetyAlert).toBe(true)
-  expect(events.find(([name]) => name === 'answer')?.[1]).toMatchObject({ safetyAlert: true })
-})
-it('未预警时回答不带提示，也不写标记', async () => {
-  await runAssistantTurn(input)
+  await runAssistantTurn({ ...input, emit: (name, data) => events.push([name, data]) })
   const message = writes.find((row) => (row as { role?: string }).role === 'assistant') as {
     contentEnc: string
     metadata: Record<string, unknown>
   }
   expect(message.contentEnc).toBe('可以先核实发生场景。')
   expect(message.metadata.safetyAlert).toBeUndefined()
+  expect(Object.keys(message.metadata)).not.toContain('safetyAlert')
+  expect(events.find(([name]) => name === 'fuse')).toBeUndefined()
 })

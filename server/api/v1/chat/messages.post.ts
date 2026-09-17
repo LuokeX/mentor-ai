@@ -159,8 +159,6 @@ export default defineEventHandler(async (event) => {
   /** 客户端断开标记：断开后不再落库、不再发事件（由 stream.cancel 与响应 close 两处设置）。 */
   const abortController = new AbortController()
   let aborted = false
-  /** 本轮语义安全命中（已建安全事件与转介、后台预警）：回答照常，只在末尾补中性提示并标记消息。 */
-  let safetyAlerted = false
   const markAborted = () => { aborted = true; abortController.abort() }
   event.node.res.on('close', markAborted)
 
@@ -182,44 +180,31 @@ export default defineEventHandler(async (event) => {
           dataGovernance: governance,
           recordIncluded: Boolean(businessContext && !body.withoutRecord)
         })
+        // 聊天链路的安全命中只做后台预警：建风险事件 + 转介 + 通知 + 审计，
+        // 不中断本轮回答、教师端不显示任何预警痕迹（2026-09-17 业务确认）。
         const localRules = detectSafetySignals(body.message)
-        if (localRules.length) {
-          // 本地硬规则（明确措辞）：停答 + 转介 + 通知，教师端进入转介指引
-          const referral = await createSafetyReferral(event, {
-            schoolId: user.schoolId!, ownerUserId: user.id, sourceType: 'chat', sourceId: ownedSessionId,
-            text: body.message, matchedRules: localRules
-          })
-          emit(controller, 'fuse', {
-            eventId: referral.safety.id, referralId: referral.referral.id,
-            guide: referral.crisisGuide,
-            helpPhone: referral.helpPhone,
-            ackMinutes: referral.ackMinutes,
-            escalationMinutes: referral.escalationMinutes,
-            psychologistAssigned: referral.psychologistAssigned,
-            message: '检测到需要重点关注的安全信号，常规建议已暂停。'
-          })
-          emit(controller, 'done', { sessionId: ownedSessionId })
-          return
-        }
-        // 未命中硬规则才做语义补充（首轮 + 复核，复核不可用时保留首轮判定）
-        const semantic = await confirmedSemanticSafetySignals(
-          event,
-          body.message,
-          governance.effectiveMode === 'local',
-          { schoolId: user.schoolId, ownerUserId: user.id, sessionId: ownedSessionId }
-        )
-        // 语义命中（模型判定，复核确认）：后台照常预警，但不打断本轮回答——
-        // 教师照常拿到回答，回答末尾由流水线补一句中性提示，教师端另有「已同步提醒」标记。
-        if (semantic.matchedRules.length) {
+        const semantic = localRules.length
+          ? null
+          : await confirmedSemanticSafetySignals(
+            event,
+            body.message,
+            governance.effectiveMode === 'local',
+            { schoolId: user.schoolId, ownerUserId: user.id, sessionId: ownedSessionId }
+          )
+        const matchedRules = localRules.length ? localRules : semantic?.matchedRules ?? []
+        if (matchedRules.length) {
           await createSafetyReferral(event, {
             schoolId: user.schoolId!, ownerUserId: user.id, sourceType: 'chat', sourceId: ownedSessionId,
-            text: body.message, matchedRules: semantic.matchedRules
+            text: body.message, matchedRules
           })
-          safetyAlerted = true
           await trackProductEvent(event, {
             schoolId: user.schoolId, userId: user.id, eventName: 'assistant_safety_alert_issued',
             targetType: 'chat_session', targetId: ownedSessionId,
-            metadata: { rules: semantic.matchedRules.join(','), review: semantic.review }
+            metadata: {
+              rules: matchedRules.join(','),
+              source: localRules.length ? 'local_rules' : 'semantic',
+              review: semantic?.review ?? 'none'
+            }
           })
         }
 
@@ -264,7 +249,6 @@ export default defineEventHandler(async (event) => {
           history: history.messages,
           contextSummary: history.contextSummary,
           lastModuleScores,
-          safetyAlert: safetyAlerted,
           emit: (name, data) => emit(controller, name, data),
           signal: abortController.signal,
           isAborted: () => aborted

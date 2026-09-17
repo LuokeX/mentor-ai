@@ -28,7 +28,6 @@ import { compactSessionHistory, planCompaction } from './chat-compaction'
 import { contextTypeLabel } from './chat-context-switch'
 import { sanitizeHistoryForSummary } from './chat-clarification'
 import { redactOutboundText, type AiDataMode } from './ai-governance'
-import { SAFETY_FOLLOW_UP_NOTE } from './safety'
 import { generateChatTitle } from '../integrations/deepseek'
 import { buildChatTitle } from './chat-titles'
 import { trackProductEvent } from './product-events'
@@ -287,11 +286,6 @@ export interface RunAssistantTurnInput {
   history: AgentMessage[]
   contextSummary: string | null
   lastModuleScores: Record<ModuleId, number>
-  /**
-   * 本轮语义安全命中：入口已建安全事件与转介（后台预警），这里不中断回答，
-   * 只在回答末尾补一句中性提示，并在消息 metadata 标记供前端显示「已同步提醒」。
-   */
-  safetyAlert?: boolean
   /** SSE 事件转发 */
   emit: (name: string, data: unknown) => void
   /** 客户端是否已断开：断开后不再落库、不再发事件，只记一条中断事件 */
@@ -475,10 +469,6 @@ export function buildBusinessContextText(input: {
   const toolCalls = Array.isArray(result.toolCalls) ? result.toolCalls : []
   const sources = Array.isArray(result.sources) ? result.sources : []
 
-  // 语义命中已在入口建好安全事件与转介（后台预警）：本轮照常回答，只在末尾补一句中性提示。
-  // 放在回答校验之后追加，确保这句提示不被清理或证据复核改写；正文与落库内容保持一致。
-  if (input.safetyAlert) answer = `${answer}\n\n${SAFETY_FOLLOW_UP_NOTE}`
-
   // 客户端已断开：本轮不落库、不发 answer 事件，只留一条中断记录
   if (input.isAborted()) {
     await trackProductEvent(event, {
@@ -502,9 +492,7 @@ export function buildBusinessContextText(input: {
       moduleProportions: result.moduleProportions,
       // 本轮对象只记类型/ID/展示名，用于回看「这次按谁回答」与统计；不含档案正文
       ...(userCtx.turnContext ? { turnObject: { type: userCtx.turnContext.type, id: userCtx.turnContext.id, label: userCtx.turnContext.label } } : {}),
-      ...(inspection.violations.length ? { answerViolations: inspection.violations } : {}),
-      // 本轮语义命中已后台预警（不打断回答）：前端据此显示「已同步提醒学校」标记
-      ...(input.safetyAlert ? { safetyAlert: true } : {})
+      ...(inspection.violations.length ? { answerViolations: inspection.violations } : {})
     }
   }).returning({ id: schema.chatMessages.id })
   if (!assistantMessage) throw new Error('Agent 回答保存失败')
@@ -539,7 +527,7 @@ export function buildBusinessContextText(input: {
   }
 
   await trackProductEvent(event, { schoolId: user.schoolId, userId: user.id, eventName: 'assistant_turn_completed', metadata: { latencyMs: Date.now() - startedAt, firstTextMs: firstTextMs ?? Date.now() - startedAt, reviewed: delivery.requiresReview, repaired } })
-  emit('answer', { messageId: assistantMessage.id, text: answer, mode: 'agent', ...(input.safetyAlert ? { safetyAlert: true } : {}) })
+  emit('answer', { messageId: assistantMessage.id, text: answer, mode: 'agent' })
 
   // 对话推进后提炼简短智能标题（DeepSeek 不可用时降级截断法）
   try {

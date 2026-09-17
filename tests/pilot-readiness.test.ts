@@ -92,8 +92,13 @@ describe('校内试用核心不变量', () => {
     expect(chat).toContain('runAssistantTurn(')
     expect(chat).toContain("from '../../../domain/chat-stream'")
     expect(stream).toContain('runAgentGraph(')
-    // 安全熔断与失败提示
-    expect(chat).toContain("emit(controller, 'fuse'")
+    // 安全命中只做后台预警：建风险事件与转介、记产品事件，但不再打断回答（2026-09-17 业务确认）
+    expect(chat).toContain('createSafetyReferral(')
+    expect(chat).toContain("eventName: 'assistant_safety_alert_issued'")
+    expect(chat).not.toContain("emit(controller, 'fuse'")
+    // 量表提交的熔断不受影响
+    const submit = readFileSync(new URL('../server/api/v1/assessments/[module]/submit.post.ts', import.meta.url), 'utf8')
+    expect(submit).toContain('fuse')
     expect(chat).toContain('AGENT_UNAVAILABLE_MESSAGE')
     expect(worker).toContain('INSERT INTO notifications')
     expect(worker).not.toContain('studentNameEnc')

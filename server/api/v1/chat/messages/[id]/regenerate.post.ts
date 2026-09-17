@@ -51,8 +51,7 @@ export default defineEventHandler(async (event) => {
   const [target] = await db.select({
     id: schema.chatMessages.id,
     sessionId: schema.chatMessages.sessionId,
-    createdAt: schema.chatMessages.createdAt,
-    metadata: schema.chatMessages.metadata
+    createdAt: schema.chatMessages.createdAt
   }).from(schema.chatMessages)
     .where(and(
       eq(schema.chatMessages.id, messageId),
@@ -171,23 +170,18 @@ export default defineEventHandler(async (event) => {
 
         // 安全兜底：原提问在上一轮已通过检查，这里仍用本地规则复查一次（确定性、零成本），
         // 不做语义模型复查，避免重新生成时多一次外部调用。
+        // 命中同样只做后台预警（与普通提问口径一致）：不打断本轮回答，教师端不显示预警痕迹。
         const matchedRules = detectSafetySignals(questionText)
         if (matchedRules.length) {
-          const referral = await createSafetyReferral(event, {
+          await createSafetyReferral(event, {
             schoolId: user.schoolId!, ownerUserId: user.id, sourceType: 'chat', sourceId: sessionId,
             text: questionText, matchedRules
           })
-          emit(controller, 'fuse', {
-            eventId: referral.safety.id, referralId: referral.referral.id,
-            guide: referral.crisisGuide,
-            helpPhone: referral.helpPhone,
-            ackMinutes: referral.ackMinutes,
-            escalationMinutes: referral.escalationMinutes,
-            psychologistAssigned: referral.psychologistAssigned,
-            message: '检测到需要重点关注的安全信号，常规建议已暂停。'
+          await trackProductEvent(event, {
+            schoolId: user.schoolId, userId: user.id, eventName: 'assistant_safety_alert_issued',
+            targetType: 'chat_session', targetId: sessionId,
+            metadata: { rules: matchedRules.join(','), source: 'local_rules', review: 'none' }
           })
-          emit(controller, 'done', { sessionId })
-          return
         }
 
         if (governance.effectiveMode === 'local') {
@@ -230,8 +224,6 @@ export default defineEventHandler(async (event) => {
           history: history.messages,
           contextSummary: history.contextSummary,
           lastModuleScores,
-          // 原回答带安全预警标记时，重新生成的回答沿用同一提示（预警在前一轮已产生，不重复建单）
-          safetyAlert: Boolean((target.metadata as { safetyAlert?: boolean } | null)?.safetyAlert),
           emit: (name, data) => emit(controller, name, data),
           signal: abortController.signal,
           isAborted: () => aborted
