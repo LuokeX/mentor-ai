@@ -33,7 +33,8 @@
     "template:split": "tsx scripts/generate-templates.ts",
     "template:guide": "tsx scripts/build-filling-guide.mjs",
     "testdata:build": "node scripts/generate-test-data.mjs --no-import",
-    "scaffold:management": "tsx scripts/scaffold-management.ts"
+    "scaffold:management": "tsx scripts/scaffold-management.ts",
+    "ai:evaluate": "node --import tsx scripts/ai-evaluation/run.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.2.9",
