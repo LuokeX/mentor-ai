@@ -59,6 +59,8 @@ export const moduleResourceDocumentImportSchemaBase = z.object({
   confirmNoPersonalData: z.literal(true),
   module: moduleIdSchema.optional(),
   tags: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+  /** 适用学部：知识库文档按学段可见（all/primary/junior/senior/repeat），缺省按 all 处理 */
+  applicableSchoolSection: z.enum(['all', 'primary', 'junior', 'senior', 'repeat']).optional(),
   sourceRef: z.string().trim().max(500).optional()
 })
 

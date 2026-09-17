@@ -3,6 +3,7 @@ import type { H3Event } from 'h3'
 import { assessmentDefinitions } from '../../shared/assessments'
 import type { AssessmentDefinition } from '../../shared/assessments'
 import type { AttributionConfig, LibraryType, ModuleId } from '../../shared/contracts'
+import { filterBySchoolSection, type SchoolSection } from '../../shared/school-section'
 import type { ModuleResourceCounterpart } from './module-resource-validation'
 import { schema, useDb } from '../utils/db'
 
@@ -140,12 +141,16 @@ export async function resolveAssessmentDefinition(
 }
 
 /**
- * 列出某个模块下所有已发布的评估量表（支持多 instrument）
+ * 列出某个模块下所有已发布的评估量表（支持多 instrument）。
+ *
+ * sections：查看者学段（教师任教年级折算）。传入时按「适用学部」过滤：未标注或标 all 的
+ * 量表始终保留；标了具体学部的只有同学段才保留；过滤后为空则回退全部，避免整页没有可用量表。
  */
 export async function listAssessmentInstruments(
   event: H3Event,
   module: ModuleId,
-  schoolId?: string | null
+  schoolId?: string | null,
+  options?: { sections?: readonly SchoolSection[] | null }
 ): Promise<AssessmentDefinition[]> {
   const db = useDb(event)
   const instruments: AssessmentDefinition[] = []
@@ -216,12 +221,15 @@ export async function listAssessmentInstruments(
     }
   }
 
+  // 按学段过滤：未标注学部的量表视为全学部；过滤后为空时回退到全部（不出空列表）
+  const scoped = filterBySchoolSection(instruments, item => item.applicableSchoolSection, options?.sections)
+
   // 如果没有动态 instrument，fallback 到硬编码
-  if (instruments.length === 0) {
-    instruments.push(assessmentDefinitions[module])
+  if (scoped.rows.length === 0) {
+    scoped.rows.push(assessmentDefinitions[module])
   }
 
-  return instruments
+  return scoped.rows
 }
 
 export async function resolveAttributionConfig(
@@ -234,12 +242,28 @@ export async function resolveAttributionConfig(
   return resolveContentPackage<AttributionConfig>(event, `attribution-${module}`)
 }
 
-export async function listPublishedModuleTools(event: H3Event, module: ModuleId, schoolId?: string | null) {
+/**
+ * 列出模块下已发布的工具（处方）。
+ *
+ * sections：查看者学段（教师任教年级折算）。传入时按工具「适用学部」过滤，口径同量表：
+ * 未标注或标 all 的始终保留；过滤后为空回退全部。
+ */
+export async function listPublishedModuleTools(
+  event: H3Event,
+  module: ModuleId,
+  schoolId?: string | null,
+  options?: { sections?: readonly SchoolSection[] | null }
+) {
   const resource = await resolvePublishedModuleResource<{ tools?: unknown[] } | unknown[]>(event, { module, libraryType: 'tool', schoolId })
   if (!resource) return { tools: [], sourceVersions: [] as string[] }
   const payload = resource.payload
   const tools = Array.isArray(payload) ? payload : Array.isArray((payload as { tools?: unknown[] }).tools) ? (payload as { tools: unknown[] }).tools : []
-  return { tools, sourceVersions: resource.sourceVersions }
+  const scoped = filterBySchoolSection(
+    tools,
+    tool => (tool as { applicableSchoolSection?: unknown } | null | undefined)?.applicableSchoolSection,
+    options?.sections
+  )
+  return { tools: scoped.rows, sourceVersions: resource.sourceVersions }
 }
 
 function normalizeAssessmentDefinition(resource: ResolvedModuleResource<AssessmentResourcePayload>, module: ModuleId): ResolvedModuleResource<AssessmentDefinition> {

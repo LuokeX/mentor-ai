@@ -2,10 +2,13 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type * as schema from '../db/schema'
 import type { ModuleId } from '../../shared/contracts'
+import type { SchoolSection } from '../../shared/school-section'
 
 export type DrizzleDB = NodePgDatabase<typeof schema>
 
 export interface KnowledgeSearchResult {
+  versionId?: string
+  version?: string
   chunkId: string
   documentId: string
   documentTitle: string
@@ -20,6 +23,49 @@ export interface KnowledgeSearchResult {
 }
 
 /**
+ * 所有召回分支共享的可见性条件（与 JOIN 一起使用）：
+ *  - 独立知识库文档（平台后台「知识库」导入，不挂三库版本，`c.version_id IS NULL`）：
+ *    只要求文档 `ready`，属于平台级知识，对所有学校可见；
+ *  - 挂在三库版本上的文档：版本必须已发布，并按库 scope（全局 / 本校）裁定。
+ * 未提供学校时读不到校级资源（只能读全局资源与独立知识库文档）。
+ */
+export function publishedVisibility(schoolId?: string) {
+  return sql`d.status = 'ready'
+    AND (c.version_id IS NULL
+      OR (v.status = 'published'
+        AND ((l.scope = 'global' AND l.school_id IS NULL)
+          OR (l.scope = 'school' AND l.school_id = ${schoolId ?? null}))))`
+}
+
+/**
+ * 文档关联与库关联（两个召回分支共用）：
+ *  - 文档：按 id 关联，版本/库归属做 NULL 安全比较（独立知识库文档两侧都是 NULL）；
+ *  - 版本与库：LEFT JOIN —— 独立知识库文档没有版本和库，仍需参与召回。
+ */
+const documentAndLibraryJoins = sql`
+    JOIN module_resource_documents d ON d.id = c.document_id
+      AND (d.version_id = c.version_id OR (d.version_id IS NULL AND c.version_id IS NULL))
+      AND (d.library_id = c.library_id OR (d.library_id IS NULL AND c.library_id IS NULL))
+    LEFT JOIN module_resource_versions v ON v.id = c.version_id AND v.library_id = c.library_id
+    LEFT JOIN module_resource_libraries l ON l.id = v.library_id`
+
+/** 模块判定：优先取三库库的 module，独立知识库文档回退到切块 metadata.module。 */
+const resourceModuleExpr = sql`COALESCE(l.module, c.metadata->>'module')`
+
+/**
+ * 学段可见性：文档/切块标了具体学部时只有命中查看者学段才可见；
+ * 未标注（老数据）或标 all 的始终可见；未传学段（教师没填任教年级）时不过滤。
+ * 口径与三库资源一致，见 shared/school-section.ts。
+ */
+export function schoolSectionVisibility(sections?: readonly SchoolSection[] | null) {
+  if (!sections?.length) return sql`TRUE`
+  const values = sql.join(sections.map(section => sql`${section}`), sql`, `)
+  return sql`(c.metadata->>'applicableSchoolSection' IS NULL
+    OR c.metadata->>'applicableSchoolSection' IN ('', 'all')
+    OR c.metadata->>'applicableSchoolSection' IN (${values}))`
+}
+
+/**
  * 使用 pgvector 余弦相似度检索知识库 chunk。
  *
  * @param db          Drizzle 数据库实例
@@ -30,9 +76,12 @@ export async function searchKnowledgeChunks(
   db: DrizzleDB,
   embedding: number[],
   filters?: {
+    schoolId?: string
     module?: ModuleId
     minSimilarity?: number
     limit?: number
+    /** 查看者学段：按文档「适用学部」过滤，未标注的始终可见 */
+    sections?: readonly SchoolSection[] | null
   },
 ): Promise<KnowledgeSearchResult[]> {
   const module = filters?.module
@@ -43,6 +92,11 @@ export async function searchKnowledgeChunks(
   const vectorStr = `[${embedding.join(',')}]`
 
   const result = await db.execute<{
+    version_id: string
+    resource_version: string
+    document_title: string
+    resource_module: string
+    library_type: string
     chunk_id: string
     document_id: string
     heading: string | null
@@ -51,6 +105,11 @@ export async function searchKnowledgeChunks(
     similarity: number
   }>(sql`
     SELECT
+      v.id AS version_id,
+      v.version AS resource_version,
+      d.title AS document_title,
+      ${resourceModuleExpr} AS resource_module,
+      COALESCE(l.library_type, c.metadata->>'libraryType', 'knowledge') AS library_type,
       c.id AS chunk_id,
       c.document_id,
       c.heading,
@@ -58,8 +117,11 @@ export async function searchKnowledgeChunks(
       c.metadata,
       1 - (c.embedding <=> ${vectorStr}::vector) AS similarity
     FROM module_resource_chunks c
+    ${documentAndLibraryJoins}
     WHERE c.embedding IS NOT NULL
-      ${module ? sql`AND c.metadata->>'module' = ${module}` : sql``}
+      AND ${publishedVisibility(filters?.schoolId)}
+      AND ${schoolSectionVisibility(filters?.sections)}
+      ${module ? sql`AND ${resourceModuleExpr} = ${module}` : sql``}
       AND 1 - (c.embedding <=> ${vectorStr}::vector) >= ${minSimilarity}
     ORDER BY c.embedding <=> ${vectorStr}::vector
     LIMIT ${limit}
@@ -69,14 +131,16 @@ export async function searchKnowledgeChunks(
     const metadata = row.metadata || {}
     const content = row.content || ''
     return {
+      versionId: row.version_id ? String(row.version_id) : undefined,
+      version: row.resource_version ? String(row.resource_version) : undefined,
       chunkId: String(row.chunk_id),
       documentId: String(row.document_id),
-      documentTitle: String(metadata.documentTitle || ''),
+      documentTitle: String(row.document_title || ''),
       heading: row.heading,
       content,
       excerpt: content.length > 300 ? content.slice(0, 300) + '...' : content,
-      module: String(metadata.module || ''),
-      libraryType: String(metadata.libraryType || 'knowledge'),
+      module: String(row.resource_module || ''),
+      libraryType: String(row.library_type || 'knowledge'),
       sourceType: typeof metadata.sourceType === 'string' ? metadata.sourceType : undefined,
       sourceRef: typeof metadata.sourceRef === 'string' ? metadata.sourceRef : undefined,
       similarity: Number(row.similarity),
@@ -144,7 +208,7 @@ async function searchKeywordChunks(
   db: DrizzleDB,
   keywords: string[],
   queryText: string,
-  filters: { module?: ModuleId, limit: number, similarity?: number[] | null }
+  filters: { schoolId?: string, module?: ModuleId, limit: number, similarity?: number[] | null, sections?: readonly SchoolSection[] | null }
 ): Promise<KnowledgeSearchResult[]> {
   if (!keywords.length) return []
   const module = filters.module
@@ -158,6 +222,11 @@ async function searchKeywordChunks(
     : sql`, 0 AS similarity`
 
   const result = await db.execute<{
+    version_id: string
+    resource_version: string
+    document_title: string
+    resource_module: string
+    library_type: string
     chunk_id: string
     document_id: string
     heading: string | null
@@ -166,6 +235,11 @@ async function searchKeywordChunks(
     similarity: number
   }>(sql`
     SELECT
+      v.id AS version_id,
+      v.version AS resource_version,
+      d.title AS document_title,
+      ${resourceModuleExpr} AS resource_module,
+      COALESCE(l.library_type, c.metadata->>'libraryType', 'knowledge') AS library_type,
       c.id AS chunk_id,
       c.document_id,
       c.heading,
@@ -175,7 +249,10 @@ async function searchKeywordChunks(
       similarity(coalesce(c.heading, ''), ${queryText}) AS heading_score
       ${similarityExpr}
     FROM module_resource_chunks c
-    WHERE ${module ? sql`c.metadata->>'module' = ${module}` : sql`TRUE`}
+    ${documentAndLibraryJoins}
+    WHERE ${publishedVisibility(filters.schoolId)}
+      AND ${schoolSectionVisibility(filters.sections)}
+      AND ${module ? sql`${resourceModuleExpr} = ${module}` : sql`TRUE`}
       AND (${sql.join(hitPredicates, sql` OR `)})
     ORDER BY hit_score DESC, heading_score DESC
     LIMIT ${filters.limit}
@@ -185,14 +262,16 @@ async function searchKeywordChunks(
     const metadata = row.metadata || {}
     const content = row.content || ''
     return {
+      versionId: row.version_id ? String(row.version_id) : undefined,
+      version: row.resource_version ? String(row.resource_version) : undefined,
       chunkId: String(row.chunk_id),
       documentId: String(row.document_id),
-      documentTitle: String(metadata.documentTitle || ''),
+      documentTitle: String(row.document_title || ''),
       heading: row.heading,
       content,
       excerpt: content.length > 300 ? content.slice(0, 300) + '...' : content,
-      module: String(metadata.module || ''),
-      libraryType: String(metadata.libraryType || 'knowledge'),
+      module: String(row.resource_module || ''),
+      libraryType: String(row.library_type || 'knowledge'),
       sourceType: typeof metadata.sourceType === 'string' ? metadata.sourceType : undefined,
       sourceRef: typeof metadata.sourceRef === 'string' ? metadata.sourceRef : undefined,
       similarity: Number(row.similarity) || 0,
@@ -215,9 +294,12 @@ export async function searchKnowledgeChunksHybrid(
   queryText: string,
   embedding: number[] | null | undefined,
   filters?: {
+    schoolId?: string
     module?: ModuleId
     minSimilarity?: number
     limit?: number
+    /** 查看者学段：按文档「适用学部」过滤，未标注的始终可见 */
+    sections?: readonly SchoolSection[] | null
   }
 ): Promise<KnowledgeSearchResult[]> {
   const limit = filters?.limit ?? 5
@@ -228,16 +310,20 @@ export async function searchKnowledgeChunksHybrid(
   const [vectorHits, keywordHits] = await Promise.all([
     hasEmbedding
       ? searchKnowledgeChunks(db, embedding as number[], {
+        schoolId: filters?.schoolId,
         module: filters?.module,
         minSimilarity: filters?.minSimilarity ?? 0.45,
-        limit: coarseLimit
+        limit: coarseLimit,
+        sections: filters?.sections
       })
       : Promise.resolve([] as KnowledgeSearchResult[]),
     keywords.length
       ? searchKeywordChunks(db, keywords, queryText, {
+        schoolId: filters?.schoolId,
         module: filters?.module,
         limit: coarseLimit,
-        similarity: hasEmbedding ? embedding as number[] : null
+        similarity: hasEmbedding ? embedding as number[] : null,
+        sections: filters?.sections
       })
       : Promise.resolve([] as KnowledgeSearchResult[])
   ])

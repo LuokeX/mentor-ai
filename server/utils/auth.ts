@@ -97,7 +97,9 @@ export async function currentUser(event: H3Event): Promise<AuthUser | null> {
     phone: row.user.phone ?? '',
     name: row.user.name,
     role,
-    roleLabel: ROLE_LABELS[role]
+    roleLabel: ROLE_LABELS[role],
+    // 任教年级：随会话用户一起带出（同一行数据，不额外查询），供按学段筛选资源使用
+    teachingGrades: row.user.teachingGrades ?? []
   }
 }
 

@@ -7,6 +7,11 @@ export interface AuthUser {
   name: string
   role: AppRole
   roleLabel: string
+  /**
+   * 任教年级（1-12，教师本人资料字段）。用于按学段筛选量表/工具/知识库资源：
+   * 空数组表示未填写，此时不做学段过滤（不因为缺资料而藏内容）。
+   */
+  teachingGrades?: number[]
 }
 
 export const useAuth = () => {

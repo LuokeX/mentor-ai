@@ -25,6 +25,7 @@
     "backfill:plan-attributions": "tsx scripts/backfill-plan-attributions.ts",
     "backfill:chat-titles": "tsx scripts/backfill-chat-titles.ts",
     "backfill:tool-action-steps": "tsx scripts/backfill-tool-action-steps.ts",
+    "backfill:school-section": "tsx scripts/backfill-school-section.ts",
     "resources:reindex": "tsx scripts/reindex-module-resource-embeddings.ts",
     "ai:cache-probe": "tsx scripts/ai-cache-probe.ts",
     "import:business-data": "tsx scripts/import-business-data/index.ts",

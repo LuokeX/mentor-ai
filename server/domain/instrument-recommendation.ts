@@ -142,7 +142,7 @@ export async function recommendInstrument(
   input: {
     module: ModuleId
     text?: string
-    user: { id: string, schoolId?: string | null }
+    user: { id: string, schoolId?: string | null, teachingGrades?: readonly number[] | null }
     sessionId?: string | null
     /** 当前咨询对象：对象级量表（per_case）的触发条件只认同一对象的提交 */
     context?: AssessmentContextRef | null

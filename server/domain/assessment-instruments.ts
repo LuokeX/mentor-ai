@@ -17,6 +17,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { InstrumentRole, ModuleId } from '../../shared/contracts'
 import type { AssessmentDefinition } from '../../shared/assessments'
 import { MODULE_ASSESSMENT_CONTEXT_TYPES } from '../../shared/assessments'
+import { viewerSchoolSections } from '../utils/stage-filter'
 import { schema, useDb } from '../utils/db'
 import { listAssessmentInstruments } from './module-resources'
 import { evaluateTriggerCondition, extractReferencedInstrumentCodes, type PriorAssessmentResult } from './rules-executor'
@@ -402,11 +403,16 @@ export function describeTriggerEvidence(option: InstrumentOption): string | null
   return `你${when}的「${evidence.title}」${facts.length ? `（${facts.join('，')}）` : ''}，业务规则据此判定现在适合做这张。`
 }
 
-/** 列出某模块下所有已发布量表及其可选状态 */
+/**
+ * 列出某模块下所有已发布量表及其可选状态
+ *
+ * user.teachingGrades 传入时按学段过滤量表明细（未填的教师不过滤，口径见
+ * shared/school-section.ts）；过滤只影响「候选有哪些」，不影响已填写的历史记录。
+ */
 export async function listInstrumentOptions(
   event: H3Event,
   module: ModuleId,
-  user: { id: string, schoolId?: string | null },
+  user: { id: string, schoolId?: string | null, teachingGrades?: readonly number[] | null },
   /**
    * 提交前预演：把指定量表的本次作答视作其最新提交，仅用于状态与触发条件判定，不落库。
    * 前端在答完最后一题时传入，让「下一张建议」基于本次答案而非历史快照。
@@ -419,7 +425,9 @@ export async function listInstrumentOptions(
    */
   context?: AssessmentContextRef | null
 ): Promise<InstrumentOption[]> {
-  const instruments = await listAssessmentInstruments(event, module, user.schoolId)
+  const instruments = await listAssessmentInstruments(event, module, user.schoolId, {
+    sections: viewerSchoolSections(event, user.teachingGrades)
+  })
   const { latest, scoped } = await loadPriorAttempts(event, module, user.id, instruments, context ?? null)
   if (overrideLatest) {
     // level/severity/dimensions 未知，置空：触发条件只引用 answers 现算的分数，
@@ -497,7 +505,7 @@ export function filterTeacherVisibleInstruments(options: InstrumentOption[]): In
 export async function resolveNextInstrumentSuggestion(
   event: H3Event,
   module: ModuleId,
-  user: { id: string, schoolId?: string | null },
+  user: { id: string, schoolId?: string | null, teachingGrades?: readonly number[] | null },
   excludeCodes: Set<string>,
   /** 本次评估的咨询对象：对象级量表的触发条件只认同一对象的提交 */
   context?: AssessmentContextRef | null

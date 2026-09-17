@@ -41,6 +41,9 @@ export default defineNuxtConfig({
     // 空 = 全部走 json_object（与既有行为一致），启用后 strict 不可用会自动回退
     aiStrictJsonPurposes: process.env.AI_STRICT_JSON_PURPOSES || '',
     embeddingEnabled: process.env.EMBEDDING_ENABLED === 'true',
+    // 学段过滤开关（三库资源与知识库文档的「适用学部」）：默认关闭，所有请求都不过滤；
+    // 内容按学段细分好后，设 NUXT_SCHOOL_SECTION_FILTER_ENABLED=true 即可启用（见 server/utils/stage-filter.ts）
+    schoolSectionFilterEnabled: process.env.SCHOOL_SECTION_FILTER_ENABLED === 'true',
     // ollama | dashscope：向量化供应商，切换后存量向量需全量重建（语义空间不兼容）
     embeddingProvider: process.env.EMBEDDING_PROVIDER || 'ollama',
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',

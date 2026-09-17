@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm'
 import { moduleIdSchema } from '../../../../shared/contracts'
+import { viewerSchoolSections } from '../../../utils/stage-filter'
 import { filterVisiblePublishedLibraries, listPublishedModuleTools, resolveAssessmentDefinition } from '../../../domain/module-resources'
 import { requireUser } from '../../../utils/auth'
 import { schema, useDb } from '../../../utils/db'
@@ -9,9 +10,11 @@ export default defineEventHandler(async (event) => {
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const module = moduleIdSchema.parse(getRouterParam(event, 'module'))
   const db = useDb(event)
+  // 按教师任教年级折算学段：工具清单只列该学段适用的（未标注学部的始终可见）
+  const sections = viewerSchoolSections(event, user.teachingGrades)
   const [assessment, tools, libraries] = await Promise.all([
     resolveAssessmentDefinition(event, module, user.schoolId),
-    listPublishedModuleTools(event, module, user.schoolId),
+    listPublishedModuleTools(event, module, user.schoolId, { sections }),
     db.select({
       id: schema.moduleResourceLibraries.id,
       module: schema.moduleResourceLibraries.module,

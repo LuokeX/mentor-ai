@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { moduleIdSchema } from '../../../../../shared/contracts'
+import { viewerSchoolSections } from '../../../../utils/stage-filter'
 import { listPublishedModuleTools } from '../../../../domain/module-resources'
 import { requireUser } from '../../../../utils/auth'
 
@@ -16,7 +17,10 @@ export default defineEventHandler(async (event) => {
 
   const module = moduleIdSchema.parse(getRouterParam(event, 'module'))
   const query = querySchema.parse(getQuery(event))
-  const { tools, sourceVersions } = await listPublishedModuleTools(event, module, user.schoolId)
+  // 按教师任教年级折算学段：只列该学段适用的工具（未标注学部的工具始终可见）
+  const { tools, sourceVersions } = await listPublishedModuleTools(event, module, user.schoolId, {
+    sections: viewerSchoolSections(event, user.teachingGrades)
+  })
   const filtered = filterTools(tools, query)
 
   return {
