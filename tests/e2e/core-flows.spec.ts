@@ -29,7 +29,9 @@ test.describe('四角色核心路径', () => {
 
   test('教师登录、移动导航与 AI 咨询', async ({ page }, testInfo) => {
     await login(page, '16688096890')
-    await expect(page.getByRole('heading', { name: /今天遇到了什么/ })).toBeVisible()
+    // 首页就绪判定以输入区为准：无历史会话时显示问候空态，有历史会话时自动恢复最近一次对话，
+    // 问候语在恢复会话时不再渲染（账号只要有历史对话就不会出现），两种状态都算正常。
+    await expect(page.getByLabel('向 AI 赋能助手提问')).toBeVisible()
     if (testInfo.project.name === 'mobile-chromium') {
       // 小屏导航默认收起，点悬浮按钮滑出后才能校验底部菜单入口
       await revealMobileNav(page, testInfo)
@@ -39,13 +41,17 @@ test.describe('四角色核心路径', () => {
     await page.getByRole('button', { name: '发送消息' }).click()
     await expect(page.getByText('这条回答有帮助吗？').last()).toBeVisible({ timeout: 30_000 })
     // 回答完成后：最后一条回答可「重新生成」
-    await expect(page.getByRole('button', { name: '重新生成' }).last()).toBeVisible({ timeout: 15_000 })
-    // 追问建议：始终至少有兜底一条（动作卡/引用来源/模块占比三种来源命中时会替换为对应建议）
-    await expect(
-      page.locator('button:has-text("拆成这周的三步"), button:has-text("这条建议怎么在我们班落地"), button:has-text("开始做《")').first()
-    ).toBeVisible({ timeout: 15_000 })
+    // 回答完成后：最后一条回答可「重新生成」。该按钮只在 SSE 结束（done）后出现，
+    // 真实模型与落库耗时波动较大，超时给足以免误判。
+    await expect(page.getByRole('button', { name: '重新生成' }).last()).toBeVisible({ timeout: 30_000 })
+    // 追问建议：当前默认关闭（app/pages/index.vue 的 SHOW_FOLLOW_UP_CHIPS=false），
+    // 渲染时校验至少有一条可见；开关恢复后本断言自然重新生效
+    const followUps = page.locator('button:has-text("拆成这周的三步"), button:has-text("这条建议怎么在我们班落地"), button:has-text("开始做《")')
+    if (await followUps.count()) {
+      await expect(followUps.first()).toBeVisible({ timeout: 15_000 })
+    }
     // 工具过程面板：模型调用了工具时应可见且可展开（未调用工具时不渲染）
-    const toolPanel = page.locator('details:has-text("调用过")')
+    const toolPanel = page.locator('details:has-text("调用工具")')
     if (await toolPanel.count()) {
       await expect(toolPanel.first()).toBeVisible()
     }
@@ -157,12 +163,15 @@ test.describe('四角色核心路径', () => {
     const submit = page.getByRole('button', { name: '提交并生成方案' })
     await expect(submit).toBeEnabled()
     // 关键断言：提交前最后一题页面出现「可继续量表」选择卡（SG_S2 建议做或已完成都可继续）。
-    // 点「先做这张量表」：先提交 SG_S1（deferred 建组），再自动切入 SG_S2。
-    // 该教师 SG_S1 折算总分恒为 17（>= 15），SG_S2 触发条件始终满足；重复运行时
+    // 点 SG_S2 那一行的「先做这张量表」：先提交 SG_S1（deferred 建组），再自动切入 SG_S2。
+    // 该教师 SG_S1 折算总分达到 SG_S2 触发条件后，SG_S3 也可能同时变成建议做，
+    // 页面上会出现多个「先做这张量表」按钮，因此必须按量表名锚定行，不能只按按钮文案定位。
     // SG_S2 显示为「已完成，可重新评估」，同样可点按钮重做，保证用例可重复执行。
-    const continueNext = page.getByRole('button', { name: '先做这张量表' })
-    await expect(continueNext).toBeVisible({ timeout: 15_000 })
-    await continueNext.click()
+    const continueCard = page.locator('section').filter({ has: page.getByRole('heading', { name: '还有可以继续的量表' }) }).last()
+    await expect(continueCard).toBeVisible({ timeout: 15_000 })
+    await continueCard.locator('div.rounded-xl', { hasText: 'HERO心理资本与依恋安全感评估' })
+      .getByRole('button', { name: '先做这张量表' })
+      .click()
     // 已切入 SG_S2：出现 HERO 第一题与 1 / 20 进度
     await expect(page.getByText('我对未来的职业发展有清晰的规划')).toBeVisible()
     await expect(page.getByText('1 / 20', { exact: true })).toBeVisible()
@@ -180,6 +189,51 @@ test.describe('四角色核心路径', () => {
     // 首次提交无评估组时 deferPlan 恒 false，直接出方案跳转，不会续做下一张）
     await expect(page).toHaveURL(/\/plans\/[0-9a-f-]{36}/, { timeout: 45_000 })
     await expect(page.locator('section').filter({ has: page.getByRole('heading', { name: '行动方案建议' }) })).toBeVisible()
+  })
+
+  test('安全转介的评估记录可重新打开处置指引', async ({ page }) => {
+    // 覆盖两个此前的断点：提交评估后的结论离页即失；被安全冻结的方案不进教师方案列表。
+    // 已发布归因库里 SG_S1（五问自评）的红线由 SG_GR_01 触发，实测该组作答（折算总分 25：
+    // q3/q4 为反向计分，原始 1 表示高分）会命中；中低分作答只出普通结论，不要改动。
+    await login(page, '16688096890')
+    await page.goto('/module/self_growth')
+    await page.waitForFunction(() => !!document.querySelector('#__nuxt')?.__vue_app__)
+    await expect(page.getByRole('heading', { name: '自我成长赋能 评估' })).toBeVisible()
+    await page.getByRole('button', { name: /^教师自我成长五问自评/ }).click()
+    const start = page.getByRole('button', { name: /^(开始完整评估|重新开始)$/ })
+    await expect(start).toBeVisible()
+    await start.click()
+
+    const answers = [5, 5, 1, 1, 5]
+    for (let questionIndex = 0; questionIndex < 5; questionIndex++) {
+      await expect(page.getByText(`${questionIndex + 1} / 5`, { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: new RegExp(`^${answers[questionIndex]} `) }).click()
+    }
+    // 高分作答可能同时出现「还有可以继续的量表」选择卡，这里直接提交，不做下一张
+    const submit = page.getByRole('button', { name: '提交并生成方案' })
+    await expect(submit).toBeEnabled()
+    await submit.click()
+
+    const referralCard = page.getByTestId('crisis-referral-card')
+    await expect(referralCard).toBeVisible({ timeout: 45_000 })
+    const eventId = (await referralCard.getByText(/事件编号：/).innerText()).replace('事件编号：', '').trim()
+    expect(eventId).toMatch(/[0-9a-f-]{8,}/)
+
+    // 评估记录列表：这条记录是普通一行，状态标记为安全转介
+    await page.goto('/assessments')
+    await page.waitForFunction(() => !!document.querySelector('#__nuxt')?.__vue_app__)
+    await expect(page.getByRole('heading', { name: '评估记录' })).toBeVisible()
+    await expect(page.getByText('安全转介', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
+    const recordLink = page.getByRole('link', { name: /教师自我成长五问自评/ }).first()
+    await expect(recordLink).toBeVisible()
+    await recordLink.click()
+
+    // 详情页：重新看到提交当天那套转介处置指引（含同一个事件编号）
+    await expect(page).toHaveURL(/\/assessments\/[0-9a-f-]{36}/)
+    await expect(page.getByText('本次评估已启动安全转介')).toBeVisible()
+    const detailCard = page.getByTestId('crisis-referral-card')
+    await expect(detailCard).toBeVisible()
+    await expect(detailCard.getByText(eventId)).toBeVisible()
   })
 
   test('学校管理员直接添加并激活教师账号', async ({ page }, testInfo) => {
