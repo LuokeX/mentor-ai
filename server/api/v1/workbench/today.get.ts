@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { ensurePlanActions } from '../../../domain/plan-actions'
+import { teacherPlanVisibleCondition } from '../../../domain/plan-operations'
 import { schema, useDb } from '../../../utils/db'
 
 export default defineEventHandler(async (event) => {
@@ -8,7 +9,10 @@ export default defineEventHandler(async (event) => {
   if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
   const db = useDb(event)
   const plans = await db.select({ id: schema.plans.id }).from(schema.plans).where(and(
-    eq(schema.plans.ownerUserId, user.id), inArray(schema.plans.status, ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated'])
+    eq(schema.plans.ownerUserId, user.id),
+    inArray(schema.plans.status, ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated']),
+    // 冻结方案不再生成/回填行动项：它的执行路径已切换为转介处置
+    teacherPlanVisibleCondition()
   )).limit(100)
   await Promise.all(plans.map(plan => ensurePlanActions(event, plan.id, user.id)))
 
@@ -25,7 +29,9 @@ export default defineEventHandler(async (event) => {
     db.select({ id: schema.plans.id, module: schema.plans.module, title: schema.plans.title, nextReviewAt: schema.plans.nextReviewAt })
       .from(schema.plans).where(and(
         eq(schema.plans.ownerUserId, user.id),
-        inArray(schema.plans.status, ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated'])
+        inArray(schema.plans.status, ['accepted', 'in_progress', 'review_due', 'adjustment_needed', 'escalated']),
+        // 「待复盘」不能包含冻结方案：它连复盘入口都没有（canReviewPlan 为 false）
+        teacherPlanVisibleCondition()
       )).orderBy(schema.plans.nextReviewAt).limit(20),
     db.select().from(schema.recordAssignments).where(eq(schema.recordAssignments.toUserId, user.id))
       .orderBy(desc(schema.recordAssignments.createdAt)).limit(10),

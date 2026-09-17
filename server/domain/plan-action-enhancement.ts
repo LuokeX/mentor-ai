@@ -19,6 +19,7 @@
 import type { H3Event } from 'h3'
 import { and, eq, inArray } from 'drizzle-orm'
 import type { ModuleId, Severity } from '../../shared/contracts'
+import type { SchoolSection } from '../../shared/school-section'
 import { moduleMeta } from '../../shared/assessments'
 import { useDb, schema } from '../utils/db'
 import { polishToolSteps } from './tool-step-polish'
@@ -45,6 +46,8 @@ export interface PlanActionEnhancementInput {
   module: ModuleId
   /** 触发时事务内的 plan.updatedAt：改写前校验，任何并发更新（接受/调整/合并重算）都会使增强放弃 */
   expectedPlanUpdatedAt?: Date | null
+  /** 教师任教年级折算的学段：知识片段按文档「适用学部」过滤（不传则不过滤） */
+  sections?: readonly SchoolSection[] | null
 }
 
 /** 工具动作标题口径与 plan-actions.toToolActions 保持一致，用于按标题回写。 */
@@ -159,7 +162,8 @@ export async function enhancePlanActions(
       attributions,
       tools: aiTools,
       actions: aiActions,
-      knowledgeQuery: buildKnowledgeQuery(input.module, aiTools, attributions)
+      knowledgeQuery: buildKnowledgeQuery(input.module, aiTools, attributions),
+      sections: input.sections
     })
 
     // 全覆盖才写入：任一工具/行动未被 AI 改写命中就整体放弃，避免方案页出现

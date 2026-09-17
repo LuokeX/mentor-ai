@@ -1,6 +1,46 @@
 import { z } from 'zod'
 import { moduleIdSchema, severitySchema } from './contracts'
 
+/**
+ * 接受前被安全熔断冻结的方案：状态 `escalated` 但没有 `acceptedAt`。
+ *
+ * 必须与「复盘判定需要协同」升级出的 `escalated`（`acceptedAt` 非空、仍可复盘、
+ * 行动只读）区分开：接受前冻结的方案执行路径已切换为转介处置，既不能接受、
+ * 不能执行，也不能复盘，教师端只保留一份停止说明。判定放在 shared 是为了让
+ * 服务端路由与方案页用同一个条件，避免两处各写一半导致状态显示与接口不一致。
+ */
+export function isPlanFrozenBeforeAcceptance(plan: { status?: string | null, acceptedAt?: string | Date | null }) {
+  return plan.status === 'escalated' && !plan.acceptedAt
+}
+
+/**
+ * 冻结方案的教师端受限载荷：只保留标识与转介处置信息，不下发方案正文。
+ *
+ * `freeze` 为 null 表示没找到触发冻结的那次提交（历史数据或事件写入失败），
+ * 此时前端只展示停止说明，不展示转介引导卡，避免出现无依据的处置指引。
+ */
+export type PlanFrozenNotice = {
+  id: string
+  module: string
+  title: string
+  titleFull: string | null
+  sourceType: string | null
+  status: string
+  acceptedAt: null
+  createdAt: string | Date
+  updatedAt: string | Date
+  frozenBeforeAcceptance: true
+  freeze: {
+    frozenAt: string | Date
+    eventId: string
+    guide: string
+    helpPhone: string | null
+    ackMinutes: number
+    escalationMinutes: number
+    psychologistAssigned: boolean
+  } | null
+}
+
 export const planStatusSchema = z.enum([
   'pending_acceptance',
   'accepted',

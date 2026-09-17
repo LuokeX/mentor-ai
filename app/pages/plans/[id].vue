@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { moduleMeta } from '#shared/assessments'
+import { isPlanFrozenBeforeAcceptance } from '#shared/reports'
 
 type PlanAction = {
   id: string; sequence: number; title: string; detail: string;
@@ -31,6 +32,24 @@ type RecommendationGroup = {
 const route = useRoute()
 const id = String(route.params.id)
 const { data, error: loadError, refresh } = await useFetch<any>(`/api/v1/plans/${id}`)
+/**
+ * 接受前被安全熔断冻结：服务端只返回停止说明所需字段（无正文、无行动、无报告）。
+ * 页面据此走独立分支，不再渲染方案正文与任何操作按钮。
+ */
+const frozenBeforeAcceptance = computed(() => isPlanFrozenBeforeAcceptance({
+  status: data.value?.status,
+  acceptedAt: data.value?.acceptedAt
+}))
+/**
+ * 「去完成」深链：带上仍可续接的评估组（服务端只在组未关闭时返回）。
+ * 教师从方案页去补做建议量表属于明确的续接意图，补完仍并入同一份方案；
+ * 组已关闭或没有组时不带参数，模块页会开新组、新方案。
+ */
+const continueInstrumentTarget = computed(() => ({
+  path: `/module/${data.value?.module || ''}`,
+  query: data.value?.assessmentSessionId ? { continueSession: data.value.assessmentSessionId } : {}
+}))
+
 const pending = ref(false)
 const actionPendingId = ref<string | null>(null)
 const sourceExpanded = ref(true)
@@ -241,6 +260,48 @@ const canExecute = computed(() => ['accepted', 'in_progress', 'review_due'].incl
 const canReview = computed(() => canExecute.value)
 /** 需协同状态：行动项只读展示（服务端禁止更新行动），等待学校处理 */
 const planIsEscalated = computed(() => data.value?.status === 'escalated' && Boolean(data.value?.acceptedAt))
+/**
+ * 展示层可执行行动是否全部完成。与「N/N 项完成」同一个口径，
+ * 服务端也按同一套合并规则判断，所以这里不会出现「页面显示全完成、服务端说还有未完成」。
+ */
+const allExecutableActionsCompleted = computed(() =>
+  executableActions.value.length > 0 && completedActionCount.value === executableActions.value.length
+)
+/** 全部行动完成后的收口入口：一次确认即生成复盘记录并关闭方案（服务端校验完成情况）。 */
+const showCompleteShortcut = computed(() => canExecute.value
+  && allExecutableActionsCompleted.value
+  && !planIsEscalated.value)
+const completeModalOpen = ref(false)
+const completePending = ref(false)
+const completeForm = reactive({ effectScore: 5, progressNote: '' })
+
+async function confirmPlanComplete() {
+  if (!data.value) return
+  completePending.value = true
+  try {
+    await $fetch(`/api/v1/plans/${data.value.id}/complete`, {
+      method: 'POST',
+      body: {
+        effectScore: Number(completeForm.effectScore),
+        progressNote: completeForm.progressNote.trim() || undefined
+      }
+    })
+    completeModalOpen.value = false
+    Object.assign(completeForm, { effectScore: 5, progressNote: '' })
+    await refresh()
+    toast.add({ title: '方案已完成', description: '已记录一条复盘，可在复盘时间线查看。', color: 'success' })
+  } catch (error: any) {
+    // 完成情况以服务端为准：冲突（如行动被撤销）时刷新页面回到真实状态。
+    await refresh()
+    toast.add({
+      title: '确认完成失败',
+      description: error?.data?.message || error?.message || '请稍后重试',
+      color: 'error'
+    })
+  } finally {
+    completePending.value = false
+  }
+}
 const showReviewForm = computed(() => canReview.value && (
   data.value?.status === 'review_due'
   || Boolean(data.value?.reviews?.length)
@@ -327,6 +388,12 @@ function groupAiPending(group: RecommendationGroup): boolean {
   return aiActionsPending.value && group.actions.some(isAiManagedAction)
 }
 
+/**
+ * 方案块正文拼装：每条动作「标题一行 + 正文一行起」。
+ * 标题独占一行是为了交给 PlanRichText 排成小标题——过去单条目方案块不展示标题，
+ * 教师看不到这条建议针对的是什么，多条目又和正文挤在同一行。
+ * 深度诊断待办有标题无正文时只输出标题行。
+ */
 function recommendationImplementation(group: RecommendationGroup) {
   if (groupAiPending(group)) return ''
   return group.actions
@@ -336,9 +403,7 @@ function recommendationImplementation(group: RecommendationGroup) {
       const head = numbered ? `${ordinal}、${action.title}` : action.title
       const detail = displayActionDetail(action)
       if (!detail) return head
-      // 工具动作的正文是结构化步骤（自带序号），标题独占一行，步骤换行展开
-      if (isToolAction(action)) return `${head}\n${detail}`
-      return numbered ? `${head}：${detail}` : detail
+      return `${head}\n${detail}`
     })
     .join('\n\n')
 }
@@ -766,7 +831,8 @@ useHead({ title: () => data.value?.title || '方案详情' })
     <!-- 返回 -->
     <div class="mb-6 flex items-center justify-between gap-3 print:hidden">
       <UButton to="/plans" color="neutral" variant="ghost" icon="i-lucide-arrow-left" size="sm">返回方案列表</UButton>
-      <UButton color="neutral" variant="soft" icon="i-lucide-file-down" size="sm" @click="exportPdf">下载 PDF</UButton>
+      <!-- 冻结方案没有可导出的正文，不提供 PDF 入口 -->
+      <UButton v-if="!frozenBeforeAcceptance" color="neutral" variant="soft" icon="i-lucide-file-down" size="sm" @click="exportPdf">下载 PDF</UButton>
     </div>
 
     <!-- 失败态。之前这里没有分支，拉取失败时 data 恒为 null，页面会永远转圈。 -->
@@ -796,6 +862,63 @@ useHead({ title: () => data.value?.title || '方案详情' })
     </div>
 
     <div v-else class="flex flex-col gap-6">
+      <!-- ══════════ 冻结说明（接受前被安全熔断冻结时替代整个方案正文） ══════════
+           服务端对这种方案只返回标识与停止原因，不返回正文；这里也就没有可渲染的方案内容。
+           与「复盘判定需要协同」区分开：那种方案 acceptedAt 非空，走下面的只读分支。 -->
+      <template v-if="frozenBeforeAcceptance">
+        <UAlert
+          color="error"
+          variant="soft"
+          icon="i-lucide-shield-alert"
+          title="本方案已停止"
+        >
+          <template #description>
+            <p>
+              本方案所属的评估组在后续一次量表提交中命中了安全规则，执行路径已切换为安全转介处置，
+              因此不再提供确认与执行入口，方案正文也不再展示。
+            </p>
+            <p class="mt-2">
+              你不需要在这里做任何处理。如需继续这个主题的工作，请重新完成一次评估，
+              系统会基于新的结果生成一份新方案。
+            </p>
+          </template>
+        </UAlert>
+
+        <CrisisReferralCard
+          v-if="data.freeze?.eventId"
+          :guide="data.freeze.guide"
+          :help-phone="data.freeze.helpPhone"
+          :ack-minutes="data.freeze.ackMinutes"
+          :escalation-minutes="data.freeze.escalationMinutes"
+          :psychologist-assigned="data.freeze.psychologistAssigned"
+          :event-id="data.freeze.eventId"
+          message="请在完成安全转介处置后，再处理与本人成长相关的其他工作。"
+        />
+
+        <section class="rounded-2xl border border-slate-200 bg-white p-5">
+          <dl class="divide-y divide-slate-100 text-sm">
+            <div class="flex items-start justify-between gap-4 py-3">
+              <dt class="shrink-0 text-slate-500">所属模块</dt>
+              <dd class="text-right text-slate-700">{{ moduleTitle(data.module) }}</dd>
+            </div>
+            <div class="flex items-start justify-between gap-4 py-3">
+              <dt class="shrink-0 text-slate-500">方案状态</dt>
+              <dd class="text-right text-slate-700">{{ statusText(data.status) }}</dd>
+            </div>
+            <div class="flex items-start justify-between gap-4 py-3">
+              <dt class="shrink-0 text-slate-500">停止时间</dt>
+              <dd class="text-right text-slate-700">{{ formatDateTime(data.freeze?.frozenAt || data.updatedAt) }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <UButton to="/plans" color="neutral" variant="soft" icon="i-lucide-arrow-left">返回方案列表</UButton>
+          <UButton :to="`/module/${data.module}`" variant="ghost" color="neutral">重新完成一次评估</UButton>
+        </div>
+      </template>
+
+      <template v-else>
       <!-- AI 后台增强状态条：确定性方案先返回，工具/行动改写与深度报告在后台顺序生成 -->
       <UAlert
         v-if="aiEnhancing"
@@ -995,6 +1118,28 @@ useHead({ title: () => data.value?.title || '方案详情' })
           class="mt-4"
         />
 
+        <!-- 全部行动完成后的收口入口：方案已进入「待复盘」，一次确认即生成复盘记录并关闭 -->
+        <div
+          v-if="showCompleteShortcut"
+          class="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="min-w-0">
+              <p class="flex items-center gap-2 text-sm font-medium text-emerald-900">
+                <UIcon name="i-lucide-circle-check-big" class="size-4 shrink-0" />
+                全部行动已完成
+              </p>
+              <p class="mt-1 text-xs leading-5 text-emerald-800">
+                确认目标达成后，方案会标记为「已完成」并自动记录一条复盘；如果还需要继续跟进，
+                可直接在下方填写复盘并选择「继续原方案」，方案回到「进行中」。
+              </p>
+            </div>
+            <UButton color="success" size="sm" icon="i-lucide-check-check" @click="completeModalOpen = true">
+              确认目标达成并关闭方案
+            </UButton>
+          </div>
+        </div>
+
         <div v-if="!executableActions.length" class="mt-4 rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-400">
           当前方案尚未生成跟踪动作，可点击“新增行动”补充一项可执行、可复盘的行动。
         </div>
@@ -1029,7 +1174,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                   {{ action.title }}
                 </p>
                 <!-- 工具动作与普通动作一致展示正文（结构化步骤），与建议区排版同步 -->
-                <p v-if="displayActionDetail(action)" class="mt-1 whitespace-pre-line text-xs leading-5 text-slate-500">{{ displayActionDetail(action) }}</p>
+                <PlanRichText v-if="displayActionDetail(action)" dense muted :text="displayActionDetail(action)" class="mt-1" />
                 <!-- 截止日期 -->
                 <p v-if="action.dueAt" class="mt-1 text-xs text-amber-600">
                   截止：{{ formatDateTimeShort(action.dueAt) }}
@@ -1316,7 +1461,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
               </p>
               <p v-if="nextInstrumentSuggestion.note" class="mt-1 text-xs leading-5 text-slate-500">{{ nextInstrumentSuggestion.note }}</p>
             </div>
-            <UButton size="sm" color="warning" icon="i-lucide-arrow-right" trailing :to="`/module/${data.module}`">去完成</UButton>
+            <UButton size="sm" color="warning" icon="i-lucide-arrow-right" trailing :to="continueInstrumentTarget">去完成</UButton>
           </div>
         </div>
 
@@ -1387,7 +1532,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
                 color="warning"
                 icon="i-lucide-arrow-right"
                 trailing
-                :to="`/module/${data.module}`"
+                :to="continueInstrumentTarget"
               >
                 去完成
               </UButton>
@@ -1395,12 +1540,12 @@ useHead({ title: () => data.value?.title || '方案详情' })
 
             <dl class="divide-y divide-slate-100 text-sm md:grid md:grid-cols-[9rem_1fr] md:divide-y-0">
               <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-b md:border-r md:border-slate-100">具体实施方案</dt>
-              <dd class="whitespace-pre-line px-4 py-3 leading-7 text-slate-700 md:border-b md:border-slate-100">
-                <div v-if="groupAiPending(group)" class="flex items-center gap-2 text-primary-600">
+              <dd class="px-4 py-3 md:border-b md:border-slate-100">
+                <div v-if="groupAiPending(group)" class="flex items-center gap-2 text-sm leading-7 text-primary-600">
                   <UIcon name="i-lucide-loader-circle" class="size-4 shrink-0 animate-spin" />
                   <span>AI 正在生成具体实施方案，完成后页面将自动刷新…</span>
                 </div>
-                <template v-else>{{ recommendationImplementation(group) }}</template>
+                <PlanRichText v-else :text="recommendationImplementation(group)" />
               </dd>
               <dt class="bg-slate-50 px-4 py-3 font-medium text-slate-600 md:border-b md:border-r md:border-slate-100">执行人</dt>
               <dd class="px-4 py-3 text-slate-700 md:border-b md:border-slate-100">{{ recommendationMeta(group.audience).executor }}</dd>
@@ -1500,7 +1645,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
       </section>
 
       <!-- ══════════ 7. 新增复盘 ══════════ -->
-      <section v-if="showReviewForm" class="order-10 rounded-2xl border border-slate-200 bg-white p-5 print:hidden">
+      <section id="review" v-if="showReviewForm" class="order-10 rounded-2xl border border-slate-200 bg-white p-5 print:hidden">
         <h3 class="flex items-center gap-2 font-semibold text-slate-800">
           <UIcon name="i-lucide-plus-circle" class="size-4 text-emerald-600" />
           新增复盘
@@ -1618,6 +1763,7 @@ useHead({ title: () => data.value?.title || '方案详情' })
           <UButton :loading="feedbackPending" @click="submitFeedback">提交质量反馈</UButton>
         </div>
       </section>
+      </template>
     </div>
   </div>
 
@@ -1678,6 +1824,37 @@ useHead({ title: () => data.value?.title || '方案详情' })
         <div class="flex justify-end gap-2">
           <UButton color="neutral" variant="ghost" type="button" @click="addActionOpen = false">取消</UButton>
           <UButton type="submit" :loading="addActionPending" :disabled="addActionForm.title.trim().length < 2 || addActionForm.detail.trim().length < 4">保存行动</UButton>
+        </div>
+      </form>
+    </template>
+  </UModal>
+
+  <UModal
+    v-model:open="completeModalOpen"
+    title="确认目标达成"
+    description="确认后方案标记为「已完成」，并生成一条复盘记录；行动结果、反馈与证据都会保留。"
+  >
+    <template #body>
+      <form class="space-y-4" @submit.prevent="confirmPlanComplete">
+        <UFormField label="效果评分">
+          <USelect
+            v-model="completeForm.effectScore"
+            :items="[1, 2, 3, 4, 5].map(v => ({ label: `${v} / 5`, value: v }))"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="进展说明" hint="留空时自动填写「全部行动已完成，教师确认目标达成」">
+          <UTextarea
+            v-model="completeForm.progressNote"
+            class="w-full"
+            :rows="3"
+            maxlength="1000"
+            placeholder="可补充本阶段观察到的变化（不少于 4 个字，留空则自动填写）"
+          />
+        </UFormField>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="ghost" type="button" @click="completeModalOpen = false">取消</UButton>
+          <UButton type="submit" color="success" :loading="completePending">确认完成</UButton>
         </div>
       </form>
     </template>

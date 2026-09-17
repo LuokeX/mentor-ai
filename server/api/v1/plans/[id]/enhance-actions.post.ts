@@ -7,6 +7,7 @@
 import { and, eq, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { moduleIdSchema } from '../../../../../shared/contracts'
+import { viewerSchoolSections } from '../../../../utils/stage-filter'
 import { enhancePlanActions } from '../../../../domain/plan-action-enhancement'
 import { requireUser } from '../../../../utils/auth'
 import { writeAudit } from '../../../../utils/audit'
@@ -62,7 +63,8 @@ export default defineEventHandler(async (event) => {
     schoolId,
     ownerUserId: user.id,
     module,
-    expectedPlanUpdatedAt: updated.updatedAt
+    expectedPlanUpdatedAt: updated.updatedAt,
+    sections: viewerSchoolSections(event, user.teachingGrades)
   })
 
   await writeAudit(event, {

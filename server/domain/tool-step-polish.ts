@@ -27,6 +27,7 @@
 import type { H3Event } from 'h3'
 import { z } from 'zod'
 import type { ModuleId, Severity } from '../../shared/contracts'
+import type { SchoolSection } from '../../shared/school-section'
 import { moduleMeta } from '../../shared/assessments'
 import { getAiRuntimeConfig, isPromptPublished, promptAvailable, renderPrompt } from './ai-config'
 import { embedModuleResourceQuery } from '../integrations/embeddings'
@@ -49,6 +50,11 @@ export interface ToolPolishInput {
   actions?: Array<{ title: string, detail: string, code?: string }>
   /** 知识库检索词（不含 PII），由调用方传入；非空且 embedding 可用时先做向量检索，片段并入 facts */
   knowledgeQuery?: string
+  /**
+   * 本次改写服务的学段（教师任教年级折算）：知识片段按文档「适用学部」过滤，
+   * 避免把别的学段的资料写进本班方案；不传（未填任教年级）时不过滤。
+   */
+  sections?: readonly SchoolSection[] | null
 }
 
 export const MAX_TOOL_POLISH_ATTEMPTS = 3
@@ -418,9 +424,11 @@ export async function polishToolSteps<T extends PolishTool>(
       const embedding = await embedModuleResourceQuery(event, knowledgeQuery)
       if (embedding && embedding.length > 0) {
         chunks = await searchKnowledgeChunks(useDb(event), embedding, {
+          schoolId: input.schoolId,
           module: input.module,
           minSimilarity: 0.45,
-          limit: 5
+          limit: 5,
+          sections: input.sections
         })
       }
     } catch (error) {

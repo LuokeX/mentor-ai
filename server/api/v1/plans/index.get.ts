@@ -14,6 +14,7 @@ import { moduleIdSchema } from '../../../../shared/contracts'
 import { requireUser } from '../../../utils/auth'
 import { schema, useDb } from '../../../utils/db'
 import { resolveReviewDateRange } from '../../../domain/plan-filters'
+import { teacherPlanVisibleCondition } from '../../../domain/plan-operations'
 
 const PLAN_STATUSES = [
   'pending_acceptance', 'accepted', 'in_progress', 'review_due',
@@ -60,7 +61,9 @@ export default defineEventHandler(async (event) => {
     eq(schema.plans.ownerUserId, user.id),
     eq(schema.plans.schoolId, user.schoolId),
     // 管理员归档/弃用的方案对教师不可见（列表与详情一致）
-    ne(schema.plans.status, 'archived')
+    ne(schema.plans.status, 'archived'),
+    // 接受前被安全熔断冻结的方案不进教师列表：它不能接受也不能执行（详情只返回停止说明）
+    teacherPlanVisibleCondition()
   ]
   if (query.status === 'active') filters.push(inArray(schema.plans.status, ACTIVE_STATUSES))
   else if (query.status) filters.push(eq(schema.plans.status, query.status))

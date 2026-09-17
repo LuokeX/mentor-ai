@@ -108,6 +108,53 @@ export async function resolvePlanToolPlacementBinding(
   return { placement, fallbackBinding }
 }
 
+/** 投影输入的方案动作行：读取层只需 id/title/detail + 决策与执行状态。 */
+export type PlanDisplayActionInput = {
+  id: string
+  title: string
+  detail?: string | null
+  decision?: string | null
+  status?: string | null
+}
+
+/**
+ * 计算方案页实际展示的动作向量：与方案详情读取层走同一套合并/截断规则。
+ *
+ * 供两类调用方复用，保证「教师看到的动作」和「服务端据此判断的动作」是同一套规则：
+ *   - 接受的校验（`acceptance.patch.ts`）：只要求教师为看得见的动作做决策；
+ *   - 行动执行后的方案状态流转（`actions.patch.ts`）：只按看得见的可执行行动判断
+ *     「是否全部完成」，避免被并入归因条的工具行、被截断隐藏的归因行卡住状态。
+ */
+export async function resolveDisplayedPlanActions(
+  event: H3Event,
+  input: {
+    module: string | null | undefined
+    schoolId: string
+    report: unknown
+    actions: PlanDisplayActionInput[]
+    /** 方案快照 plans.tools：生成时记录的工具归属 */
+    tools?: unknown
+  }
+): Promise<PlanActionDisplayAction[]> {
+  const toolTitles = input.actions
+    .filter(action => action.title.startsWith(TOOL_ACTION_PREFIX))
+    .map(action => toolTitleOf(action.title))
+  const { placement, fallbackBinding } = await resolvePlanToolPlacementBinding(event, {
+    module: input.module,
+    schoolId: input.schoolId,
+    toolTitles,
+    planTools: input.tools
+  })
+  const attributionOrder = resolvePlanAttributionOrder(input.report)
+  return mergePlanActionDisplay(
+    input.actions as unknown as PlanActionDisplayAction[],
+    placement,
+    attributionOrder,
+    MAX_EXECUTABLE_PLAN_ACTIONS,
+    fallbackBinding
+  )
+}
+
 /**
  * 计算方案动作的「可决策展示集」：与方案详情读取层走同一套合并/截断规则，返回教师
  * 实际能在方案页确认的行动 ID。接受的校验只应要求这些动作已决策——被并入归因条的工具行、
@@ -119,27 +166,11 @@ export async function resolveDecidablePlanActionIds(
     module: string | null | undefined
     schoolId: string
     report: unknown
-    actions: Array<{ id: string, title: string, detail?: string | null }>
+    actions: PlanDisplayActionInput[]
     /** 方案快照 plans.tools：生成时记录的工具归属 */
     tools?: unknown
   }
 ): Promise<Set<string>> {
-  const toolTitles = input.actions
-    .filter(action => action.title.startsWith(TOOL_ACTION_PREFIX))
-    .map(action => toolTitleOf(action.title))
-  const { placement, fallbackBinding } = await resolvePlanToolPlacementBinding(event, {
-    module: input.module,
-    schoolId: input.schoolId,
-    toolTitles,
-    planTools: input.tools
-  })
-  const attributionOrder = resolvePlanAttributionOrder(input.report)
-  const displayed = mergePlanActionDisplay(
-    input.actions as unknown as PlanActionDisplayAction[],
-    placement,
-    attributionOrder,
-    MAX_EXECUTABLE_PLAN_ACTIONS,
-    fallbackBinding
-  )
+  const displayed = await resolveDisplayedPlanActions(event, input)
   return new Set(displayed.map(action => action.id))
 }

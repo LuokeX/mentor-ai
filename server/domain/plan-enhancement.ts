@@ -10,6 +10,7 @@
 import type { H3Event } from 'h3'
 import { and, eq } from 'drizzle-orm'
 import type { ModuleId, RuleExecResult } from '../../shared/contracts'
+import type { SchoolSection } from '../../shared/school-section'
 import type { AssessmentDefinition } from '../../shared/assessments'
 import { useDb, schema } from '../utils/db'
 import { generateAssessmentReport } from '../integrations/deepseek'
@@ -30,6 +31,8 @@ export interface PlanEnhancementInput {
   attemptResult?: RuleExecResult
   /** 提交时事务内的 plan.updatedAt：回写前校验，任何并发更新（合并重算/接受/调整）都会使增强放弃，防止过期报告覆盖新内容 */
   expectedPlanUpdatedAt?: Date | null
+  /** 教师任教年级折算的学段：知识片段按文档「适用学部」过滤（不传则不过滤） */
+  sections?: readonly SchoolSection[] | null
 }
 
 /**
@@ -48,7 +51,8 @@ export async function enhancePlanInBackground(event: H3Event, input: PlanEnhance
       schoolId: input.schoolId,
       ownerUserId: input.ownerUserId,
       module: input.module,
-      expectedPlanUpdatedAt
+      expectedPlanUpdatedAt,
+      sections: input.sections
     })
     if (planUpdatedAt) expectedPlanUpdatedAt = planUpdatedAt
   } catch (error) {

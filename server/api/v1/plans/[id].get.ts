@@ -1,10 +1,13 @@
 import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { moduleIdSchema, type ModuleId } from '../../../../shared/contracts'
+import { viewerSchoolSections } from '../../../utils/stage-filter'
+import { isPlanFrozenBeforeAcceptance } from '../../../../shared/reports'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
 import { ensurePlanActions } from '../../../domain/plan-actions'
+import { buildPlanFrozenNotice } from '../../../domain/plan-freeze'
 import { enhancePlanActions, hasAiManagedActionItems } from '../../../domain/plan-action-enhancement'
 import { truncateByChars } from '../../../domain/plan-titles'
 import { redactPii } from '../../../integrations/deepseek'
@@ -33,6 +36,25 @@ export default defineEventHandler(async (event) => {
     ne(schema.plans.status, 'archived')
   )).limit(1)
   if (!plan) throw createError({ statusCode: 404, message: '方案不存在' })
+
+  // 接受前被安全熔断冻结的方案：执行路径已切换为转介处置，不再下发正文。
+  // 若照常返回，教师会打开一份不能接受、不能执行、也没有原因的方案；
+  // 这里只回传停止说明与转介处置所需字段（实时转介状态见 specialist 侧）。
+  if (isPlanFrozenBeforeAcceptance(plan)) {
+    return await buildPlanFrozenNotice(db, {
+      schoolId: user.schoolId,
+      plan: {
+        id: plan.id,
+        module: plan.module,
+        title: plan.title,
+        titleFull: plan.titleFull,
+        sourceType: plan.sourceType,
+        status: plan.status,
+        createdAt: plan.createdAt,
+        updatedAt: plan.updatedAt
+      }
+    })
+  }
 
   // 后台 AI 增强兜底：进程崩溃会留下 pending 状态且无任务可收敛。
   // 增强为「行动改写 → 深度报告」顺序执行，行动改写单次上限 300s、最多 3 次，
@@ -76,7 +98,8 @@ export default defineEventHandler(async (event) => {
         schoolId: user.schoolId,
         ownerUserId: user.id,
         module: parsedModule.data,
-        expectedPlanUpdatedAt: claimed.updatedAt
+        expectedPlanUpdatedAt: claimed.updatedAt,
+        sections: viewerSchoolSections(event, user.teachingGrades)
       })
     } else if (claimed) {
       // 模块值异常（理论上不会发生）：回退状态，避免方案永远停在 pending
@@ -132,6 +155,25 @@ export default defineEventHandler(async (event) => {
   }))
   // 兼容字段：首个来源评估，供既有消费方使用
   const sourceAssessment = assessments[0] || null
+
+  // 方案所属评估组（仅在仍 open 时返回）：方案页「去完成」用它做显式续接，
+  // 补做建议量表后仍并入同一组、同一份方案。组已关闭（方案已被接受）时返回 null，
+  // 教师再次评估由服务端新建组、新方案，不把新结果混进旧方案。
+  let assessmentSessionId: string | null = null
+  if (assessmentRows.length) {
+    const [openSession] = await db.select({ id: schema.assessmentSessions.id })
+      .from(schema.assessmentSessionAttempts)
+      .innerJoin(schema.assessmentSessions, eq(schema.assessmentSessions.id, schema.assessmentSessionAttempts.assessmentSessionId))
+      .where(and(
+        inArray(schema.assessmentSessionAttempts.assessmentAttemptId, assessmentRows.map(row => row.attemptId)),
+        eq(schema.assessmentSessions.status, 'open'),
+        eq(schema.assessmentSessions.ownerUserId, user.id),
+        eq(schema.assessmentSessions.schoolId, user.schoolId)
+      ))
+      .orderBy(desc(schema.assessmentSessionAttempts.sequence))
+      .limit(1)
+    assessmentSessionId = openSession?.id ?? null
+  }
 
   // 来源对话摘要：仅 AI 来源且会话仍属于当前教师/学校时返回（跨教师/跨学校视为不存在）
   let sourceConversation: { sessionId: string, questionSummary: string | null, createdAt: Date } | null = null
@@ -210,7 +252,7 @@ export default defineEventHandler(async (event) => {
         : plan.classId
           ? { type: 'class' as const, id: plan.classId }
           : null
-    const options = await listInstrumentOptions(event, plan.module as ModuleId, { id: user.id, schoolId: user.schoolId }, undefined, planContext)
+    const options = await listInstrumentOptions(event, plan.module as ModuleId, { id: user.id, schoolId: user.schoolId, teachingGrades: user.teachingGrades }, undefined, planContext)
     const snapshots = (plan.actions || []) as Array<Record<string, unknown>>
     for (const snapshot of snapshots) {
       if (snapshot.kind !== 'instrument_suggestion') continue
@@ -230,8 +272,16 @@ export default defineEventHandler(async (event) => {
         ))
         .limit(1)
       if (row && row.status !== 'completed') {
-        await db.update(schema.planActions).set({ status: 'completed', completedAt: new Date() })
+        const now = new Date()
+        await db.update(schema.planActions).set({ status: 'completed', completedAt: now })
           .where(eq(schema.planActions.id, row.id))
+        // 同一响应里的动作向量同步：否则这次返回仍显示该待办未完成，
+        // 「行动全部完成 → 待复盘」的收敛也要多等一次刷新。
+        const inMemory = actions.find(item => item.id === row.id)
+        if (inMemory) {
+          inMemory.status = 'completed'
+          inMemory.completedAt = now
+        }
       }
     }
     const linkedCodes = new Set(assessmentRows.map(row => row.code))
@@ -251,8 +301,6 @@ export default defineEventHandler(async (event) => {
   } catch {
     // 建议计算失败不阻断方案查看
   }
-
-  const { summaryEnc, acceptanceReasonEnc, aiActionsEnhancedAt: _aiActionsEnhancedAt, ...publicPlan } = plan
 
   // 展示层合并：「使用工具」并进带出它的动作（归因条 / 等级干预条），并按归因占比截断到上限。
   // 工具归属来自生成时写入 plans.tools 的 sourceChannel；只有老方案无标记时才回退查工具库。
@@ -275,6 +323,33 @@ export default defineEventHandler(async (event) => {
     planTools: plan.tools
   })
   const attributionOrder = resolvePlanAttributionOrder(plan.report)
+  const mergedActions = mergePlanActionDisplay(
+    displayActions,
+    placement,
+    attributionOrder,
+    MAX_EXECUTABLE_PLAN_ACTIONS,
+    fallbackBinding
+  )
+
+  // 行动全部完成的老方案收敛：本次改动前收口的方案没有走「行动更新 → 待复盘」这条路，
+  // 教师端会出现「N/N 项完成」但徽章仍是「进行中」。这里与行动更新时的自动流转用同一套
+  // 展示层口径懒置为「待复盘」；已经有复盘记录的方案不在此列——教师复盘选「继续原方案」
+  // 后方案应留在进行中，由下一次行动更新重新计算，避免读路径把它反复推回待复盘。
+  if (['accepted', 'in_progress'].includes(plan.status) && !reviews.length) {
+    const executableActions = mergedActions.filter(action => action.decision === 'included')
+    if (executableActions.length && executableActions.every(action => action.status === 'completed')) {
+      const [row] = await db.update(schema.plans).set({ status: 'review_due', updatedAt: new Date() })
+        .where(and(
+          eq(schema.plans.id, id),
+          eq(schema.plans.ownerUserId, user.id),
+          eq(schema.plans.schoolId, user.schoolId),
+          eq(schema.plans.status, plan.status)
+        )).returning({ id: schema.plans.id })
+      if (row) plan.status = 'review_due'
+    }
+  }
+
+  const { summaryEnc, acceptanceReasonEnc, aiActionsEnhancedAt: _aiActionsEnhancedAt, ...publicPlan } = plan
 
   return {
     ...publicPlan,
@@ -284,15 +359,11 @@ export default defineEventHandler(async (event) => {
     class: klass,
     sourceAssessment,
     assessments,
+    // 仍可续接的评估组；方案页「去完成」据此带上 continueSession 深链
+    assessmentSessionId,
     sourceConversation,
     nextInstrumentSuggestion,
-    actions: mergePlanActionDisplay(
-      displayActions,
-      placement,
-      attributionOrder,
-      MAX_EXECUTABLE_PLAN_ACTIONS,
-      fallbackBinding
-    ),
+    actions: mergedActions,
     reviews,
     feedback: feedback.map(({ noteEnc, ...item }) => ({
       ...item,

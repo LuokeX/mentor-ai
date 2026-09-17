@@ -6,7 +6,8 @@ import { writeAudit } from '../../../../utils/audit'
 import { encryptSensitive } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 import { ensurePlanActions } from '../../../../domain/plan-actions'
-import { canUpdatePlanActions, recordPlanOperationEvent } from '../../../../domain/plan-operations'
+import { resolveDisplayedPlanActions } from '../../../../domain/plan-action-display-context'
+import { canUpdatePlanActions, planStatusAfterActionUpdate, recordPlanOperationEvent } from '../../../../domain/plan-operations'
 import { trackProductEvent } from '../../../../domain/product-events'
 
 export default defineEventHandler(async (event) => {
@@ -39,7 +40,10 @@ export default defineEventHandler(async (event) => {
     id: schema.plans.id,
     schoolId: schema.plans.schoolId,
     ownerUserId: schema.plans.ownerUserId,
+    module: schema.plans.module,
     actions: schema.plans.actions,
+    report: schema.plans.report,
+    tools: schema.plans.tools,
     status: schema.plans.status,
     acceptedAt: schema.plans.acceptedAt,
     updatedAt: schema.plans.updatedAt
@@ -66,9 +70,29 @@ export default defineEventHandler(async (event) => {
   }
   const now = new Date()
   const secret = useRuntimeConfig(event).encryptionKey
+  // 展示层可执行行动是否全部完成：按方案页同一套合并/截断规则判断，
+  // 与教师看到的「N/N 项完成」一致；被并入归因条的工具行不参与判断。
+  const displayedActions = await resolveDisplayedPlanActions(event, {
+    module: plan.module,
+    schoolId,
+    report: plan.report,
+    actions: persisted,
+    tools: plan.tools
+  })
+  const executableActions = displayedActions.filter(item => item.decision === 'included')
+  const allExecutableCompleted = executableActions.length > 0
+    && executableActions.every(item => item.id === action.id
+      ? body.status === 'completed'
+      : item.status === 'completed')
+  // 全部完成 → 待复盘（由教师复盘决定完成或继续）；仍有无完成的 → 回到进行中。
+  const executionStatus = planStatusAfterActionUpdate({
+    currentStatus: plan.status,
+    nextActionStatus: body.status,
+    allIncludedActionsCompleted: allExecutableCompleted
+  })
   const nextPlanStatus = body.status === 'blocked'
     ? (['risk_escalated', 'need_collaboration'].includes(body.blockReason || '') ? 'escalated' : 'adjustment_needed')
-    : (body.status === 'in_progress' || body.status === 'completed' ? 'in_progress' : plan.status)
+    : (executionStatus ?? plan.status)
   await db.transaction(async (tx) => {
     await tx.update(schema.planActions).set({
       status: body.status,
