@@ -20,6 +20,7 @@ const { data, pending, refresh } = await useFetch<{
   models: Record<string, ModelEntry>
   keys: { deepseekApiKey: { configured: boolean, note: string }, deepseekBaseUrl: string, agreementVersion: string }
   stats7d: {
+    quality?: { failureRate: number | null; blockedRate: number | null; timeoutRate: number | null; knowledgeGaps: number; p95LatencyMs: number; p95FirstTextMs: number; tokens: { input: number; output: number }; reasons: Array<{ reason: string; total: number }> }
     total: number
     success: number
     failed: number
@@ -33,6 +34,8 @@ const { data, pending, refresh } = await useFetch<{
 
 const purposeLabels: Record<string, string> = {
   assistant_chat: '首页助手回答',
+  assistant_evidence_review: '回答依据检查',
+  assistant_answer_repair: '回答修正',
   chat_history_summary: '对话历史摘要',
   assessment_report: '评估报告润色',
   instrument_recommendation: '量表分诊',
@@ -123,6 +126,23 @@ function effectiveText(value: ModelEntry | undefined) {
         <p class="mt-1.5 text-xs text-gray-500">{{ data?.keys.agreementVersion }}</p>
       </div>
     </div>
+
+    <section v-if="data?.stats7d.quality" class="mt-6 rounded-xl border border-gray-200 bg-white p-5">
+      <h2 class="text-lg font-semibold">助手质量（近 7 天）</h2>
+      <div class="mt-3 grid gap-3 text-sm sm:grid-cols-3">
+        <p>回答失败率：{{ data.stats7d.quality.failureRate == null ? '暂无数据' : `${(data.stats7d.quality.failureRate * 100).toFixed(1)}%` }}</p>
+        <p>校验拦截率：{{ data.stats7d.quality.blockedRate == null ? '暂无数据' : `${(data.stats7d.quality.blockedRate * 100).toFixed(1)}%` }}</p>
+        <p>工具超时率：{{ data.stats7d.quality.timeoutRate == null ? '暂无数据' : `${(data.stats7d.quality.timeoutRate * 100).toFixed(1)}%` }}</p>
+        <p>普通回答首字 P95：{{ data.stats7d.quality.p95FirstTextMs }} ms</p>
+        <p>完整回答 P95：{{ data.stats7d.quality.p95LatencyMs }} ms</p>
+        <p>知识缺口待补：{{ data.stats7d.quality.knowledgeGaps }}</p>
+        <p>输入 / 输出 token：{{ data.stats7d.quality.tokens.input }} / {{ data.stats7d.quality.tokens.output }}</p>
+      </div>
+      <p class="mt-3 text-xs text-gray-500">仅统计新版本记录的整轮事件；检查与修正调用包含在用量内，不展示聊天正文。</p>
+      <div class="mt-3 flex flex-wrap gap-3 text-sm">
+        <span v-for="item in data.stats7d.quality.reasons" :key="item.reason">{{ ({ not_relevant: '不贴合', not_actionable: '不可执行', source_insufficient: '依据不足', too_generic: '太空泛', other: '其他' } as Record<string, string>)[item.reason] || '其他' }}：{{ item.total }}</span>
+      </div>
+    </section>
 
     <!-- 近 7 天调用统计 -->
     <h2 class="mt-8 text-lg font-semibold text-gray-900">近 7 天调用统计</h2>
