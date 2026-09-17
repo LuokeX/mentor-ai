@@ -30,7 +30,7 @@ export const classOverviewTool: AgentTool = {
       return await readClassOverviewForAssistant(ctx.event, toAssistantReaderUser(ctx), parsed.data)
     } catch (error) {
       console.error('[agent:class_overview] 读取班级概览失败，返回空结果:', error instanceof Error ? error.message : error)
-      return { classes: [], message: '班级概览读取失败，请基于教师描述回答，不要编造学生名单或数据。' }
+      return { status: 'error', classes: [], message: '班级概览读取失败，请基于教师描述回答，不要编造学生名单或数据。' }
     }
   }
 }

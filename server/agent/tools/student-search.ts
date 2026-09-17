@@ -97,7 +97,7 @@ export const studentSearchTool: AgentTool = {
       return { students, count: students.length, hasMore }
     } catch (error) {
       console.error('[agent:student_search] 检索失败，返回空结果:', error instanceof Error ? error.message : error)
-      return { students: [], message: '学生检索失败，请基于教师描述回答，不要编造学生名单。' }
+      return { status: 'error', students: [], message: '学生检索失败，请基于教师描述回答，不要编造学生名单。' }
     }
   }
 }

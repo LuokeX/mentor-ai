@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
-const { streamEvents, captured, toolDef } = vi.hoisted(() => ({
+const { streamEvents, captured, toolDef, finalize } = vi.hoisted(() => ({
   streamEvents: vi.fn(),
+  finalize: vi.fn(),
   captured: { tools: [] as unknown[] },
   toolDef: {} as Record<string, unknown>
 }))
@@ -14,7 +15,7 @@ vi.mock('@langchain/langgraph/prebuilt', () => ({
   }
 }))
 vi.mock('../server/integrations/models', () => ({
-  createAgentLlm: vi.fn(async () => ({}))
+  createAgentLlm: vi.fn(async () => ({ invoke: finalize }))
 }))
 vi.mock('../server/agent/tools/index', () => ({
   buildAgentTools: vi.fn(async () => [toolDef])
@@ -54,6 +55,7 @@ function firstTool() {
 describe('runAgentGraph 运行期防护', () => {
   beforeEach(() => {
     streamEvents.mockReset()
+    finalize.mockReset()
     execute.mockReset()
     captured.tools = []
     toolDef.name = 'plan_lookup'
@@ -137,7 +139,7 @@ describe('runAgentGraph 运行期防护', () => {
 
     expect(result.toolCalls).toHaveLength(1)
     expect(result.toolCalls?.[0]!.name).toBe('plan_lookup')
-    expect(result.toolCalls?.[0]!.status).toBe('success')
+    expect(result.toolCalls?.[0]!.status).toBe('empty')
     expect(typeof result.toolCalls?.[0]!.latencyMs).toBe('number')
   })
 
@@ -181,4 +183,31 @@ describe('runAgentGraph 运行期防护', () => {
     expect(result.sources).toHaveLength(1)
     expect(result.sources?.[0]!.chunkId).toBe('chunk-1')
   })
+  it('达到预算后收齐并行工具结果，再进行一次无工具收尾', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ deepseekApiKey: 'test-key', deepseekTimeoutMs: 5000, agentMaxToolRounds: 1 }))
+    const calls = ['a', 'b'].map(id => ({ id, name: 'plan_lookup', args: {} }))
+    streamEvents.mockImplementation(() => chunks([
+      { event: 'on_chat_model_end', data: { output: { content: '', tool_calls: calls } } },
+      ...calls.map(c => ({ event: 'on_tool_start', name: c.name, run_id: c.id, data: { input: {} } })),
+      ...calls.map(c => ({ event: 'on_tool_end', name: c.name, run_id: c.id, data: { output: { content: '{"plans":[]}', tool_call_id: c.id } } }))
+    ]))
+    finalize.mockResolvedValue({ content: '查询已完成，可以先核实执行条件。', response_metadata: { finish_reason: 'stop' } })
+    const result = await invoke()
+    expect(result.exitReason).toBe('done')
+    expect(result.toolCalls).toHaveLength(2)
+    expect(finalize).toHaveBeenCalledTimes(1)
+    expect(finalize.mock.calls[0]![0].filter((m: { tool_call_id?: string }) => m.tool_call_id)).toHaveLength(2)
+  })
+
+  it('调用方停止后不继续生成或重试', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    streamEvents.mockImplementation(() => chunks([textChunk('不应展示')]))
+    const result = await runAgentGraph({} as never, { messages, systemPrompt: 'system', userCtx: { schoolId: 's', userId: 'u', sessionId: 'c' }, signal: controller.signal, onEvent: () => {} })
+    expect(result.exitReason).toBe('error')
+    expect(result.answer).toBe('')
+    expect(streamEvents).toHaveBeenCalledTimes(1)
+    expect(finalize).not.toHaveBeenCalled()
+  })
+
 })

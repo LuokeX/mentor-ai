@@ -1,6 +1,7 @@
+import { assessmentNavigation } from '../navigation'
 import { z } from 'zod'
 import { readAssessmentHistoryForAssistant, type AssistantObjectRef } from '../../domain/assistant-readers'
-import { toAssistantReaderUser } from './record-context'
+import { effectiveObject, toAssistantReaderUser } from './record-context'
 import type { AgentTool, AgentToolContext } from '../types'
 
 const assessmentHistorySchema = z.object({
@@ -29,18 +30,18 @@ export const assessmentHistoryTool: AgentTool = {
       return { submitted: [], drafts: [], openSessions: [], message: '查询参数无效（module 与 limit 需在允许范围内）。' }
     }
     // 对象收口：教师选择「不带档案咨询」时 businessContext 为 null，此时按教师维度返回并逐条标注对象
-    const object: AssistantObjectRef | null = ctx.user.businessContext
-      ? { type: ctx.user.businessContext.type, id: ctx.user.businessContext.id }
-      : null
+    const scoped = effectiveObject(ctx.user)
+    const object: AssistantObjectRef | null = scoped ? { type: scoped.type, id: scoped.id } : null
     try {
       const result = await readAssessmentHistoryForAssistant(ctx.event, toAssistantReaderUser(ctx), {
         ...parsed.data,
         object
       })
-      return object ? { ...result, scope: 'current_object' } : result
+      const withCards = { ...result, actionCards: assessmentNavigation(result, ctx.user.currentQuestion ?? '') }
+      return object ? { ...withCards, scope: 'current_object' } : withCards
     } catch (error) {
       console.error('[agent:assessment_history] 读取评估历史失败，返回空结果:', error instanceof Error ? error.message : error)
-      return {
+      return { status: 'error',
         submitted: [],
         drafts: [],
         openSessions: [],

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { ModuleId } from '../../../shared/contracts'
 import { moduleMeta } from '../../../shared/assessments'
 import { topModuleFromScores } from '../../domain/chat-clarification'
+import { effectiveObject } from './record-context'
 import {
   describeTriggerEvidence,
   filterTeacherVisibleInstruments,
@@ -100,12 +101,14 @@ export const recommendAssessmentTool: AgentTool = {
     const playbook = getModulePlaybookText(module)
 
     try {
-      // 当前会话绑定的咨询对象：对象级量表（per_case / 红线检查）的触发条件只认同一对象的提交
-      const binding = ctx.user.businessContext
+      // 本轮回答收口的对象（会话绑定优先，其次本轮消息里识别到的对象）：
+      // 对象级量表（per_case / 红线检查）的触发条件只认同一对象的提交，避免重复推荐已做过的量表
+      const binding = effectiveObject(ctx.user)
       const context: AssessmentContextRef | null = binding ? { type: binding.type, id: binding.id } : null
       const options = filterTeacherVisibleInstruments(await listInstrumentOptions(ctx.event, module, {
         id: ctx.user.userId,
-        schoolId: ctx.user.schoolId
+        schoolId: ctx.user.schoolId,
+        teachingGrades: ctx.user.teachingGrades
       }, undefined, context))
       if (!options.length) {
         return {
@@ -164,7 +167,7 @@ export const recommendAssessmentTool: AgentTool = {
       }
     } catch (error) {
       console.error('[agent:recommend_assessment] 读取量表库失败:', error instanceof Error ? error.message : error)
-      return {
+      return { status: 'error',
         module: null,
         assessmentCode: null,
         title: null,

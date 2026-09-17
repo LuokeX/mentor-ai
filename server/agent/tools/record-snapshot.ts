@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { readGovernedContextSnapshot } from './record-context'
+import { effectiveObject, readGovernedContextSnapshot } from './record-context'
 import type { AgentTool, AgentToolContext } from '../types'
 
 const recordSnapshotSchema = z.object({})
@@ -14,10 +14,10 @@ const recordSnapshotSchema = z.object({})
  */
 export const recordSnapshotTool: AgentTool = {
   name: 'record_snapshot',
-  description: '读取当前咨询对象（学生/班级/家长）的档案快照：基本信息、家长关系、最近沟通、在跟方案与复盘。回答涉及该对象的具体事实前先调用一次；未绑定咨询对象时返回提示。',
+  description: '读取当前咨询对象（学生/班级/家长）的档案快照：基本信息、家长关系、最近沟通、在跟方案与复盘。回答涉及该对象的具体事实前先调用一次；对象可以是会话绑定的，也可以是教师本轮消息里提到的（服务端已解析归属）；都没有时返回提示。',
   schema: recordSnapshotSchema,
   async execute(_args: unknown, ctx: AgentToolContext): Promise<unknown> {
-    const binding = ctx.user.businessContext
+    const binding = effectiveObject(ctx.user)
     if (!binding) {
       return { message: '当前会话未绑定咨询对象，请基于教师描述回答，不要假设档案内容。' }
     }

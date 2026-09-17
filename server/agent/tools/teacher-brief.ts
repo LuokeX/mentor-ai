@@ -18,7 +18,7 @@ export const teacherBriefTool: AgentTool = {
       return await readTeacherBriefForAssistant(ctx.event, toAssistantReaderUser(ctx))
     } catch (error) {
       console.error('[agent:teacher_brief] 读取待办失败，返回空结果:', error instanceof Error ? error.message : error)
-      return {
+      return { status: 'error',
         overdueActions: [],
         upcomingReviews: [],
         draftAssessments: [],

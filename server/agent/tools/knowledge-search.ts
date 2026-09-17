@@ -2,6 +2,9 @@ import { z } from 'zod'
 import { embedModuleResourceQuery } from '../../integrations/embeddings'
 import { searchKnowledgeChunksHybrid } from '../../domain/module-resource-knowledge-search'
 import { readPublishedResourceCatalog } from '../../domain/assistant-readers'
+import { viewerSchoolSections } from '../../utils/stage-filter'
+import { budgetText } from '../tool-output'
+import { trackProductEvent } from '../../domain/product-events'
 import { useDb } from '../../utils/db'
 import type { AgentTool, AgentToolContext } from '../types'
 
@@ -35,18 +38,24 @@ export const knowledgeSearchTool: AgentTool = {
       return { items: [], catalog: [], message: '检索参数无效，请提供检索问题文本。' }
     }
     const { query, module } = parsed.data
+    // 学段：按教师任教年级折算，只检索本学段适用的知识片段（未标注学部的文档始终可见）
+    const sections = viewerSchoolSections(ctx.event, ctx.user.teachingGrades)
     try {
       const embedding = await embedModuleResourceQuery(ctx.event, query)
       const db = useDb(ctx.event)
-      const results = await searchKnowledgeChunksHybrid(db, query, embedding, { module, minSimilarity: 0.45, limit: 5 })
+      const results = await searchKnowledgeChunksHybrid(db, query, embedding, { schoolId: ctx.user.schoolId, module, minSimilarity: 0.45, limit: 5, sections })
       if (results.length) {
         return {
+          status: 'success',
           items: results.map(item => ({
+            versionId: item.versionId,
+            version: item.version,
             chunkId: item.chunkId,
             documentId: item.documentId,
             documentTitle: item.documentTitle,
             heading: item.heading,
-            content: truncateText(item.content),
+            content: budgetText(item.content, 2000).text,
+            truncated: budgetText(item.content, 2000).truncated,
             excerpt: truncateText(item.content),
             module: item.module || null,
             libraryType: item.libraryType,
@@ -54,12 +63,18 @@ export const knowledgeSearchTool: AgentTool = {
           }))
         }
       }
+      await trackProductEvent(ctx.event, {
+        schoolId: ctx.user.schoolId, userId: ctx.user.userId,
+        eventName: 'assistant_knowledge_gap', metadata: { module: module ?? 'all', reason: 'no_match' }
+      })
       // 零命中：退到「已发布资源目录」，让回答能落到真实存在的资源上
       const catalog = await readPublishedResourceCatalog(ctx.event, {
         schoolId: ctx.user.schoolId,
-        module
+        module,
+        sections
       }).catch(() => [])
       return {
+        status: 'empty',
         items: [],
         catalog,
         message: catalog.length
@@ -68,7 +83,7 @@ export const knowledgeSearchTool: AgentTool = {
       }
     } catch (error) {
       console.error('[agent:knowledge_search] 检索失败，返回空结果:', error instanceof Error ? error.message : error)
-      return { items: [], catalog: [], message: '知识检索失败，请基于通用班主任工作方法回答，不要编造平台内容或来源。' }
+      return { status: 'error', items: [], catalog: [], message: '知识检索失败，请基于通用班主任工作方法回答，不要编造平台内容或来源。' }
     }
   }
 }

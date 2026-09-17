@@ -1,6 +1,7 @@
+import { planNavigation } from '../navigation'
 import { z } from 'zod'
 import { readPlansForAssistant } from '../../domain/assistant-readers'
-import { resolveObjectScopedArgs, toAssistantReaderUser } from './record-context'
+import { effectiveObject, resolveObjectScopedArgs, toAssistantReaderUser } from './record-context'
 import type { AgentTool, AgentToolContext } from '../types'
 
 const planLookupSchema = z.object({
@@ -32,9 +33,10 @@ export const planLookupTool: AgentTool = {
     if (!parsed.success) {
       return { plans: [], message: '查询参数无效，请提供学生 id、班级 id 或家长 id（或都不提供以查看当前对象或最近的方案）。' }
     }
-    const { args: scopedArgs, scopedObject } = resolveObjectScopedArgs(ctx.user.businessContext, parsed.data)
+    const { args: scopedArgs, scopedObject } = resolveObjectScopedArgs(effectiveObject(ctx.user), parsed.data)
     try {
-      const result = await readPlansForAssistant(ctx.event, toAssistantReaderUser(ctx), scopedArgs)
+      const found = await readPlansForAssistant(ctx.event, toAssistantReaderUser(ctx), scopedArgs)
+      const result = { ...found, actionCards: planNavigation(found.plans, ctx.user.currentQuestion ?? '') }
       if (!scopedObject) return result
       return {
         ...result,
@@ -46,7 +48,7 @@ export const planLookupTool: AgentTool = {
       }
     } catch (error) {
       console.error('[agent:plan_lookup] 读取方案失败，返回空结果:', error instanceof Error ? error.message : error)
-      return { plans: [], message: '方案读取失败，请基于教师描述回答，不要编造方案、行动项或复盘内容。' }
+      return { status: 'error', plans: [], message: '方案读取失败，请基于教师描述回答，不要编造方案、行动项或复盘内容。' }
     }
   }
 }

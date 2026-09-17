@@ -43,20 +43,22 @@ const statelessTools: AgentTool[] = [knowledgeSearchTool, moduleRouteTool]
  * - 上下文存在时补充 recommend_assessment（依赖 lastModuleScores 可选）、
  *   entity_memory（依赖 userId/sessionId 读取实体记忆）、学生检索/档案，
  *   以及方案、评估历史、沟通记录、班级概览、教师待办与三库资源目录；
- * - 仅当会话绑定了咨询对象（businessContext）且教师未选择不引入档案时，
- *   才暴露 record_snapshot（避免模型对未绑定会话做无效查询）。
+ * - 仅当本轮回答有可收口的对象（会话绑定或本轮消息里唯一命中的对象）且教师未选择
+ *   不引入档案时，才暴露 record_snapshot（避免模型对未绑定会话做无效查询）。
  *
  * enabledTools：AI_AGENT_ENABLED_TOOLS 环境变量给出的启用工具名数组。
  *  - null / 未提供 → 返回全部（按上下文裁剪后的）默认工具；
  *  - 数组 → 仅保留名字命中该数组的工具（空数组 = 禁用全部工具）。
  *
- * 注意：工具定义集合在会话内必须稳定（绑定对象改变会新建会话），
+ * 注意：上下文不变时工具定义集合保持稳定；切换对象或不带档案偏好时按权限重新裁剪，
  * 否则每轮请求前缀都会分叉，DeepSeek 前缀缓存全部落空。
  */
 export function buildAgentTools(userCtx: AgentUserContext | null | undefined, enabledTools?: string[] | null): AgentTool[] {
-  const base = !userCtx?.userId || !userCtx.sessionId
+  const hasScopedObject = Boolean(userCtx?.businessContext || userCtx?.turnContext)
+  let base = !userCtx?.userId || !userCtx.sessionId
     ? statelessTools
-    : [...agentTools, ...(userCtx.businessContext ? [recordSnapshotTool] : [])]
+    : [...agentTools, ...(hasScopedObject ? [recordSnapshotTool] : [])]
+  if (userCtx?.withoutRecord) base = base.filter(tool => ['knowledge_search', 'module_route', 'resource_lookup'].includes(tool.name))
   if (enabledTools == null) return base
   const allow = new Set(enabledTools)
   return base.filter(tool => allow.has(tool.name))

@@ -1,24 +1,21 @@
 import { z } from 'zod'
 import type { AuthUser } from '../../../app/composables/useAuth'
 import { fetchEntityMemory } from '../../domain/assistant-context'
+import { effectiveObject } from './record-context'
 import { redactOutboundText } from '../../domain/ai-governance'
 import type { AgentTool, AgentToolContext } from '../types'
 
 const entityMemorySchema = z.object({
+  query: z.string().trim().max(200).optional().describe('本轮要回顾的问题或已尝试做法'),
   contextType: z.enum(['student', 'class', 'parent']).optional()
     .describe('咨询对象类型：student 学生 / class 班级 / parent 家长；当前会话已绑定对象时可不传'),
   contextId: z.string().uuid().optional()
     .describe('咨询对象档案 ID（学生/班级/家长的 UUID）；当前会话已绑定对象时可不传，默认读取当前咨询对象的记忆')
 })
 
-function truncateText(text: string, max = 300): string {
-  const value = (text || '').trim()
-  return value.length > max ? `${value.slice(0, max)}…` : value
-}
-
 /**
- * 实体记忆读取（只读）：拉取绑定到同一咨询对象的跨会话历史摘要
- * （fetchEntityMemory，limit 8，排除当前会话）。
+ * 实体记忆读取（只读）：拉取绑定到同一咨询对象的跨会话相关原文
+ * （候选120条，最多12条/6000 token，排除当前会话）。
  *
  * 参数可省略：不传时使用当前会话绑定的咨询对象（与 record_snapshot 同一口径），
  * 否则模型必须先从 student_search 等渠道拿到对象 ID——这正是此前该工具几乎用不上的原因。
@@ -30,7 +27,7 @@ function truncateText(text: string, max = 300): string {
  */
 export const entityMemoryTool: AgentTool = {
   name: 'entity_memory',
-  description: '读取当前咨询对象（学生/班级/家长）跨会话的历史沟通摘要（最近 8 条），用于在回答前回顾与该对象此前谈过什么；不传参数时读取当前会话绑定的对象，无绑定对象或读取失败时返回空列表。',
+  description: '读取当前咨询对象（学生/班级/家长）跨会话的历史沟通摘要（按本轮问题相关性与最近纠正筛选，最多12条，包含消息来源），用于在回答前回顾与该对象此前谈过什么；不传参数时读取当前会话绑定的对象，无绑定对象或读取失败时返回空列表。',
   schema: entityMemorySchema,
   async execute(args: unknown, ctx: AgentToolContext): Promise<unknown> {
     const parsed = entityMemorySchema.safeParse(args)
@@ -38,11 +35,11 @@ export const entityMemoryTool: AgentTool = {
       console.warn('[agent:entity_memory] 参数无效:', parsed.error.issues[0]?.message)
       return { memories: [], message: '咨询对象参数无效，请传入合法的对象 ID 或改用当前会话绑定的对象。' }
     }
-    const binding = ctx.user.businessContext
+    const binding = effectiveObject(ctx.user)
     const contextType = parsed.data.contextType ?? binding?.type
     const contextId = parsed.data.contextId ?? binding?.id
     if (!contextType || !contextId) {
-      return { memories: [], message: '当前会话未绑定咨询对象，且未指定对象 ID，无法读取跨会话记忆。' }
+      return { memories: [], message: '当前会话未绑定咨询对象，本轮消息里也没有可确认的对象，无法读取跨会话记忆。' }
     }
     const dbContextType = contextType === 'parent' ? 'guardian' : contextType
     const user: AuthUser = {
@@ -54,19 +51,21 @@ export const entityMemoryTool: AgentTool = {
       roleLabel: ''
     }
     try {
-      const raw = await fetchEntityMemory(ctx.event, user, dbContextType, contextId, ctx.user.sessionId, 8)
+      const raw = await fetchEntityMemory(ctx.event, user, dbContextType, contextId, ctx.user.sessionId, 12, parsed.data.query ?? ctx.user.currentQuestion ?? '')
       // 外发脱敏：full_context 原样，其余模式过 redactPii（与入口历史脱敏保持同一套规则）
       const outbound = (text: string) => redactOutboundText(text, ctx.user.dataMode ?? 'redacted')
       return {
         memories: raw.map(item => ({
           role: item.role,
-          content: truncateText(outbound(item.content)),
+          sourceId: item.id,
+          sessionId: item.sessionId,
+          content: outbound(item.content),
           createdAt: item.createdAt
         }))
       }
     } catch (error) {
       console.error('[agent:entity_memory] 读取实体记忆失败，返回空结果:', error instanceof Error ? error.message : error)
-      return { memories: [] }
+      return { status: 'error', memories: [], message: '历史查询失败，不能据此判断没有历史。' }
     }
   }
 }

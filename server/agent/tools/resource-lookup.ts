@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { readPublishedResourceCatalog } from '../../domain/assistant-readers'
+import { viewerSchoolSections } from '../../utils/stage-filter'
 import type { AgentTool, AgentToolContext } from '../types'
 
 const resourceLookupSchema = z.object({
@@ -28,7 +29,9 @@ export const resourceLookupTool: AgentTool = {
     try {
       const items = await readPublishedResourceCatalog(ctx.event, {
         schoolId: ctx.user.schoolId,
-        module: parsed.data.module
+        module: parsed.data.module,
+        // 按教师任教年级折算学段：只列该学段适用的资源（未标注学部的资源始终可见）
+        sections: viewerSchoolSections(ctx.event, ctx.user.teachingGrades)
       })
       const filtered = parsed.data.libraryType
         ? items.filter(item => item.libraryType === parsed.data.libraryType)
@@ -42,7 +45,7 @@ export const resourceLookupTool: AgentTool = {
       return { items: filtered }
     } catch (error) {
       console.error('[agent:resource_lookup] 读取资源目录失败，返回空结果:', error instanceof Error ? error.message : error)
-      return { items: [], message: '资源目录读取失败，请基于通用工作方法回答，不要编造平台资源。' }
+      return { status: 'error', items: [], message: '资源目录读取失败，请基于通用工作方法回答，不要编造平台资源。' }
     }
   }
 }

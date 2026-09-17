@@ -17,6 +17,7 @@ import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import type { ModuleId } from '../../shared/contracts'
 import type { AssessmentDefinition } from '../../shared/assessments'
 import { MODULE_ASSESSMENT_CONTEXT_TYPES } from '../../shared/assessments'
+import { filterBySchoolSection, type SchoolSection } from '../../shared/school-section'
 import { decryptSensitive } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
 import { redactOutboundText, type AiDataMode } from './ai-governance'
@@ -402,6 +403,8 @@ async function countUnscopedActivePlans(event: H3Event, user: AssistantReaderUse
 
 export interface AssistantAssessmentHistory {
   submitted: Array<{
+    id?: string
+    sessionId?: string | null
     module: string
     assessmentCode: string
     submittedAt: string | null
@@ -451,8 +454,10 @@ export async function readAssessmentHistoryForAssistant(
 
   const [submittedRows, draftRows, sessionRows] = await Promise.all([
     db.select({
+      id: schema.assessmentAttempts.id,
       module: schema.assessmentAttempts.module,
       assessmentCode: schema.assessmentAttempts.assessmentCode,
+      sessionId: schema.assessmentSessions.id,
       submittedAt: schema.assessmentAttempts.submittedAt,
       result: schema.assessmentAttempts.result,
       contextType: schema.assessmentSessions.contextType,
@@ -464,6 +469,7 @@ export async function readAssessmentHistoryForAssistant(
       .orderBy(desc(schema.assessmentAttempts.submittedAt))
       .limit(submittedLimit),
     db.select({
+      id: schema.assessmentAttempts.id,
       module: schema.assessmentAttempts.module,
       assessmentCode: schema.assessmentAttempts.assessmentCode,
       answers: schema.assessmentAttempts.answers,
@@ -525,8 +531,10 @@ export async function readAssessmentHistoryForAssistant(
     submitted: submittedRows.map(row => {
       const result = (row.result || null) as Record<string, unknown> | null
       return {
+        id: row.id,
         module: row.module,
         assessmentCode: row.assessmentCode,
+        sessionId: row.sessionId,
         submittedAt: toIsoOrNull(row.submittedAt),
         object: pickContextObjectLabel(row.contextType, row.contextId, objectLabels),
         level: pickResultString(result, 'level'),
@@ -847,6 +855,7 @@ export async function readTeacherBriefForAssistant(
       .orderBy(schema.plans.nextReviewAt)
       .limit(3),
     db.select({
+      id: schema.assessmentAttempts.id,
       module: schema.assessmentAttempts.module,
       answers: schema.assessmentAttempts.answers,
       updatedAt: schema.assessmentAttempts.updatedAt
@@ -937,7 +946,7 @@ function asString(value: unknown): string | null {
  */
 export async function readPublishedResourceCatalog(
   event: H3Event,
-  input: { schoolId: string, module?: ModuleId }
+  input: { schoolId: string, module?: ModuleId, sections?: readonly SchoolSection[] | null }
 ): Promise<AssistantResourceCatalogEntry[]> {
   if (!input.module) return []
   const module = input.module
@@ -951,14 +960,20 @@ export async function readPublishedResourceCatalog(
     resolvePublishedModuleResource<Record<string, unknown>>(event, {
       module, libraryType: 'attribution', schoolId: input.schoolId
     }).catch(() => null),
-    listPublishedModuleTools(event, module, input.schoolId).catch(() => ({ tools: [] as unknown[], sourceVersions: [] as string[] }))
+    listPublishedModuleTools(event, module, input.schoolId, { sections: input.sections }).catch(() => ({ tools: [] as unknown[], sourceVersions: [] as string[] }))
   ])
 
   const assessmentPayload = assessmentResource?.payload
   const instruments = asArray(assessmentPayload?.instruments).length
     ? asArray(assessmentPayload?.instruments)
     : assessmentPayload?.code && assessmentPayload?.title ? [assessmentPayload] : []
-  for (const item of instruments.slice(0, perType)) {
+  // 按学段过滤（未标学部的视为全学部；过滤后为空回退全部）
+  const scopedInstruments = filterBySchoolSection(
+    instruments,
+    item => (item as { applicableSchoolSection?: unknown })?.applicableSchoolSection,
+    input.sections
+  ).rows
+  for (const item of scopedInstruments.slice(0, perType)) {
     const record = item as Record<string, unknown>
     const title = asString(record.title)
     if (!title) continue

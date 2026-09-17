@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { readCommunicationsForAssistant } from '../../domain/assistant-readers'
-import { resolveObjectScopedArgs, toAssistantReaderUser } from './record-context'
+import { effectiveObject, resolveObjectScopedArgs, toAssistantReaderUser } from './record-context'
 import type { AgentTool, AgentToolContext } from '../types'
 
 const communicationLookupSchema = z.object({
@@ -30,13 +30,13 @@ export const communicationLookupTool: AgentTool = {
       return { communications: [], message: '查询参数无效，请提供学生 id 或家长 id（或都不提供以查看当前对象或最近的沟通）。' }
     }
     // 沟通记录没有班级维度：当前对象是班级时不兜底，退回教师维度并由 object 字段标明每条归属
-    const { args: scopedArgs, scopedObject } = resolveObjectScopedArgs(ctx.user.businessContext, parsed.data, ['student', 'guardian'])
+    const { args: scopedArgs, scopedObject } = resolveObjectScopedArgs(effectiveObject(ctx.user), parsed.data, ['student', 'guardian'])
     try {
       const result = await readCommunicationsForAssistant(ctx.event, toAssistantReaderUser(ctx), scopedArgs)
       return scopedObject ? { ...result, scope: 'current_object' } : result
     } catch (error) {
       console.error('[agent:communication_lookup] 读取沟通记录失败，返回空结果:', error instanceof Error ? error.message : error)
-      return { communications: [], message: '沟通记录读取失败，请基于教师描述回答，不要编造沟通历史。' }
+      return { status: 'error', communications: [], message: '沟通记录读取失败，请基于教师描述回答，不要编造沟通历史。' }
     }
   }
 }
