@@ -52,10 +52,10 @@ export function parseModuleResourceFile(input: {
  */
 const GUIDE_SHEET_PATTERN = /使用说明|字段映射|填写总览|严格填写说明|枚举字典|条件写法速查|编排指南|角色说明|路径示意|编排自检|推演算例/i
 
-function readWorkbook(buffer: Buffer): SheetData[] {
+function readWorkbook(buffer: Buffer, ignoredSheetPattern: RegExp = GUIDE_SHEET_PATTERN): SheetData[] {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
   return workbook.SheetNames
-    .filter(name => !GUIDE_SHEET_PATTERN.test(name))
+    .filter(name => !ignoredSheetPattern.test(name))
     .map((name) => {
       const sheet = workbook.Sheets[name]
       const raw = sheet ? XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: undefined }) : []
@@ -699,6 +699,13 @@ export interface KnowledgeEntry {
   applicableSchoolSection?: string
   sourceRef?: string
   notes?: string
+  /**
+   * 平台内文档 ID（导出文件自带的「文档ID」列）。
+   * 有值时全量替换导入按它定位要更新的文档；留空表示新增。批量导入（只有新增）会忽略它。
+   */
+  documentId?: string
+  /** 该行在「知识文档」表里的数据行序号（表头下第几行，1 基）：仅用于报错定位 */
+  rowIndex?: number
 }
 
 const VALID_SOURCE_TYPES = ['markdown', 'text', 'json'] as const
@@ -706,10 +713,10 @@ const MODULE_IDS: ModuleId[] = ['self_growth', 'class_system', 'home_school', 's
 
 export function parseKnowledgeSheets(sheets: SheetData[], defaultModule: ModuleId): KnowledgeEntry[] {
   // 查找「知识文档」Sheet（优先按名匹配，fallback 按含知识/文档关键字的 Sheet 或第一个数据 Sheet）
-  const targetSheet = sheets.find(s => /知识文档|知识库|knowledge/i.test(s.name)) || sheets[0]
+  const targetSheet = findKnowledgeSheet(sheets)
   if (!targetSheet) return []
 
-  return targetSheet.rows.map((row): KnowledgeEntry | null => {
+  return targetSheet.rows.map((row, rowOffset): KnowledgeEntry | null => {
     const title = read(row, ['文档标题', 'title'])
     const content = read(row, ['文档内容', 'content'])
     if (!title || !content) return null
@@ -747,8 +754,36 @@ export function parseKnowledgeSheets(sheets: SheetData[], defaultModule: ModuleI
       applicableSchoolSection,
       sourceRef: read(row, ['来源出处', 'sourceRef']),
       notes: read(row, ['备注', 'notes']),
+      documentId: read(row, ['文档ID', 'documentId'])?.trim() || undefined,
+      rowIndex: rowOffset + 1,
     }
   }).filter((item): item is KnowledgeEntry => Boolean(item))
+}
+
+/**
+ * 知识库导入（批量导入与全量替换）共用入口：读工作簿 → 解析「知识文档」表。
+ * 返回解析结果与参与解析的 sheet 明细（供 0 篇时给出可操作的诊断信息）。
+ * `hasDocumentIdColumn` 表示表里存在「文档ID」列：全量替换导入据此区分
+ * 「新增行（ID 留空）」与「文件根本不含 ID 列（拒绝执行）」。
+ */
+export function parseKnowledgeWorkbook(buffer: Buffer, defaultModule: ModuleId): {
+  entries: KnowledgeEntry[]
+  sheets: Array<{ name: string, rows: Array<Record<string, string | undefined>> }>
+  hasDocumentIdColumn: boolean
+} {
+  const sheets = readWorkbook(buffer, /填写说明|使用说明|字段映射|说明页/i)
+  const targetSheet = findKnowledgeSheet(sheets)
+  const hasDocumentIdColumn = Boolean(targetSheet?.rows.some(row =>
+    Object.keys(row).some(key => {
+      const normalized = normalizeKey(key)
+      return normalized.includes('文档id') || normalized.includes('documentid')
+    })
+  ))
+  return { entries: parseKnowledgeSheets(sheets, defaultModule), sheets, hasDocumentIdColumn }
+}
+
+function findKnowledgeSheet(sheets: SheetData[]) {
+  return sheets.find(sheet => /知识文档|知识库|knowledge/i.test(sheet.name)) || sheets[0]
 }
 
 function read(row: Record<string, string | undefined>, keys: string[]) {

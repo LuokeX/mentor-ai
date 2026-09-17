@@ -1,11 +1,10 @@
-import { parseKnowledgeSheets, type KnowledgeEntry } from '../../../../../domain/module-resource-file-import'
+import { parseKnowledgeWorkbook, type KnowledgeEntry } from '../../../../../domain/module-resource-file-import'
 import { chunkModuleResourceDocument, checksumModuleResourceContent, normalizeModuleResourceContent } from '../../../../../domain/module-resource-documents'
 import { embedModuleResourceChunks } from '../../../../../integrations/embeddings'
 import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
 import { schema, useDb } from '../../../../../utils/db'
 import { z } from 'zod'
-import XLSX from 'xlsx'
 import type { ModuleId } from '../../../../../../shared/contracts'
 
 const batchImportSchema = z.object({
@@ -14,9 +13,6 @@ const batchImportSchema = z.object({
   defaultModule: z.string().optional().default('self_growth')
 })
 
-// 说明类工作表不参与数据解析；模板实际使用「填写说明」，比「使用说明」更常见
-const IGNORED_SHEET_PATTERN = /填写说明|使用说明|字段映射|说明页/i
-
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['platform_admin'])
   const parsed = batchImportSchema.safeParse(await readBody(event))
@@ -24,34 +20,13 @@ export default defineEventHandler(async (event) => {
   const body = parsed.data
   const db = useDb(event)
 
-  // 解析 XLSX：直接使用 parseKnowledgeSheets（不依赖三库运营台 pipeline）
+  // 解析 XLSX：与知识库全量替换导入（scripts/import-knowledge-base.ts）共用同一份工作簿解析
   let documents: KnowledgeEntry[] = []
   let parsedSheets: Array<{ name: string, rows: Array<Record<string, string | undefined>> }> = []
   try {
-    const buffer = Buffer.from(body.contentBase64, 'base64')
-    const workbook = XLSX.read(buffer, { type: 'buffer' })
-    parsedSheets = workbook.SheetNames
-      .filter(name => !IGNORED_SHEET_PATTERN.test(name))
-      .map((name) => {
-        const sheet = workbook.Sheets[name]
-        const raw = sheet ? XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: undefined }) : []
-        const headerIndex = inferHeaderRow(raw)
-        const headers = (raw[headerIndex] || []).map(v => String(v ?? '').trim()).filter(Boolean)
-        const rows: Record<string, string | undefined>[] = []
-        for (let i = headerIndex + 1; i < raw.length; i++) {
-          const row = raw[i]
-          if (!row || row.every(v => v === undefined || v === null || String(v).trim() === '')) continue
-          const item: Record<string, string | undefined> = {}
-          for (let j = 0; j < headers.length; j++) {
-            const value = row[j]
-            item[headers[j]!] = value === undefined || value === null ? undefined : String(value).trim()
-          }
-          rows.push(item)
-        }
-        return { name, rows }
-      })
-      .filter(sheet => sheet.rows.length > 0)
-    documents = parseKnowledgeSheets(parsedSheets, body.defaultModule as ModuleId)
+    const parsed = parseKnowledgeWorkbook(Buffer.from(body.contentBase64, 'base64'), body.defaultModule as ModuleId)
+    documents = parsed.entries
+    parsedSheets = parsed.sheets
   } catch (error: any) {
     throw createError({ statusCode: 400, message: error?.message || '文件解析失败' })
   }
@@ -212,21 +187,3 @@ export default defineEventHandler(async (event) => {
     embeddedChunks
   }
 })
-
-function inferHeaderRow(rows: unknown[][]) {
-  const hints = [
-    '文档标题', '所属模块', '来源类型', '标签关键词', '文档内容', '来源出处',
-    'title', 'module', 'sourceType', 'tags', 'content'
-  ]
-  let bestIndex = 0
-  let bestScore = -1
-  for (let i = 0; i < Math.min(rows.length, 12); i++) {
-    const values = (rows[i] || []).map(v => String(v ?? '').trim()).filter(Boolean)
-    const score = values.reduce((sum, v) => {
-      const normalized = v.toLowerCase()
-      return sum + hints.reduce((s, hint) => s + (normalized.includes(hint.toLowerCase()) ? 1 : 0), 0)
-    }, 0)
-    if (score > bestScore) { bestIndex = i; bestScore = score }
-  }
-  return bestScore > 0 ? bestIndex : 0
-}
