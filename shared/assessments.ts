@@ -31,6 +31,12 @@ export interface AssessmentDefinition {
   isRequired?: boolean
   /** 使用时机，自由文本，展示给教师作参考 */
   usageTiming?: string
+  /** 适用学部（③「适用学部」列）：all/primary/junior/senior/repeat；未标注按 all（全学部）处理 */
+  applicableSchoolSection?: string
+  /** 适用年级（③「适用年级」列）：1-12，0 表示全学段 */
+  applicableGrades?: number[]
+  /** 适用学科（③「适用学科」列） */
+  applicableSubjects?: string[]
   /**
    * 量表使用频率（③「量表使用频率」列）：`per_case` 表示结果描述的是某个学生/家长/班级
    * （对象级量表，触发条件只看同一对象的提交）；weekly/monthly/once 等为教师级。
