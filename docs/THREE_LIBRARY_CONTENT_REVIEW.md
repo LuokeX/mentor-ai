@@ -1,5 +1,8 @@
 # 三库文案与知识库原文体检报告
 
+> 可直接派工的版本：**`docs/three-library-issue-list.html`**（单文件、可筛选、可打印为 PDF）。
+> 该文件把本报告的问题拆成 20 条，每条写明「在哪个库的哪一列 / 现在写的是什么 / 为什么是问题 / 应该改成什么 / 改完怎么验证」，并标注由业务还是产品处理。
+
 - 体检日期：2026-09-16
 - 数据来源：本地开发库 `mentor_ai_dev`（`localhost:5434`）中**已发布**的三库版本与全部知识库文档
 - 体检对象：①工具库「结构化步骤」②归因库「建议动作」③归因库「分级规则」的等级名与干预动作 ④方案输出模板 ⑤知识库文档原文
@@ -41,7 +44,7 @@
 | P0 | 运行期直接报错，教师无法提交 | home_school HS_S10 命中 `HS_EV_48` 时抛错（`Unknown variable '紊乱型均分'`） |
 | P1 | 工具步骤「标题」被截断成半句话，与完整说明并列展示 | 1049 条结构化步骤中 **366 条**标题被截断 |
 | P1 | 工具步骤「标题」与「说明」完全相同，渲染后无信息 | **683 条** |
-| P1 | 方案摘要模板一套文案套所有等级 | student_case 19 条模板中 **16 条正文完全相同** |
+| P1 | 方案摘要模板一套文案套所有等级 | student_case 19 条模板只有 **2 种正文**（15 条 + 4 条完全相同） |
 | P1 | 知识库原文描述了引擎不会执行的规则 | 例：五问自评文档写「任何单项≥4 启动支持响应」「Q3 连续 4 周≤2 触发紫色预警」，已发布规则里两者都不存在 |
 | P2 | 知识库切片的来源标题与文档标题错配 | 1027 个单切片文档中 **659 个** 不一致，多为「禁止事项」「适用场景」 |
 | P2 | 知识库文件标题是小节名 | **88 篇**形如「（一）结构与时长」 |
@@ -113,7 +116,7 @@ home_school 的 50 条死规则中，47 条是 `HS_GR_AUTO_*`，另外 3 条是 
 `executeRules` 的等级通道是「命中等级的 `interventionActions` 逐条变成方案动作，标题为『按「等级名」干预』」；动作为空时该通道什么都产不出。
 
 - 119 条分级规则中 **86 条干预动作为空**
-- 其中 `severity = high | crisis` 的有 **22 条**：self_growth 全部 5 条、home_school `HS_GR_AUTO_01/05/…` 共 16 条、learning_problem `LP_GR_AUTO_01/04/07/10` 4 条
+- 其中 `severity = high | crisis` 的有 **22 条**：self_growth 2 条（`SG_GR_01`、`SG_GR_02`）、home_school `HS_GR_AUTO_01/05/…` 共 16 条、learning_problem `LP_GR_AUTO_01/04/07/10` 4 条
 
 后果：教师命中 high/crisis，方案里只有一条没有正文的标题，或者干脆没有这一条（`plan-action-enhancement.ts` 会过滤掉 `detail` 为空的动作，AI 改写也不会补）。
 
@@ -258,17 +261,20 @@ learning_problem LP_AT_02 执行功能薄弱 → 「开展认知训练（注意�
 
 模板决定方案摘要的第一段，`createTemplateAssessmentReport` 按等级选一条渲染，`report.profile.summary` 由此产生。
 
-### 4.1 student_case：19 条模板里 16 条正文完全相同
+### 4.1 student_case：19 条模板只有 2 种正文
 
 ```
-TPL_SC_RED_1 / ORANGE_2 / YELLOW_3 / BLUE_4 / RED_6 / ORANGE_7 / YELLOW_8 / BLUE_9 /
-RED_11 / ORANGE_12 / YELLOW_13 / BLUE_14 / RED_16 / ORANGE_17 / YELLOW_18
+出现 15 次的模板（RED_1 / ORANGE_2 / YELLOW_3 / BLUE_4 / RED_6 / ORANGE_7 / YELLOW_8 /
+BLUE_9 / RED_11 / ORANGE_12 / YELLOW_13 / BLUE_14 / RED_16 / ORANGE_17 / YELLOW_18）
 → 全部是：
 「本次评估判定为黄色·中响应：≥2 个编码激活且无安全信号。请启动 L2 年级协同
 （年级组长+班主任，必要时心理教师参与），1 周内完成 S2 分层评估并制定组合处方，按双周记录进展。」
+
+另外 4 条（DEFAULT_5 / DEFAULT_10 / DEFAULT_15 / DEFAULT）共用另一句
+「本次评估未发现需要重点干预的信号……」，也完全相同。
 ```
 
-一个被判为 red、已熔断转介的教师，方案摘要第一句写的是「本次评估判定为黄色·中响应」。
+19 条模板覆盖 5 个等级，实际只有 2 种正文；从编号规律看是按批次复制（每批 red/orange/yellow/blue/green 各一条），但正文从未按等级区分。一个被判为 red、已熔断转介的教师，方案摘要第一句写的是「本次评估判定为黄色·中响应」。
 
 ### 4.2 home_school：两套等级命名体系错配
 
@@ -332,7 +338,7 @@ RED_11 / ORANGE_12 / YELLOW_13 / BLUE_14 / RED_16 / ORANGE_17 / YELLOW_18
 - 「紫色预警」——全库（五模块 119 条规则）**不存在 purple 等级**
 - 但知识库里有 12 篇文档提到「紫色预警」，包括标题就叫「紫色预警」「L1·紫色·待观察」的两篇
 
-**AI 的提示词要求「平台正式内容只能基于工具实际返回的内容」，而工具返回的正是这些与引擎不一致的阈值描述——模型会把这些当作平台事实转述给教师。**
+**AI 回答平台制度、量表、SOP 这类内容时只依据工具检索返回的结果，而检索返回的正是这些与引擎不一致的阈值描述——模型会把这些当作平台事实转述给教师。**
 
 ### 5.5 「智能体回复示例话术」78 篇
 
@@ -431,7 +437,7 @@ RED_11 / ORANGE_12 / YELLOW_13 / BLUE_14 / RED_16 / ORANGE_17 / YELLOW_18
 
 - 召回池就是第五节里那 1036 篇：含三库派生文档、含 `${主要归因}`/`None`、含与引擎不符的阈值、含 78 篇写好的第一人称话术
 - 切片的 `heading` 有 659 篇错配，来源展示与模型看到的标题都是错的小节名
-- 提示词明确要求「平台正式内容只能基于工具实际返回的内容」「不得编造平台手册、量表、SOP、等级、制度」——**当检索返回的内容本身就是错的，模型越守规矩，越会把错误内容当成平台事实讲出去**
+- AI 回答平台正式内容（手册、量表、SOP、等级、制度）时只依据检索返回的结果，且被明确要求不得编造平台内容——**当检索返回的内容本身就是错的，模型越守规矩，越会把错误内容当成平台事实讲出去**
 - `resource_lookup` 只给标题与一句摘要（`description` / `typicalTrigger`），所以 AI 对话受「建议动作」的直接影响小于方案链路，但受「知识库原文」的直接影响很大
 
 ---
@@ -447,26 +453,21 @@ RED_11 / ORANGE_12 / YELLOW_13 / BLUE_14 / RED_16 / ORANGE_17 / YELLOW_18
 5. **修 `HS_EV_48`**（引用跨量表变量），并顺带清理所有引用不可计算变量的证据规则。
 6. **确认 student_case `SC_GR_01` 的单题红线**是否符合安全策略（对比 self_growth 的两题同时命中）。
 
-### P1 — 代码侧容错（不等业务重发也能立刻降低损失）
+### P1 — 内部内容不要流向教师端
 
-7. **导入校验增加「恒真/恒假条件」检查**：`module-resource-validation.ts` 里对分级规则与证据规则做一次条件可满足性检查（能识别 `x >= a 或 x <= b` 这类恒真、`>= 量表满分` 这类恒假），导入即拦截。
-8. **`executeRules` 对单条规则求值失败改为跳过 + 诊断**，而不是让整个提交 500；至少在 submit 路由加 try/catch 并给出中文提示。
-9. **关闭 `ensurePlanActions` 的重复插入路径**：把工具动作的判重口径改成「按标题」，或在合并前先用 `plans.tools` 覆盖快照。
-10. **`renderToolContent` 增加防护**：`title` 是 `description` 前缀且长度等于 24 时，直接用完整 `description` 渲染；正文里出现内部编码（`RX-\d+`）时在渲染层剥离。
-11. **修 chunk 的 `heading`**：单切片文档的 `heading` 应取文档标题（或文档第一个一级标题），不要用最后一个小节名。
-12. **渲染三库派生文档时，不要把它们放进 `knowledge` 库的检索池**（或至少在 `knowledge_search` 里排除 `libraryType=knowledge` 但由 `module-resource-document-render` 生成的文档），避免内部规则被当作知识外发。
+7. **删除 28 篇由三库自动生成的内部规则文档**（或明确排除在 AI 检索之外），避免内部规则被当作知识外发。这 28 篇的标题前缀是「输出模板·」「分级规则·」「红线·」「路由·」「禁忌·」。
 
 ### P2 — 文案与知识库整理
 
-13. **方案输出模板**：student_case 16 条重复文案按等级重写；home_school 两套等级文案二选一并与分级规则等级名对齐；learning_problem 模板里写死的阈值改为不写具体数字（保留 `<待补>` 与重发版本对照）；class_system 模板去掉双体系混写。
-14. **归因建议动作统一写法**：统一为「时间 + 对象 + 动作 + 可观察完成标志」，长度控制在一句话到两句话；class_system 的电报体与 learning_problem 的短语补全。
-15. **归因名去术语化**：对「学业堰塞」「认知锁定」「情感容器临界」这类术语，在归因库中增加面向教师的口语化别名（方案标题用别名，报告正文可保留专业名）。
-16. **知识库整理**：
+8. **方案输出模板**：student_case 的 19 条模板按等级重写成 5 种正文（当前只有 2 种）；home_school 两套等级文案二选一并与分级规则等级名对齐；learning_problem 模板里写死的阈值改为不写具体数字（保留 `<待补>` 与重发版本对照）；class_system 模板去掉双体系混写。
+9. **归因建议动作统一写法**：统一为「时间 + 对象 + 动作 + 可观察完成标志」，长度控制在一句话到两句话；class_system 的电报体与 learning_problem 的短语补全。
+10. **归因名去术语化**：对「学业堰塞」「认知锁定」「情感容器临界」这类术语，在归因库中增加面向教师的口语化别名（方案标题用别名，报告正文可保留专业名）。
+11. **知识库整理**：
     - 补齐 234 篇过短文档的原文，或合并回其所属手册的完整章节；
     - 88 篇「（一）…」标题补上前缀（如「Kagan 结构·Numbered Heads Together·结构与时长」）；
-    - 修正 5.4 里与引擎不符的阈值描述（以 `server/domain/ai-prompt-baselines.ts` 与实际规则为准）；
-    - 评估 78 篇「智能体回复示例话术」是否继续保留为检索语料（保留则需与提示词口径一致，避免直接照念）。
-17. **学段标注**：按 `pnpm backfill:school-section` 的口径先把 719 篇 primary 核实一遍（哪些确实只适用小学），再考虑打开 `SCHOOL_SECTION_FILTER_ENABLED`。
+    - 修正 5.4 里与引擎不符的阈值描述（以实际规则为准）；
+    - 评估 78 篇「智能体回复示例话术」是否继续保留为检索语料（保留则需与 AI 的回答口径一致，避免直接照念）。
+12. **学段标注**：先把 719 篇 primary 按学段标注口径核实一遍（哪些确实只适用小学），再考虑打开学段过滤开关。
 
 ---
 
@@ -477,18 +478,3 @@ RED_11 / ORANGE_12 / YELLOW_13 / BLUE_14 / RED_16 / ORANGE_17 / YELLOW_18
 - AI 对话与方案报告的实际输出质量未做端到端采样（未调用 DeepSeek）；本报告只证明「输入側存在确定的错误内容」，以及代码层面这些内容会进入输入。
 - 156 个工具的建议动作/步骤只做了结构化统计与抽样阅读，未逐条通读全部 1921 条扁平步骤。
 - 未检查 `keyword_route`（关键词路由）与 `contraindication`（工具禁忌规则）两库的内容质量。
-
-## 复现方式
-
-```bash
-# 1) 导出已发布版本 payload（开发库 5434）
-docker exec mentor-ai-local-postgres-1 psql -U mentor_admin -d mentor_ai_dev -t -A -c "
-select v.payload::text from module_resource_versions v
-join module_resource_libraries l on l.id = v.library_id
-where l.module='student_case' and l.library_type='attribution'
-  and l.scope='global' and v.status='published'
-order by v.published_at desc limit 1;" > /tmp/student_case.attribution.json
-
-# 2) 用真实引擎跑等级分布（脚本见本报告第一节的取样口径）
-npx tsx <加载 payload 后调用 executeRules 的脚本>
-```
