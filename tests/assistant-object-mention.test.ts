@@ -88,6 +88,6 @@ describe('本轮对象的作用范围', () => {
     expect(names({ ...base, turnContext: turn })).toContain('record_snapshot')
     expect(names({ ...base, businessContext: { type: 'student', id: 's-bound', label: '李雷' } })).toContain('record_snapshot')
     expect(names(base)).not.toContain('record_snapshot')
-    expect(names({ ...base, turnContext: turn, withoutRecord: true })).toEqual(['knowledge_search', 'module_route', 'resource_lookup'])
+    expect(names({ ...base, turnContext: turn, withoutRecord: true })).toEqual(['knowledge_search', 'module_route', 'resource_lookup', 'resource_detail'])
   })
 })

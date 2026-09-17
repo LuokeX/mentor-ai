@@ -72,7 +72,7 @@ describe('助手升级：边界与有效输出', () => {
   })
   it('不带档案时不提供可读取档案或历史的工具', () => {
     const tools = buildAgentTools({ schoolId: 's', userId: 'u', sessionId: 'c', withoutRecord: true })
-    expect(tools.map(t => t.name)).toEqual(['knowledge_search', 'module_route', 'resource_lookup'])
+    expect(tools.map(t => t.name)).toEqual(['knowledge_search', 'module_route', 'resource_lookup', 'resource_detail'])
   })
   it('评估导航使用评估组ID，并拒绝模型任意URL', () => {
     const id = '11111111-1111-4111-8111-111111111111'

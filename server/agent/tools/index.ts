@@ -10,6 +10,7 @@ import { assessmentHistoryTool } from './assessment-history'
 import { classOverviewTool } from './class-overview'
 import { communicationLookupTool } from './communication-lookup'
 import { planLookupTool } from './plan-lookup'
+import { resourceDetailTool } from './resource-detail'
 import { resourceLookupTool } from './resource-lookup'
 import { teacherBriefTool } from './teacher-brief'
 
@@ -30,7 +31,8 @@ export const agentTools: AgentTool[] = [
   communicationLookupTool,
   classOverviewTool,
   teacherBriefTool,
-  resourceLookupTool
+  resourceLookupTool,
+  resourceDetailTool
 ]
 
 /** 无教师上下文（未装载 userCtx）时可安全暴露的无状态工具。 */
@@ -42,7 +44,7 @@ const statelessTools: AgentTool[] = [knowledgeSearchTool, moduleRouteTool]
  *   module_route —— 它们不依赖业务对象；
  * - 上下文存在时补充 recommend_assessment（依赖 lastModuleScores 可选）、
  *   entity_memory（依赖 userId/sessionId 读取实体记忆）、学生检索/档案，
- *   以及方案、评估历史、沟通记录、班级概览、教师待办与三库资源目录；
+ *   以及方案、评估历史、沟通记录、班级概览、教师待办、三库资源目录与三库明细；
  * - 仅当本轮回答有可收口的对象（会话绑定或本轮消息里唯一命中的对象）且教师未选择
  *   不引入档案时，才暴露 record_snapshot（避免模型对未绑定会话做无效查询）。
  *
@@ -58,7 +60,7 @@ export function buildAgentTools(userCtx: AgentUserContext | null | undefined, en
   let base = !userCtx?.userId || !userCtx.sessionId
     ? statelessTools
     : [...agentTools, ...(hasScopedObject ? [recordSnapshotTool] : [])]
-  if (userCtx?.withoutRecord) base = base.filter(tool => ['knowledge_search', 'module_route', 'resource_lookup'].includes(tool.name))
+  if (userCtx?.withoutRecord) base = base.filter(tool => ['knowledge_search', 'module_route', 'resource_lookup', 'resource_detail'].includes(tool.name))
   if (enabledTools == null) return base
   const allow = new Set(enabledTools)
   return base.filter(tool => allow.has(tool.name))

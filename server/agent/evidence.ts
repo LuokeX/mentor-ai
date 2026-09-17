@@ -23,6 +23,18 @@ export function collectToolEvidence(tool: string, output: unknown): AnswerEviden
       typeof item.chunkId === 'string' && typeof item.content === 'string'
         ? [{ id: item.chunkId, kind: 'knowledge' as const, tool, content: JSON.stringify(item) }] : [])
   }
+  // 三库明细是随版本发布的平台正式资料（归因项/工具卡原文），按 knowledge 归类，
+  // 使其能作为「平台资料怎么归类与建议」的依据；逐条给证据，避免一条命中就认可整段回答。
+  if (tool === 'resource_detail') {
+    return (Array.isArray(data.items) ? data.items : []).flatMap((item: Record<string, unknown>) =>
+      typeof item.name === 'string'
+        ? [{
+            id: `${tool}:${String(item.libraryType ?? '')}:${String(item.code ?? item.name)}`,
+            kind: 'knowledge' as const,
+            tool,
+            content: JSON.stringify(item)
+          }] : [])
+  }
   return [{ id: `${tool}:result`, kind: ['assessment_history', 'recommend_assessment'].includes(tool) ? 'rule' : 'record', tool, content: JSON.stringify(data) }]
 }
 

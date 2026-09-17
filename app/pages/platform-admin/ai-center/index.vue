@@ -61,7 +61,8 @@ const toolLabels: Record<string, string> = {
   communication_lookup: '查询沟通记录',
   class_overview: '班级学生概览',
   teacher_brief: '读取教师待办',
-  resource_lookup: '查询三库资源'
+  resource_lookup: '查询三库资源',
+  resource_detail: '查询三库明细'
 }
 const toolStats = computed(() => data.value?.stats7d.tools || [])
 const toolStatsTotal = computed(() => toolStats.value.reduce((sum, item) => sum + item.total, 0))

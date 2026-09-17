@@ -61,7 +61,7 @@ DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Ag
 - 工具轨迹回放：`server/agent/tool-trace.ts` 把本轮模型发起的 `tool_calls` 与工具返回加密存在助手消息的 `tool_trace_enc`，下一轮挂在对应提问上原样回放，使上一轮的完整请求（含工具往返）成为本轮的前缀。只回放最近一轮；超过步数/字符上限的轨迹直接丢弃；不保存思维链（实测回放不带 `reasoning_content` 也被服务端接受）。**回放前必须修复配对**（`repairToolTrace`）：OpenAI 兼容接口要求每个 assistant 的 `tool_calls` 都有紧随其后、按 `tool_call_id` 一一对应的工具结果，否则整轮请求被服务端以 400 拒绝（`INVALID_TOOL_RESULTS`，2026-09-16 真实模型评测复现 4/420 轮）。修复会丢弃无法完整回应的调用与孤立工具结果，发生在落库前（`serializeToolTrace`）与回放前（`traceToLangChainMessages`）两处，历史数据无需迁移；模型未给出调用 id 时该轮不记录工具轨迹。
 - system 前缀稳定：咨询对象只保留「类型 + 名称」指针，档案细节由 `record_snapshot` 工具按需查询；教师画像与会话摘要都放在 system 段，只在变化时（改画像、压缩）才打断前缀。
 - 会话内换绑咨询对象（`server/domain/chat-context-switch.ts`）：一个会话默认绑定一个对象，教师可以在会话中途用 `@` 换对象——既有消息保留（不新建会话、不清空记录），入口把 `chat_sessions.context_type/context_id` 改到新对象，并在元数据 `contextSwitches` 里留痕（前端据此在时间线画分隔条）。换绑后 system 段持续带同一段提示，声明「历史消息属于旧对象、当前对象以工具返回为准」；提示只由元数据推导，逐轮逐字一致，因此不会打断前缀缓存。`chat_sessions.metadata` 的模块占比写回必须是 jsonb 合并（`||`），不能整块覆盖，否则会抹掉换绑记录。
-- 只读工具集（`server/agent/tools/index.ts` 按上下文裁剪，共 13 个）：`knowledge_search` 三库混合检索（向量 + pg_trgm 关键词，RRF 融合；零命中时返回该模块已发布资源目录）、`module_route` 确定性分诊（返回模块与该模块的静态分析与行动框架 playbook）、`recommend_assessment` 量表推荐卡（走与模块页同一套门禁：已发布、红线量表仅在触发时可见、被前置锁住则改推前置，并返回候选量表清单）、`entity_memory` 同一对象**跨会话**的相关历史（当前教师/学校/对象内最多 20 个会话、120 条候选，按当前问题相关性和纠正信息选取最多 12 条、6000 token，携带来源与原文）（排除当前会话；未传参数时读当前会话绑定的对象，未绑定对象时返回空与提示），`record_snapshot` 当前会话绑定的咨询对象档案、`student_search` 按姓名或班级检索当前教师负责的在册学生（只返回 id/姓名/班级；姓名 AES 加密存储，只能精确匹配，不支持模糊检索）、`student_snapshot` 按 `student_search` 得到的 id 读取该学生档案、`plan_lookup` 进行中方案与行动项（含逾期标记）与最近复盘（未指定对象时按当前会话的咨询对象收口，逐条带 `object` 标签；该对象没有关联方案时只报「另有 N 条未关联对象的方案」的条数，不把别的对象的方案当作本次对象的）、`assessment_history` 已提交量表结论与未完成草稿与开放评估组（按当前咨询对象收口：返回该对象的结论与教师本人的自我成长量表结论，对象未知的历史提交不返回，逐条带 `object` 标签）、`communication_lookup` 沟通记录（按当前对象的学生/家长收口，逐条带 `object` 与 `studentLabel`/`guardianRelation`；当前对象是班级时不适用，退回教师维度）、`class_overview` 班级与学生聚合概览（沟通数/在跟方案数/最近方案等级）、`teacher_brief` 教师待办简报（逾期行动项、待复盘方案、未完成草稿、未读通知数、需关注的沟通）、`resource_lookup` 三库资源目录（只给名称与摘要，不给正文与结论）。全部只读、按 `schoolId + ownerUserId` 收口、按数据模式脱敏；`record_snapshot` 与 `student_snapshot` 共用 `server/agent/tools/record-context.ts` 的读取与治理路径，业务数据的读取集中在 `server/domain/assistant-readers.ts`。**写操作不进工具层**：教师业务正文的修改仍由既有 REST 路由执行（带 `expectedUpdatedAt` 并发校验、归属条件与审计）；若日后要接入，只允许「模型起草动作卡 → 教师确认 → 前端调用既有接口」的形式，不给模型直接的写工具或 SQL。
+- 只读工具集（`server/agent/tools/index.ts` 按上下文裁剪，共 14 个）：`knowledge_search` 三库混合检索（向量 + pg_trgm 关键词，RRF 融合；零命中时返回该模块已发布资源目录）、`module_route` 确定性分诊（返回模块与该模块的静态分析与行动框架 playbook）、`recommend_assessment` 量表推荐卡（走与模块页同一套门禁：已发布、红线量表仅在触发时可见、被前置锁住则改推前置，并返回候选量表清单）、`entity_memory` 同一对象**跨会话**的相关历史（当前教师/学校/对象内最多 20 个会话、120 条候选，按当前问题相关性和纠正信息选取最多 12 条、6000 token，携带来源与原文）（排除当前会话；未传参数时读当前会话绑定的对象，未绑定对象时返回空与提示），`record_snapshot` 当前会话绑定的咨询对象档案、`student_search` 按姓名或班级检索当前教师负责的在册学生（只返回 id/姓名/班级；姓名 AES 加密存储，只能精确匹配，不支持模糊检索）、`student_snapshot` 按 `student_search` 得到的 id 读取该学生档案、`plan_lookup` 进行中方案与行动项（含逾期标记）与最近复盘（未指定对象时按当前会话的咨询对象收口，逐条带 `object` 标签；该对象没有关联方案时只报「另有 N 条未关联对象的方案」的条数，不把别的对象的方案当作本次对象的）、`assessment_history` 已提交量表结论与未完成草稿与开放评估组（按当前咨询对象收口：返回该对象的结论与教师本人的自我成长量表结论，对象未知的历史提交不返回，逐条带 `object` 标签）、`communication_lookup` 沟通记录（按当前对象的学生/家长收口，逐条带 `object` 与 `studentLabel`/`guardianRelation`；当前对象是班级时不适用，退回教师维度）、`class_overview` 班级与学生聚合概览（沟通数/在跟方案数/最近方案等级）、`teacher_brief` 教师待办简报（逾期行动项、待复盘方案、未完成草稿、未读通知数、需关注的沟通）、`resource_lookup` 三库资源目录（只给名称与摘要，不给正文与结论）、`resource_detail` 三库明细（`libraryType=attribution` 返回归因项的原因名/常见表现/通常成因/建议动作/匹配标签，`libraryType=tool` 返回工具卡的适用症状/关键步骤/预期效果/时长；按模块 + 现象关键词或名称筛选、单次最多 6 条；只暴露这两类教师可见字段，证据规则、分级规则、红线、禁忌规则不进返回；正文字段过 `server/domain/knowledge-text-guard.ts` 的 `findBannedTerms` 防线命中即整段置空，名称含「危机/红线/预警/立即/110/120」时整条丢弃；读的是已发布版本 payload，版本切换自动跟随，不写库也不重新向量化）。全部只读、按 `schoolId + ownerUserId` 收口、按数据模式脱敏；`record_snapshot` 与 `student_snapshot` 共用 `server/agent/tools/record-context.ts` 的读取与治理路径，业务数据的读取集中在 `server/domain/assistant-readers.ts`。**写操作不进工具层**：教师业务正文的修改仍由既有 REST 路由执行（带 `expectedUpdatedAt` 并发校验、归属条件与审计）；若日后要接入，只允许「模型起草动作卡 → 教师确认 → 前端调用既有接口」的形式，不给模型直接的写工具或 SQL。
 - 运行期防护（`server/agent/graph.ts`）：同轮内相同 (工具, 参数) 的重复调用直接复用上次结果；单次工具执行有超时上限（`AgentTool.timeoutMs`，默认 10 秒），超时按工具失败回传模型自愈；模块分诊结论与量表推荐模块不一致时以量表推荐为准并写 `assistant_tool_conflict` 产品事件。工具启用清单与轮次上限来自 `AI_AGENT_ENABLED_TOOLS` / `AI_AGENT_MAX_TOOL_ROUNDS`，AI 中心「运行时配置」只读展示生效值。
 - 回答校验与展示：`answer-delivery.ts` 对普通回答按完整句子清理后流式展示；制度、量表或敏感判断先缓冲，普通回答中出现这些内容时从该句起缓冲。`assistant-answer-review.ts` 使用教师陈述、档案、确定性工具结果及已发布知识证据校验；代码检查数值/等级是否存在于规则结果，语义检查表述是否得到支持（不负责计分、归因或安全定级）。最多修正一次，仍失败或超时发送现有 `error`，不展示被拦截原文、不落库、不生成替代兜底。语义检查并非绝对可靠，对象/版本的支持性仍需测试与人工验收。
 - 知识正文与展示摘要分开：最多 5 个片段，正文每段约 2000 字符并按段落/句子预算，摘要 300 字符；携带文档、版本、片段和截断标记。工具整体结果超预算返回有效结构错误，不截断 JSON。向量、关键词查询统一限定已发布版本、就绪文档与学校可见性。空检索允许一次改写；知识缺口只记模块/原因，人工补库。
@@ -82,7 +82,7 @@ DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Ag
 - 提示词正文随代码发布，唯一来源是 `server/domain/ai-prompt-baselines.ts`；平台后台 AI 中心的提示词页只读展示，改文案走代码评审与发版。
 - 数据库 `ai_prompt_templates`（提示词）与 `ai_runtime_settings`（运行时配置）已随迁移 `drizzle/0051_sour_hellfire_club.sql` 删除，不再存在库内来源。
 - 没有 Agent 开关：所有消息一律走 Agent 图；Agent 行为要点（回答先行、先检索再回答、量表优先、不得输出「选项：」列表）在 `server/agent/prompts.ts` 的 `buildFormatInstruction`。「先检索再回答」要求：除寒暄与能力询问外，涉及班主任具体做法、平台量表/工具/SOP/制度的问题必须先调用 `knowledge_search`（必要时再补 `resource_lookup`），回答只能基于工具实际返回的内容——这既保证回答有平台知识依据，也让界面上的「参考知识库 N 条」面板有内容可展示。
-- 用语红线：面向教师的文本不得出现「危机、红线、预警、立即、110、120」这些字样（含空格、谐音或拆字写法），已在 `assistant_chat`、`assessment_report`、`tool_step_polish`、`instrument_recommendation`、`chat_history_summary` 五条提示词里约束（同类含义改用「安全事项 / 重点关注、安全底线、关注提示、尽快 / 第一时间」；紧急处置只引导联系校内心理专员或学校值班负责人，不写报警或急救电话号码）。当前是提示词层的软约束，`server/agent/answer-guard.ts` 尚未对回答做词级清洗兜底，若观测到漏出再考虑加一层替换。
+- 用语红线：面向教师的文本不得出现「危机、红线、预警、立即、110、120」这些字样（含空格、谐音或拆字写法），已在 `assistant_chat`、`assessment_report`、`tool_step_polish`、`instrument_recommendation`、`chat_history_summary` 五条提示词里约束（同类含义改用「安全事项 / 重点关注、安全底线、关注提示、尽快 / 第一时间」；紧急处置只引导联系校内心理专员或学校值班负责人，不写报警或急救电话号码）。助手回答目前仍是提示词层的软约束，`server/agent/answer-guard.ts` 尚未对回答做词级清洗兜底，若观测到漏出再考虑加一层替换；方案改写与深度报告两条链路已有确定性防线（见第 7 节「方案正文的术语白话化与两道防线」）。
 
 超时说明：`DEEPSEEK_TIMEOUT_MS` 是全局默认（建议 30000）。评估报告润色是最长输出（完整报告 JSON），走专用逻辑：不低于 360000ms，不受全局短超时影响。运行时参数（模型名、超时、embedding）只来自环境变量与代码默认值。
 
@@ -205,6 +205,18 @@ pnpm import:business-data --dry-run --require-complete
 
 方案状态不再只看时间：展示层纳入方案的可执行行动全部完成时，方案由「进行中」自动进入「待复盘」（`planStatusAfterActionUpdate`，与方案页同一套合并/截断口径，被并入归因条的工具行不参与判断）；教师可在方案页「确认目标达成并关闭方案」一次完成收口——服务端按同一口径校验完成情况，写一条真实复盘记录（决策 `close_success`，效果评分默认 5 分、可改）并把方案置为「已完成」（`POST /api/v1/plans/[id]/complete`），也可按原有复盘流程选「继续原方案」回到「进行中」。跳过/取消行动不改变方案状态，行动被撤销完成则回到「进行中」。
 
-## 助手升级评测
+### 方案正文的术语白话化与两道防线
 
+方案行动改写（`tool_step_polish`）与 AI 深度报告（`assessment_report`）在生成前会先做一次「术语检索」（`server/domain/term-glossary.ts`）：
+
+1. `term_extraction` 提示词从待改写的正文（工具步骤、归因/等级建议、报告事实与输出模板渲染文案）里抽出教师可能看不懂的专业词，最多 8 个，且每个词必须是输入文本的子串（防编造）；
+2. 用 `embedModuleResourceQueries` 批量向量化后逐词检索知识库（每词 top 2、相似度 ≥ 0.5），按 chunkId 合并去重；
+3. 检索结果先过 `filterKnowledgeChunks`（`server/domain/knowledge-text-guard.ts`）：文档标题带「输出模板·/ 分级规则·/ 红线·/ 路由·/ 禁忌·」前缀，或正文命中红线词 / 内部编码（六力、A-E、SOP、OTC 等）的片段整段丢弃；
+4. 剩余片段作为 `facts.termChunks`（每条带 `term` 标注）交给模型，只用于把已出现的专业词讲成白话，不得当作新步骤、新建议、新工具或制度依据。
+
+出口检查用同一份词表（`findBannedTerms`）：行动改写命中即判本次输出不合格（触发带反馈重试，重试耗尽不写入任何部分结果、方案置 `ai_actions_status=failed`）；深度报告命中即抛错（重试 3 次后收敛为 failed）。输出模板库渲染出的摘要与风险说明在写库前单独兜底：命中即退回模块内置文案并告警，不阻断方案生成。等级、等级中文名、归因名称等取自三库的确定性字段不参与判定，避免三库原文里的词把报告永久判失败。
+
+成本与取舍：每条链路多一次小模型调用（`term_extraction`，关闭思考、20 秒超时）+ 一次批量 embedding + 最多 8 次向量查询，均在后台异步执行、不影响教师请求；术语片段与工具名检索结果按 chunkId 去重，合计最多 11 段进入 facts。已知取舍：知识库里的「附录 I 术语表」因含「心理风险 A-E」会被过滤丢弃，后续可用标题白名单放行。
+
+## 助手升级评测
 合成案例、真实模型命令、人工盲评标准及领导演示见 [评测说明](ai-evaluation/README.md)。

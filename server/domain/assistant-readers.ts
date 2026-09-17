@@ -940,30 +940,29 @@ function asString(value: unknown): string | null {
 }
 
 /**
- * 读取某模块已发布的三库资源目录（只要标题与一句摘要，不含正文）。
- * 用途：知识检索零命中时，让模型能说明「平台里有这些已发布资源、进入模块可查看」，
- * 而不是只说「没查到」或编造内容。未指定模块时返回空数组（避免一次打 15 个查询）。
+ * 三库资源目录条目的构造口径（纯函数，不碰数据库，便于单测盯住字段映射）。
+ *
+ * 摘要字段必须与各自已发布 payload 的字段名对齐：
+ *  - 量表库 instruments[]：title / description | shortName；
+ *  - 归因库 attributionItems[]：name / description | typicalTrigger；
+ *  - 工具库 tools[]（toolRxEntrySchema）：name / symptoms —— 曾误用 title / scenario，
+ *    导致 220 条已发布工具一条也进不了目录。
+ * 每类最多 perType 条；只给名称与一句摘要，正文不进目录。
  */
-export async function readPublishedResourceCatalog(
-  event: H3Event,
-  input: { schoolId: string, module?: ModuleId, sections?: readonly SchoolSection[] | null }
-): Promise<AssistantResourceCatalogEntry[]> {
-  if (!input.module) return []
+export function buildResourceCatalogEntries(input: {
+  module: ModuleId
+  assessmentPayload?: Record<string, unknown> | null
+  attributionPayload?: Record<string, unknown> | null
+  /** 已发布工具（listPublishedModuleTools 的 tools，通常已按学段过滤） */
+  tools?: unknown[]
+  sections?: readonly SchoolSection[] | null
+  perType?: number
+}): AssistantResourceCatalogEntry[] {
   const module = input.module
+  const perType = input.perType ?? ASSISTANT_READER_LIMITS.catalogPerType
   const catalog: AssistantResourceCatalogEntry[] = []
-  const perType = ASSISTANT_READER_LIMITS.catalogPerType
 
-  const [assessmentResource, attributionResource, toolResource] = await Promise.all([
-    resolvePublishedModuleResource<{ instruments?: AssessmentDefinition[] } & Partial<AssessmentDefinition>>(event, {
-      module, libraryType: 'assessment', schoolId: input.schoolId
-    }).catch(() => null),
-    resolvePublishedModuleResource<Record<string, unknown>>(event, {
-      module, libraryType: 'attribution', schoolId: input.schoolId
-    }).catch(() => null),
-    listPublishedModuleTools(event, module, input.schoolId, { sections: input.sections }).catch(() => ({ tools: [] as unknown[], sourceVersions: [] as string[] }))
-  ])
-
-  const assessmentPayload = assessmentResource?.payload
+  const assessmentPayload = input.assessmentPayload ?? undefined
   const instruments = asArray(assessmentPayload?.instruments).length
     ? asArray(assessmentPayload?.instruments)
     : assessmentPayload?.code && assessmentPayload?.title ? [assessmentPayload] : []
@@ -985,7 +984,7 @@ export async function readPublishedResourceCatalog(
     })
   }
 
-  const attributionItems = asArray((attributionResource?.payload as { attributionItems?: unknown } | undefined)?.attributionItems)
+  const attributionItems = asArray(input.attributionPayload?.attributionItems)
   for (const item of attributionItems.slice(0, perType)) {
     const record = item as Record<string, unknown>
     const title = asString(record.name)
@@ -998,17 +997,48 @@ export async function readPublishedResourceCatalog(
     })
   }
 
-  for (const item of asArray(toolResource?.tools).slice(0, perType)) {
+  for (const item of asArray(input.tools).slice(0, perType)) {
     const record = item as Record<string, unknown>
-    const title = asString(record.title)
+    const title = asString(record.name)
     if (!title) continue
     catalog.push({
       module,
       libraryType: 'tool',
       title: truncateAssistantText(title, 80),
-      summary: truncateAssistantText(asString(record.scenario) || '', ASSISTANT_READER_LIMITS.summaryChars) || null
+      summary: truncateAssistantText(asString(record.symptoms) || asString(record.effectNote) || '', ASSISTANT_READER_LIMITS.summaryChars) || null
     })
   }
 
   return catalog
+}
+
+/**
+ * 读取某模块已发布的三库资源目录（只要标题与一句摘要，不含正文）。
+ * 用途：知识检索零命中时，让模型能说明「平台里有这些已发布资源、进入模块可查看」，
+ * 而不是只说「没查到」或编造内容。未指定模块时返回空数组（避免一次打 15 个查询）。
+ */
+export async function readPublishedResourceCatalog(
+  event: H3Event,
+  input: { schoolId: string, module?: ModuleId, sections?: readonly SchoolSection[] | null }
+): Promise<AssistantResourceCatalogEntry[]> {
+  if (!input.module) return []
+  const module = input.module
+
+  const [assessmentResource, attributionResource, toolResource] = await Promise.all([
+    resolvePublishedModuleResource<{ instruments?: AssessmentDefinition[] } & Partial<AssessmentDefinition>>(event, {
+      module, libraryType: 'assessment', schoolId: input.schoolId
+    }).catch(() => null),
+    resolvePublishedModuleResource<Record<string, unknown>>(event, {
+      module, libraryType: 'attribution', schoolId: input.schoolId
+    }).catch(() => null),
+    listPublishedModuleTools(event, module, input.schoolId, { sections: input.sections }).catch(() => ({ tools: [] as unknown[], sourceVersions: [] as string[] }))
+  ])
+
+  return buildResourceCatalogEntries({
+    module,
+    assessmentPayload: (assessmentResource?.payload as Record<string, unknown> | undefined) ?? null,
+    attributionPayload: attributionResource?.payload ?? null,
+    tools: toolResource?.tools,
+    sections: input.sections
+  })
 }

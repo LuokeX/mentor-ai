@@ -26,11 +26,12 @@ describe('Agent 行为要点（formatInstruction）', () => {
     expect(text).toContain('recommend_assessment')
   })
 
-  it('要求先检索知识库再回答，未命中时说明而不是编造', () => {
+  it('要求先检索知识库再回答，需要明细时查三库，未命中时说明而不是编造', () => {
     const text = buildFormatInstruction({})
     expect(text).toContain('先检索再回答')
     expect(text).toContain('knowledge_search')
     expect(text).toContain('resource_lookup')
+    expect(text).toContain('resource_detail')
     expect(text).toContain('平台里暂时没有对应资源')
     // 寒暄与能力询问不强制检索，避免每轮都多一次工具往返
     expect(text).toContain('你能提供什么帮助')

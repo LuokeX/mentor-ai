@@ -5,6 +5,7 @@ import {
   ASSISTANT_READER_LIMITS,
   TEACHER_LEVEL_MODULES,
   assistantObjectKey,
+  buildResourceCatalogEntries,
   clampAssistantLimit,
   isTeacherLevelModule,
   outboundAssistantText,
@@ -17,6 +18,7 @@ import {
   truncateAssistantText,
   type AssistantObjectLabel
 } from '../server/domain/assistant-readers'
+import { goldenAssessmentPayload, goldenModule, goldenToolPayload } from './fixtures/business-resource-golden'
 
 describe('助手读取层：限额与截断', () => {
   it('文本截断保留前缀并加省略号', () => {
@@ -88,6 +90,57 @@ describe('助手读取层：确定性规则结果取值', () => {
     expect([...ASSISTANT_ACTIVE_PLAN_STATUSES]).toContain('in_progress')
     expect([...ASSISTANT_ACTIVE_PLAN_STATUSES]).not.toContain('archived')
     expect([...ASSISTANT_ATTENTION_RISK_LEVELS]).toEqual(['crisis', 'high'])
+  })
+})
+
+describe('助手读取层：三库资源目录条目', () => {
+  it('工具库按 name/symptoms 映射（曾因写成 title/scenario 导致已发布工具全部进不了目录）', () => {
+    const entries = buildResourceCatalogEntries({ module: goldenModule, tools: goldenToolPayload.tools })
+    const tools = entries.filter(entry => entry.libraryType === 'tool')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]?.title).toBe('三步降温沟通卡')
+    expect(tools[0]?.summary).toBe('家长情绪激烈但未触发红线')
+  })
+
+  it('归因库取 name，摘要优先 description，缺 description 回退 typicalTrigger', () => {
+    const entries = buildResourceCatalogEntries({
+      module: goldenModule,
+      attributionPayload: {
+        attributionItems: [
+          { name: '沟通结构待澄清', description: '事实与期待混在一起', typicalTrigger: '缺少固定沟通时间' },
+          { name: '家校沟通冲突升级', typicalTrigger: '家长对处理结果不满' },
+          { code: 'HS_AT_NO_NAME' }
+        ]
+      }
+    })
+    expect(entries.map(entry => [entry.libraryType, entry.title, entry.summary])).toEqual([
+      ['attribution', '沟通结构待澄清', '事实与期待混在一起'],
+      ['attribution', '家校沟通冲突升级', '家长对处理结果不满']
+    ])
+  })
+
+  it('量表库取 title，摘要回退 shortName；每类数量不超过 perType', () => {
+    const entries = buildResourceCatalogEntries({
+      module: goldenModule,
+      assessmentPayload: goldenAssessmentPayload,
+      tools: goldenToolPayload.tools,
+      perType: 1
+    })
+    expect(entries.filter(entry => entry.libraryType === 'assessment')).toEqual([{
+      module: goldenModule,
+      libraryType: 'assessment',
+      title: '家校沟通黄金样例量表',
+      summary: '用于验证三库导入质量链路的稳定样例'
+    }])
+    expect(entries).toHaveLength(2)
+  })
+
+  it('工具条目缺少 name 时整条跳过，不让空标题占位', () => {
+    const entries = buildResourceCatalogEntries({
+      module: goldenModule,
+      tools: [{ code: 'X', symptoms: '只有症状没有名称' }, goldenToolPayload.tools[0]]
+    })
+    expect(entries.map(entry => entry.title)).toEqual(['三步降温沟通卡'])
   })
 })
 
