@@ -8,6 +8,7 @@ const AI_CENTER_CODES = [
   'assistant_chat',
   'assessment_report',
   'tool_step_polish',
+  'term_extraction',
   'semantic_safety',
   'instrument_recommendation',
   'chat_history_summary',
@@ -17,7 +18,7 @@ const AI_CENTER_CODES = [
 const fakeEvent = {} as H3Event
 
 describe('PROMPT_REGISTRY 提示词注册表', () => {
-  it('覆盖全部 7 个 AI 调用点且 code 唯一', () => {
+  it('覆盖全部 8 个 AI 调用点且 code 唯一', () => {
     const codes = PROMPT_REGISTRY.map(item => item.code)
     expect(codes).toEqual(AI_CENTER_CODES)
     expect(new Set(codes).size).toBe(codes.length)
@@ -32,7 +33,7 @@ describe('PROMPT_REGISTRY 提示词注册表', () => {
 })
 
 describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () => {
-  it('7 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
+  it('8 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
     expect(Object.keys(AI_PROMPT_BASELINES).sort()).toEqual([...AI_CENTER_CODES].sort())
     for (const code of AI_CENTER_CODES) {
       const text = getPromptBaseline(code)

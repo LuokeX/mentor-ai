@@ -5,7 +5,9 @@ import { assessmentReportSchema, type AssessmentReport } from '../../shared/repo
 import { assessmentDefinitions, moduleMeta, type AssessmentDefinition } from '../../shared/assessments'
 import { createTemplateAssessmentReport, validateAssessmentReport } from '../domain/reports'
 import { getAiRuntimeConfig, promptAvailable, renderPrompt } from '../domain/ai-config'
+import { buildTermGlossary } from '../domain/term-glossary'
 import { resolvePublishedModuleResource } from '../domain/module-resources'
+import type { SchoolSection } from '../../shared/school-section'
 import {
   callJsonChatWithRetry,
   compactValidationError,
@@ -132,6 +134,8 @@ export async function generateAssessmentReport(event: H3Event, input: {
   module: ModuleId
   result: RuleExecResult
   definition?: AssessmentDefinition
+  /** 教师任教年级折算的学段：术语片段按文档「适用学部」过滤（不传则不过滤） */
+  sections?: readonly SchoolSection[] | null
 }): Promise<AssessmentReport> {
   const definition = input.definition || assessmentDefinitions[input.module]
   const outputTemplateResource = await resolvePublishedModuleResource<{ templates?: OutputTemplateEntry[] }>(event, {
@@ -145,6 +149,25 @@ export async function generateAssessmentReport(event: H3Event, input: {
   const fallback = createTemplateAssessmentReport({ module: input.module, result: input.result, definition, outputTemplates })
   const config = useRuntimeConfig(event)
   if (!config.deepseekApiKey || input.result.blocked) return fallback
+  // 术语白话对照：报告正文里的专业词来源于归因名称与依据、行动建议、工具步骤，
+  // 以及输出模板渲染出的摘要/风险说明；先去知识库检索解释，再交给模型讲成白话。
+  // 失败即空片段（buildTermGlossary 内部已降级），不阻断报告生成。
+  const termTexts = [
+    ...(input.result.attributions || []).flatMap(attribution => [attribution.name, ...(attribution.reasons || [])]),
+    ...(input.result.reasons || []),
+    ...(input.result.actions || []).map(action => `${action.title}\n${action.detail}`),
+    ...(input.result.tools || []).map(tool => `${tool.title}\n${tool.content}`),
+    fallback.profile.summary,
+    fallback.risk.description
+  ].filter((text): text is string => typeof text === 'string' && Boolean(text.trim()))
+  const termChunks = termTexts.length
+    ? await buildTermGlossary(event, {
+      schoolId: input.schoolId,
+      module: input.module,
+      sections: input.sections,
+      texts: termTexts
+    })
+    : []
   const facts = {
     module: input.module,
     moduleTitle: moduleMeta[input.module].title,
@@ -162,7 +185,15 @@ export async function generateAssessmentReport(event: H3Event, input: {
     dimensions: input.result.dimensions,
     actions: input.result.actions,
     tools: input.result.tools,
-    matchedRuleIds: input.result.matchedRuleIds
+    matchedRuleIds: input.result.matchedRuleIds,
+    // 术语解释片段：只用于把上面这些文本里的专业词讲成白话，不得据此新增规则/等级/结论
+    termChunks: termChunks.map(chunk => ({
+      term: chunk.term,
+      documentTitle: chunk.documentTitle,
+      heading: chunk.heading,
+      content: chunk.content,
+      similarity: Number(chunk.similarity.toFixed(4))
+    }))
   }
   const format = (() => {
     const base = { ...fallback, printMeta: { ...fallback.printMeta, source: 'ai' as const } }

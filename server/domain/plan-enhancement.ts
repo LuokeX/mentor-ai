@@ -85,7 +85,9 @@ export async function enhancePlanReportInBackground(event: H3Event, input: PlanE
       ownerUserId,
       module,
       result,
-      definition
+      definition,
+      // 术语片段与行动改写同一口径：按教师任教年级折算的学段过滤
+      sections: input.sections
     })
 
     // 禁止失败回退模板：generateAssessmentReport 在重试耗尽后抛错（由下方 catch 收敛为

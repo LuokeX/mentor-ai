@@ -33,6 +33,8 @@ import { getAiRuntimeConfig, isPromptPublished, promptAvailable, renderPrompt } 
 import { embedModuleResourceQuery } from '../integrations/embeddings'
 import { callJsonChat, type JsonChatMessage } from '../integrations/json-chat'
 import { searchKnowledgeChunks, type KnowledgeSearchResult } from './module-resource-knowledge-search'
+import { filterKnowledgeChunks, findBannedTerms } from './knowledge-text-guard'
+import { buildTermGlossary } from './term-glossary'
 import { useDb } from '../utils/db'
 
 export type PolishTool = { title: string, content: string, code?: string }
@@ -94,6 +96,16 @@ const toolPolishOutputSchema = z.object({
     content: z.string()
   })).optional().default([])
 })
+
+/**
+ * 出口检查（纯函数）：改写正文或 AI 自拟标题命中红线词/内部编码时，返回一句
+ * 可直接计入 errors 的说明（触发带反馈重试）；未命中返回 null。
+ * 口径与知识片段过滤共用同一份规则（server/domain/knowledge-text-guard）。
+ */
+function bannedTermError(label: string, text: string): string | null {
+  const hits = findBannedTerms(text)
+  return hits.length ? `${label}出现不得外发的词：${hits.join('、')}` : null
+}
 
 export interface PolishAttemptResult {
   /** 本次尝试中通过校验的工具（title → 加工后 content） */
@@ -197,6 +209,20 @@ export function parsePolishOutput(
       errors.push(`工具「${title.slice(0, 40)}」重复输出`)
       continue
     }
+    // 出口检查：改写后的正文不得出现红线词/内部编码；模式 B 的 title 由 AI 自拟，同样检查
+    // （模式 A 的 title 来自三库输入，不在此列——否则工具库里带编码的工具名会让改写永远失败）
+    const contentBan = bannedTermError(`工具「${title.slice(0, 40)}」`, content)
+    if (contentBan) {
+      errors.push(contentBan)
+      continue
+    }
+    if (generating) {
+      const titleBan = bannedTermError('自拟工具名', title)
+      if (titleBan) {
+        errors.push(titleBan)
+        continue
+      }
+    }
     seen.add(title)
     matched.set(title, content)
   }
@@ -233,6 +259,11 @@ export function parsePolishOutput(
       }
       if (content.length > MAX_TOOL_POLISH_CONTENT) {
         errors.push(`action「${title.slice(0, 40)}」内容过长（${content.length} 字符，上限 ${MAX_TOOL_POLISH_CONTENT}）`)
+        continue
+      }
+      const actionBan = bannedTermError(`action「${title.slice(0, 40)}」`, content)
+      if (actionBan) {
+        errors.push(actionBan)
         continue
       }
       actionContents.push({ title, content })
@@ -437,6 +468,30 @@ export async function polishToolSteps<T extends PolishTool>(
       chunks = []
     }
   }
+  // 文本防线：内部规则文档、含红线词或内部编码的片段整段丢弃，不得进入 facts
+  const guarded = filterKnowledgeChunks(chunks)
+  if (guarded.dropped) {
+    console.warn(`[tool-step-polish] 知识片段过滤丢弃 ${guarded.dropped} 段（${guarded.reasons.join('、') || '未知'}）`)
+  }
+  chunks = guarded.kept
+
+  // 术语白话对照：用工具正文与建议正文抽词后逐词检索，作为 termChunks 供
+  // 模型解释「教师看不懂的专业词」；与上面按工具名的检索互补，失败即空片段
+  const termTexts = [
+    ...input.tools.map(tool => `${tool.title}\n${tool.content}`),
+    ...inputActions.map(action => `${action.title}\n${action.detail}`)
+  ]
+  const termChunks = termTexts.length
+    ? await buildTermGlossary(event, {
+      schoolId: input.schoolId,
+      module: input.module,
+      sections: input.sections,
+      texts: termTexts
+    })
+    : []
+  const existingChunkIds = new Set(chunks.map(chunk => chunk.chunkId))
+  const extraTermChunks = termChunks.filter(chunk => !existingChunkIds.has(chunk.chunkId))
+
   // tools、actions、知识片段全空：没有可改写也没有可生成的内容，直接返回（不调 AI）
   if (input.tools.length === 0 && inputActions.length === 0 && chunks.length === 0) {
     return {
@@ -450,6 +505,7 @@ export async function polishToolSteps<T extends PolishTool>(
   const model = rt.generatorModel || config.deepseekGeneratorModel
   // 只有检索到知识片段才让模型自拟新工具；既无匹配工具也无片段时退化为
   // 「只改写行动、tools 输出空数组」，避免模型凭空编造工具。
+  // 术语片段不参与模式 B 的生成判定：它的口径是「解释已出现的词」，不是「生成新工具」。
   const generateTools = input.tools.length === 0 && chunks.length > 0
   const facts = {
     module: input.module,
@@ -459,6 +515,13 @@ export async function polishToolSteps<T extends PolishTool>(
     tools: input.tools.map(tool => ({ title: tool.title, content: tool.content })),
     actions: inputActions.map(action => ({ title: action.title, content: action.detail })),
     knowledgeChunks: chunks.map(chunk => ({
+      documentTitle: chunk.documentTitle,
+      heading: chunk.heading,
+      content: chunk.content.slice(0, KNOWLEDGE_CHUNK_MAX_LENGTH),
+      similarity: Number(chunk.similarity.toFixed(4))
+    })),
+    termChunks: extraTermChunks.map(chunk => ({
+      term: chunk.term,
       documentTitle: chunk.documentTitle,
       heading: chunk.heading,
       content: chunk.content.slice(0, KNOWLEDGE_CHUNK_MAX_LENGTH),

@@ -64,3 +64,16 @@ export async function embedModuleResourceQuery(event: H3Event, query: string) {
   const embeddings = await requestProviderEmbeddings(resolveConfig(event), [instruction])
   return embeddings[0] || null
 }
+
+/**
+ * 批量检索向量化（术语逐词检索等场景）：与 embedModuleResourceQuery 同一口径
+ *（每个 query 加同一 Instruct 前缀），一次请求批量向量化。
+ * 未启用 embedding 返回 null；空数组返回 []；单批失败的元素为 null，由调用方跳过。
+ */
+export async function embedModuleResourceQueries(event: H3Event, queries: string[]) {
+  const config = useRuntimeConfig(event)
+  if (!config.embeddingEnabled) return null
+  if (!queries.length) return []
+  const instructions = queries.map(query => `Instruct: 检索与教师赋能业务模块资源最相关的片段\nQuery: ${query}`)
+  return requestProviderEmbeddings(resolveConfig(event), instructions)
+}

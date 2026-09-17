@@ -563,3 +563,70 @@ describe('mergeActionResults', () => {
     expect(merged).toEqual(inputActions)
   })
 })
+describe('parsePolishOutput 出口检查（红线词 / 内部编码不得外发）', () => {
+  it('工具正文命中禁用词时报错且不进入 matched', () => {
+    const output = JSON.stringify({
+      tools: [
+        { title: '结构化沟通三步法', content: '按 SOP 执行，先分开冷静。' },
+        { title: '家庭作业约定术', content: '先和孩子约好每周固定时间做作业。' },
+      ],
+    })
+    const result = parsePolishOutput(output, inputTools)
+    expect(result.errors.some(error => error.includes('出现不得外发的词'))).toBe(true)
+    expect(result.matched.has('结构化沟通三步法')).toBe(false)
+    expect(result.matched.get('家庭作业约定术')).toContain('每周固定时间')
+  })
+
+  it('红线词的空格/拆写变体同样被拦截', () => {
+    const output = JSON.stringify({
+      tools: [
+        { title: '结构化沟通三步法', content: '如出现 危 机 情形，按学校流程处理。' },
+        { title: '家庭作业约定术', content: '先和孩子约好每周固定时间做作业。' },
+      ],
+    })
+    const result = parsePolishOutput(output, inputTools)
+    expect(result.errors.some(error => error.includes('危机'))).toBe(true)
+    expect(result.matched.has('结构化沟通三步法')).toBe(false)
+  })
+
+  it('模式 A 的 title 来自三库输入：标题本身含内部编码时不报错（只查正文）', () => {
+    const toolWithCode = [{ title: '心理风险A-E响应SOP', content: '1. 观察: 记录变化' }]
+    const output = JSON.stringify({
+      tools: [{ title: '心理风险A-E响应SOP', content: '先观察并记录学生的状态变化，一周后回看。' }],
+    })
+    const result = parsePolishOutput(output, toolWithCode)
+    expect(result.errors).toEqual([])
+    expect(result.matched.get('心理风险A-E响应SOP')).toContain('一周后回看')
+  })
+
+  it('模式 B 的 AI 自拟标题命中禁用词时报错', () => {
+    const output = JSON.stringify({ tools: [{ title: '六力沟通法', content: '先顺着对方情绪回应，再谈具体事。' }] })
+    const result = parsePolishOutput(output, [])
+    expect(result.errors.some(error => error.includes('自拟工具名'))).toBe(true)
+    expect(result.matched.size).toBe(0)
+  })
+
+  it('actions 正文命中禁用词时报错且不进入 matched', () => {
+    const actions = [
+      { title: '针对「意义感流失」', detail: '每周做一次周复盘。' },
+      { title: '针对「职业倦怠」', detail: '与同事聊聊。' },
+    ]
+    const output = JSON.stringify({
+      tools: inputTools.map(tool => ({ title: tool.title, content: '正常内容' })),
+      actions: [
+        { title: '针对「意义感流失」', content: '每周做一次周复盘，触发 红线 时按流程上报。' },
+        { title: '针对「职业倦怠」', content: '找信任的同事聊一次，写下感受。' },
+      ],
+    })
+    const result = parsePolishOutput(output, inputTools, actions)
+    expect(result.errors.some(error => error.includes('红线'))).toBe(true)
+    expect(result.actionsMatched?.has('针对「意义感流失」')).toBe(false)
+    expect(result.actionsMatched?.get('针对「职业倦怠」')).toContain('写下感受')
+  })
+
+  it('正常正文不触发出口检查', () => {
+    const result = parsePolishOutput(okOutput(), inputTools)
+    expect(result.errors).toEqual([])
+    expect(result.matched.size).toBe(2)
+  })
+})

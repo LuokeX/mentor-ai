@@ -2,6 +2,7 @@ import { assessmentDefinitions, moduleMeta, type AssessmentDefinition } from '..
 import type { ModuleId, AttributionOutcome, OutputTemplateEntry, RedLineConfig, Severity } from '../../shared/contracts'
 import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
 import type { RuleOutput } from './rules'
+import { findBannedTerms } from './knowledge-text-guard'
 
 /**
  * 报告可以由新引擎的多归因结果生成，也可以由硬编码 fallback 的单归因结果生成，
@@ -122,6 +123,33 @@ function fitReportText(value: string, max: number) {
   return text.length > max ? text.slice(0, max) : text
 }
 
+/**
+ * 输出模板渲染 + 出口检查：模板文案命中红线词/内部编码时退回模块内置文案。
+ *
+ * 输出模板库由业务直接维护，且摘要/风险说明在提交事务内就写进方案，
+ * 走不到 AI 的出口检查；这里做确定性兜底，保证教师正文不出现这些词。
+ */
+function renderOutputTemplateChecked(input: {
+  template: OutputTemplateEntry | undefined
+  result: ReportResult
+  weak: string
+  strong: string
+  fallback: string
+  max: number
+  field: string
+}): string {
+  if (!input.template) return input.fallback
+  const rendered = fitReportText(
+    renderOutputTemplate(input.template.content, input.result, input.weak, input.strong),
+    input.max
+  )
+  if (!rendered) return input.fallback
+  const hits = findBannedTerms(rendered)
+  if (!hits.length) return rendered
+  console.warn(`[reports] 输出模板渲染的${input.field}命中禁用词（${hits.join('、')}），已退回内置文案`)
+  return input.fallback
+}
+
 // 占位符注入口径与 shared/contracts.ts 的 OUTPUT_TEMPLATE_PLACEHOLDERS 一一对应。
 // 未知占位符在这里仍静默置空——拦截责任在导入校验（module-resource-validation），
 // 运行期对存量旧数据保持容忍。
@@ -166,9 +194,15 @@ export function createTemplateAssessmentReport(input: {
   // 有归因结果时，「当前重点」用主归因而不是最弱维度——维度是测量口径，归因才是业务结论
   if (attributions[0]) profile.primaryConcern = attributions[0].name
   const templateSummary = selectOutputTemplate(input.outputTemplates, result.level, 'summary')
-  if (templateSummary) {
-    profile.summary = fitReportText(renderOutputTemplate(templateSummary.content, result, weak, strong), 700)
-  }
+  profile.summary = renderOutputTemplateChecked({
+    template: templateSummary,
+    result,
+    weak,
+    strong,
+    fallback: profile.summary,
+    max: 700,
+    field: '方案摘要'
+  })
   const conclusionTemplate = selectOutputTemplate(input.outputTemplates, result.level, 'conclusion')
   const report: AssessmentReport = {
     profile,
@@ -181,12 +215,15 @@ export function createTemplateAssessmentReport(input: {
       level: result.level,
       label: riskLabel(input.module, result.level, result.levelName),
       severity: result.severity,
-      description: fitReportText(
-        conclusionTemplate
-          ? renderOutputTemplate(conclusionTemplate.content, result, weak, strong)
-          : moduleRiskDescription(input.module, result),
-        500
-      ),
+      description: renderOutputTemplateChecked({
+        template: conclusionTemplate,
+        result,
+        weak,
+        strong,
+        fallback: moduleRiskDescription(input.module, result),
+        max: 500,
+        field: '风险说明'
+      }),
       nonDiagnosticNote
     },
     printMeta: {
@@ -299,5 +336,20 @@ export function validateAssessmentReport(input: unknown, module: ModuleId, resul
     throw new Error('AI report used unknown attribution')
   }
   if (/(确诊|治疗|治愈|一定|保证|医学诊断)/i.test(JSON.stringify(parsed))) throw new Error('AI report contains forbidden wording')
+  // 出口检查：模型撰写的说明性文字不得出现红线词（危机/预警/立即/110/120）与内部编码
+  //（六力/A-E/SOP 等）。先扣掉确定性字段里本来就有的词——三库的等级中文名可能含「危机干预」，
+  // 内置风险说明会原样引用它，这类命中属于内容侧问题，不能让它把报告永久判失败。
+  const deterministicText = [result.level, result.levelName, moduleRiskDescription(module, result)]
+    .filter((text): text is string => typeof text === 'string' && Boolean(text))
+    .join('\n')
+  const deterministicTerms = new Set(findBannedTerms(deterministicText))
+  const aiAuthoredText = [
+    parsed.profile.title,
+    parsed.profile.summary,
+    parsed.profile.primaryConcern,
+    parsed.risk.description
+  ].join('\n')
+  const bannedTerms = findBannedTerms(aiAuthoredText).filter(term => !deterministicTerms.has(term))
+  if (bannedTerms.length) throw new Error(`AI report contains banned terms: ${bannedTerms.join('、')}`)
   return parsed
 }

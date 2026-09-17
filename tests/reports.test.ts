@@ -189,3 +189,61 @@ describe('报告失败的审计格式', () => {
     expect(compactValidationError('boom')).toBe('unknown')
   })
 })
+/**
+ * 术语检索与出口检查（2026-09）：输出模板库由业务直接维护，渲染出的摘要/风险说明
+ * 在提交事务内就写进方案，走不到 AI 的出口检查，因此这里做确定性兜底；
+ * AI 撰写的说明性文字命中红线词/内部编码时仍按生成失败处理（重试后收敛为 failed）。
+ */
+describe('报告文本的红线词与内部编码防线', () => {
+  it('输出模板渲染的摘要命中红线词时退回模块内置摘要', () => {
+    const result = evaluateAssessment('class_system', answers('class_system', 3))
+    const builtIn = createTemplateAssessmentReport({ module: 'class_system', result })
+    const templates = [
+      { code: 'T-SUM', module: 'class_system' as const, attributionLevel: result.level, type: 'summary' as const, content: '当前进入${等级中文名}，请关注班级的危机信号。', order: 1 }
+    ]
+    const report = createTemplateAssessmentReport({ module: 'class_system', result, outputTemplates: templates })
+    expect(report.profile.summary).toBe(builtIn.profile.summary)
+    expect(report.profile.summary).not.toContain('危机')
+  })
+
+  it('输出模板渲染的风险说明命中内部编码时退回内置文案', () => {
+    const result = evaluateAssessment('class_system', answers('class_system', 3))
+    const builtIn = createTemplateAssessmentReport({ module: 'class_system', result })
+    const templates = [
+      { code: 'T-CON', module: 'class_system' as const, attributionLevel: result.level, type: 'conclusion' as const, content: '按 SOP 重建班级秩序。', order: 1 }
+    ]
+    const report = createTemplateAssessmentReport({ module: 'class_system', result, outputTemplates: templates })
+    expect(report.risk.description).toBe(builtIn.risk.description)
+    expect(report.risk.description).not.toContain('SOP')
+  })
+
+  it('干净的输出模板仍照常渲染（兜底不误伤）', () => {
+    const result = evaluateAssessment('class_system', answers('class_system', 3))
+    const templates = [
+      { code: 'T-OK', module: 'class_system' as const, attributionLevel: result.level, type: 'summary' as const, content: '当前处于${等级中文名}，最需要先做的是${最薄弱维度}。', order: 1 }
+    ]
+    const report = createTemplateAssessmentReport({ module: 'class_system', result, outputTemplates: templates })
+    expect(report.profile.summary).toContain('最需要先做的是')
+  })
+
+  it('AI 撰写的摘要/风险说明命中红线词或内部编码时判定生成失败', () => {
+    const result = evaluateAssessment('class_system', answers('class_system', 3))
+    const report = createTemplateAssessmentReport({ module: 'class_system', result })
+    expect(() => validateAssessmentReport({
+      ...report,
+      profile: { ...report.profile, summary: '本周请重点关注班级的预警信号。' }
+    }, 'class_system', result)).toThrow('banned terms')
+    expect(() => validateAssessmentReport({
+      ...report,
+      risk: { ...report.risk, description: '建议按 Six-SOP 流程推进。' }
+    }, 'class_system', result)).toThrow('banned terms')
+  })
+
+  it('不误伤确定性字段：等级中文名来自三库（例如含「危机干预」）时不判失败', () => {
+    const base = evaluateAssessment('class_system', answers('class_system', 3))
+    const result = { ...base, levelName: '5级·极重（危机干预）' }
+    const report = createTemplateAssessmentReport({ module: 'class_system', result })
+    expect(report.risk.label).toContain('危机干预')
+    expect(() => validateAssessmentReport(report, 'class_system', result)).not.toThrow()
+  })
+})
