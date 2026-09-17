@@ -11,6 +11,8 @@
 import type { AgentMessage } from '../agent/types'
 
 export interface HistoryMessage {
+  id?: string
+  createdAt?: string
   role: 'user' | 'assistant'
   content: string
 }
@@ -96,10 +98,10 @@ export function isAppendOnlyPrefix(previous: HistoryMessage[], next: HistoryMess
 }
 
 /** 把数据库回放的 AgentMessage 转成历史视图（过滤非法角色）。 */
-export function toHistoryMessages(messages: Array<{ role: string, content: string }>): HistoryMessage[] {
+export function toHistoryMessages(messages: Array<{ role: string, content: string, id?: string, createdAt?: Date | string }>): HistoryMessage[] {
   return messages.flatMap(message => (
     message.role === 'user' || message.role === 'assistant'
-      ? [{ role: message.role as 'user' | 'assistant', content: message.content }]
+      ? [{ role: message.role as 'user' | 'assistant', content: message.content, ...(message.id ? { id: message.id } : {}), ...(message.createdAt ? { createdAt: message.createdAt instanceof Date ? message.createdAt.toISOString() : message.createdAt } : {}) }]
       : []
   ))
 }

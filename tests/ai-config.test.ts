@@ -4,6 +4,7 @@ import { AI_PROMPT_BASELINES, getPromptBaseline } from '../server/domain/ai-prom
 import { PROMPT_REGISTRY, getAiRuntimeConfig, getPromptTemplate, isPromptPublished, listPromptRegistry, promptAvailable, renderPrompt, renderTemplate } from '../server/domain/ai-config'
 
 const AI_CENTER_CODES = [
+  'assistant_evidence_review',
   'assistant_chat',
   'assessment_report',
   'tool_step_polish',
@@ -16,7 +17,7 @@ const AI_CENTER_CODES = [
 const fakeEvent = {} as H3Event
 
 describe('PROMPT_REGISTRY 提示词注册表', () => {
-  it('覆盖全部 6 个 AI 调用点且 code 唯一', () => {
+  it('覆盖全部 7 个 AI 调用点且 code 唯一', () => {
     const codes = PROMPT_REGISTRY.map(item => item.code)
     expect(codes).toEqual(AI_CENTER_CODES)
     expect(new Set(codes).size).toBe(codes.length)
@@ -31,7 +32,7 @@ describe('PROMPT_REGISTRY 提示词注册表', () => {
 })
 
 describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () => {
-  it('6 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
+  it('7 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
     expect(Object.keys(AI_PROMPT_BASELINES).sort()).toEqual([...AI_CENTER_CODES].sort())
     for (const code of AI_CENTER_CODES) {
       const text = getPromptBaseline(code)
@@ -43,8 +44,8 @@ describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () =
   it('assistant_chat 纳入角色定位与双向共情，且不出现临床心理学身份表述', () => {
     const text = getPromptBaseline('assistant_chat')!
     expect(text).toContain('【角色定位】')
-    expect(text).toContain('双向共情')
-    expect(text).toContain('共情班主任')
+    expect(text).toContain('家校沟通')
+    expect(text).toContain('不强制每轮共情')
     expect(text).not.toContain('临床')
     expect(text).not.toContain('心理顾问')
   })
@@ -67,7 +68,7 @@ describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () =
     expect(listed).toHaveLength(AI_CENTER_CODES.length)
     for (const item of listed) {
       expect(item.template).toBe(getPromptBaseline(item.code))
-      expect(item.placeholders.length).toBeGreaterThan(0)
+      if (item.code !== 'assistant_evidence_review') expect(item.placeholders.length).toBeGreaterThan(0)
     }
   })
 

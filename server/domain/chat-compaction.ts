@@ -10,8 +10,9 @@
  *
  * 与安全边界的关系：压缩输入按学校数据模式脱敏，摘要正文加密落库，原始消息保留不删。
  */
+import { validateMemory } from './chat-memory'
 import type { H3Event } from 'h3'
-import { and, asc, eq, gt, isNull, lt } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, isNull, lt } from 'drizzle-orm'
 import { decryptSensitive, encryptSensitive } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
 import { renderPrompt } from './ai-config'
@@ -21,7 +22,7 @@ import { redactOutboundText, type AiDataMode } from './ai-governance'
 /** 摘要提示词占位符上限：避免超长输入把摘要调用拖慢或超时。 */
 const SUMMARY_INPUT_TOKEN_CAP = 30000
 /** 摘要输出上限与超时。 */
-const SUMMARY_MAX_TOKENS = 800
+const SUMMARY_MAX_TOKENS = 3000
 const SUMMARY_SOURCE_LIMIT = 300
 
 export interface CompactionPlan {
@@ -76,7 +77,7 @@ export function planCompaction(
 /** 把待压缩消息渲染成提示词用的文本（含角色标记，逐字节确定）。 */
 export function formatCompactionTranscript(messages: HistoryMessage[]): string {
   return messages
-    .map(message => `${message.role === 'user' ? '教师' : '助手'}：${message.content}`)
+    .map(message => `${message.id ? `[${message.id} ${message.createdAt ?? ''}]` : ''}${message.role === 'user' ? '教师' : '助手'}：${message.content}`)
     .join('\n')
 }
 
@@ -84,6 +85,7 @@ export interface SummarizeHistoryResult {
   summary: string
   promptTokens?: number
   completionTokens?: number
+  lastSourceId?: string
 }
 
 /**
@@ -101,26 +103,26 @@ export async function summarizeHistory(
     sessionId: string
   }
 ): Promise<SummarizeHistoryResult | null> {
-  if (!input.messages.length) return null
+  if (!input.messages.length || input.dataMode === 'local') return null
   const config = useRuntimeConfig(event)
   if (!config.deepseekApiKey) return null
   const model = String(config.deepseekRouterModel || 'deepseek-flash')
   const startedAt = Date.now()
 
-  // 输入限长：从最近的消息往前取，避免摘要调用本身超时
+  // 按最早未摘要的前缀取一批，游标只推进到实际送入模型的最后一条。
   const outbound = (text: string) => redactOutboundText(text, input.dataMode)
   const picked: HistoryMessage[] = []
   let usedTokens = 0
-  for (let index = input.messages.length - 1; index >= 0; index -= 1) {
-    const message = input.messages[index]!
+  for (const message of input.messages) {
     const cost = estimateTokens(message.content) + MESSAGE_OVERHEAD_TOKENS
-    if (usedTokens + cost > SUMMARY_INPUT_TOKEN_CAP && picked.length) break
-    picked.unshift({ role: message.role, content: outbound(message.content) })
+    if (usedTokens + cost > SUMMARY_INPUT_TOKEN_CAP) break
+    picked.push({ ...message, content: outbound(message.content) })
     usedTokens += cost
   }
 
+  if (!picked.length) return null
   const prompt = await renderPrompt(event, 'chat_history_summary', {
-    previousSummary: input.previousSummary?.trim() || '（无）',
+    previousSummary: input.previousSummary ? outbound(input.previousSummary) : '（无）',
     newMessages: formatCompactionTranscript(picked)
   })
   const messages: Array<{ role: 'system' | 'user', content: string }> = []
@@ -154,6 +156,7 @@ export async function summarizeHistory(
         // 摘要不需要思考链：显式关闭以降低延迟与成本（OpenAI 兼容格式下放在请求体）
         thinking: { type: 'disabled' },
         temperature: 0.2,
+        response_format: { type: 'json_object' },
         max_tokens: SUMMARY_MAX_TOKENS
       }),
       signal: AbortSignal.timeout(Math.max(Number(config.deepseekTimeoutMs) || 0, 30000))
@@ -165,11 +168,13 @@ export async function summarizeHistory(
     }
     const summary = json.choices?.[0]?.message?.content?.trim()
     if (!summary) throw new Error('Empty summary output')
+    const validated = validateMemory(summary, picked, input.previousSummary)
+    if (!validated) throw new Error('Invalid summary provenance')
     await record('success', {
       promptTokens: json.usage?.prompt_tokens,
       completionTokens: json.usage?.completion_tokens
     })
-    return { summary, promptTokens: json.usage?.prompt_tokens, completionTokens: json.usage?.completion_tokens }
+    return { lastSourceId: picked.at(-1)?.id, summary: validated, promptTokens: json.usage?.prompt_tokens, completionTokens: json.usage?.completion_tokens }
   } catch (error) {
     await record('failed', { errorCode: error instanceof Error ? error.message.slice(0, 80) : 'unknown' })
     console.warn('[chat-compaction] 摘要生成失败，保留旧摘要:', error instanceof Error ? error.message : error)
@@ -198,6 +203,7 @@ export async function compactSessionHistory(
     summaryUptoAt: Date | null
     /** 保留边界（不含）：该时间之后的消息继续以原文回放。 */
     uptoBeforeAt: Date
+    fromAt?: Date
     previousSummary: string | null
   }
 ): Promise<CompactSessionResult | null> {
@@ -206,12 +212,15 @@ export async function compactSessionHistory(
   const conditions = [
     eq(schema.chatMessages.sessionId, input.sessionId),
     eq(schema.chatMessages.ownerUserId, input.ownerUserId),
+    ...(input.schoolId ? [eq(schema.chatMessages.schoolId, input.schoolId)] : []),
     isNull(schema.chatMessages.deletedAt),
     lt(schema.chatMessages.createdAt, input.uptoBeforeAt)
   ]
+  if (input.fromAt) conditions.push(gte(schema.chatMessages.createdAt, input.fromAt))
   if (input.summaryUptoAt) conditions.push(gt(schema.chatMessages.createdAt, input.summaryUptoAt))
 
   const rows = await db.select({
+    id: schema.chatMessages.id,
     role: schema.chatMessages.role,
     contentEnc: schema.chatMessages.contentEnc,
     createdAt: schema.chatMessages.createdAt
@@ -222,7 +231,7 @@ export async function compactSessionHistory(
 
   const messages = rows.flatMap(row => (
     row.role === 'user' || row.role === 'assistant'
-      ? [{ role: row.role as 'user' | 'assistant', content: decryptSensitive(row.contentEnc, secret) }]
+      ? [{ id: row.id, createdAt: row.createdAt.toISOString(), role: row.role as 'user' | 'assistant', content: decryptSensitive(row.contentEnc, secret) }]
       : []
   ))
   if (!messages.length) return null
@@ -237,7 +246,9 @@ export async function compactSessionHistory(
   })
   if (!result) return null
 
-  const uptoAt = rows[rows.length - 1]!.createdAt
+  const lastSource = rows.find(row => row.id === result.lastSourceId)
+  if (!lastSource) return null
+  const uptoAt = lastSource.createdAt
   const summaryTokens = estimateTokens(result.summary)
   try {
     await db.update(schema.chatSessions).set({
@@ -245,7 +256,7 @@ export async function compactSessionHistory(
       contextSummaryUptoAt: uptoAt,
       contextSummaryUpdatedAt: new Date(),
       contextSummaryTokens: summaryTokens
-    }).where(eq(schema.chatSessions.id, input.sessionId))
+    }).where(and(eq(schema.chatSessions.id, input.sessionId), eq(schema.chatSessions.ownerUserId, input.ownerUserId), ...(input.schoolId ? [eq(schema.chatSessions.schoolId, input.schoolId)] : [])))
   } catch (error) {
     console.warn('[chat-compaction] 摘要落库失败，本轮不启用新摘要:', error instanceof Error ? error.message : error)
     return null

@@ -52,12 +52,12 @@ describe('Agent 行为要点（formatInstruction）', () => {
     expect(text).toContain('约 N 分钟')
   })
 
-  it('共情开场：三层共情、禁止套话、共情不等于附和，且仍在回答先行之前', () => {
+  it('按情境回应：事实查询直接回答，情绪出现时共情且不附和', () => {
     const text = buildFormatInstruction({})
     expect(text).toContain('共情开场')
-    expect(text).toContain('认知共情')
-    expect(text).toContain('情感共情')
-    expect(text).toContain('行为共情')
+    expect(text).toContain('事实查询直接回答')
+    expect(text).toContain('不强制共情开场')
+    expect(text).toContain('教师表达情绪时')
     // 空泛套话必须明确禁止
     expect(text).toContain('我理解你的感受')
     expect(text).toContain('这确实不容易')

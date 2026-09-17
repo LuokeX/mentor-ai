@@ -19,7 +19,7 @@ import { getAiRuntimeConfig } from '../domain/ai-config'
  */
 export async function createAgentLlm(
   event: H3Event,
-  opts: { temperature?: number; maxTokens?: number } = {}
+  opts: { temperature?: number; maxTokens?: number; thinking?: 'disabled' } = {}
 ): Promise<ChatOpenAI> {
   const config = useRuntimeConfig(event)
   const rt = await getAiRuntimeConfig(event)
@@ -37,6 +37,7 @@ export async function createAgentLlm(
     // 即沿用服务端默认行为（思考开启）。若要降本，应先评估回答质量再显式关闭或降低 effort。
     temperature: opts.temperature ?? 0.35,
     maxTokens,
+    ...(opts.thinking ? { modelKwargs: { thinking: { type: opts.thinking } } } : {}),
     streaming: true,
     timeout: timeoutMs,
     // 传输层自动重试（网络抖动、429、5xx）：Agent 无法自愈的临时故障在 SDK 内重试

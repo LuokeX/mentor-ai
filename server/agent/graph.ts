@@ -1,3 +1,4 @@
+import { assistantNavigationSchema } from '../../shared/assistant'
 /**
  * LangGraph「回答先行 Agent」基座（P0）。
  *
@@ -16,9 +17,12 @@
  *  module_proportions → { moduleProportions }（最终模块评估占比，驱动前端「模块评估占比」面板）
  */
 import type { H3Event } from 'h3'
+import { serializeToolOutput, toolOutcome } from './tool-output'
+import { collectToolEvidence, type AnswerEvidence } from './evidence'
+import { repairToolTrace, traceToLangChainMessages } from './tool-trace'
 import { createReactAgent } from '@langchain/langgraph/prebuilt'
 import { DynamicStructuredTool } from '@langchain/core/tools'
-import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages'
+import { AIMessage, HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
 import type { ActionCard, AgentMessage, AgentState, AgentTool, AgentToolContext, AgentToolTraceStep, AgentUserContext } from './types'
 import { AGENT_SSE_EVENTS } from './types'
 import { sanitizeHistoryForSummary } from '../domain/chat-clarification'
@@ -36,7 +40,7 @@ const DEFAULT_TOOL_TIMEOUT_MS = 10_000
 const MAX_HISTORY_MESSAGES = 400
 
 /** 单次工具返回的字符上限（防止工具结果把 in-turn 前缀撑大，进而抬高成本与延迟）。 */
-const TOOL_RESULT_CHAR_CAP = 8000
+const TOOL_RESULT_CHAR_CAP = 16000
 
 /** 无产出时的自动重试次数：总尝试次数 = 1 + AGENT_RETRY_TIMES。 */
 const AGENT_RETRY_TIMES = 1
@@ -44,6 +48,9 @@ const AGENT_RETRY_TIMES = 1
 export interface RunAgentGraphInput {
   /** 对话消息（含本轮用户输入），入口组装。 */
   messages: AgentMessage[]
+  signal?: AbortSignal
+  /** 仅内部合成评测注入；REST 不接受该参数。 */
+  toolsForEvaluation?: AgentTool[]
   /** 教师上下文（业务对象/记忆/画像），guard 装载后传入。 */
   userCtx: AgentUserContext
   /** system prompt（AGENT-C 提供 renderPrompt 结果），本图只追加行为附加说明。 */
@@ -54,10 +61,11 @@ export interface RunAgentGraphInput {
 
 export interface RunAgentGraphResult {
   answer: string
+  evidence?: AnswerEvidence[]
   actionCards: ActionCard[]
   exitReason: AgentState['exitReason']
   /** 本轮工具调用过程（供入口持久化到消息 metadata，切换会话后仍可展示） */
-  toolCalls?: Array<{ name: string; title: string; args: string; status?: 'success' | 'error' | 'timeout'; latencyMs?: number }>
+  toolCalls?: Array<{ name: string; title: string; args: string; status?: 'success' | 'empty' | 'error' | 'timeout'; latencyMs?: number }>
   /**
    * 工具之间的判定冲突（如模块分诊结论与量表推荐模块不一致）。
    * 图内不做落库，由入口写产品事件留痕。
@@ -147,6 +155,7 @@ async function withToolTimeout<T>(promise: Promise<T>, timeoutMs: number, toolNa
  * 命中缓存可省掉一次数据库查询与一次工具往返的 token 开销（缓存按轮次重置，不跨轮）。
  */
 function toLangChainTool(def: AgentTool, ctx: AgentToolContext, cache: Map<string, string>): DynamicStructuredTool {
+  let emptySearches = 0
   const input = {
     name: def.name,
     description: def.description,
@@ -155,21 +164,20 @@ function toLangChainTool(def: AgentTool, ctx: AgentToolContext, cache: Map<strin
       const cacheKey = `${def.name}:${stringify(args)}`
       const cached = cache.get(cacheKey)
       if (cached !== undefined) return cached
+      if (def.name === 'knowledge_search' && emptySearches >= 2) return JSON.stringify({ status: 'empty', items: [], message: '本轮已检索并改写查询一次，仍未获得依据。请区分通用建议与正式资源，不再重复查询。' })
+      ctx.user.signal?.throwIfAborted()
       const timeoutMs = def.timeoutMs && def.timeoutMs > 0 ? def.timeoutMs : DEFAULT_TOOL_TIMEOUT_MS
       try {
         const result = await withToolTimeout(Promise.resolve(def.execute(args, ctx)), timeoutMs, def.name)
-        const serialized = typeof result === 'string' ? result : JSON.stringify(result)
-        // 工具返回限长：超长结果只保留前缀，避免单次工具结果把上下文撑大
-        const capped = serialized.length > TOOL_RESULT_CHAR_CAP
-          ? `${serialized.slice(0, TOOL_RESULT_CHAR_CAP)}…（结果过长已截断）`
-          : serialized
+        if (def.name === 'knowledge_search' && toolOutcome(result) === 'empty') emptySearches += 1
+        const capped = serializeToolOutput(result, TOOL_RESULT_CHAR_CAP)
         cache.set(cacheKey, capped)
         return capped
       } catch (error) {
         if (error instanceof ToolTimeoutError) {
           console.error(`[agent/graph] 工具 ${def.name} 执行超时（>${timeoutMs}ms），按失败回传模型自愈`)
           const payload = JSON.stringify({
-            error: '工具执行超时',
+            status: 'timeout', error: '工具执行超时',
             message: `该工具在 ${Math.round(timeoutMs / 1000)} 秒内没有返回结果，请缩小查询范围，或基于已有信息直接回答。`
           })
           cache.set(cacheKey, payload)
@@ -177,7 +185,7 @@ function toLangChainTool(def: AgentTool, ctx: AgentToolContext, cache: Map<strin
         }
         // 工具执行失败回传模型自愈（文本描述错误），不中断整个 agent 运行
         console.error(`[agent/graph] 工具 ${def.name} 执行失败:`, error instanceof Error ? error.message : error)
-        return JSON.stringify({ error: '工具执行失败', message: error instanceof Error ? error.message.slice(0, 200) : 'unknown' })
+        return JSON.stringify({ status: 'error', error: '工具执行失败', message: '查询暂时不可用，请缩小范围或说明信息缺口。' })
       }
     }
   }
@@ -295,6 +303,7 @@ function extractStreamedText(chunk: { data: Record<string, unknown> }): string {
 function isActionCard(value: unknown): value is ActionCard {
   if (!value || typeof value !== 'object') return false
   const card = value as Record<string, unknown>
+  if (card.kind === 'navigate') return assistantNavigationSchema.safeParse(card).success
   if (card.kind === 'info') {
     return typeof card.title === 'string' && typeof card.content === 'string'
   }
@@ -358,54 +367,27 @@ function renderToolMessageContent(content: unknown): string | null {
 }
 
 /** 从模型输出中提取工具调用（工具轨迹用，字段逐个校验）。 */
-function extractToolCalls(message: unknown): Array<{ id: string, name: string, args: string }> | null {
+/**
+ * 提取模型发起的工具调用。`reliable` 表示每个调用都带真实 id：
+ * 只有可靠时才记录工具轨迹与待配对集合，否则回放会产生服务端拒绝的非法序列。
+ */
+function extractToolCalls(message: unknown): { calls: Array<{ id: string, name: string, args: string }>, reliable: boolean } | null {
   if (!message || typeof message !== 'object') return null
   const raw = (message as { tool_calls?: unknown }).tool_calls
   if (!Array.isArray(raw) || !raw.length) return null
   const calls: Array<{ id: string, name: string, args: string }> = []
+  let reliable = true
   for (const item of raw) {
-    if (!item || typeof item !== 'object') continue
+    if (!item || typeof item !== 'object') { reliable = false; continue }
     const call = item as { id?: unknown, name?: unknown, args?: unknown }
     const name = typeof call.name === 'string' ? call.name : ''
-    if (!name) continue
-    const id = typeof call.id === 'string' && call.id ? call.id : `call_${calls.length}`
+    if (!name) { reliable = false; continue }
+    const hasId = typeof call.id === 'string' && call.id.length > 0
+    if (!hasId) reliable = false
     const args = typeof call.args === 'string' ? call.args : JSON.stringify(call.args ?? {})
-    calls.push({ id, name, args })
+    calls.push({ id: hasId ? call.id as string : `call_${calls.length}`, name, args })
   }
-  return calls.length ? calls : null
-}
-
-/** JSON 参数串 → 对象（回放时还原 tool_call 参数；解析失败按空对象处理）。 */
-function safeParseArgs(args: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(args)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
-  } catch {
-    return {}
-  }
-}
-
-/** 工具轨迹步骤 → LangChain 消息（P3 回放，顺序与模型当时所见一致）。 */
-function traceToLangChainMessages(steps: AgentToolTraceStep[]): BaseMessage[] {
-  const messages: BaseMessage[] = []
-  for (const step of steps) {
-    if (step.type === 'assistant') {
-      messages.push(new AIMessage({
-        content: step.content,
-        tool_calls: (step.toolCalls ?? []).map(call => ({
-          name: call.name,
-          id: call.id,
-          type: 'tool_call' as const,
-          args: safeParseArgs(call.args)
-        }))
-      }))
-      continue
-    }
-    if (step.toolCallId) {
-      messages.push(new ToolMessage({ content: step.content, tool_call_id: step.toolCallId }))
-    }
-  }
-  return messages
+  return calls.length ? { calls, reliable } : null
 }
 
 /** 五个业务模块 ID（模块占比兜底/归一化用）。 */
@@ -447,12 +429,12 @@ function extractRoutedModule(output: unknown): { module: ModuleId; confidence?: 
 }
 
 /** 运行期工具调用记录（供入口写 assistant_tool_called 事件与消息 metadata）。 */
-function detectToolOutcome(output: unknown): 'success' | 'error' | 'timeout' {
+function detectToolOutcome(output: unknown): 'success' | 'empty' | 'error' | 'timeout' {
   const text = renderToolMessageContent((output as { content?: unknown } | null)?.content ?? output)
   if (!text) return 'success'
   if (text.includes('工具执行超时')) return 'timeout'
   if (text.includes('工具执行失败')) return 'error'
-  return 'success'
+  try { return toolOutcome(JSON.parse(text)) } catch { return 'success' }
 }
 
 /**
@@ -478,6 +460,7 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
   const config = useRuntimeConfig(event)
   const totalTimeoutMs = Number(config.deepseekTimeoutMs) || 60_000
   const deadline = Date.now() + totalTimeoutMs
+  const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(totalTimeoutMs)]) : AbortSignal.timeout(totalTimeoutMs)
   /** 轮次上限与工具启用清单：来自 AI_AGENT_MAX_TOOL_ROUNDS / AI_AGENT_ENABLED_TOOLS（AI 中心只读展示）。 */
   const maxToolRounds = Number(config.agentMaxToolRounds) || DEFAULT_MAX_TOOL_ROUNDS
   const enabledTools = typeof config.agentEnabledTools === 'string' && config.agentEnabledTools.trim()
@@ -485,11 +468,13 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     : null
   let exitReason: AgentState['exitReason'] = null
   let answerText = ''
+  let evidence: AnswerEvidence[] = []
+  let attemptFailed = false
   let actionCards: ActionCard[] = []
   /** 工具/引用过程记录（用于展示：工具调用与知识库引用来源）。 */
   let contextEvents: Array<unknown> = []
   /** 工具调用记录（供持久化）：与 contextEvents 同步收集 */
-  let toolCallRecords: Array<{ name: string; title: string; args: string; status?: 'success' | 'error' | 'timeout'; latencyMs?: number }> = []
+  let toolCallRecords: Array<{ name: string; title: string; args: string; status?: 'success' | 'empty' | 'error' | 'timeout'; latencyMs?: number }> = []
   /** 本轮的模块分诊结论与量表推荐模块（用于一致性检查）。 */
   let routedModule: ModuleId | null = null
   let recommendedModule: ModuleId | null = null
@@ -525,8 +510,8 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     const toolCallIndex = new Map<string, number>()
     /** 同轮重复调用缓存：相同 (工具, 参数) 直接复用上次结果 */
     const toolResultCache = new Map<string, string>()
-    const agentTools = await loadAgentTools(userCtx, enabledTools)
-    const tools = agentTools.map(def => toLangChainTool(def, { event, user: userCtx }, toolResultCache))
+    const agentTools = input.toolsForEvaluation ?? await loadAgentTools(userCtx, enabledTools)
+    const tools = agentTools.map(def => toLangChainTool(def, { event, user: { ...userCtx, signal } }, toolResultCache))
     const agent = createReactAgent({ llm, tools })
 
     // system（代码基线 assistant_chat 模板 + 代码行为要点）
@@ -556,18 +541,19 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     onEvent(AGENT_SSE_EVENTS.THINKING, { phase: 'planning' })
     const stream = await agent.streamEvents(
       { messages: langMessages },
-      { version: 'v2', recursionLimit: maxToolRounds + 4 }
+      { version: 'v2', recursionLimit: maxToolRounds * 2 + 6, signal }
     )
     let toolRounds = 0
+    const activeTools = new Set<string>()
+    const pendingToolCalls = new Set<string>()
+    let finishWithoutTools = false
     for await (const rawChunk of stream) {
       if (!isStreamChunk(rawChunk)) continue
-      // 轮次/总时长上限：把已生成文本作为答案返回
-      if (toolRounds >= maxToolRounds || Date.now() >= deadline) {
-        exitReason = 'max_rounds'
-        break
-      }
+      signal.throwIfAborted()
+      if (Date.now() >= deadline) throw new Error('Agent timeout')
       if (rawChunk.event === 'on_tool_start') {
         toolRounds += 1
+        activeTools.add(rawChunk.run_id ?? rawChunk.name ?? 'tool')
         const toolName = rawChunk.name ?? 'tool'
         const toolCall = { name: toolName, title: TOOL_TITLES[toolName] || toolName, args: truncate(stringify(rawChunk.data.input), 300) }
         contextEvents.push(toolCall)
@@ -583,10 +569,24 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
       }
       if (rawChunk.event === 'on_tool_end') {
         const output = rawChunk.data.output
+        activeTools.delete(rawChunk.run_id ?? rawChunk.name ?? 'tool')
+        evidence.push(...collectToolEvidence(rawChunk.name ?? '', output))
         const card = extractActionCard(output)
-        if (card) {
+        if (card && actionCards.length < 2 && !actionCards.some(existing => JSON.stringify(existing) === JSON.stringify(card))) {
           actionCards.push(card)
           onEvent(AGENT_SSE_EVENTS.ACTION_CARD, card)
+        }
+        const rawTool = renderToolMessageContent((output as { content?: unknown } | null)?.content ?? output)
+        if (rawTool && actionCards.length < 2) {
+          try {
+            const extra = JSON.parse(rawTool).actionCards
+            if (Array.isArray(extra)) for (const candidate of extra) {
+              if (actionCards.length >= 2) break
+              if (isActionCard(candidate) && !actionCards.some(existing => JSON.stringify(existing) === JSON.stringify(candidate))) {
+                actionCards.push(candidate); onEvent(AGENT_SSE_EVENTS.ACTION_CARD, candidate)
+              }
+            }
+          } catch { /* 非卡片结果 */ }
         }
         // 工具调用耗时与状态回填（供入口写 assistant_tool_called 产品事件）
         const toolRunId = rawChunk.run_id
@@ -619,6 +619,7 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
         // P3：工具返回进入轨迹（按模型当时看到的完整内容回放，展示用的截断不影响落库）
         const toolCallId = (output as { tool_call_id?: unknown } | null)?.tool_call_id
         if (typeof toolCallId === 'string' && toolCallId) {
+          pendingToolCalls.delete(toolCallId)
           toolTraceRecords.push({
             type: 'tool',
             content: renderToolMessageContent((output as { content?: unknown } | null)?.content) ?? stringify(output),
@@ -626,6 +627,7 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
           })
         }
         emittedContent = true
+        if (toolRounds >= maxToolRounds && activeTools.size === 0 && pendingToolCalls.size === 0) { finishWithoutTools = true; break }
         continue
       }
       if (rawChunk.event === 'on_chat_model_start') {
@@ -633,6 +635,8 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
         continue
       }
       if (rawChunk.event === 'on_chat_model_end') {
+        const finishReason = (rawChunk.data.output as { response_metadata?: { finish_reason?: string } } | undefined)?.response_metadata?.finish_reason
+        if (finishReason === 'length' || finishReason === 'content_filter') throw new Error('模型回答未完整结束')
         const usage = readUsageMetadata(rawChunk.data.output)
         const startedAt = rawChunk.run_id ? modelCallStarts.get(rawChunk.run_id) : undefined
         modelCallRecords.push({
@@ -641,12 +645,18 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
           latencyMs: startedAt ? Math.max(0, Date.now() - startedAt) : 0,
           ...(usage || {})
         })
-        // P3：模型发起的工具调用进入轨迹（含 id，用于与工具返回配对）
+        // P3：模型发起的工具调用进入轨迹（含 id，用于与工具返回配对）；
+        // 调用没有真实 id 时不记录工具轨迹，避免回放出现无法配对的 tool_calls 序列
         const modelOutput = rawChunk.data.output
-        const calls = extractToolCalls(modelOutput)
-        if (calls) {
+        const extracted = extractToolCalls(modelOutput)
+        if (extracted) {
           const text = renderToolMessageContent((modelOutput as { content?: unknown } | null)?.content) ?? ''
-          toolTraceRecords.push({ type: 'assistant', content: text, toolCalls: calls })
+          if (extracted.reliable) {
+            for (const call of extracted.calls) pendingToolCalls.add(call.id)
+            toolTraceRecords.push({ type: 'assistant', content: text, toolCalls: extracted.calls })
+          } else if (text.trim()) {
+            toolTraceRecords.push({ type: 'assistant', content: text })
+          }
         }
         continue
       }
@@ -669,6 +679,21 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
         }
       }
     }
+    if (finishWithoutTools) {
+      signal.throwIfAborted()
+      const startedAt = Date.now()
+      const final = await llm.invoke([
+        ...langMessages, ...traceToLangChainMessages(toolTraceRecords),
+        new HumanMessage('工具查询预算已用完。请依据已返回的事实完整回答，说明尚缺的信息；不要声称查询未获得的结论。')
+      ], { signal })
+      if (['length', 'content_filter'].includes(String(final.response_metadata?.finish_reason))) throw new Error('模型回答未完整结束')
+      const content = renderToolMessageContent(final.content)
+      if (!content?.trim()) throw new Error('Agent 无回答产出')
+      modelCallRecords.push({ model: modelName, status: 'success', latencyMs: Date.now() - startedAt, ...(readUsageMetadata(final) ?? {}) })
+      answerText += content
+      onEvent(AGENT_SSE_EVENTS.ANSWER_DELTA, { text: content })
+      exitReason = 'done'
+    }
   }
 
   for (let attempt = 0; attempt <= AGENT_RETRY_TIMES; attempt += 1) {
@@ -683,11 +708,16 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
     toolConflicts = []
     moduleProportions = seedModuleProportions(userCtx.lastModuleScores)
     answerText = ''
+    evidence = []
+    attemptFailed = false
     exitReason = null
     emittedContent = false
     try {
       await runOnce(attempt)
     } catch (error) {
+      attemptFailed = true
+      answerText = ''
+      exitReason = 'error'
       console.error(`[agent/graph] runAgentGraph 第 ${attempt + 1} 次尝试失败:`, error instanceof Error ? error.message : error)
     }
     // 模块一致性检查：分诊结论与量表推荐模块不一致时以量表推荐为准，冲突交入口留痕
@@ -696,9 +726,10 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
       console.warn(`[agent/graph] 工具判定冲突：分诊=${routedModule}，量表推荐=${recommendedModule}，以量表推荐为准`)
     }
     // 已产出文本、已向客户端发过内容、或已到轮次/时长上限：不再重试
-    if (answerText.trim()) break
+    if (answerText.trim() && !attemptFailed) break
+    if (signal.aborted) break
     if (emittedContent) break
-    if (exitReason === 'max_rounds') break
+
     if (attempt < AGENT_RETRY_TIMES) {
       console.warn(`[agent/graph] 本轮无回答产出，自动重试（第 ${attempt + 2} 次）`)
     }
@@ -706,7 +737,7 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
 
   // 重试后仍无产出：不回退到其它提示词，返回空答案由入口发 error 事件
   if (!answerText.trim()) {
-    return { answer: '', actionCards: [], exitReason: 'error', toolCalls: [], sources: [], modelCalls: modelCallRecords, toolTrace: [], toolConflicts }
+    return { answer: '', actionCards: [], exitReason: 'error', toolCalls: toolCallRecords, sources: [], modelCalls: modelCallRecords, toolTrace: [], toolConflicts }
   }
   if (exitReason === null) exitReason = 'done'
 
@@ -717,11 +748,11 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
   }
 
   return {
-    answer: answerText.trim(), actionCards, exitReason,
+    answer: answerText.trim(), evidence, actionCards, exitReason,
     toolCalls: toolCallRecords, sources: sourceRecords,
     moduleProportions: hasProportion ? moduleProportions : undefined,
     modelCalls: modelCallRecords,
-    toolTrace: toolTraceRecords,
+    toolTrace: repairToolTrace(toolTraceRecords),
     toolConflicts: toolConflicts.length ? toolConflicts : undefined
   }
 }

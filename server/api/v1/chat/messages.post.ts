@@ -4,15 +4,14 @@ import { useDb, schema } from '../../../utils/db'
 import { encryptSensitive } from '../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../domain/safety'
 import { semanticSafetySignals } from '../../../integrations/deepseek'
+import { decideEntryObjectUse, resolveMentionedObject, type MentionResolution } from '../../../domain/assistant-object-mention'
 import { buildAssistantBusinessContext } from '../../../domain/assistant-context'
 import {
-  appendContextSwitch,
   buildContextSwitchNote,
-  readContextLabel,
-  readContextSwitches,
-  toContextRef
+  readContextSwitches
 } from '../../../domain/chat-context-switch'
 import { buildChatTitle } from '../../../domain/chat-titles'
+import { bindChatSessionContext } from '../../../domain/chat-session-binding'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
 import { trackProductEvent } from '../../../domain/product-events'
 import { sendStream } from 'h3'
@@ -68,23 +67,16 @@ export default defineEventHandler(async (event) => {
     const switching = Boolean(requestedBusinessContext
       && (requestedBusinessContext.type !== sessionContextType || requestedBusinessContext.id !== boundId))
     if (switching && requestedBusinessContext) {
-      await db.update(schema.chatSessions).set({
-        contextType: requestedBusinessContext.type,
-        contextId: requestedBusinessContext.id,
-        metadata: appendContextSwitch(owned.metadata, {
-          at: new Date().toISOString(),
-          from: toContextRef(sessionContextType, boundId, readContextLabel(owned.metadata)),
-          to: {
-            type: requestedBusinessContext.type,
-            id: requestedBusinessContext.id,
-            label: requestedBusinessContext.label
-          }
-        })
-      }).where(and(eq(schema.chatSessions.id, sessionId), eq(schema.chatSessions.ownerUserId, user.id)))
-      await trackProductEvent(event, {
-        schoolId: user.schoolId, userId: user.id, eventName: 'assistant_context_switched',
-        targetType: requestedBusinessContext.type, targetId: requestedBusinessContext.id,
-        metadata: { fromType: sessionContextType || 'none', fromId: boundId || null }
+      await bindChatSessionContext(event, {
+        sessionId,
+        userId: user.id,
+        schoolId: user.schoolId,
+        target: {
+          type: requestedBusinessContext.type,
+          id: requestedBusinessContext.id,
+          label: requestedBusinessContext.label
+        },
+        current: owned
       })
     } else {
       // 未指定对象（或指定同一对象）时沿用会话绑定，避免前端不传参就丢掉会话上下文
@@ -113,10 +105,11 @@ export default defineEventHandler(async (event) => {
   const historyBudgetTokens = Number(config.agentHistoryTokenBudget) || 24000
   const compactionKeepRatio = Number(config.agentCompactionKeepRatio) || 0.5
 
-  await db.insert(schema.chatMessages).values({
+  const [question] = await db.insert(schema.chatMessages).values({
     schoolId: user.schoolId, ownerUserId: user.id, sessionId: ownedSessionId,
     role: 'user', contentEnc: encryptSensitive(body.message, config.encryptionKey)
-  })
+  }).returning({ createdAt: schema.chatMessages.createdAt })
+  if (!question) throw createError({ statusCode: 500, message: '提问保存失败' })
   await trackProductEvent(event, {
     schoolId: user.schoolId, userId: user.id, eventName: 'assistant_question_submitted',
     targetType: 'chat_session', targetId: ownedSessionId,
@@ -127,6 +120,28 @@ export default defineEventHandler(async (event) => {
       schoolId: user.schoolId, userId: user.id, eventName: 'assistant_context_selected',
       targetType: businessContext.type, targetId: businessContext.id,
       metadata: { contextType: businessContext.type, recordIncluded: !body.withoutRecord }
+    })
+  }
+
+  // 本轮识别：会话未绑定对象时作为「本轮对象」；已绑定对象时只提示是否切换（两种情况都要先识别）
+  const mention = body.withoutRecord || governance.effectiveMode === 'local'
+    ? ({ kind: 'none' } as MentionResolution)
+    : await resolveMentionedObject(event, { id: user.id, schoolId: user.schoolId }, body.message)
+  const objectUse = decideEntryObjectUse({ binding: businessContext ?? null, mention })
+  const turnContext = objectUse.turnContext
+  if (mention.kind !== 'none') {
+    const firstHit = mention.kind === 'single' ? mention.object : mention.candidates[0]
+    await trackProductEvent(event, {
+      schoolId: user.schoolId, userId: user.id, eventName: 'assistant_turn_object_resolved',
+      targetType: 'chat_session', targetId: ownedSessionId,
+      metadata: {
+        result: mention.kind,
+        objectType: firstHit?.type ?? null,
+        // 只记命中数量、类型与用途，不记姓名或正文
+        candidates: mention.kind === 'ambiguous' ? mention.candidates.length : 1,
+        turnScoped: Boolean(objectUse.turnContext),
+        switchSuggested: Boolean(objectUse.suggestedSwitch)
+      }
     })
   }
 
@@ -142,8 +157,9 @@ export default defineEventHandler(async (event) => {
   }
 
   /** 客户端断开标记：断开后不再落库、不再发事件（由 stream.cancel 与响应 close 两处设置）。 */
+  const abortController = new AbortController()
   let aborted = false
-  const markAborted = () => { aborted = true }
+  const markAborted = () => { aborted = true; abortController.abort() }
   event.node.res.on('close', markAborted)
 
   const stream = new ReadableStream({
@@ -152,6 +168,15 @@ export default defineEventHandler(async (event) => {
         emit(controller, 'ack', {
           sessionId: ownedSessionId,
           context: businessContext ? { type: businessContext.type, id: businessContext.id, label: businessContext.label } : undefined,
+          // 本轮对象（未绑定会话时按消息识别）：前端据此显示「本次按 X 回答」与「固定为本会话对象」
+          turnObject: turnContext ? { type: turnContext.type, id: turnContext.id, label: turnContext.label } : undefined,
+          turnObjectCandidates: objectUse.candidates.length
+            ? objectUse.candidates.map(item => ({ type: item.type, id: item.id, label: item.label }))
+            : undefined,
+          // 会话已绑定对象、本轮又提到另一个唯一对象：提示是否切换，不自动切换
+          suggestedContext: objectUse.suggestedSwitch
+            ? { type: objectUse.suggestedSwitch.type, id: objectUse.suggestedSwitch.id, label: objectUse.suggestedSwitch.label }
+            : undefined,
           dataGovernance: governance,
           recordIncluded: Boolean(businessContext && !body.withoutRecord)
         })
@@ -189,9 +214,13 @@ export default defineEventHandler(async (event) => {
         }
 
         // 历史装载（含超预算压缩与最近一轮工具轨迹回放）：放在本地模式判断之后，避免本地模式白跑一次数据库读与模型调用
+        const switchAt = readContextSwitches(sessionContext?.metadata).at(-1)?.at
         const history = await loadSessionHistoryForAgent({
+          before: question.createdAt,
+          objectSince: switchAt ? new Date(switchAt) : undefined,
+          withoutRecord: Boolean(body.withoutRecord),
           event,
-          user: { id: user.id, schoolId: user.schoolId! },
+          user: { id: user.id, schoolId: user.schoolId!, teachingGrades: user.teachingGrades },
           sessionId: ownedSessionId,
           contextSummary: sessionContext?.contextSummary ?? null,
           summaryUptoAt: sessionContext?.summaryUptoAt ?? null,
@@ -202,12 +231,15 @@ export default defineEventHandler(async (event) => {
 
         await runAssistantTurn({
           event,
-          user: { id: user.id, schoolId: user.schoolId! },
+          user: { id: user.id, schoolId: user.schoolId!, teachingGrades: user.teachingGrades },
           sessionId: ownedSessionId,
           message: body.message,
           withoutRecord: Boolean(body.withoutRecord),
           businessContext: businessContext
             ? { type: businessContext.type, id: businessContext.id, label: businessContext.label }
+            : null,
+          turnContext: turnContext
+            ? { type: turnContext.type, id: turnContext.id, label: turnContext.label }
             : null,
           contextSwitchNote,
           governance,
@@ -216,6 +248,7 @@ export default defineEventHandler(async (event) => {
           contextSummary: history.contextSummary,
           lastModuleScores,
           emit: (name, data) => emit(controller, name, data),
+          signal: abortController.signal,
           isAborted: () => aborted
         })
         emit(controller, 'done', { sessionId: ownedSessionId })
@@ -224,9 +257,9 @@ export default defineEventHandler(async (event) => {
         const errorName = error instanceof Error ? error.name.toLowerCase() : ''
         const errorText = error instanceof Error ? error.message.toLowerCase() : ''
         await trackProductEvent(event, {
-          schoolId: user.schoolId, userId: user.id, eventName: 'assistant_answer_failed',
+          schoolId: user.schoolId, userId: user.id, eventName: aborted ? 'assistant_answer_aborted' : 'assistant_answer_failed',
           targetType: 'chat_session', targetId: ownedSessionId,
-          metadata: { category: errorName.includes('abort') || errorText.includes('timeout') ? 'timeout' : 'other' }
+          metadata: { qualityVersion: 1, category: errorName.includes('abort') || errorText.includes('timeout') ? 'timeout' : 'other' }
         })
         // 失败也记一行审计：便于在 AI 中心区分「无产出」与超时/网络故障
         try {

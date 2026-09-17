@@ -80,7 +80,8 @@ describe('runAgentGraph 自动重试', () => {
     const result = await invoke()
 
     expect(streamEvents).toHaveBeenCalledTimes(1)
-    expect(result.answer).toBe('已经流出的部分回答')
+    expect(result.answer).toBe('')
+    expect(result.exitReason).toBe('error')
   })
 
   it('未配置模型时不重试、不产出兜底回答', async () => {

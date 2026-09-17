@@ -50,7 +50,7 @@ export default defineEventHandler(async (event) => {
   const toolStats = await db.select({
     name: sql<string>`coalesce(${schema.productEvents.metadata}->>'tool', 'unknown')`,
     total: sql<number>`count(*)::int`,
-    failed: sql<number>`count(*) filter (where coalesce(${schema.productEvents.metadata}->>'status', 'success') <> 'success')::int`
+    failed: sql<number>`count(*) filter (where coalesce(${schema.productEvents.metadata}->>'status', 'success') in ('error', 'timeout'))::int`
   }).from(schema.productEvents)
     .where(and(
       eq(schema.productEvents.eventName, 'assistant_tool_called'),
@@ -59,6 +59,28 @@ export default defineEventHandler(async (event) => {
     .groupBy(sql`coalesce(${schema.productEvents.metadata}->>'tool', 'unknown')`)
     .orderBy(sql`count(*) desc`)
     .limit(20)
+
+  const [quality] = await db.select({
+    completed: sql<number>`count(*) filter (where event_name = 'assistant_turn_completed')::int`,
+    failed: sql<number>`count(*) filter (where event_name = 'assistant_answer_failed' and metadata->>'qualityVersion' = '1')::int`,
+    blocked: sql<number>`count(*) filter (where event_name = 'assistant_answer_blocked')::int`,
+    toolTotal: sql<number>`count(*) filter (where event_name = 'assistant_tool_called')::int`,
+    toolTimeouts: sql<number>`count(*) filter (where event_name = 'assistant_tool_called' and metadata->>'status' = 'timeout')::int`,
+    knowledgeGaps: sql<number>`count(*) filter (where event_name = 'assistant_knowledge_gap')::int`,
+    p95LatencyMs: sql<number>`coalesce(percentile_cont(0.95) within group (order by (metadata->>'latencyMs')::numeric) filter (where event_name = 'assistant_turn_completed'), 0)::int`,
+    p95FirstTextMs: sql<number>`coalesce(percentile_cont(0.95) within group (order by (metadata->>'firstTextMs')::numeric) filter (where event_name = 'assistant_turn_completed' and metadata->>'reviewed' = 'false'), 0)::int`
+  }).from(schema.productEvents).where(gte(schema.productEvents.createdAt, since))
+  const [tokens] = await db.select({
+    input: sql<number>`coalesce(sum(${schema.aiModelCalls.promptTokens}), 0)::float8`,
+    output: sql<number>`coalesce(sum(${schema.aiModelCalls.completionTokens}), 0)::float8`
+  }).from(schema.aiModelCalls).where(and(gte(schema.aiModelCalls.createdAt, since), sql`${schema.aiModelCalls.purpose} in ('assistant_chat', 'assistant_evidence_review', 'assistant_answer_repair')`))
+  const reasons = await db.execute<{ reason: string; total: number }>(sql`
+    select reason, count(*)::int as total from assistant_feedback f
+    cross join lateral jsonb_array_elements_text(f.reasons) as reason
+    where f.updated_at >= ${since} and f.rating = 'not_helpful'
+    group by reason order by total desc limit 5
+  `)
+  const totalTurns = (quality?.completed ?? 0) + (quality?.failed ?? 0)
 
   return {
     models: {
@@ -73,7 +95,7 @@ export default defineEventHandler(async (event) => {
       deepseekBaseUrl: config.deepseekBaseUrl,
       agreementVersion: config.deepseekAgreementVersion || '未登记协议版本（full_context 门禁关闭）'
     },
-    stats7d: { ...summary, byPurpose, tools: toolStats },
+    stats7d: { ...summary, byPurpose, tools: toolStats, quality: { ...quality, failureRate: totalTurns ? (quality?.failed ?? 0) / totalTurns : null, blockedRate: totalTurns ? (quality?.blocked ?? 0) / totalTurns : null, timeoutRate: quality?.toolTotal ? quality.toolTimeouts / quality.toolTotal : null, tokens, reasons: reasons.rows } },
     recentCalls,
     governance: { byDataMode }
   }

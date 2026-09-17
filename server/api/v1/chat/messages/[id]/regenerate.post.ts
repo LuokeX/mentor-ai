@@ -5,6 +5,7 @@ import { requireUser } from '../../../../../utils/auth'
 import { schema, useDb } from '../../../../../utils/db'
 import { decryptSensitive } from '../../../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../../../domain/safety'
+import { decideEntryObjectUse, resolveMentionedObject, type MentionResolution } from '../../../../../domain/assistant-object-mention'
 import { buildAssistantBusinessContext } from '../../../../../domain/assistant-context'
 import { resolveAiGovernance } from '../../../../../domain/ai-governance'
 import { buildContextSwitchNote, readContextSwitches } from '../../../../../domain/chat-context-switch'
@@ -79,6 +80,7 @@ export default defineEventHandler(async (event) => {
   // 该回答对应的教师提问：同会话中时间早于该回答的最近一条用户消息
   const [question] = await db.select({
     id: schema.chatMessages.id,
+    createdAt: schema.chatMessages.createdAt,
     contentEnc: schema.chatMessages.contentEnc
   }).from(schema.chatMessages)
     .where(and(
@@ -110,6 +112,12 @@ export default defineEventHandler(async (event) => {
     session.contextId || undefined
   )
   const teacherProfileText = await buildTeacherProfileText(event, user.id) ?? undefined
+  // 本轮识别与普通提问同一套口径：未绑定会话时作为本轮对象，已绑定时只提示是否切换
+  const mention = body.withoutRecord || governance.effectiveMode === 'local'
+    ? ({ kind: 'none' } as MentionResolution)
+    : await resolveMentionedObject(event, { id: user.id, schoolId: user.schoolId }, questionText)
+  const objectUse = decideEntryObjectUse({ binding: businessContext ?? null, mention })
+  const turnContext = objectUse.turnContext
   const lastModuleScores = getSessionModuleScores(sessionContext.metadata) as Record<ModuleId, number>
 
   // 软删旧回答：装载历史与后续界面都不再包含它
@@ -137,8 +145,9 @@ export default defineEventHandler(async (event) => {
     controller.enqueue(encoder.encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`))
   }
 
+  const abortController = new AbortController()
   let aborted = false
-  const markAborted = () => { aborted = true }
+  const markAborted = () => { aborted = true; abortController.abort() }
   event.node.res.on('close', markAborted)
 
   const stream = new ReadableStream({
@@ -147,6 +156,13 @@ export default defineEventHandler(async (event) => {
         emit(controller, 'ack', {
           sessionId,
           context: businessContext ? { type: businessContext.type, id: businessContext.id, label: businessContext.label } : undefined,
+          turnObject: turnContext ? { type: turnContext.type, id: turnContext.id, label: turnContext.label } : undefined,
+          turnObjectCandidates: objectUse.candidates.length
+            ? objectUse.candidates.map(item => ({ type: item.type, id: item.id, label: item.label }))
+            : undefined,
+          suggestedContext: objectUse.suggestedSwitch
+            ? { type: objectUse.suggestedSwitch.type, id: objectUse.suggestedSwitch.id, label: objectUse.suggestedSwitch.label }
+            : undefined,
           dataGovernance: governance,
           recordIncluded: Boolean(businessContext && !body.withoutRecord),
           regenerated: true
@@ -179,9 +195,13 @@ export default defineEventHandler(async (event) => {
           return
         }
 
+        const switchAt = readContextSwitches(sessionContext.metadata).at(-1)?.at
         const history = await loadSessionHistoryForAgent({
+          before: question.createdAt,
+          objectSince: switchAt ? new Date(switchAt) : undefined,
+          withoutRecord: Boolean(body.withoutRecord),
           event,
-          user: { id: user.id, schoolId: user.schoolId! },
+          user: { id: user.id, schoolId: user.schoolId!, teachingGrades: user.teachingGrades },
           sessionId,
           contextSummary: sessionContext.contextSummary,
           summaryUptoAt: sessionContext.summaryUptoAt,
@@ -192,12 +212,15 @@ export default defineEventHandler(async (event) => {
 
         await runAssistantTurn({
           event,
-          user: { id: user.id, schoolId: user.schoolId! },
+          user: { id: user.id, schoolId: user.schoolId!, teachingGrades: user.teachingGrades },
           sessionId,
           message: questionText,
           withoutRecord: Boolean(body.withoutRecord),
           businessContext: businessContext
             ? { type: businessContext.type, id: businessContext.id, label: businessContext.label }
+            : null,
+          turnContext: turnContext
+            ? { type: turnContext.type, id: turnContext.id, label: turnContext.label }
             : null,
           // 会话换绑过对象时沿用同一段提示（与普通提问口径一致，保持 system 前缀稳定）
           contextSwitchNote: buildContextSwitchNote(readContextSwitches(sessionContext.metadata)),
@@ -207,13 +230,14 @@ export default defineEventHandler(async (event) => {
           contextSummary: history.contextSummary,
           lastModuleScores,
           emit: (name, data) => emit(controller, name, data),
+          signal: abortController.signal,
           isAborted: () => aborted
         })
         emit(controller, 'done', { sessionId })
       } catch (error) {
         console.error('[chat] 重新生成失败:', error instanceof Error ? error.message : error)
         await trackProductEvent(event, {
-          schoolId: user.schoolId, userId: user.id, eventName: 'assistant_answer_failed',
+          schoolId: user.schoolId, userId: user.id, eventName: aborted ? 'assistant_answer_aborted' : 'assistant_answer_failed',
           targetType: 'chat_session', targetId: sessionId,
           metadata: { category: classifyAgentFailure(error), phase: 'regenerate' }
         })

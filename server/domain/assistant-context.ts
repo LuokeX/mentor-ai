@@ -1,3 +1,4 @@
+import { rankMemory } from './chat-memory'
 import type { H3Event } from 'h3'
 import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm'
 import type { AuthUser } from '../../app/composables/useAuth'
@@ -64,7 +65,7 @@ export async function buildAssistantBusinessContext(event: H3Event, user: AuthUs
     const [klass, relations, communications, plans] = await Promise.all([
       student.classId ? db.select().from(schema.classes).where(and(eq(schema.classes.id, student.classId), eq(schema.classes.schoolId, user.schoolId))).limit(1) : Promise.resolve([]),
       db.select().from(schema.studentGuardians).where(eq(schema.studentGuardians.studentId, student.id)),
-      db.select().from(schema.communications).where(and(eq(schema.communications.studentId, student.id), eq(schema.communications.schoolId, user.schoolId))).orderBy(desc(schema.communications.occurredAt)).limit(10),
+      db.select().from(schema.communications).where(and(eq(schema.communications.studentId, student.id), eq(schema.communications.schoolId, user.schoolId), eq(schema.communications.ownerUserId, user.id))).orderBy(desc(schema.communications.occurredAt)).limit(10),
       db.select().from(schema.plans).where(and(eq(schema.plans.studentId, student.id), eq(schema.plans.schoolId, user.schoolId), eq(schema.plans.ownerUserId, user.id))).orderBy(desc(schema.plans.updatedAt)).limit(10)
     ])
     const guardianIds = relations.map(row => row.guardianId)
@@ -134,7 +135,7 @@ export async function buildAssistantBusinessContext(event: H3Event, user: AuthUs
     const studentIds = students.map(row => row.id)
     const [relations, communications, plans] = await Promise.all([
       studentIds.length ? db.select().from(schema.studentGuardians).where(inArray(schema.studentGuardians.studentId, studentIds)) : Promise.resolve([]),
-      studentIds.length ? db.select().from(schema.communications).where(and(inArray(schema.communications.studentId, studentIds), eq(schema.communications.schoolId, user.schoolId))).orderBy(desc(schema.communications.occurredAt)).limit(10) : Promise.resolve([]),
+      studentIds.length ? db.select().from(schema.communications).where(and(inArray(schema.communications.studentId, studentIds), eq(schema.communications.schoolId, user.schoolId), eq(schema.communications.ownerUserId, user.id))).orderBy(desc(schema.communications.occurredAt)).limit(10) : Promise.resolve([]),
       db.select().from(schema.plans).where(and(eq(schema.plans.classId, klass.id), eq(schema.plans.schoolId, user.schoolId), eq(schema.plans.ownerUserId, user.id))).orderBy(desc(schema.plans.updatedAt)).limit(10)
     ])
     const guardianIds = [...new Set(relations.map(row => row.guardianId))]
@@ -175,7 +176,7 @@ export async function buildAssistantBusinessContext(event: H3Event, user: AuthUs
   if (!guardian) throw createError({ statusCode: 404, message: '家长不存在或不属于当前负责范围' })
   const [relations, communications, plans] = await Promise.all([
     db.select().from(schema.studentGuardians).where(eq(schema.studentGuardians.guardianId, guardian.id)),
-    db.select().from(schema.communications).where(and(eq(schema.communications.guardianId, guardian.id), eq(schema.communications.schoolId, user.schoolId))).orderBy(desc(schema.communications.occurredAt)).limit(10),
+    db.select().from(schema.communications).where(and(eq(schema.communications.guardianId, guardian.id), eq(schema.communications.schoolId, user.schoolId), eq(schema.communications.ownerUserId, user.id))).orderBy(desc(schema.communications.occurredAt)).limit(10),
     db.select().from(schema.plans).where(and(eq(schema.plans.guardianId, guardian.id), eq(schema.plans.schoolId, user.schoolId), eq(schema.plans.ownerUserId, user.id))).orderBy(desc(schema.plans.updatedAt)).limit(10)
   ])
   const studentIds = relations.map(row => row.studentId)
@@ -229,7 +230,7 @@ export async function listAssistantContextOptions(event: H3Event, user: AuthUser
     db.select().from(schema.students).where(and(eq(schema.students.ownerUserId, user.id), eq(schema.students.schoolId, user.schoolId))).orderBy(desc(schema.students.updatedAt)),
     db.select().from(schema.guardians).where(and(eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId))).orderBy(desc(schema.guardians.updatedAt)),
     db.select().from(schema.studentGuardians),
-    db.select().from(schema.communications).where(and(eq(schema.communications.ownerUserId, user.id), eq(schema.communications.schoolId, user.schoolId))).orderBy(desc(schema.communications.occurredAt)).limit(200)
+    db.select().from(schema.communications).where(and(eq(schema.communications.ownerUserId, user.id), eq(schema.communications.schoolId, user.schoolId), eq(schema.communications.ownerUserId, user.id))).orderBy(desc(schema.communications.occurredAt)).limit(200)
   ])
   const classById = new Map(classes.map(row => [row.id, row]))
   const communicationsByStudent = new Map<string, number>()
@@ -278,8 +279,9 @@ export async function fetchEntityMemory(
   contextType: string,
   contextId: string,
   excludeSessionId?: string,
-  limit = 15
-): Promise<Array<{ role: 'user' | 'assistant'; content: string; createdAt: Date }>> {
+  limit = 15,
+  query = ''
+): Promise<Array<{ id: string; sessionId: string; role: 'user' | 'assistant'; content: string; createdAt: Date }>> {
   if (!user.schoolId) return []
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
@@ -306,6 +308,7 @@ export async function fetchEntityMemory(
   // 2. 从这些会话中拉取最近的 user/assistant 消息
   // 多取一批再过滤：会话中途换绑过对象时，换绑前的消息属于旧对象，不能算作当前对象的记忆
   const messages = await db.select({
+    id: schema.chatMessages.id,
     sessionId: schema.chatMessages.sessionId,
     role: schema.chatMessages.role,
     contentEnc: schema.chatMessages.contentEnc,
@@ -315,21 +318,23 @@ export async function fetchEntityMemory(
     .where(and(
       inArray(schema.chatMessages.sessionId, sessionIds),
       eq(schema.chatMessages.ownerUserId, user.id),
+      eq(schema.chatMessages.schoolId, user.schoolId),
       // 管理员软删的消息不进入实体记忆
       isNull(schema.chatMessages.deletedAt)
     ))
     .orderBy(desc(schema.chatMessages.createdAt))
-    .limit(Math.min(Math.max(limit * 4, limit), 60))
+    .limit(120)
 
   // 3. 过滤掉换绑前的旧对象消息，解密并按时间正序排列
   const binding = { type: contextType, id: contextId }
-  return messages
+  const candidates = messages
     .filter(item => isMessageAfterBindingSwitch(switchesBySession.get(item.sessionId) || [], binding, item.createdAt))
-    .slice(0, limit)
-    .reverse()
+
     .map(item => ({
+      id: item.id, sessionId: item.sessionId,
       role: item.role as 'user' | 'assistant',
       content: decryptSensitive(item.contentEnc, secret),
       createdAt: item.createdAt
     }))
+  return rankMemory(candidates, query, Math.min(limit, 12))
 }

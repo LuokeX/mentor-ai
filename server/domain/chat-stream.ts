@@ -11,8 +11,12 @@
  *  - system 段会话内稳定（咨询对象只留指针，档案由工具按需查）；
  *  - 外发文本按学校数据模式脱敏；local 模式不进入本模块（入口直接返回提示）。
  */
+import { parseMemory } from './chat-memory'
+import { AnswerDelivery } from '../agent/answer-delivery'
+import { needsEvidenceReview, teacherEvidence, type AnswerEvidence } from '../agent/evidence'
+import { reviewAssistantAnswer } from './assistant-answer-review'
 import type { H3Event } from 'h3'
-import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, gte, isNull, lt, sql } from 'drizzle-orm'
 import type { ModuleId } from '../../shared/contracts'
 import type { AgentMessage, AgentToolTraceStep } from '../agent/types'
 import { buildAgentSystemPrompt } from '../agent/prompts'
@@ -43,6 +47,8 @@ export interface ChatGovernanceLike {
 export interface ChatStreamUser {
   id: string
   schoolId: string
+  /** 任教年级（1-12）：供工具按学段筛选资源；空或未传表示未填写，不过滤 */
+  teachingGrades?: number[]
 }
 
 /** 会话里读出来的元数据（模块占比等）。 */
@@ -67,7 +73,7 @@ export async function loadChatSessionContext(
     contextSummaryEnc: schema.chatSessions.contextSummaryEnc,
     contextSummaryUptoAt: schema.chatSessions.contextSummaryUptoAt
   }).from(schema.chatSessions)
-    .where(and(eq(schema.chatSessions.id, sessionId), eq(schema.chatSessions.ownerUserId, user.id)))
+    .where(and(eq(schema.chatSessions.id, sessionId), eq(schema.chatSessions.ownerUserId, user.id), eq(schema.chatSessions.schoolId, user.schoolId)))
     .limit(1)
   if (!row) return null
   const config = useRuntimeConfig(event)
@@ -117,6 +123,9 @@ export async function buildTeacherProfileText(event: H3Event, userId: string): P
 }
 
 export interface LoadHistoryInput {
+  before?: Date
+  objectSince?: Date
+  withoutRecord?: boolean
   event: H3Event
   user: ChatStreamUser
   sessionId: string
@@ -146,16 +155,26 @@ export async function loadSessionHistoryForAgent(input: LoadHistoryInput): Promi
   const { event, user, sessionId, dataMode } = input
   const db = useDb(event)
   const config = useRuntimeConfig(event)
-  const summaryBudgetTokens = input.contextSummary ? estimateTokens(input.contextSummary) : 0
+  const memory = parseMemory(input.contextSummary)
+  const summarySafe = !input.withoutRecord && (!input.before || !input.summaryUptoAt || input.summaryUptoAt < input.before)
+    && (!input.objectSince || Boolean(memory?.entries.length && memory.entries.every(item => Date.parse(item.occurredAt) >= input.objectSince!.getTime())))
+  const savedSummary = summarySafe ? input.contextSummary : null
+  const savedCursor = summarySafe ? input.summaryUptoAt : null
+  const summaryBudgetTokens = savedSummary ? estimateTokens(savedSummary) : 0
   const historyBudget = Math.max(2000, input.historyBudgetTokens - summaryBudgetTokens)
   const conditions = [
     eq(schema.chatMessages.sessionId, sessionId),
     eq(schema.chatMessages.ownerUserId, user.id),
+    eq(schema.chatMessages.schoolId, user.schoolId),
     isNull(schema.chatMessages.deletedAt)
   ]
-  if (input.summaryUptoAt) conditions.push(gte(schema.chatMessages.createdAt, input.summaryUptoAt))
+  if (savedCursor) conditions.push(gt(schema.chatMessages.createdAt, savedCursor))
+  if (input.before) conditions.push(lt(schema.chatMessages.createdAt, input.before))
+  if (input.objectSince) conditions.push(gte(schema.chatMessages.createdAt, input.objectSince))
+  if (input.withoutRecord) conditions.push(eq(schema.chatMessages.role, 'user'))
 
   const previousMessages = await db.select({
+    id: schema.chatMessages.id,
     role: schema.chatMessages.role,
     contentEnc: schema.chatMessages.contentEnc,
     toolTraceEnc: schema.chatMessages.toolTraceEnc,
@@ -166,19 +185,23 @@ export async function loadSessionHistoryForAgent(input: LoadHistoryInput): Promi
     .limit(HISTORY_ROW_SAFETY_LIMIT)
 
   // 倒序增量解密：预算已满足且再往前只会更旧时停止，避免整会话全量解密
-  const decryptedDesc: Array<{ role: 'user' | 'assistant', content: string, createdAt: Date }> = []
+  const decryptedDesc: Array<{ id: string, role: 'user' | 'assistant', content: string, createdAt: Date }> = []
   let decryptedTokens = 0
   let replayToolTrace: AgentToolTraceStep[] | null = null
+  let inspectedLatestAssistant = false
   for (const item of previousMessages) {
     if (item.role !== 'user' && item.role !== 'assistant') continue
     const content = decryptSensitive(item.contentEnc, config.encryptionKey)
-    decryptedDesc.push({ role: item.role as 'user' | 'assistant', content, createdAt: item.createdAt })
-    if (!replayToolTrace && item.role === 'assistant' && item.toolTraceEnc) {
-      try {
-        replayToolTrace = parseToolTrace(decryptSensitive(item.toolTraceEnc, config.encryptionKey))
-      } catch (traceError) {
-        console.warn('[chat-stream] 工具轨迹解密失败，本轮不回放:', traceError instanceof Error ? traceError.message : traceError)
-        replayToolTrace = null
+    decryptedDesc.push({ id: item.id, role: item.role as 'user' | 'assistant', content, createdAt: item.createdAt })
+    if (!inspectedLatestAssistant && item.role === 'assistant') {
+      inspectedLatestAssistant = true
+      if (item.toolTraceEnc) {
+        try {
+          replayToolTrace = parseToolTrace(decryptSensitive(item.toolTraceEnc, config.encryptionKey))
+        } catch (traceError) {
+          console.warn('[chat-stream] 工具轨迹解密失败，本轮不回放:', traceError instanceof Error ? traceError.message : traceError)
+          replayToolTrace = null
+        }
       }
     }
     decryptedTokens += estimateTokens(content) + MESSAGE_OVERHEAD_TOKENS
@@ -188,10 +211,10 @@ export async function loadSessionHistoryForAgent(input: LoadHistoryInput): Promi
   const budgetExceeded = decryptedDesc.length < previousMessages.length || decryptedTokens >= historyBudget
   const decryptedAsc = decryptedDesc.reverse()
   let replayMessages = toHistoryMessages(decryptedAsc)
-  let contextSummary = input.contextSummary
-  let summaryUptoAt = input.summaryUptoAt
+  let contextSummary = savedSummary
+  let summaryUptoAt = savedCursor
 
-  if (budgetExceeded && replayMessages.length) {
+  if (budgetExceeded && replayMessages.length && !input.withoutRecord) {
     const plan = planCompaction(replayMessages, historyBudget, input.compactionKeepRatio)
     const boundary = plan.required ? decryptedAsc[decryptedAsc.length - plan.keepMessages.length] : undefined
     if (plan.required && boundary) {
@@ -202,12 +225,13 @@ export async function loadSessionHistoryForAgent(input: LoadHistoryInput): Promi
         dataMode,
         summaryUptoAt,
         uptoBeforeAt: boundary.createdAt,
-        previousSummary: contextSummary
+        previousSummary: contextSummary,
+        fromAt: input.objectSince
       })
       if (compacted) {
         contextSummary = compacted.summary
         summaryUptoAt = compacted.uptoAt
-        replayMessages = plan.keepMessages
+        replayMessages = toHistoryMessages(decryptedAsc.filter(message => message.createdAt > compacted.uptoAt))
       }
     }
   }
@@ -228,7 +252,7 @@ export async function loadSessionHistoryForAgent(input: LoadHistoryInput): Promi
   const messages: AgentMessage[] = history.map(message => {
     const trace = (message as AgentMessage).toolTrace
     return {
-      role: message.role,
+      ...message,
       content: outbound(message.content),
       ...(trace?.length ? { toolTrace: trace.map(step => ({ ...step, content: outbound(step.content) })) } : {})
     }
@@ -247,6 +271,11 @@ export interface RunAssistantTurnInput {
   /** 当前会话绑定的咨询对象（已校验归属） */
   businessContext: { type: 'student' | 'class' | 'guardian', id: string, label: string } | null
   /**
+   * 本轮对象：教师本轮消息里唯一命中的学生/班级（服务端确定性识别）。
+   * 只作用于本轮的记录查询；不改变会话绑定，也不进 system 段（否则每轮前缀都会分叉）。
+   */
+  turnContext?: { type: 'student' | 'class', id: string, label: string } | null
+  /**
    * 会话中途换过咨询对象时的持续提示（由入口按会话元数据生成）：
    * 声明历史消息属于旧对象、当前对象以工具返回为准。有值后每轮都传，保持 system 前缀稳定。
    */
@@ -260,6 +289,7 @@ export interface RunAssistantTurnInput {
   /** SSE 事件转发 */
   emit: (name: string, data: unknown) => void
   /** 客户端是否已断开：断开后不再落库、不再发事件，只记一条中断事件 */
+  signal?: AbortSignal
   isAborted: () => boolean
 }
 
@@ -327,24 +357,47 @@ export function buildBusinessContextText(input: {
     schoolId: user.schoolId,
     userId: user.id,
     sessionId,
+    teachingGrades: user.teachingGrades ?? [],
     businessContextText: contextText,
     businessContext: recordBinding,
+    // 本轮对象只在未绑定会话时生效：绑定是教师的显式选择，不能被一句提及改写
+    turnContext: recordBinding ? null : (input.turnContext ?? null),
     teacherProfileText: input.teacherProfileText,
     lastModuleScores: input.lastModuleScores,
-    dataMode
+    dataMode,
+    withoutRecord: input.withoutRecord,
+    currentQuestion: outbound(input.message),
+    signal: input.signal
   }
   const agentMessages: AgentMessage[] = [
-    ...sanitizeHistoryForSummary(input.history).map(message => ({ role: message.role, content: message.content })),
+    ...sanitizeHistoryForSummary(input.history).map(message => ({ ...message })),
     { role: 'user', content: outbound(input.message) }
   ]
 
   // 先发 answer_start 创建助手气泡：后续 thinking/tool_call/sources/action_card/answer_delta 都挂到同一气泡
   emit('answer_start', { mode: 'agent' })
+  const startedAt = Date.now()
+  let firstTextMs: number | null = null
+  const delivery = new AnswerDelivery(input.message, text => {
+    if (!input.isAborted()) {
+      firstTextMs ??= Date.now() - startedAt
+      emit('answer_delta', { text })
+    }
+  }, () => {
+    // 有个别句子被扣住、等整轮校验：通知前端在静默超过短暂时间后挂起「正在核对回答依据…」，
+    // 后续句子继续流出时前端会自行撤下
+    if (!input.isAborted()) emit('thinking', { phase: 'review' })
+  })
   const result = await runAgentGraph(event, {
+    signal: input.signal,
     messages: agentMessages,
     userCtx,
     systemPrompt,
-    onEvent: (eventName: string, data: unknown) => emit(eventName, data)
+    onEvent: (eventName: string, data: unknown) => {
+      if (input.isAborted()) return
+      if (eventName === 'answer_delta') delivery.push(String((data as { text?: string }).text ?? ''))
+      else emit(eventName, data)
+    }
   })
 
   // 模型调用审计：每次模型往返一行（只记元数据，不记 Prompt 与正文），失败不阻断回答
@@ -374,16 +427,43 @@ export function buildBusinessContextText(input: {
     }
   }
 
+  for (const call of result.toolCalls ?? []) {
+    await trackProductEvent(event, {
+      schoolId: user.schoolId, userId: user.id, eventName: 'assistant_tool_called',
+      targetType: 'chat_session', targetId: sessionId,
+      metadata: {
+        tool: call.name,
+        status: call.status || 'success',
+        latencyMs: call.latencyMs ?? 0
+      }
+    })
+  }
   const rawAnswer = typeof result?.answer === 'string' ? result.answer.trim() : ''
-  if (!rawAnswer) throw new Error('Agent 无回答产出')
+  if (!rawAnswer || result.exitReason === 'error' || result.exitReason === 'max_rounds') throw new Error('Agent 无回答产出')
 
-  // 回答后确定性校验：清理内部标识与来源标注，其余只告警不改写
+  // 先清理内部标识，再对敏感表述执行证据校验与最多一次修正
   const inspection = inspectAgentAnswer({
     answer: rawAnswer,
     sources: result.sources,
     toolCalls: result.toolCalls
   })
-  const answer = inspection.cleaned
+  let answer = inspection.cleaned
+  let repaired = false
+  const evidence: AnswerEvidence[] = [
+    ...teacherEvidence(input.history, outbound(input.message)),
+    ...(result.evidence ?? [])
+  ]
+  if (delivery.requiresReview || needsEvidenceReview(answer) || inspection.violations.includes('secret_like_token')) {
+    try {
+      const reviewed = await reviewAssistantAnswer(event, { answer, evidence, systemPrompt, signal: input.signal,
+        schoolId: user.schoolId, userId: user.id, sessionId })
+      answer = reviewed.answer
+      repaired = reviewed.repaired
+    } catch {
+      await trackProductEvent(event, { schoolId: user.schoolId, userId: user.id, eventName: 'assistant_answer_blocked', metadata: { reason: 'review_failed' } })
+      throw new Error('回答校验失败')
+    }
+  }
   const actionCards = Array.isArray(result.actionCards) ? result.actionCards : []
   const toolCalls = Array.isArray(result.toolCalls) ? result.toolCalls : []
   const sources = Array.isArray(result.sources) ? result.sources : []
@@ -409,6 +489,8 @@ export function buildBusinessContextText(input: {
       toolCalls,
       sources,
       moduleProportions: result.moduleProportions,
+      // 本轮对象只记类型/ID/展示名，用于回看「这次按谁回答」与统计；不含档案正文
+      ...(userCtx.turnContext ? { turnObject: { type: userCtx.turnContext.type, id: userCtx.turnContext.id, label: userCtx.turnContext.label } } : {}),
       ...(inspection.violations.length ? { answerViolations: inspection.violations } : {})
     }
   }).returning({ id: schema.chatMessages.id })
@@ -420,17 +502,6 @@ export function buildBusinessContextText(input: {
       schoolId: user.schoolId, userId: user.id, eventName: 'assistant_answer_flagged',
       targetType: 'chat_session', targetId: sessionId,
       metadata: { kinds: inspection.violations.join(','), count: inspection.violations.length }
-    })
-  }
-  for (const call of toolCalls) {
-    await trackProductEvent(event, {
-      schoolId: user.schoolId, userId: user.id, eventName: 'assistant_tool_called',
-      targetType: 'chat_session', targetId: sessionId,
-      metadata: {
-        tool: call.name,
-        status: call.status || 'success',
-        latencyMs: call.latencyMs ?? 0
-      }
     })
   }
   if (result.toolConflicts?.length) {
@@ -454,6 +525,7 @@ export function buildBusinessContextText(input: {
     }
   }
 
+  await trackProductEvent(event, { schoolId: user.schoolId, userId: user.id, eventName: 'assistant_turn_completed', metadata: { latencyMs: Date.now() - startedAt, firstTextMs: firstTextMs ?? Date.now() - startedAt, reviewed: delivery.requiresReview, repaired } })
   emit('answer', { messageId: assistantMessage.id, text: answer, mode: 'agent' })
 
   // 对话推进后提炼简短智能标题（DeepSeek 不可用时降级截断法）

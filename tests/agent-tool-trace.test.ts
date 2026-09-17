@@ -13,7 +13,7 @@ vi.mock('../server/agent/tools/index', () => ({
 }))
 
 import { runAgentGraph } from '../server/agent/graph'
-import { attachToolTraces, parseToolTrace, serializeToolTrace, TOOL_TRACE_MAX_CHARS, TOOL_TRACE_MAX_STEPS, TOOL_TRACE_VERSION } from '../server/agent/tool-trace'
+import { attachToolTraces, parseToolTrace, repairToolTrace, serializeToolTrace, TOOL_TRACE_MAX_CHARS, TOOL_TRACE_MAX_STEPS, TOOL_TRACE_VERSION, traceToLangChainMessages } from '../server/agent/tool-trace'
 import type { AgentMessage, AgentToolTraceStep } from '../server/agent/types'
 
 async function* chunks(items: unknown[]): AsyncGenerator<unknown> {
@@ -81,6 +81,40 @@ describe('工具轨迹序列化', () => {
     expect(history[0]!.toolTrace).toBeUndefined()
     expect(history[1]!.toolTrace).toEqual(steps)
   })
+
+  it('配对不完整的轨迹被修复：未配对的调用与孤立工具结果都不回放', () => {
+    // 只有一个 assistant 调用、却配了另一个 id 的工具结果 → 整步丢弃（回放会触发 INVALID_TOOL_RESULTS）
+    expect(repairToolTrace([
+      { type: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: 'x', args: '{}' }] },
+      { type: 'tool', content: '{}', toolCallId: 'call_2' }
+    ])).toEqual([])
+    // 没有 assistant 调用的孤立工具结果同样丢弃
+    expect(repairToolTrace([{ type: 'tool', content: '{}', toolCallId: 'call_1' }])).toEqual([])
+    // 并行调用只回来一半时，只保留能配对的那一组
+    expect(repairToolTrace([
+      { type: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: 'x', args: '{}' }, { id: 'call_2', name: 'y', args: '{}' }] },
+      { type: 'tool', content: 'a', toolCallId: 'call_1' },
+      { type: 'assistant', content: '继续', toolCalls: [{ id: 'call_3', name: 'z', args: '{}' }] },
+      { type: 'tool', content: 'b', toolCallId: 'call_3' }
+    ])).toEqual([
+      { type: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: 'x', args: '{}' }] },
+      { type: 'tool', content: 'a', toolCallId: 'call_1' },
+      { type: 'assistant', content: '继续', toolCalls: [{ id: 'call_3', name: 'z', args: '{}' }] },
+      { type: 'tool', content: 'b', toolCallId: 'call_3' }
+    ])
+  })
+
+  it('不可回放的轨迹不落库，回放也不会产出不合法的 tool_calls 序列', () => {
+    const broken: AgentToolTraceStep[] = [
+      { type: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: 'x', args: '{}' }] },
+      { type: 'tool', content: '{}', toolCallId: 'call_2' }
+    ]
+    expect(serializeToolTrace(broken)).toBeNull()
+    expect(traceToLangChainMessages(broken)).toEqual([])
+    const paired = traceToLangChainMessages(steps)
+    expect(paired.map(message => message.getType())).toEqual(['ai', 'tool'])
+    expect((paired[1] as { tool_call_id?: string }).tool_call_id).toBe('call_1')
+  })
 })
 
 describe('runAgentGraph 工具轨迹采集与回放', () => {
@@ -134,5 +168,45 @@ describe('runAgentGraph 工具轨迹采集与回放', () => {
     const result = await invoke()
 
     expect(result.toolTrace).toEqual([])
+  })
+
+  it('模型未给出调用 id 时不记录工具轨迹（回放不能出现无法配对的调用）', async () => {
+    streamEvents.mockImplementationOnce(() => chunks([
+      {
+        event: 'on_chat_model_end',
+        data: { output: { content: '', tool_calls: [{ name: 'record_snapshot', args: {} }] } }
+      },
+      {
+        event: 'on_tool_end',
+        name: 'record_snapshot',
+        data: { output: { content: '{"label":"合成档案"}', tool_call_id: 'call_1' } }
+      },
+      textChunk('这是回答')
+    ]))
+
+    const result = await invoke()
+
+    expect(result.toolTrace).toEqual([])
+  })
+
+  it('历史里的非法轨迹回放时自动修复，不发无配对的 tool_calls', async () => {
+    streamEvents.mockImplementationOnce(() => chunks([textChunk('第二轮回答')]))
+
+    await invoke([
+      {
+        role: 'user',
+        content: '这个孩子最近怎么样？',
+        toolTrace: [
+          { type: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: 'record_snapshot', args: '{}' }] },
+          { type: 'tool', content: '{"label":"合成档案"}', toolCallId: 'call_2' }
+        ]
+      },
+      { role: 'assistant', content: '这是回答' },
+      { role: 'user', content: '那我该怎么做？' }
+    ])
+
+    const passed = streamEvents.mock.calls[0]?.[0] as { messages: Array<{ getType?: () => string, tool_calls?: unknown[] }> }
+    expect(passed.messages.map(message => message.getType?.())).toEqual(['system', 'human', 'ai', 'human'])
+    expect(passed.messages.some(message => Array.isArray(message.tool_calls) && message.tool_calls.length > 0)).toBe(false)
   })
 })

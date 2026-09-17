@@ -48,6 +48,7 @@ const SYSTEM_MARKER = '###SYSTEM###\n'
 const USER_MARKER = '###USER###\n'
 
 export const PROMPT_REGISTRY: PromptDefinition[] = [
+  { code: 'assistant_evidence_review', name: '助手回答依据检查', description: '只验证依据，不产生业务结论', placeholders: [] },
   {
     code: 'assistant_chat',
     name: 'AI 助手系统提示词',
