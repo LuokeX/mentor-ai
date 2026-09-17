@@ -2,7 +2,7 @@ import { assessmentDefinitions, moduleMeta, type AssessmentDefinition } from '..
 import type { ModuleId, AttributionOutcome, OutputTemplateEntry, RedLineConfig, Severity } from '../../shared/contracts'
 import { assessmentReportSchema, type AssessmentReport } from '../../shared/reports'
 import type { RuleOutput } from './rules'
-import { findBannedTerms } from './knowledge-text-guard'
+import { findOutboundBannedTerms } from './knowledge-text-guard'
 
 /**
  * 报告可以由新引擎的多归因结果生成，也可以由硬编码 fallback 的单归因结果生成，
@@ -144,7 +144,7 @@ function renderOutputTemplateChecked(input: {
     input.max
   )
   if (!rendered) return input.fallback
-  const hits = findBannedTerms(rendered)
+  const hits = findOutboundBannedTerms(rendered)
   if (!hits.length) return rendered
   console.warn(`[reports] 输出模板渲染的${input.field}命中禁用词（${hits.join('、')}），已退回内置文案`)
   return input.fallback
@@ -336,20 +336,21 @@ export function validateAssessmentReport(input: unknown, module: ModuleId, resul
     throw new Error('AI report used unknown attribution')
   }
   if (/(确诊|治疗|治愈|一定|保证|医学诊断)/i.test(JSON.stringify(parsed))) throw new Error('AI report contains forbidden wording')
-  // 出口检查：模型撰写的说明性文字不得出现红线词（危机/预警/立即/110/120）与内部编码
-  //（六力/A-E/SOP 等）。先扣掉确定性字段里本来就有的词——三库的等级中文名可能含「危机干预」，
+  // 出口检查：模型撰写的说明性文字不得出现红线词（危机/预警/立即/110/120）、内部编码
+  //（六力/A-E/SOP 等）与内部标注（技术编号 T1-T12、流程编号 S0-S5、响应分级 L1-L3、
+  // 维度字母、六维）。先扣掉确定性字段里本来就有的词——三库的等级中文名可能含「危机干预」，
   // 内置风险说明会原样引用它，这类命中属于内容侧问题，不能让它把报告永久判失败。
   const deterministicText = [result.level, result.levelName, moduleRiskDescription(module, result)]
     .filter((text): text is string => typeof text === 'string' && Boolean(text))
     .join('\n')
-  const deterministicTerms = new Set(findBannedTerms(deterministicText))
+  const deterministicTerms = new Set(findOutboundBannedTerms(deterministicText))
   const aiAuthoredText = [
     parsed.profile.title,
     parsed.profile.summary,
     parsed.profile.primaryConcern,
     parsed.risk.description
   ].join('\n')
-  const bannedTerms = findBannedTerms(aiAuthoredText).filter(term => !deterministicTerms.has(term))
+  const bannedTerms = findOutboundBannedTerms(aiAuthoredText).filter(term => !deterministicTerms.has(term))
   if (bannedTerms.length) throw new Error(`AI report contains banned terms: ${bannedTerms.join('、')}`)
   return parsed
 }

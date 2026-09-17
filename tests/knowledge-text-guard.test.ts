@@ -3,6 +3,7 @@ import {
   INTERNAL_DOC_TITLE_PREFIXES,
   filterKnowledgeChunks,
   findBannedTerms,
+  findOutboundBannedTerms,
   type GuardableChunk
 } from '../server/domain/knowledge-text-guard'
 
@@ -122,5 +123,65 @@ describe('findBannedTerms', () => {
 
   it('数字与字母边界不误伤', () => {
     expect(findBannedTerms('全文 1100 字，SOPHIA 同学，2024 年')).toEqual([])
+  })
+})
+
+describe('findOutboundBannedTerms（出口专用内部标注）', () => {
+  it('技术编号 T1-T12（含 T4+ / T11+ 与 T1-T8 区间写法）命中', () => {
+    expect(findOutboundBannedTerms('用 T1 定时器分段法开始')).toContain('T1')
+    expect(findOutboundBannedTerms('叠加 T4+ 关系修复目标')).toContain('T4+')
+    expect(findOutboundBannedTerms('T11 优势锚定法')).toEqual(['T11'])
+    expect(findOutboundBannedTerms('编码匹配主技术 T1-T8')).toContain('T1')
+    expect(findOutboundBannedTerms('T12 心智化回应')).toContain('T12')
+  })
+
+  it('技术编号的边界不误伤（T13 / T1D / AT11）', () => {
+    expect(findOutboundBannedTerms('T13 教室，T1D 类型，AT11 型号')).toEqual([])
+  })
+
+  it('流程编号 S0-S5（含 S0a 子步骤）命中，S6 / STM32 不误伤', () => {
+    expect(findOutboundBannedTerms('启动 S2 全方位评估')).toEqual(['S2'])
+    expect(findOutboundBannedTerms('S0a 识别，S0c 方案制定')).toEqual(['S0a'])
+    expect(findOutboundBannedTerms('S6 赛季与 STM32 芯片')).toEqual([])
+    // SOP 属于既有内部编码，出口口径同样拦截
+    expect(findOutboundBannedTerms('按 SOP 执行')).toEqual(['SOP'])
+  })
+
+  it('响应分级 L1-L3 命中，L4 不误伤', () => {
+    expect(findOutboundBannedTerms('按 L3 中心会商处理')).toEqual(['L3'])
+    expect(findOutboundBannedTerms('L4 缓存命中率')).toEqual([])
+  })
+
+  it('维度字母只在明确语境命中，单个字母与「5A 级」不误伤', () => {
+    expect(findOutboundBannedTerms('逐维对应到 A-E 的等级上')).toContain('A-E')
+    expect(findOutboundBannedTerms('重点看 D、E 那两维')).toContain('D、E 那两维')
+    expect(findOutboundBannedTerms('达到 D 级需要重点关注')).toContain('D 级')
+    expect(findOutboundBannedTerms('维度 D 偏低')).toContain('维度 D')
+    expect(findOutboundBannedTerms('从 A 到 E 共五档')).toContain('A 到 E')
+    expect(findOutboundBannedTerms('答案是选项 D，5A 级景区的 D 出口')).toEqual([])
+  })
+
+  it('内部体系名「六维」命中', () => {
+    expect(findOutboundBannedTerms('六维等级与优势测评')).toEqual(['六维'])
+  })
+
+  it('出口口径不扩大到过滤：findBannedTerms 与知识片段过滤保持原状', () => {
+    expect(findBannedTerms('用 T11 优势锚定法')).toEqual([])
+    expect(findOutboundBannedTerms('用 T11 优势锚定法')).toEqual(['T11'])
+    // 含技术编号的片段仍保留（内容有效），含原有内部编码的片段仍整段丢弃
+    expect(filterKnowledgeChunks([chunk({ content: '用 T11 优势锚定法，从优势通道进入' })]).kept).toHaveLength(1)
+    expect(filterKnowledgeChunks([chunk({ content: '心理风险 A-E 五级分类' })]).kept).toHaveLength(0)
+  })
+
+  it('返回顺序固定（红线词 → 内部编码 → 内部标注）且去重', () => {
+    expect(findOutboundBannedTerms('涉及 危机 与 六力，用 T11 与 T11，参考 A-E'))
+      .toEqual(['危机', 'A-E', '六力', 'T11'])
+  })
+
+  it('空字符串、空白与非法输入返回空数组', () => {
+    expect(findOutboundBannedTerms('')).toEqual([])
+    expect(findOutboundBannedTerms('   \n  ')).toEqual([])
+    expect(findOutboundBannedTerms(null as unknown as string)).toEqual([])
+    expect(findOutboundBannedTerms(undefined as unknown as string)).toEqual([])
   })
 })

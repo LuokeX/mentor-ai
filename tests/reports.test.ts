@@ -246,4 +246,17 @@ describe('报告文本的红线词与内部编码防线', () => {
     expect(report.risk.label).toContain('危机干预')
     expect(() => validateAssessmentReport(report, 'class_system', result)).not.toThrow()
   })
+
+  it('AI 撰写的摘要/风险说明命中内部标注（技术编号 / 流程编号 / 维度字母）时判定生成失败', () => {
+    const result = evaluateAssessment('class_system', answers('class_system', 3))
+    const report = createTemplateAssessmentReport({ module: 'class_system', result })
+    expect(() => validateAssessmentReport({
+      ...report,
+      profile: { ...report.profile, summary: '建议按 T11 优势锚定的思路推进。' }
+    }, 'class_system', result)).toThrow('banned terms')
+    expect(() => validateAssessmentReport({
+      ...report,
+      risk: { ...report.risk, description: '启动 S2 全方位评估，重点看 D、E 那两维。' }
+    }, 'class_system', result)).toThrow('banned terms')
+  })
 })

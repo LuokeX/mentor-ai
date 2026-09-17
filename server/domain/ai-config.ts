@@ -62,7 +62,7 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
   {
     code: 'assessment_report',
     name: '评估报告润色提示词',
-    description: '确定性规则结果生成正式评估报告 JSON（AI 仅润色，约束字段不得改变）。facts 另含 termChunks（专业词白话解释片段），只用于把报告里的专业词解释成教师能懂的话，不得据此新增规则、等级、阈值或结论。',
+    description: '确定性规则结果生成正式评估报告 JSON（AI 仅润色，约束字段不得改变）。facts 另含 termChunks（专业词白话解释片段），只用于把报告里的专业词解释成教师能懂的话，不得据此新增规则、等级、阈值或结论。报告正文不得出现内部标注（技术编号 T1-T12、流程编号 S0-S5、响应分级 L1-L3、维度字母、体系名），需引用时改写为中文名称。',
     placeholders: [
       { key: 'facts', label: '规则事实 JSON', description: '规则执行结果：模块、等级、归因名称/强弱、原因、行动等（不含占比小数）；另含 termChunks：为解释专业词检索到的知识片段（term/documentTitle/heading/content/similarity）。' },
       { key: 'jsonFormat', label: '报告 JSON 结构示例', description: '由代码按报告 schema 生成的完整示例。' }
@@ -71,7 +71,7 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
   {
     code: 'tool_step_polish',
     name: '工具步骤人话改写提示词',
-    description: '把工具库机械的结构化步骤与归因建议/分级干预的一句话建议改写成教师可直接执行的口语化步骤；知识库检索片段（knowledgeChunks）与术语解释片段（termChunks）为共同输入，只用于把专业术语解释成教师能懂的白话。tools 非空时工具名与步骤数量/顺序/关键事实不变、只优化表达；tools 为空且知识片段非空时仅依据知识片段自拟 1-3 条新工具，两者都为空时 tools 输出空数组。actions 逐条按「何时做 → 怎么做 → 话术示例 → 频率/周期 → 达标标准」扩写为可执行步骤，title 与条数必须与输入一致、保留原建议要点，为空时输出空数组。后台调用，格式校验失败自动重试（最多 3 次），未覆盖全部条目时不写入部分结果。',
+    description: '把工具库机械的结构化步骤与归因建议/分级干预的一句话建议改写成教师可直接执行的口语化步骤；知识库检索片段（knowledgeChunks）与术语解释片段（termChunks）为共同输入，只用于把专业术语解释成教师能懂的白话。tools 非空时工具名与步骤数量/顺序/关键事实不变、只优化表达；tools 为空且知识片段非空时仅依据知识片段自拟 1-3 条新工具，两者都为空时 tools 输出空数组。actions 逐条按「何时做 → 怎么做 → 话术示例 → 频率/周期 → 达标标准」扩写为可执行步骤，title 与条数必须与输入一致、保留原建议要点，为空时输出空数组。改写正文不得出现内部标注（技术编号 T1-T12、流程编号 S0-S5、响应分级 L1-L3、维度字母、六维等），需引用时改写为中文名称。后台调用，格式校验失败自动重试（最多 3 次），未覆盖全部条目时不写入部分结果。',
     placeholders: [
       { key: 'facts', label: '规则事实 JSON', description: '模块、严重度、归因名称/强弱/原因、匹配工具标题与原文内容；另含 actions（归因建议/分级干预的一句话建议，每项含 title 与 content）与 termChunks（专业词白话解释片段，含 term 标注）。' },
       { key: 'jsonFormat', label: '输出 JSON 结构示例', description: '由代码生成的人话版示例（content 为改写后的效果，title 保持不变）。' },

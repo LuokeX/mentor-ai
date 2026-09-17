@@ -33,7 +33,7 @@ import { getAiRuntimeConfig, isPromptPublished, promptAvailable, renderPrompt } 
 import { embedModuleResourceQuery } from '../integrations/embeddings'
 import { callJsonChat, type JsonChatMessage } from '../integrations/json-chat'
 import { searchKnowledgeChunks, type KnowledgeSearchResult } from './module-resource-knowledge-search'
-import { filterKnowledgeChunks, findBannedTerms } from './knowledge-text-guard'
+import { filterKnowledgeChunks, findOutboundBannedTerms } from './knowledge-text-guard'
 import { buildTermGlossary } from './term-glossary'
 import { useDb } from '../utils/db'
 
@@ -98,12 +98,15 @@ const toolPolishOutputSchema = z.object({
 })
 
 /**
- * 出口检查（纯函数）：改写正文或 AI 自拟标题命中红线词/内部编码时，返回一句
- * 可直接计入 errors 的说明（触发带反馈重试）；未命中返回 null。
- * 口径与知识片段过滤共用同一份规则（server/domain/knowledge-text-guard）。
+ * 出口检查（纯函数）：改写正文或 AI 自拟标题命中红线词/内部编码/内部标注时，
+ * 返回一句可直接计入 errors 的说明（触发带反馈重试）；未命中返回 null。
+ * 口径与知识片段过滤共用同一份规则（server/domain/knowledge-text-guard）的出口档：
+ * 除红线词与内部编码外，还含技术编号（T1-T12）、流程编号（S0-S5）、响应分级
+ * （L1-L3）、维度字母（维度 D / D、E 两维 / D 级）与「六维」——三库原文与知识
+ * 片段里夹带这些标注时，要求模型改写成教师能懂的中文名称，而不是丢弃承载内容。
  */
 function bannedTermError(label: string, text: string): string | null {
-  const hits = findBannedTerms(text)
+  const hits = findOutboundBannedTerms(text)
   return hits.length ? `${label}出现不得外发的词：${hits.join('、')}` : null
 }
 
@@ -209,7 +212,8 @@ export function parsePolishOutput(
       errors.push(`工具「${title.slice(0, 40)}」重复输出`)
       continue
     }
-    // 出口检查：改写后的正文不得出现红线词/内部编码；模式 B 的 title 由 AI 自拟，同样检查
+    // 出口检查：改写后的正文不得出现红线词/内部编码/内部标注（技术编号 / 流程编号 /
+    // 响应分级 / 维度字母 / 六维）；模式 B 的 title 由 AI 自拟，同样检查
     // （模式 A 的 title 来自三库输入，不在此列——否则工具库里带编码的工具名会让改写永远失败）
     const contentBan = bannedTermError(`工具「${title.slice(0, 40)}」`, content)
     if (contentBan) {

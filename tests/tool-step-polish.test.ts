@@ -417,7 +417,7 @@ describe('actions 加工（parsePolishOutput 传入 expectedActions）', () => {
     const raw = JSON.stringify({
       tools: [],
       actions: [
-        { title: '按「橙色-高响应」干预', content: '48 小时内组织课堂观察、学生访谈、科任老师交叉了解、家长沟通，并从六维做一次完整评估。' },
+        { title: '按「橙色-高响应」干预', content: '48 小时内组织课堂观察、学生访谈、科任老师交叉了解、家长沟通，并从六个方面做一次完整评估。' },
         { title: '按「橙色-高响应」干预', content: '汇总评估结果，牵头在年级组周例会上讨论并形成综合干预方案。' },
       ],
     })
@@ -427,7 +427,7 @@ describe('actions 加工（parsePolishOutput 传入 expectedActions）', () => {
     expect(result.actionsMatched.size).toBe(1)
     expect(result.actionsMatched.get('按「橙色-高响应」干预')).toContain('综合干预方案')
     expect(result.actionContents).toHaveLength(2)
-    expect(result.actionContents![0]!.content).toContain('六维做一次完整评估')
+    expect(result.actionContents![0]!.content).toContain('六个方面做一次完整评估')
     expect(result.actionContents![1]!.content).toContain('年级组周例会')
   })
 })
@@ -628,5 +628,42 @@ describe('parsePolishOutput 出口检查（红线词 / 内部编码不得外发�
     const result = parsePolishOutput(okOutput(), inputTools)
     expect(result.errors).toEqual([])
     expect(result.matched.size).toBe(2)
+  })
+
+  it('正文含技术编号 / 流程编号 / 维度字母时报错且不进入 matched', () => {
+    const actions = [
+      { title: '针对「意义感流失」', detail: '每周做一次周复盘。' },
+      { title: '针对「职业倦怠」', detail: '与同事聊聊。' }
+    ]
+    const output = JSON.stringify({
+      tools: [
+        { title: '结构化沟通三步法', content: '按 T11 优势锚定法调整入口。' },
+        { title: '家庭作业约定术', content: '先和孩子约好每周固定时间做作业。' }
+      ],
+      actions: [
+        { title: '针对「意义感流失」', content: '每周做一次周复盘。' },
+        { title: '针对「职业倦怠」', content: '启动 S2 全方位评估，逐维对应到 A-E 的等级上，重点看 D、E 那两维。' }
+      ]
+    })
+    const result = parsePolishOutput(output, inputTools, actions)
+    expect(result.errors.some(error => error.includes('T11'))).toBe(true)
+    expect(result.errors.some(error => error.includes('S2'))).toBe(true)
+    expect(result.errors.some(error => error.includes('D、E 那两维'))).toBe(true)
+    expect(result.matched.has('结构化沟通三步法')).toBe(false)
+    expect(result.matched.get('家庭作业约定术')).toContain('每周固定时间')
+    expect(result.actionsMatched?.has('针对「职业倦怠」')).toBe(false)
+    expect(result.actionsMatched?.get('针对「意义感流失」')).toContain('周复盘')
+  })
+
+  it('三库原文常见的「T1-T8」区间写法同样命中', () => {
+    const output = JSON.stringify({
+      tools: [
+        { title: '结构化沟通三步法', content: '为命中的情况选择主技术（编码对应表里 T1-T8 那一栏）。' },
+        { title: '家庭作业约定术', content: '先和孩子约好每周固定时间做作业。' }
+      ]
+    })
+    const result = parsePolishOutput(output, inputTools)
+    expect(result.errors.some(error => error.includes('T1'))).toBe(true)
+    expect(result.matched.has('结构化沟通三步法')).toBe(false)
   })
 })
