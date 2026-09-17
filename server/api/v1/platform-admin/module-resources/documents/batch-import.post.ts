@@ -80,6 +80,8 @@ export default defineEventHandler(async (event) => {
     sourceType: string
     tags: string[]
     content: string
+    /** 适用学部（all/primary/junior/senior/repeat） */
+    applicableSchoolSection: string
     sourceRef?: string
     notes?: string
     checksum: string
@@ -112,6 +114,7 @@ export default defineEventHandler(async (event) => {
       sourceType: doc.sourceType,
       tags: doc.tags,
       content,
+      applicableSchoolSection: doc.applicableSchoolSection || 'all',
       sourceRef: doc.sourceRef,
       notes: doc.notes,
       checksum: checksumModuleResourceContent(content),
@@ -144,11 +147,13 @@ export default defineEventHandler(async (event) => {
         title: doc.title,
         sourceType: doc.sourceType,
         checksum: doc.checksum,
-        status: 'draft',
+        // 独立知识库文档：导入即分块 + 向量化，置 ready 才可被知识检索召回
+        status: 'ready',
         content: doc.content,
         metadata: {
           module: doc.module,
           libraryType: 'knowledge',
+          applicableSchoolSection: doc.applicableSchoolSection,
           characterCount: doc.content.length,
           chunkCount: doc.chunks.length,
           embeddedChunkCount: doc.chunks.filter(c => c.embedding).length,
@@ -175,6 +180,7 @@ export default defineEventHandler(async (event) => {
         metadata: {
           module: doc.module,
           libraryType: 'knowledge',
+          applicableSchoolSection: doc.applicableSchoolSection,
           documentTitle: doc.title,
           sourceType: doc.sourceType,
           tags: doc.tags,

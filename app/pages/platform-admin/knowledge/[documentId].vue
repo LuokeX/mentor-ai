@@ -1,6 +1,8 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'default' })
 
+import { SCHOOL_SECTION_LABELS, SCHOOL_SECTIONS, normalizeSchoolSection, type SchoolSection } from '#shared/school-section'
+
 const route = useRoute()
 const documentId = route.params.documentId as string
 const { moduleLabel, resourceStatusLabel } = useDisplayLabels()
@@ -9,6 +11,34 @@ const toast = useToast()
 const { data: document, refresh: refreshDocument } = await useFetch<any>(
   `/api/v1/platform-admin/module-resources/documents/${documentId}`
 )
+
+// 适用学部：与三库模板「② 枚举字典」同一套取值，标签集中在 shared/school-section.ts
+const schoolSectionOptions = SCHOOL_SECTIONS.map(section => ({
+  label: SCHOOL_SECTION_LABELS[section],
+  value: section
+}))
+
+const schoolSection = ref<SchoolSection>('all')
+const savingSection = ref(false)
+watch(() => document.value, (value) => {
+  schoolSection.value = normalizeSchoolSection(value?.metadata?.applicableSchoolSection)
+}, { immediate: true })
+
+async function saveSchoolSection() {
+  savingSection.value = true
+  try {
+    await $fetch(`/api/v1/platform-admin/module-resources/documents/${documentId}`, {
+      method: 'PATCH',
+      body: { applicableSchoolSection: schoolSection.value }
+    })
+    toast.add({ title: '适用学部已更新', color: 'success' })
+    await refreshDocument()
+  } catch (error: any) {
+    toast.add({ title: error?.data?.message || '保存失败', color: 'error' })
+  } finally {
+    savingSection.value = false
+  }
+}
 
 const reindexPending = ref(false)
 async function reindexDocument() {
@@ -102,12 +132,20 @@ function libraryTypeLabel(type: string | null | undefined) {
           </div>
         </div>
 
-        <div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
           <div class="rounded-lg bg-slate-50 p-3 text-sm">
             模块 <strong class="block text-lg">{{ moduleLabel(document.module) }}</strong>
           </div>
           <div class="rounded-lg bg-slate-50 p-3 text-sm">
             类型 <strong class="block text-lg">{{ libraryTypeLabel(document.libraryType) }}</strong>
+          </div>
+          <div class="rounded-lg bg-slate-50 p-3 text-sm">
+            适用学部
+            <div class="mt-1 flex items-center gap-2">
+              <USelect v-model="schoolSection" :items="schoolSectionOptions" size="sm" class="w-full" />
+              <UButton size="xs" color="primary" variant="soft" icon="i-lucide-check" aria-label="保存适用学部" :loading="savingSection" @click="saveSchoolSection" />
+            </div>
+            <p class="mt-1 text-xs text-slate-400">决定哪些学段的教师能检索到这篇文档</p>
           </div>
           <div class="rounded-lg bg-slate-50 p-3 text-sm">
             状态 <UBadge :color="document.status === 'ready' ? 'success' : 'neutral'" variant="soft" size="xs" class="mt-1">{{ resourceStatusLabel(document.status) }}</UBadge>

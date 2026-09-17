@@ -13,6 +13,7 @@ import {
   type ToolStructuredStep
 } from '../../shared/contracts'
 import type { AssessmentDefinition } from '../../shared/assessments'
+import { SCHOOL_SECTIONS } from '../../shared/school-section'
 
 interface SheetData {
   name: string
@@ -694,6 +695,8 @@ export interface KnowledgeEntry {
   sourceType: string
   tags: string[]
   content: string
+  /** 适用学部（all/primary/junior/senior/repeat）：运行时按教师学段过滤知识检索结果 */
+  applicableSchoolSection?: string
   sourceRef?: string
   notes?: string
 }
@@ -729,12 +732,19 @@ export function parseKnowledgeSheets(sheets: SheetData[], defaultModule: ModuleI
     const tagsRaw = read(row, ['标签关键词', 'tags'])
     const tags = tagsRaw ? tagsRaw.split(/[,，;；]/).map(t => t.trim()).filter(Boolean) : []
 
+    // 适用学部：与三库模板同一套取值（all/primary/junior/senior/repeat），非法或未填按 all 处理
+    const schoolSectionRaw = read(row, ['适用学部', 'applicableSchoolSection'])
+    const applicableSchoolSection = (SCHOOL_SECTIONS as readonly string[]).includes(schoolSectionRaw || '')
+      ? schoolSectionRaw
+      : 'all'
+
     return {
       title,
       module: entryModule,
       sourceType,
       tags,
       content,
+      applicableSchoolSection,
       sourceRef: read(row, ['来源出处', 'sourceRef']),
       notes: read(row, ['备注', 'notes']),
     }

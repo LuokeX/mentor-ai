@@ -2,6 +2,7 @@ import { eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { createDocumentWithChunks } from '../../../../../domain/module-resource-documents'
 import { renderVersionDocument } from '../../../../../domain/module-resource-document-render'
+import { resourceRowsOfVersion, schoolSectionOfResourceRows } from '../../../../../../shared/school-section'
 import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
 import { useDb, schema } from '../../../../../utils/db'
@@ -101,6 +102,9 @@ export default defineEventHandler(async (event) => {
     }
 
     try {
+      // 从版本 payload 的资源行继承「适用学部」：整版同一具体学部才采用，混杂/缺失按 all。
+      // 文档与切块都写这一键，知识检索按切块 metadata 过滤（与回填脚本同一口径）。
+      const applicableSchoolSection = schoolSectionOfResourceRows(resourceRowsOfVersion(row.libraryType, row.payload))
       const created = await createDocumentWithChunks(db, {
         libraryId: row.libraryId,
         versionId: row.id,
@@ -110,6 +114,7 @@ export default defineEventHandler(async (event) => {
         metadata: {
           module: row.module,
           libraryType: row.libraryType,
+          applicableSchoolSection,
           source: 'from_version',
           version: row.version
         },

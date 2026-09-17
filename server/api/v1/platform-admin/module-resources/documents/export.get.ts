@@ -44,7 +44,8 @@ export default defineEventHandler(async (event) => {
   }
 
   // 构建 XLSX
-  const headers = ['文档标题', '所属模块', '来源类型', '标签关键词', '文档内容', '来源出处', '备注']
+  // 「适用学部」与导入模板同列名，导出 → 修改 → 批量导入的往返不丢学段标签
+  const headers = ['文档标题', '所属模块', '来源类型', '标签关键词', '适用学部', '文档内容', '来源出处', '备注']
   const moduleLabelMap: Record<string, string> = {
     self_growth: 'self_growth', class_system: 'class_system',
     home_school: 'home_school', student_case: 'student_case',
@@ -58,6 +59,7 @@ export default defineEventHandler(async (event) => {
       moduleLabelMap[meta.module as string] || (meta.module as string) || 'self_growth',
       doc.sourceType || 'markdown',
       Array.isArray(meta.tags) ? (meta.tags as string[]).join(', ') : '',
+      (meta.applicableSchoolSection as string) || 'all',
       doc.content,
       (meta.sourceRef as string) || '',
       (meta.notes as string) || ''
@@ -69,7 +71,7 @@ export default defineEventHandler(async (event) => {
   // 设置列宽
   ws['!cols'] = [
     { wch: 30 }, { wch: 18 }, { wch: 12 }, { wch: 25 },
-    { wch: 60 }, { wch: 30 }, { wch: 20 }
+    { wch: 12 }, { wch: 60 }, { wch: 30 }, { wch: 20 }
   ]
   XLSX.utils.book_append_sheet(wb, ws, '知识文档')
 

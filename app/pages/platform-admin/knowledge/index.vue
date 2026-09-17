@@ -1,6 +1,8 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'default' })
 
+import { SCHOOL_SECTION_LABELS, SCHOOL_SECTIONS, normalizeSchoolSection, type SchoolSection } from '#shared/school-section'
+
 const { data: resourceData, refresh: refreshResources } = await useFetch<any>('/api/v1/platform-admin/module-resources')
 const { moduleLabel, resourceStatusLabel } = useDisplayLabels()
 const toast = useToast()
@@ -13,6 +15,12 @@ const moduleOptions = [
   { label: '学生个案', value: 'student_case' },
   { label: '学习问题', value: 'learning_problem' }
 ]
+
+// 适用学部：取值与三库模板「② 枚举字典」一致，标签集中在 shared/school-section.ts
+const schoolSectionOptions = SCHOOL_SECTIONS.map(section => ({
+  label: SCHOOL_SECTION_LABELS[section],
+  value: section
+}))
 
 const libraryTypeOptions = [
   { label: '全部类型', value: '__all__' },
@@ -35,6 +43,11 @@ const libraryTypeLabels: Record<string, string> = {
 
 function libraryTypeLabel(type: string | null | undefined) {
   return (type && libraryTypeLabels[type]) || '知识库'
+}
+
+/** 列表里的「适用学部」：文档 metadata 未标注时按 all（全学部）显示 */
+function schoolSectionLabelOf(doc: any) {
+  return SCHOOL_SECTION_LABELS[normalizeSchoolSection(doc?.metadata?.applicableSchoolSection)]
 }
 
 const moduleLabelMap = Object.fromEntries(
@@ -106,6 +119,7 @@ const uploadForm = reactive({
   content: '',
   originalFilename: '',
   module: 'self_growth' as string,
+  schoolSection: 'all' as SchoolSection,
   tags: '',
   sourceRef: '',
   confirmNoPersonalData: false
@@ -132,6 +146,7 @@ async function uploadDocument() {
         content: uploadForm.content,
         originalFilename: uploadForm.originalFilename || undefined,
         module: uploadForm.module || undefined,
+        applicableSchoolSection: uploadForm.schoolSection || undefined,
         tags: uploadForm.tags ? uploadForm.tags.split(/[,，]/).map(t => t.trim()).filter(Boolean) : undefined,
         sourceRef: uploadForm.sourceRef.trim() || undefined,
         confirmNoPersonalData: true
@@ -142,6 +157,7 @@ async function uploadDocument() {
     uploadForm.title = ''
     uploadForm.content = ''
     uploadForm.originalFilename = ''
+    uploadForm.schoolSection = 'all'
     uploadForm.tags = ''
     uploadForm.sourceRef = ''
     uploadForm.confirmNoPersonalData = false
@@ -418,6 +434,7 @@ function onFileChange(event: Event) {
               <th class="py-3 pr-4">标题</th>
               <th class="pr-4">资源库</th>
               <th class="pr-4">库类型</th>
+              <th class="pr-4">适用学部</th>
               <th class="pr-4">版本</th>
               <th class="pr-4">向量状态</th>
               <th class="pr-4">分块</th>
@@ -435,6 +452,7 @@ function onFileChange(event: Event) {
               </td>
               <td class="pr-4 text-xs text-slate-500">{{ doc.libraryName || '-' }}</td>
               <td class="pr-4"><UBadge color="neutral" variant="soft" size="xs">{{ libraryTypeLabel(doc.libraryType) }}</UBadge></td>
+              <td class="pr-4"><UBadge color="neutral" variant="soft" size="xs">{{ schoolSectionLabelOf(doc) }}</UBadge></td>
               <td class="pr-4 text-xs text-slate-500">v{{ doc.versionLabel || '-' }}</td>
               <td class="pr-4">
                 <UBadge :color="embeddingStatusColor(doc.embeddingStatus)" variant="soft" size="xs">
@@ -487,6 +505,9 @@ function onFileChange(event: Event) {
                 { label: '纯文本', value: 'text' },
                 { label: 'JSON', value: 'json' }
               ]" class="w-full" />
+            </UFormField>
+            <UFormField label="适用学部" hint="决定哪些学段的教师能检索到这篇文档">
+              <USelect v-model="uploadForm.schoolSection" :items="schoolSectionOptions" class="w-full" />
             </UFormField>
             <UFormField label="标签关键词">
               <UInput v-model="uploadForm.tags" placeholder="逗号分隔，如：术语,干预方法,评估标准" class="w-full" />

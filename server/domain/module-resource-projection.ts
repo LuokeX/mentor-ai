@@ -239,6 +239,8 @@ export function projectModuleResourcePayload(
           timePerSession: tool.timePerSession,
           targetUsers: tool.targetUsers,
           // V2 新增
+          applicableSchoolSection: (tool as { applicableSchoolSection?: string }).applicableSchoolSection || null,
+          applicableGrades: (tool as { applicableGrades?: number[] }).applicableGrades || null,
           hasStructuredSteps: Boolean(tool.structuredSteps && tool.structuredSteps.length),
           structuredStepCount: tool.structuredSteps ? tool.structuredSteps.length : 0,
           evidenceLevel: tool.evidenceLevel || null,
@@ -367,6 +369,7 @@ function projectAssessmentItem(
       module: instrument.module,
       hasInterpretation: Boolean((instrument as { interpretations?: unknown }).interpretations),
       // V2 新增
+      applicableSchoolSection: (instrument as { applicableSchoolSection?: string }).applicableSchoolSection || null,
       applicableGrades: (instrument as { applicableGrades?: number[] }).applicableGrades || null,
       applicableSubjects: (instrument as { applicableSubjects?: string[] }).applicableSubjects || null,
       triggerMethod: (instrument as { triggerMethod?: string }).triggerMethod || null,

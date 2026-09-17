@@ -8,7 +8,7 @@ export const HOME_SCHOOL_WIZARD_INPUT: WizardInput = {
   "version": "4.2.0",
   "sourceRef": "家校沟通与合作test0730-AI入口（评估量表V2.0/归因库/干预方案库/关联关系表）",
   "defaults": {
-    "schoolSection": "all",
+    "schoolSection": "primary",
     "targetAudience": "teacher",
     "formType": "self_report",
     "triggerMethod": "manual",

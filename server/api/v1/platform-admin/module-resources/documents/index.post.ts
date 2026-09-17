@@ -20,7 +20,9 @@ export default defineEventHandler(async (event) => {
   let versionModule: ModuleId = (body.module ?? 'self_growth') as ModuleId
   let versionLibraryType = 'knowledge'
   let schoolId: string | null = null
-  let docStatus = 'draft'
+  // 独立知识库文档：导入时已分块并向量化，直接置 ready 才可被知识检索召回
+  // （挂在三库版本上的文档按版本状态决定，见下方 versionId 分支）
+  let docStatus = 'ready'
 
   if (body.versionId) {
     // 业务三库模式：查询版本获取 libraryId / module / libraryType
@@ -65,7 +67,7 @@ export default defineEventHandler(async (event) => {
       title: body.title,
       sourceType: body.sourceType,
       content,
-      metadata: { module: versionModule, libraryType: versionLibraryType },
+      metadata: { module: versionModule, libraryType: versionLibraryType, applicableSchoolSection: body.applicableSchoolSection || 'all' },
       status: docStatus,
       createdBy: admin.id,
       event,

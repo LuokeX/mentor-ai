@@ -13,7 +13,7 @@ export const LEARNING_PROBLEM_WIZARD_INPUT: WizardInput = {
   "version": "4.2.0",
   "sourceRef": "学习问题 2.0 三库文档（2026-07-27 版）",
   "defaults": {
-    "schoolSection": "all",
+    "schoolSection": "primary",
     "targetAudience": "teacher",
     "formType": "observation",
     "triggerMethod": "manual",

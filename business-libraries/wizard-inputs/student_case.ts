@@ -29,7 +29,7 @@ export const STUDENT_CASE_WIZARD_INPUT: WizardInput = {
   "version": "4.5.0",
   "sourceRef": "学生个体问题 2.0 文档集（5D6D 一表双轨/处方库 V1.0/术语库 V2.0/手册 V6.0/业务指导手册 V3.0）",
   "defaults": {
-    "schoolSection": "all",
+    "schoolSection": "primary",
     "targetAudience": "teacher",
     "formType": "observation",
     "triggerMethod": "manual",
