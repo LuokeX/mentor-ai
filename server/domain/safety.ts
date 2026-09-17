@@ -21,6 +21,12 @@ export const TEACHER_FORBIDDEN_TEXT = /危机|红线|预警|立即|110|120/
 /** 学校未配置危机指引、或配置命中禁用字样时的默认指引（本身不得含禁用字样）。 */
 export const CRISIS_GUIDE_FALLBACK = '请尽快联系校内心理专员，并按学校安全流程跟进。'
 
+/**
+ * 语义命中（入口已在后台建安全事件与转介）但本轮照常回答时，追加到回答末尾的中性提示。
+ * 与学校危机指引同样受 TEACHER_FORBIDDEN_TEXT 约束：不得出现「危机/红线/预警/立即/110/120」。
+ */
+export const SAFETY_FOLLOW_UP_NOTE = '另外建议：把这件事同步告诉校内心理专员，并按学校安全流程跟进。'
+
 /** 判断一段准备展示给教师的文案是否越线。学校后台保存危机指引前先走这里。 */
 export function teacherFacingTextAllowed(text: string) {
   return !TEACHER_FORBIDDEN_TEXT.test(text)

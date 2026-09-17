@@ -90,9 +90,18 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
   {
     code: 'semantic_safety',
     name: '语义安全信号识别提示词',
-    description: '安全链路的辅助信号识别：自杀/自伤/暴力/虐待/威胁。小超时（1500ms）由代码固定。',
+    description: '安全链路的首轮辅助信号识别：自杀/自伤/暴力/虐待/威胁，只认文本本身能看出的现实威胁，不含已发生冲突的转述。小超时（1500ms）由代码固定。',
     placeholders: [
       { key: 'userText', label: '脱敏后的教师输入', description: '已脱敏（电话/邮箱/人名）的原始文本。' }
+    ]
+  },
+  {
+    code: 'semantic_safety_review',
+    name: '语义安全信号复核提示词',
+    description: '安全链路第二道判定：复核首轮识别出的风险类别，只保留文本里有依据的；复核调用失败时保留首轮判定（安全侧不因技术失败放行）。小超时（1500ms）由代码固定。',
+    placeholders: [
+      { key: 'userText', label: '脱敏后的教师输入', description: '已脱敏（电话/邮箱/人名）的原始文本。' },
+      { key: 'candidateRisks', label: '首轮识别出的风险类别', description: '首轮命中的类别，中英对照写法（如「暴力(violence)」），模型输出仍用枚举键。' }
     ]
   },
   {

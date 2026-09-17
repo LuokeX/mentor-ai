@@ -249,7 +249,7 @@ export default defineEventHandler(async (event) => {
 ### 8.1 安全与模型边界
 
 - 本地危机关键词和硬规则必须先于常规模型回答执行；语义模型只能补充识别，不能削弱本地规则。
-- 红线命中后停止常规回答，并在同一事务中创建 `safetyEvents`、`referrals`、`notificationOutbox` 和 `auditLogs`。
+- 红线命中后停止常规回答，并在同一事务中创建 `safetyEvents`、`referrals`、`notificationOutbox` 和 `auditLogs`。这里的「红线」指本地硬规则命中；语义层（首轮识别 + 复核两轮都成立）命中时同样创建这四类记录（后台预警），但**不打断本轮回答**：回答照常生成，末尾补一句中性提示（`SAFETY_FOLLOW_UP_NOTE`），消息 metadata 标 `safetyAlert`，前端显示「已同步提醒学校」。复核调用失败时保留首轮判定；复核清空时只记 `assistant_semantic_safety_cleared` 产品事件，不建事件与转介。
 - 量表计分、业务分级、危机熔断、归因和管理员授权必须由确定性代码执行，不能交给 LLM 决定。
 - 发送给外部模型的教师输入和历史消息必须先经 `redactPii`（`server/integrations/deepseek.ts`）；不要把完整电话、邮箱、姓名或未授权业务正文放入 Prompt。
 - 学校级数据模式 `local | redacted | full_context` 由 `server/domain/ai-governance.ts` 控制；`full_context` 需要协议版本、学校审批和教师确认同一告知版本，任一门禁不满足自动回退 `redacted`。

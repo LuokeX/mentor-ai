@@ -10,6 +10,7 @@ const AI_CENTER_CODES = [
   'tool_step_polish',
   'term_extraction',
   'semantic_safety',
+  'semantic_safety_review',
   'instrument_recommendation',
   'chat_history_summary',
 ]
@@ -18,7 +19,7 @@ const AI_CENTER_CODES = [
 const fakeEvent = {} as H3Event
 
 describe('PROMPT_REGISTRY 提示词注册表', () => {
-  it('覆盖全部 8 个 AI 调用点且 code 唯一', () => {
+  it('覆盖全部 9 个 AI 调用点且 code 唯一', () => {
     const codes = PROMPT_REGISTRY.map(item => item.code)
     expect(codes).toEqual(AI_CENTER_CODES)
     expect(new Set(codes).size).toBe(codes.length)
@@ -33,7 +34,7 @@ describe('PROMPT_REGISTRY 提示词注册表', () => {
 })
 
 describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () => {
-  it('8 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
+  it('9 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
     expect(Object.keys(AI_PROMPT_BASELINES).sort()).toEqual([...AI_CENTER_CODES].sort())
     for (const code of AI_CENTER_CODES) {
       const text = getPromptBaseline(code)
@@ -53,6 +54,22 @@ describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () =
 
   it('未登记的编码返回 null（调用点据此降级）', () => {
     expect(getPromptBaseline('not_a_prompt')).toBeNull()
+  })
+
+  it('语义安全提示词带判定标准与「已发生冲突」反例，复核提示词要求清空无依据类别', () => {
+    // 首轮口径：2026-09-17 测试环境误报（教师转述学生打架被判定暴力）的直接防线
+    const detect = getPromptBaseline('semantic_safety')!
+    expect(detect).toContain('判为风险')
+    expect(detect).toContain('不判为风险')
+    expect(detect).toContain('已经发生')
+    expect(detect).toContain('打起来了')
+    expect(detect).toContain('{{userText}}')
+    // 复核口径：只保留文本里有依据的类别，且复核不可用时由代码保留首轮判定
+    const review = getPromptBaseline('semantic_safety_review')!
+    expect(review).toContain('复核')
+    expect(review).toContain('{{userText}}')
+    expect(review).toContain('{{candidateRisks}}')
+    expect(review).toContain('按不成立处理')
   })
 
   it('基线正文占位符都在注册表声明范围内', () => {

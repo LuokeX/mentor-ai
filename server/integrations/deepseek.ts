@@ -7,6 +7,7 @@ import { createTemplateAssessmentReport, validateAssessmentReport } from '../dom
 import { getAiRuntimeConfig, promptAvailable, renderPrompt } from '../domain/ai-config'
 import { buildTermGlossary } from '../domain/term-glossary'
 import { resolvePublishedModuleResource } from '../domain/module-resources'
+import { trackProductEvent } from '../domain/product-events'
 import type { SchoolSection } from '../../shared/school-section'
 import {
   callJsonChatWithRetry,
@@ -42,7 +43,9 @@ const semanticRiskSchema = z.object({
   risks: z.array(z.enum(['suicide', 'self_harm', 'violence', 'abuse', 'threat'])).max(5)
 })
 
-const riskRuleIds: Record<z.infer<typeof semanticRiskSchema>['risks'][number], string> = {
+type SemanticRisk = z.infer<typeof semanticRiskSchema>['risks'][number]
+
+const riskRuleIds: Record<SemanticRisk, string> = {
   suicide: 'SAFE-SEMANTIC-SUICIDE',
   self_harm: 'SAFE-SEMANTIC-SELF-HARM',
   violence: 'SAFE-SEMANTIC-VIOLENCE',
@@ -50,57 +53,81 @@ const riskRuleIds: Record<z.infer<typeof semanticRiskSchema>['risks'][number], s
   threat: 'SAFE-SEMANTIC-THREAT'
 }
 
+/** 复核提示词里的中英对照；模型输出仍是枚举键，由 strict 通道的 schema 约束。 */
+const riskLabels: Record<SemanticRisk, string> = {
+  suicide: '自杀(suicide)',
+  self_harm: '自伤(self_harm)',
+  violence: '暴力(violence)',
+  abuse: '虐待(abuse)',
+  threat: '威胁(threat)'
+}
+
 /** 语义安全信号：1.5s 单次超时、两次尝试（本地规则先跑，这里只是补充识别）。 */
 const SEMANTIC_SAFETY_TIMEOUT_MS = 1500
 const SEMANTIC_SAFETY_MAX_TOKENS = 128
 const SEMANTIC_SAFETY_ATTEMPTS = 2
 
+/** 首轮识别与复核共用同一份风险枚举，避免两轮输出契约分叉。 */
+const semanticRiskParameters: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    risks: {
+      type: 'array',
+      items: { type: 'string', enum: ['suicide', 'self_harm', 'violence', 'abuse', 'threat'] },
+      maxItems: 5
+    }
+  },
+  required: ['risks'],
+  additionalProperties: false
+}
+
 /**
- * strict 结构化输出试点定义（仅当 AI_STRICT_JSON_PURPOSES 含 semantic_safety 时启用）。
+ * strict 结构化输出试点定义（仅当 AI_STRICT_JSON_PURPOSES 含对应 purpose 时启用）。
  * 已关思考，满足 tool_choice 具名形式对思考模式的要求；不可用时自动回退 json_object。
  */
 const semanticSafetyTool: JsonChatToolSpec = {
   name: 'report_safety_risks',
-  description: '上报教师消息里出现的危机风险类别；没有风险时返回空数组。',
-  parameters: {
-    type: 'object',
-    properties: {
-      risks: {
-        type: 'array',
-        items: { type: 'string', enum: ['suicide', 'self_harm', 'violence', 'abuse', 'threat'] },
-        maxItems: 5
-      }
-    },
-    required: ['risks'],
-    additionalProperties: false
-  }
+  description: '上报教师消息里出现的危机风险类别；只有文本本身能看出对人身安全的现实威胁才上报，没有风险时返回空数组。',
+  parameters: semanticRiskParameters
+}
+
+/** 复核通道的工具定义：输入是首轮命中的类别，输出只保留其中成立的。 */
+const semanticSafetyReviewTool: JsonChatToolSpec = {
+  name: 'confirm_safety_risks',
+  description: '复核首轮识别出的风险类别，只返回在教师消息里找得到依据的类别；找不到依据时返回空数组。',
+  parameters: semanticRiskParameters
+}
+
+export interface SemanticSafetyAudit {
+  schoolId?: string | null
+  ownerUserId?: string | null
+  sessionId?: string | null
 }
 
 /**
- * 语义安全信号（危机识别的模型补充，不能削弱本地硬规则）。
- *
- * 2026-09 迁移到统一 JSON 调用层：失败会写 ai_model_calls（purpose=semantic_safety），
- * 不再静默无痕；输出上限显式声明；strict 试点开启时走 tool 通道。
+ * 一次语义风险判定：渲染提示词 → 模型调用 → Zod 校验，返回命中的风险类别。
+ * 任何失败（无密钥、超时、HTTP、解析、校验）返回 null，由调用方决定是
+ * 「按无风险继续」还是「保留原判定」；失败元数据已由统一调用层写入 ai_model_calls。
  */
-export async function semanticSafetySignals(
+async function detectSemanticRisks(
   event: H3Event,
-  text: string,
-  forceLocal = false,
-  audit: { schoolId?: string | null, ownerUserId?: string | null, sessionId?: string | null } = {}
-) {
+  promptCode: 'semantic_safety' | 'semantic_safety_review',
+  promptVars: Record<string, string>,
+  tool: JsonChatToolSpec,
+  audit: SemanticSafetyAudit
+): Promise<SemanticRisk[] | null> {
   const config = useRuntimeConfig(event)
-  if (!config.deepseekApiKey || forceLocal) return []
-  const redacted = redactPii(text)
+  if (!config.deepseekApiKey) return null
   const rt = await getAiRuntimeConfig(event)
   const routerModel = rt.routerModel || config.deepseekRouterModel
-  const prompt = await renderPrompt(event, 'semantic_safety', { userText: redacted })
-  if (!promptAvailable(prompt)) return []
+  const prompt = await renderPrompt(event, promptCode, promptVars)
+  if (!promptAvailable(prompt)) return null
   const messages: JsonChatMessage[] = []
   if (prompt.system) messages.push({ role: 'system', content: prompt.system })
   if (prompt.user) messages.push({ role: 'user', content: prompt.user })
-  const outcome = await callJsonChatWithRetry<string[]>({
+  const outcome = await callJsonChatWithRetry<SemanticRisk[]>({
     event,
-    purpose: 'semantic_safety',
+    purpose: promptCode,
     model: routerModel,
     messages,
     // 关思考后只需回 5 个枚举值：128 token 足够，同时压掉 1.5s 超时下的长尾
@@ -109,15 +136,63 @@ export async function semanticSafetySignals(
     temperature: 0,
     thinking: 'disabled',
     attempts: SEMANTIC_SAFETY_ATTEMPTS,
-    tool: semanticSafetyTool,
+    tool,
     audit,
-    parse: content => ({
-      value: semanticRiskSchema.parse(JSON.parse(content)).risks.map(risk => riskRuleIds[risk])
-    })
+    parse: content => ({ value: semanticRiskSchema.parse(JSON.parse(content)).risks })
   })
-  // 两次尝试都失败：本地硬规则仍然生效，这里只降级为「无语义补充」；
-  // 失败元数据已由统一调用层写入 ai_model_calls（不再静默无痕）。
+  if (!outcome.ok) return null
   return outcome.data ?? []
+}
+
+/** 两轮判定的结论：熔断用 matchedRules；detectedRules 与 review 供审计与评测观察误报率。 */
+export interface SemanticSafetyVerdict {
+  /** 需要交给熔断分支的规则编号（两轮都成立；本地硬规则不经过这里） */
+  matchedRules: string[]
+  /** 首轮识别到的规则编号（未复核） */
+  detectedRules: string[]
+  /** 复核结论：none 首轮无风险；confirmed 复核成立；cleared 复核清空；unavailable 复核不可用（按首轮判定） */
+  review: 'none' | 'confirmed' | 'cleared' | 'unavailable'
+}
+
+/**
+ * 两轮判定的语义安全信号（首页助手入口使用）：首轮命中的类别必须再由复核提示词逐条确认，
+ * 只有两轮都成立的类别才交给熔断分支。
+ *
+ * 复核承担的是「去掉误报」：2026-09-17 测试环境出现过教师转述学生打架被首轮判成
+ * 暴力（SAFE-SEMANTIC-VIOLENCE）并直接熔断；首轮提示词已补判定标准与反例，复核是第二道。
+ * 复核调用失败（超时、HTTP、解析）时保留首轮判定——安全侧不因技术失败放行；本地硬规则
+ * 不经过这里，任何情况下都不会被削弱。
+ */
+export async function confirmedSemanticSafetySignals(
+  event: H3Event,
+  text: string,
+  forceLocal = false,
+  audit: SemanticSafetyAudit = {}
+): Promise<SemanticSafetyVerdict> {
+  const none: SemanticSafetyVerdict = { matchedRules: [], detectedRules: [], review: 'none' }
+  if (forceLocal) return none
+  const redacted = redactPii(text)
+  const detected = await detectSemanticRisks(event, 'semantic_safety', { userText: redacted }, semanticSafetyTool, audit)
+  if (!detected?.length) return none
+  const detectedRules = detected.map(risk => riskRuleIds[risk])
+  const confirmed = await detectSemanticRisks(event, 'semantic_safety_review', {
+    userText: redacted,
+    candidateRisks: detected.map(risk => riskLabels[risk]).join('、')
+  }, semanticSafetyReviewTool, audit)
+  if (confirmed === null) return { matchedRules: detectedRules, detectedRules, review: 'unavailable' }
+  if (!confirmed.length) {
+    // 首轮命中、复核清空：记产品事件便于观察误报率，不产生安全事件与转介
+    await trackProductEvent(event, {
+      schoolId: audit.schoolId ?? null,
+      userId: audit.ownerUserId ?? null,
+      eventName: 'assistant_semantic_safety_cleared',
+      targetType: 'chat_session',
+      targetId: audit.sessionId ?? undefined,
+      metadata: { detected: detectedRules.join(',') }
+    })
+    return { matchedRules: [], detectedRules, review: 'cleared' }
+  }
+  return { matchedRules: confirmed.map(risk => riskRuleIds[risk]), detectedRules, review: 'confirmed' }
 }
 
 

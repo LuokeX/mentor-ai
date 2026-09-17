@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CRISIS_GUIDE_FALLBACK,
+  SAFETY_FOLLOW_UP_NOTE,
   resolveCrisisGuide,
   TEACHER_FORBIDDEN_TEXT,
   teacherFacingTextAllowed
@@ -19,6 +20,10 @@ describe('教师可见文案红线（安全转介卡片）', () => {
 
   it('默认指引本身不含任何禁用字样', () => {
     expect(TEACHER_FORBIDDEN_TEXT.test(CRISIS_GUIDE_FALLBACK)).toBe(false)
+  })
+
+  it('语义命中后追加在回答末尾的提示不含禁用字样', () => {
+    expect(teacherFacingTextAllowed(SAFETY_FOLLOW_UP_NOTE)).toBe(true)
   })
 
   it('未配置或命中禁用字样时回退默认指引', () => {

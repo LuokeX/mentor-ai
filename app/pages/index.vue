@@ -64,6 +64,8 @@ interface TimelineItem {
   answerCompleted?: boolean
   /** 教师中途停止生成：保留已流入的部分文本并显示「已停止」标记 */
   stopped?: boolean
+  /** 本轮语义命中已后台预警（未打断回答）：显示「已同步提醒学校」标记 */
+  safetyAlert?: boolean
   /** 会话内换绑咨询对象的分隔条（role=system）：标记这条之后谈的是另一个对象 */
   contextSwitch?: { type: string, label: string }
 }
@@ -383,6 +385,7 @@ async function loadSession(id: string) {
         mode: item.metadata?.mode,
         sources: item.metadata?.sources || [],
         planUpdateSuggestions: item.metadata?.planUpdateSuggestions || [],
+        safetyAlert: Boolean(item.metadata?.safetyAlert),
         // 历史消息都是已完成的回答：工具/引用/量表块可以直接展示
         answerCompleted: item.role === 'assistant'
       }
@@ -545,8 +548,10 @@ async function readAssistantStream(response: Response, reuseIndex = -1): Promise
             if (typeof data.text === 'string' && item.text !== data.text) item.text = data.text
             item.mode = data.mode
             item.answerCompleted = true
+            // 本轮语义命中已后台预警（入口已提醒学校）：显示一行「已同步提醒」标记
+            if (data.safetyAlert) item.safetyAlert = true
           } else {
-            timeline.value.push({ messageId: data.messageId, role: 'assistant', text: data.text, mode: data.mode, sources: [], answerCompleted: true })
+            timeline.value.push({ messageId: data.messageId, role: 'assistant', text: data.text, mode: data.mode, sources: [], answerCompleted: true, safetyAlert: Boolean(data.safetyAlert) })
             assistantIndex = timeline.value.length - 1
           }
           // 回答已定稿：撤下「正在核对回答依据…」状态条（本轮若无任何 delta，此前一直是挂起状态）
@@ -1147,6 +1152,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   <div v-else-if="!item.answerCompleted" class="whitespace-pre-wrap" v-text="item.text" />
                   <div v-else class="markdown-body" v-html="useMarkdown(item.text)" />
                   <p v-if="item.role === 'assistant' && item.stopped" class="mt-2 flex items-center gap-1 text-[11px] text-slate-400"><UIcon name="i-lucide-circle-stop" class="size-3" />已停止生成</p>
+                  <p v-if="item.role === 'assistant' && item.safetyAlert" class="mt-2 flex items-center gap-1 text-[11px] text-amber-600"><UIcon name="i-lucide-bell-ring" class="size-3" />已同步提醒学校，请按学校安全流程跟进</p>
                   <button v-if="item.role === 'assistant'" type="button" class="absolute bottom-2 right-2 flex items-center gap-1 rounded-md bg-white/95 px-1.5 py-1 text-[11px] text-slate-400 opacity-0 shadow-sm transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
                 </div>
                 <!-- 量表推荐卡与工具过程、引用来源同一行排布：宽度够时三块同行，不够时卡片整行独占、折叠条另起一行（手机/平板/桌面自适应）。

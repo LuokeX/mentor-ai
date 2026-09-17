@@ -30,3 +30,15 @@ node --import tsx scripts/ai-evaluation/report.ts .data/ai-evaluation/current
 ## 适用范围
 
 助手提供分析、建议和已授权记录的导航；量表计分、分级、归因、安全熔断与业务写入仍由原有确定性代码和页面完成。语义校验可能误拦截或漏检，测试通过不能保证所有真实场景无误。校验失败、超时和停止生成不得作为正常回答落库。
+
+## 语义安全样例
+
+```bash
+pnpm ai:safety-eval                        # 只列出样例，不调用模型
+pnpm ai:safety-eval --run                  # 真实调用，逐条比对标签
+pnpm ai:safety-eval --run --kind=must_miss --repeats=3
+```
+
+样例集在 `scripts/ai-evaluation/safety-samples.ts`，分两类：`must_hit` 是本地关键词规则覆盖不到、只能靠语义层识别的隐性风险（写遗书、被长期索要财物、被家人按到墙上）；`must_miss` 是日常班主任提问，不应触发任何安全处置——2026-09-17 测试环境误报原句（教师转述学生打架并询问怎么处理）就在其中。
+
+运行器同时打印**首轮误报数**（改造前会直接熔断的普通提问）与**两轮误报数**，用来确认复核这道判定确实在减少误报；命中样例漏检则说明语义兜底失效，同样按失败退出。样例全部为合成文本，调用元数据（`purpose=semantic_safety` / `semantic_safety_review`）写入 `DATABASE_URL` 指向的库，未配置数据库时该写入静默失败。

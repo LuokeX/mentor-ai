@@ -51,7 +51,8 @@ export default defineEventHandler(async (event) => {
   const [target] = await db.select({
     id: schema.chatMessages.id,
     sessionId: schema.chatMessages.sessionId,
-    createdAt: schema.chatMessages.createdAt
+    createdAt: schema.chatMessages.createdAt,
+    metadata: schema.chatMessages.metadata
   }).from(schema.chatMessages)
     .where(and(
       eq(schema.chatMessages.id, messageId),
@@ -229,6 +230,8 @@ export default defineEventHandler(async (event) => {
           history: history.messages,
           contextSummary: history.contextSummary,
           lastModuleScores,
+          // 原回答带安全预警标记时，重新生成的回答沿用同一提示（预警在前一轮已产生，不重复建单）
+          safetyAlert: Boolean((target.metadata as { safetyAlert?: boolean } | null)?.safetyAlert),
           emit: (name, data) => emit(controller, name, data),
           signal: abortController.signal,
           isAborted: () => aborted
