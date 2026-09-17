@@ -1149,15 +1149,17 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   <p v-if="item.role === 'assistant' && item.stopped" class="mt-2 flex items-center gap-1 text-[11px] text-slate-400"><UIcon name="i-lucide-circle-stop" class="size-3" />已停止生成</p>
                   <button v-if="item.role === 'assistant'" type="button" class="absolute bottom-2 right-2 flex items-center gap-1 rounded-md bg-white/95 px-1.5 py-1 text-[11px] text-slate-400 opacity-0 shadow-sm transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
                 </div>
-                <!-- 量表推荐卡与工具过程、引用来源同一行排布：宽度够时三块同行，不够时卡片整行独占、折叠条另起一行（手机/平板/桌面自适应） -->
+                <!-- 量表推荐卡与工具过程、引用来源同一行排布：宽度够时三块同行，不够时卡片整行独占、折叠条另起一行（手机/平板/桌面自适应）。
+                     折叠条展开时必须同时给 details 加 open:self-start、给 summary 加 group-open:h-auto：本行用 items-stretch 做等高，
+                     被拉伸的 details 高度是确定值，summary 的 h-full 会解析成整个盒高，把展开内容挤到 overflow-hidden 之外而看不见 -->
                 <div
                   v-if="item.role === 'assistant' && (item.toolCalls?.length || (item.answerCompleted && (item.actionCards?.length || item.sources?.length)))"
                   class="mt-3 flex flex-wrap items-stretch gap-2"
                 >
                   <!-- 量表推荐卡：默认收起，展开后给理由与入口。md 起给 13rem 基准宽（空间不足即整行独占），此时卡片与折叠条同行，量表名放不下就截断（悬停看全名）；md 以下卡片独占整行，量表名换行完整显示 -->
                   <div v-if="item.answerCompleted && item.actionCards?.length" class="min-w-0 basis-full space-y-2 has-[details[open]]:basis-full md:basis-52 md:grow">
-                    <details v-for="(card, cardIndex) in item.actionCards" :key="`action-card-${cardIndex}`" class="group overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/70">
-                      <summary class="flex h-full cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-1.5">
+                    <details v-for="(card, cardIndex) in item.actionCards" :key="`action-card-${cardIndex}`" class="group overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/70 open:self-start">
+                      <summary class="flex h-full cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-1.5 group-open:h-auto">
                         <span class="flex min-w-0 items-center gap-2">
                           <UIcon name="i-lucide-clipboard-list" class="size-4 shrink-0 text-emerald-700" />
                           <span class="min-w-0 text-xs text-emerald-800 md:truncate" :title="card.title"><span v-if="card.kind === 'recommend_assessment'" class="mr-1 text-emerald-700">推荐量表</span><span class="font-semibold">{{ card.title }}</span></span>
@@ -1178,8 +1180,8 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   <!-- 工具过程与引用来源：合成一组参与换行，避免出现「卡片 + 一个条」的参差排布；任一条展开时整组独占一行 -->
                   <div class="flex min-w-0 flex-wrap items-stretch gap-2 has-[details[open]]:basis-full">
                     <!-- 工具调用过程：同名工具合并计数；不展示内部参数（含模块 ID 等标识） -->
-                    <details v-if="item.toolCalls?.length" class="group shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-xs text-slate-600 open:basis-full">
-                      <summary class="flex h-full cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-1.5 font-medium text-slate-500">
+                    <details v-if="item.toolCalls?.length" class="group shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60 text-xs text-slate-600 open:basis-full open:self-start">
+                      <summary class="flex h-full cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-1.5 font-medium text-slate-500 group-open:h-auto">
                         <span class="flex items-center gap-2">
                           <UIcon :name="item.answerCompleted ? 'i-lucide-wrench' : 'i-lucide-loader-circle'" class="size-4" :class="!item.answerCompleted ? 'animate-spin text-emerald-600' : ''" />
                           {{ item.answerCompleted ? `调用工具${item.toolCalls.length}次` : `正在调用工具${item.toolCalls.length}次` }}
@@ -1194,8 +1196,8 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                       </div>
                     </details>
                     <!-- 引用来源：展开后不展示内部字段（chunkId 等） -->
-                    <details v-if="item.answerCompleted && item.sources?.length" class="group shrink-0 overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/50 text-xs text-slate-600 open:basis-full">
-                      <summary class="flex h-full cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-1.5 font-medium text-emerald-800">
+                    <details v-if="item.answerCompleted && item.sources?.length" class="group shrink-0 overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/50 text-xs text-slate-600 open:basis-full open:self-start">
+                      <summary class="flex h-full cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-1.5 font-medium text-emerald-800 group-open:h-auto">
                         <span class="flex items-center gap-2"><UIcon name="i-lucide-book-open-check" class="size-4" />参考知识库{{ item.sources.length }}条</span>
                         <UIcon name="i-lucide-chevron-down" class="size-3.5 transition group-open:rotate-180" />
                       </summary>
