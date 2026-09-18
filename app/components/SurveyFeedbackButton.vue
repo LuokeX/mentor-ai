@@ -12,8 +12,22 @@ const feedback = computed(() => (data.value?.enabled && data.value?.url)
   ? { url: data.value.url, title: data.value.title || '调研反馈' }
   : null)
 
-/** 默认收起成右侧窄把手，点击箭头展开；不使用悬停，避免鼠标设备上「悬停展开 + 点击收起」互相打架。 */
+/**
+ * 默认展开状态随窗口宽度：桌面与平板横屏（≥1024px，与导航同一断点）默认展开，
+ * 手机竖屏/横屏（<1024px）默认收起成右侧窄把手。点击箭头仍可手动收起/展开，跨断点时回到该宽度默认值。
+ * 不使用悬停，避免鼠标设备上「悬停展开 + 点击收起」互相打架。
+ */
 const expanded = ref(false)
+
+onMounted(() => {
+  const media = window.matchMedia('(min-width: 1024px)')
+  const sync = () => {
+    expanded.value = media.matches
+  }
+  sync()
+  media.addEventListener('change', sync)
+  onBeforeUnmount(() => media.removeEventListener('change', sync))
+})
 </script>
 
 <template>
