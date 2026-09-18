@@ -2,4 +2,4 @@
  * 平台展示版本号（登录页、激活页与默认布局左上角统一引用）。
  * 发版时只改这里，避免多处硬编码漂移。
  */
-export const APP_VERSION = 'v1.1.7'
+export const APP_VERSION = 'v1.1.8'
