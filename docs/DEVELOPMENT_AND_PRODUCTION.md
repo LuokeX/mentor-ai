@@ -7,7 +7,7 @@
 | 环境 | 用途 | 数据要求 | 允许执行 `db:seed` | 启动方式 |
 |---|---|---|---|---|
 | 本地开发 | 编码、调试、单元测试 | 仅使用虚构或脱敏数据 | 允许 | Node.js + 本地专用 Docker PostgreSQL（5434/mentor_ai_dev） |
-| 测试/UAT | 发布前演练：迁移、功能与数据核对 | 测试环境自有数据，跨版本保留，发布时不用正式库覆盖（默认本机回环，经授权可校内局域网） | 禁止 | `docker-compose.test.yml`（5435/mentor_ai，app 3400） |
+| 测试/UAT | 发布前演练：迁移、功能与数据核对 | 测试环境自有数据，跨版本保留，发布时不用正式库覆盖（默认本机回环，经授权可校内局域网） | 禁止 | `docker-compose.test.yml`（5435/mentor_ai；3400 明文 307 跳 3401 HTTPS，见 8.5） |
 | 正式环境 | 校内封闭试用和正式业务 | 真实业务数据 | 禁止 | Docker Compose + Nginx/TLS |
 
 必须保证：
@@ -24,7 +24,7 @@
 | `pnpm env:init` | 为本地 `.env` 替换占位值并生成随机密钥 | 仅本地首次初始化 |
 | `pnpm db:up:local` | 启动本地开发专用 PostgreSQL（`docker-compose.local.yml`，端口 5434） | 本地开发 |
 | `bash scripts/refresh-test-db.sh` | 用正式库备份**覆盖**测试库（`docker-compose.test.yml`，端口 5435）。仅限明确的特殊场景手动执行，不属于发布流程；默认发布测试版本禁止使用 | 仅在获授权的特殊场景 |
-| `docker compose -f docker-compose.test.yml up -d` | 启动测试环境（migrate + app 3400） | 发布演练 |
+| `docker compose -f docker-compose.test.yml up -d` | 启动测试环境（migrate + app + nginx 入口，访问见 8.5） | 发布演练 |
 | `pnpm db:up` | 启动正式环境 compose 的 PostgreSQL、Ollama 并执行 migration | 仅正式环境部署流程 |
 | `pnpm db:generate` | 根据 Drizzle Schema 生成新 migration | 本地开发 |
 | `pnpm db:migrate` | 执行尚未执行的 migration | 本地或受控发布流程 |
@@ -142,7 +142,7 @@ pnpm build
 
 - 日常直接在本地 `main` 开发，本地 `main` 允许领先远端；改动默认只在 dev（3301）热更新展示，不做任何部署。
 - 提交 git 需用户明确说「提交」；多个独立改动必须拆分为多个主题提交（一次一个主题），提交即推送（用户另有指示时按指示办）。
-- 部署测试环境（3400）：仅当用户明确说「部署测试环境」时，用当前工作区代码演练迁移与功能。
+- 部署测试环境（3400 明文跳转 / 3401 HTTPS）：仅当用户明确说「部署测试环境」时，用当前工作区代码演练迁移与功能。
 - 演练通过、且用户明确说「部署正式环境」时，才按第 7 节发布正式。
 - 需要并行开发不相关功能、或进行实验性改动时，临时从 `main` 开出 `feat/*` 分支，验证通过后合回 `main`（遵循同样的闸门）。
 - 数据库迁移与正式部署永远按第 4、7 节流程执行，不因单人 trunk 而跳过。
@@ -218,8 +218,9 @@ docker compose logs --tail=100 app nginx
 
 ```bash
 docker compose -f docker-compose.test.yml build app migrate  # 迁移 SQL 在镜像内，migrate 必须一起重建
-docker compose -f docker-compose.test.yml up -d        # 测试环境执行 migrate + app，保留现有数据
-curl -s http://127.0.0.1:3400/health/ready             # 期望 200
+docker compose -f docker-compose.test.yml up -d        # 测试环境执行 migrate + app（含 nginx 入口），保留现有数据
+curl -s http://127.0.0.1:3400/health/ready             # 期望 200（健康检查在跳转规则之外，明文可探活）
+curl -sk https://127.0.0.1:3401/health/ready           # 期望 200（自签证书用 -k，正式证书可直接校验）
 # 用测试环境已有账号登录，验证迁移后关键功能与数据完整性
 ```
 
@@ -274,6 +275,31 @@ docker compose --profile tls up -d
 测试库（`docker-compose.test.yml`，5435）使用自有数据并跨版本保留。发布测试版本时只重建镜像、执行 migration 并重启，禁止用正式库备份覆盖测试库，否则会丢掉测试环境上已积累的验证数据。
 
 `scripts/refresh-test-db.sh` 会用正式库备份**清空并覆盖**测试库，属于特殊场景工具（例如需要复现只在正式数据上出现的迁移问题），不属于发布流程：仅当确有需要并经明确授权时手动执行，执行前先确认测试库现有数据可以丢弃。测试库中可能残留早期恢复的正式数据副本（真实人员与业务内容），仍按第 1 节要求限制访问，禁止外传或截图外发。
+
+### 8.5 测试环境访问入口（3400 → 3401）
+
+测试环境的唯一入口是 `docker-compose.test.yml` 里的 `nginx` 服务，应用容器不再直接发布端口：
+
+- **3400 明文**：只做跳转，任何请求返回 `307` 到 `https://<同一主机>:3401`。用 `307` 而不是 `301/302`，是因为前者要求客户端保持请求方法与请求体——否则登录、提问这类 POST 会被部分客户端改写成 GET。
+- **3401 HTTPS**：TLS 终结后转发 `app:3300`，是唯一实际提供应用的入口。**浏览器调用麦克风（语音输入）要求安全上下文，必须走这里**，明文 3400 会被浏览器拒绝。
+- **例外**：`/health/live`、`/health/ready` 在 3400 上直通应用（不跳转），发布流程与监控可继续用明文探活。
+
+证书放在 `infra/certs-test/`（已 gitignore，与正式的 `infra/certs/` 分开，避免自签证书被正式环境误用），由 `scripts/gen-test-cert.sh` 生成「本地 CA + 服务器证书」：
+
+```bash
+scripts/gen-test-cert.sh              # SAN 自动含 localhost、主机名、127.0.0.1 与本机全部 IPv4
+FORCE=1 scripts/gen-test-cert.sh      # 重签（换 IP、续期）
+```
+
+要让老师们能真正使用录音，必须把 `infra/certs-test/ca.pem` 安装到每台设备的「受信任的根证书颁发机构」；不安装时浏览器会先提示证书不受信（实测点过提示后仍是安全上下文、麦克风可用，但地址栏显示「不安全」，且浏览器策略可能收紧）。已经持有学校或公网 CA 签发的证书时，直接替换 `infra/certs-test/fullchain.pem` 与 `privkey.pem` 即可，不需要本地 CA。
+
+排查用命令：
+
+```bash
+curl -sI  http://<主机>:3400/ | grep -i location   # 应看到 307 与 https://<主机>:3401/
+curl -sk https://<主机>:3401/health/ready          # 应返回 200
+docker compose -f docker-compose.test.yml logs --tail=50 nginx
+```
 
 ## 9. 日常正式环境运维
 

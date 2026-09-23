@@ -127,15 +127,38 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    # 明文端口不再对外发布：3400 由 nginx 接管并 307 跳到 https://<同一主机>:3401，
+    # 应用只在 compose 网络内以 3300 暴露给 nginx（容器健康检查仍走容器内 127.0.0.1:3300）
     expose:
       - "3300"
-    ports:
-      - "0.0.0.0:3400:3300"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3300/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 12
+    security_opt:
+      - no-new-privileges:true
+
+  # 测试环境的唯一入口：
+  # - 3400 明文：307 跳到 https://<同一主机>:3401（但 /health/* 直通，供发布脚本与监控明文探活）
+  # - 3401 HTTPS：TLS 终结后转发 app:3300
+  # 应用容器不再直接发布端口（见 app 服务的 expose），避免绕过跳转的明文入口。
+  # 证书用 infra/certs-test/（与正式的 infra/certs/ 分开）。
+  nginx:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    environment:
+      # 证书里的 SAN 才是浏览器校验的依据；server_name 只影响同名多站点的分流，这里单站点，仅作记录
+      SERVER_NAME: ${SERVER_NAME:-localhost}
+    ports:
+      - "0.0.0.0:3400:3400"
+      - "0.0.0.0:3401:3401"
+    volumes:
+      - ./infra/nginx/test.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./infra/certs-test:/etc/nginx/certs-test:ro
+    depends_on:
+      app:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
 

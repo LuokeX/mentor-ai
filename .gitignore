@@ -18,6 +18,8 @@ backups/*.sql*
 infra/certs/*.pem
 infra/certs/*.key
 infra/certs/*.crt
+# 测试环境 HTTPS 使用的证书与私钥（自签或内部签发），一律不进版本库
+infra/certs-test/
 临时文件/
 exports/
 scripts/data/

@@ -1,0 +1,93 @@
+# 测试环境入口：
+#   3400 明文 → 307 跳到 https://<同一主机>:3401（/health/* 例外直通）
+#   3401 HTTPS → TLS 终结后转发 app:3300
+#
+# 设计取舍：
+# - 应用容器不再直接发布明文端口，明文只由这里接管，避免存在绕过跳转的入口。
+# - 跳转用 307 而不是 301/302：301/302 允许客户端把 POST 改写成 GET（历史上大量客户端这么做），
+#   而 /api/v1/** 里有登录、提问等 POST；307 要求保持方法与请求体。307 同时是临时跳转语义，
+#   证书不受信需要临时排查时，浏览器不会像 301 那样把跳转长期缓存下来。
+# - /health/* 例外直通应用：发布流程与监控用明文探活（curl http://host:3400/health/ready）不必跟随跳转，
+#   健康接口只返回状态与数据库可用性，不涉及任何敏感数据。
+# - 不加 HSTS：测试环境用自签或内部证书，一旦被 HSTS 记住，证书不受信时浏览器会直接拒绝访问，
+#   连「继续访问」的机会都没有。正式环境仍由 default.conf.template 下发 HSTS。
+# - 证书目录用 infra/certs-test/（与正式的 infra/certs/ 分开）：自签证书不会被正式环境误用。
+#
+# 证书文件（由 scripts/gen-test-cert.sh 生成，可替换为学校签发的证书）：
+#   /etc/nginx/certs-test/fullchain.pem  服务器证书
+#   /etc/nginx/certs-test/privkey.pem    私钥，权限 600
+
+limit_req_zone $binary_remote_addr zone=login:10m rate=10r/m;
+
+# 明文入口：只做跳转（健康检查放行）
+server {
+  listen 3400;
+  server_name ${SERVER_NAME};
+
+  location = /health/live {
+    proxy_pass http://app:3300;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto http;
+  }
+
+  location = /health/ready {
+    proxy_pass http://app:3300;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto http;
+  }
+
+  location / {
+    # $host 不含端口，这里显式补 3401；$request_uri 带查询串，原样保留路径与参数
+    return 307 https://$host:3401$request_uri;
+  }
+}
+
+server {
+  listen 3401 ssl;
+  http2 on;
+  server_name ${SERVER_NAME};
+
+  ssl_certificate /etc/nginx/certs-test/fullchain.pem;
+  ssl_certificate_key /etc/nginx/certs-test/privkey.pem;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_session_tickets off;
+
+  client_max_body_size 2m;
+  proxy_read_timeout 75s;
+
+  # 语音输入：录音转 WAV 后 base64 上传，请求体可达数 MB，单独放宽（全局仍为 2m）
+  location = /api/v1/chat/transcriptions {
+    client_max_body_size 12m;
+    proxy_pass http://app:3300;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_read_timeout 120s;
+  }
+
+  location = /api/v1/auth/login {
+    limit_req zone=login burst=5 nodelay;
+    proxy_pass http://app:3300;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+
+  location / {
+    proxy_pass http://app:3300;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    # 聊天 SSE 要求不缓冲
+    proxy_set_header Connection "";
+    proxy_buffering off;
+  }
+}
