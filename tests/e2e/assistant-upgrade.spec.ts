@@ -32,7 +32,7 @@ test('合成聊天：回答、导航、反馈原因与重新生成', async ({ pa
   await page.route('**/api/v1/chat/messages/*/feedback', async route => { feedback = route.request().postDataJSON(); await route.fulfill({ json: { ok: true } }) })
   await page.getByLabel('向 AI 赋能助手提问').fill('家长说我没听懂他的意思，怎么回应？')
   await page.getByRole('button', { name: '发送消息' }).click()
-  await expect(page.getByText('这条回答有帮助吗？')).toBeVisible()
+  await expect(page.getByRole('button', { name: '没帮助', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '没帮助', exact: true }).click()
   await page.getByLabel('太空泛', { exact: true }).check()
   await page.getByLabel('反馈补充说明').fill('希望话术更贴合场景')

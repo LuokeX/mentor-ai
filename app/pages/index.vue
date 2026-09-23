@@ -1517,7 +1517,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
               </div>
               <div class="min-w-0" :class="item.role === 'user' ? 'max-w-[88%] sm:max-w-[82%]' : 'max-w-full sm:max-w-[82%]'">
                 <div class="mb-1.5 items-center gap-2 text-[11px] text-slate-400" :class="item.role === 'user' ? 'flex justify-end' : 'hidden sm:flex'"><span>{{ item.role === 'user' ? '我' : '赋能助手' }}</span><span v-if="item.role === 'assistant' && item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
-                <div class="group relative rounded-2xl px-4 py-3 text-sm leading-7 shadow-sm" :class="item.role === 'user' ? 'rounded-tr-md bg-emerald-800 text-white' : 'rounded-tl-md border border-slate-100 bg-white text-slate-700'">
+                <div class="rounded-2xl px-4 py-3 text-sm leading-7 shadow-sm" :class="item.role === 'user' ? 'rounded-tr-md bg-emerald-800 text-white' : 'rounded-tl-md border border-slate-100 bg-white text-slate-700'">
                   <div v-if="item.role === 'user'" class="whitespace-pre-wrap" v-text="item.text" />
                   <!-- 空气泡内部动画：answer_start 已建立气泡但文本未流入时，动画显示在气泡内，避免与底部独立状态条重复 -->
                   <div v-else-if="item.text === '' && index === timeline.length - 1 && pending" class="flex items-center gap-1.5 py-1.5">
@@ -1531,7 +1531,6 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   <div v-else-if="!item.answerCompleted" class="whitespace-pre-wrap" v-text="item.text" />
                   <div v-else class="markdown-body" v-html="useMarkdown(item.text)" />
                   <p v-if="item.role === 'assistant' && item.stopped" class="mt-2 flex items-center gap-1 text-[11px] text-slate-400"><UIcon name="i-lucide-circle-stop" class="size-3" />已停止生成</p>
-                  <button v-if="item.role === 'assistant'" type="button" class="absolute bottom-2 right-2 flex items-center gap-1 rounded-md bg-white/95 px-1.5 py-1 text-[11px] text-slate-400 opacity-0 shadow-sm transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
                 </div>
                 <!-- 用户消息操作行：只有落库（拿到 messageId）后才能删除；样式与助手操作行一致（统一的 UButton size=xs） -->
                 <div v-if="item.role === 'user' && item.messageId" class="mt-2 flex justify-end">
@@ -1637,7 +1636,48 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   </div>
                 </div>
                 <div v-if="item.role === 'assistant' && item.planUpdateSuggestions?.length" class="mt-7 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><p class="font-semibold text-amber-900">AI 曾建议更新方案（历史记录）</p><div v-for="(suggestion, suggestionIndex) in item.planUpdateSuggestions" :key="suggestionIndex" class="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><span class="text-slate-600">{{ suggestion.actionTitle || '新增复盘' }}<template v-if="suggestion.newStatus"> → {{ actionStatusLabel(suggestion.newStatus) }}</template><span v-if="suggestion.progressNote" class="mt-1 block text-slate-400">{{ suggestion.progressNote }}</span></span><span class="text-[11px] text-slate-400">{{ suggestion.appliedAt ? '已应用' : '未应用' }}</span></div></div>
-                <div v-if="item.role === 'assistant' && item.messageId" class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton><UButton v-if="ttsEnabled && item.messageId" size="xs" color="neutral" :variant="speakingId === item.messageId ? 'soft' : 'ghost'" :icon="speakingId === item.messageId ? 'i-lucide-square' : 'i-lucide-volume-2'" :loading="speechLoadingId === item.messageId" :aria-label="speakingId === item.messageId ? '停止朗读' : '朗读回答'" @click="toggleSpeechFor(item)">{{ speakingId === item.messageId ? '停止' : '朗读' }}</UButton><UButton v-if="item.messageId" size="xs" :color="deleteMessageCandidate === item.messageId ? 'error' : 'neutral'" :variant="deleteMessageCandidate === item.messageId ? 'soft' : 'ghost'" icon="i-lucide-trash-2" :disabled="pending" :title="deleteMessageCandidate === item.messageId ? '再次点击确认删除' : '删除这条消息'" :aria-label="deleteMessageCandidate === item.messageId ? '确认删除这条消息' : '删除这条消息'" :data-delete-confirm-armed="deleteMessageCandidate === item.messageId ? '' : undefined" @click="armDeleteFor(item)">{{ deleteMessageCandidate === item.messageId ? '确认删除' : '删除' }}</UButton><UButton v-if="item.answerCompleted && !pending && index === timeline.length - 1" size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" @click="regenerateAnswer(item, index)">重新生成</UButton></div>
+                <!-- 助手消息操作行（常驻显示在气泡下方，不随 hover 隐藏）：六颗按钮统一用 UButton size=xs
+                     + neutral + ghost，字体大小、颜色与图标尺寸完全一致；状态变化也走同一套 soft 变体，
+                     只有「确认删除」切换为 error 色作为破坏性操作提示。
+                     出现条件不同：反馈、朗读、删除需要消息已落库（messageId）；重新生成只对最后一条已完成的
+                     回答开放；复制在任何有文本的气泡上可用（含出错时的临时回答）；生成中禁用删除，避免打断本轮。 -->
+                <div v-if="item.role === 'assistant' && item.text" class="mt-3 flex flex-wrap items-center gap-1.5">
+                  <template v-if="item.messageId">
+                    <UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton>
+                    <UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton>
+                    <UButton v-if="item.answerCompleted && !pending && index === timeline.length - 1" size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" @click="regenerateAnswer(item, index)">重新生成</UButton>
+                  </template>
+                  <UButton
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    :icon="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'"
+                    :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'"
+                    @click="copyMessage(item.text, index)"
+                  >{{ copiedMessage === index ? '已复制' : '复制' }}</UButton>
+                  <UButton
+                    v-if="ttsEnabled && item.messageId"
+                    size="xs"
+                    color="neutral"
+                    :variant="speakingId === item.messageId ? 'soft' : 'ghost'"
+                    :icon="speakingId === item.messageId ? 'i-lucide-square' : 'i-lucide-volume-2'"
+                    :loading="speechLoadingId === item.messageId"
+                    :aria-label="speakingId === item.messageId ? '停止朗读' : '朗读回答'"
+                    @click="toggleSpeechFor(item)"
+                  >{{ speakingId === item.messageId ? '停止' : '朗读' }}</UButton>
+                  <UButton
+                    v-if="item.messageId"
+                    size="xs"
+                    :color="deleteMessageCandidate === item.messageId ? 'error' : 'neutral'"
+                    :variant="deleteMessageCandidate === item.messageId ? 'soft' : 'ghost'"
+                    icon="i-lucide-trash-2"
+                    :disabled="pending"
+                    :title="deleteMessageCandidate === item.messageId ? '再次点击确认删除' : '删除这条消息'"
+                    :aria-label="deleteMessageCandidate === item.messageId ? '确认删除这条消息' : '删除这条消息'"
+                    :data-delete-confirm-armed="deleteMessageCandidate === item.messageId ? '' : undefined"
+                    @click="armDeleteFor(item)"
+                  >{{ deleteMessageCandidate === item.messageId ? '确认删除' : '删除' }}</UButton>
+                </div>
                 <!-- 追问建议：暂时隐藏（SHOW_FOLLOW_UP_CHIPS=false）；生成逻辑保留，改回开关即恢复 -->
                 <div v-if="item.feedbackOpen" class="mt-3 space-y-3 rounded-xl border border-slate-200 p-3">
                   <p class="text-sm">哪里需要改进？（可选）</p>

@@ -51,8 +51,9 @@ test.describe('四角色核心路径', () => {
     }
     await page.getByLabel('向 AI 赋能助手提问').fill('我想先梳理一下班级纪律反复的问题。')
     await page.getByRole('button', { name: '发送消息' }).click()
-    await expect(page.getByText('这条回答有帮助吗？').last()).toBeVisible({ timeout: 30_000 })
-    // 回答完成后：最后一条回答可「重新生成」
+    // 回答落库后出现常驻操作行（有帮助 / 没帮助 …）。此前用「这条回答有帮助吗？」文案判断完成，
+    // 该文案已按产品要求移除，改用操作行里的「没帮助」按钮作为同一时机（消息已落库）的判据。
+    await expect(page.getByRole('button', { name: '没帮助', exact: true }).last()).toBeVisible({ timeout: 30_000 })
     // 回答完成后：最后一条回答可「重新生成」。该按钮只在 SSE 结束（done）后出现，
     // 真实模型与落库耗时波动较大，超时给足以免误判。
     await expect(page.getByRole('button', { name: '重新生成' }).last()).toBeVisible({ timeout: 30_000 })
