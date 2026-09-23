@@ -7,7 +7,8 @@ coverage
 playwright-report
 test-results
 .env
-.env.bak.*
+# 同时覆盖 .env.bak.<时间戳> 与 .env.bak-<时间戳> 两种命名（后者曾长期未被忽略，含真实密钥）
+.env.bak*
 .env.dev
 *.log
 .DS_Store
