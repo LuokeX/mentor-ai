@@ -108,7 +108,7 @@ export default defineEventHandler(async (event) => {
   const [question] = await db.insert(schema.chatMessages).values({
     schoolId: user.schoolId, ownerUserId: user.id, sessionId: ownedSessionId,
     role: 'user', contentEnc: encryptSensitive(body.message, config.encryptionKey)
-  }).returning({ createdAt: schema.chatMessages.createdAt })
+  }).returning({ id: schema.chatMessages.id, createdAt: schema.chatMessages.createdAt })
   if (!question) throw createError({ statusCode: 500, message: '提问保存失败' })
   await trackProductEvent(event, {
     schoolId: user.schoolId, userId: user.id, eventName: 'assistant_question_submitted',
@@ -167,6 +167,8 @@ export default defineEventHandler(async (event) => {
       try {
         emit(controller, 'ack', {
           sessionId: ownedSessionId,
+          // 本条提问的消息 id：前端据此定位并删除这条消息
+          userMessageId: question.id,
           context: businessContext ? { type: businessContext.type, id: businessContext.id, label: businessContext.label } : undefined,
           // 本轮对象（未绑定会话时按消息识别）：前端据此显示「本次按 X 回答」与「固定为本会话对象」
           turnObject: turnContext ? { type: turnContext.type, id: turnContext.id, label: turnContext.label } : undefined,

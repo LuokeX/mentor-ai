@@ -69,6 +69,69 @@ test.describe('四角色核心路径', () => {
     }
   })
 
+  test('助手页删除单条助手回答，刷新后不再出现', async ({ page }) => {
+    // 服务端删除是软删（业务档案与审计保留）：会话接口不再返回该条，界面刷新后也不应复现。
+    test.setTimeout(120_000)
+    // 首页挂载后会自动恢复最近一次对话（GET /api/v1/chat/sessions/<id>），历史消息异步渲染。
+    // 先等这次恢复请求回来，再等渲染计数稳定，基线才不会取到偏小的中间态。
+    const sessionRestored = page.waitForResponse(response =>
+      response.request().method() === 'GET' &&
+      /\/api\/v1\/chat\/sessions\/[0-9a-f-]{36}$/.test(new URL(response.url()).pathname),
+    { timeout: 20_000 }).catch(() => null)
+    await login(page, '16688096890')
+    await ensureTextComposer(page)
+    await sessionRestored
+
+    // 名称匹配必须 exact：确认态按钮的无障碍名称「确认删除这条消息」包含「删除这条消息」。
+    // feedbackRows 用「没帮助」按钮计数：一条已落库的助手回答对应一个（此前用「这条回答有帮助吗？」文案计数，该文案已移除）
+    const feedbackRows = page.getByRole('button', { name: '没帮助', exact: true })
+    const deleteButtons = page.getByRole('button', { name: '删除这条消息', exact: true })
+    // 历史消息由多次渲染拼成：以相隔 600ms 的两次采样相等作为稳定判据，而不是固定 sleep 赌时序
+    await expect.poll(async () => {
+      const deletes = await deleteButtons.count()
+      const feedback = await feedbackRows.count()
+      await page.waitForTimeout(600)
+      return (await deleteButtons.count()) === deletes && (await feedbackRows.count()) === feedback
+    }, { timeout: 20_000, message: '历史消息渲染应稳定后再取基线' }).toBe(true)
+
+    // 提问前取基线：此时计数尚未包含本轮消息。
+    // 教师提问与助手回答各有一个删除按钮，反馈行只有已落库的助手消息才有。
+    const deletesBefore = await deleteButtons.count()
+    const feedbackBefore = await feedbackRows.count()
+
+    // 提问并等本轮回答定稿：「重新生成」只在回答完成（answer 事件）后出现
+    const question = `明天进班前我应该先做什么？端到端删除校验 ${Date.now()}`
+    await page.getByLabel('向 AI 赋能助手提问').fill(question)
+    await page.getByRole('button', { name: '发送消息' }).click()
+    await expect(page.getByRole('button', { name: '重新生成', exact: true })).toBeVisible({ timeout: 60_000 })
+
+    // 本轮两条消息已落库：教师提问从 ack 拿到 userMessageId、助手回答从 answer 拿到 messageId
+    await expect(deleteButtons).toHaveCount(deletesBefore + 2)
+    await expect(feedbackRows).toHaveCount(feedbackBefore + 1)
+
+    // 时间线里用户消息在前、回答在后：最后一个删除按钮属于最后一条助手回答
+    await deleteButtons.last().click()
+    const confirmButton = page.getByRole('button', { name: '确认删除这条消息', exact: true })
+    await expect(confirmButton).toBeVisible()
+    await confirmButton.click()
+
+    // 回答消失：反馈行回到提问前的数量，只剩本轮提问那一个删除按钮；
+    // 末条变成用户消息，整个会话不再有「重新生成」
+    await expect(deleteButtons).toHaveCount(deletesBefore + 1, { timeout: 15_000 })
+    await expect(feedbackRows).toHaveCount(feedbackBefore)
+    await expect(page.getByRole('button', { name: '重新生成', exact: true })).toHaveCount(0)
+
+    // 刷新后仍不复现：提问还在（没有连坐删除），被删回答的反馈行与「重新生成」都不回来
+    await page.reload()
+    await page.waitForFunction(() => !!document.querySelector('#__nuxt')?.__vue_app__)
+    await expect(page.getByText(question).first()).toBeVisible({ timeout: 30_000 })
+    // 删除按钮数 = 提问前 + 1（本轮提问）：先等这个数到位，证明整段历史渲染完成、
+    // 被删回答也没有随刷新回来（若回来这里会变成 +2 而超时失败），再做后续断言
+    await expect(deleteButtons).toHaveCount(deletesBefore + 1, { timeout: 30_000 })
+    await expect(feedbackRows).toHaveCount(feedbackBefore)
+    await expect(page.getByRole('button', { name: '重新生成', exact: true })).toHaveCount(0)
+  })
+
   test('助手页按服务端语音能力开关渲染语音按钮', async ({ page }, testInfo) => {
     // 语音能力（ASR/TTS）由服务端配置决定。这里不硬编码环境开关，只断言界面与
     // /api/v1/chat/status 返回的 speech 保持一致：不可用时不留麦克风/朗读死按钮。

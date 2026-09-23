@@ -435,6 +435,98 @@ function apiErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
+// ---- 单条消息删除（两次点击确认，与侧栏删会话同一交互模式） ----
+const deleteMessageCandidate = ref<string | null>(null)
+let deleteMessageTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 待确认标记的自动复位：2 秒内没有第二次点击就取消。 */
+function resetDeleteMessageCandidate() {
+  if (deleteMessageTimer) {
+    clearTimeout(deleteMessageTimer)
+    deleteMessageTimer = null
+  }
+  deleteMessageCandidate.value = null
+}
+
+/** 点击别处（非待确认按钮）时复位；待确认按钮自身的第二次 pointerdown 不打断确认。 */
+function onMessageDeletePointerDown(event: PointerEvent) {
+  if (deleteMessageCandidate.value === null) return
+  const target = event.target
+  if (target instanceof Element && target.closest('[data-delete-confirm-armed]')) return
+  resetDeleteMessageCandidate()
+}
+
+/** 第一次点击进入待确认，第二次点击真正删除。 */
+function armDeleteMessage(messageId: string) {
+  if (pending.value) return
+  if (deleteMessageCandidate.value === messageId) {
+    resetDeleteMessageCandidate()
+    void deleteMessage(messageId)
+    return
+  }
+  deleteMessageCandidate.value = messageId
+  if (deleteMessageTimer) clearTimeout(deleteMessageTimer)
+  deleteMessageTimer = setTimeout(resetDeleteMessageCandidate, 2000)
+}
+
+/** 从时间线移除一条消息，并修正按 index / 关联记录保存的展示状态。 */
+function removeTimelineItem(index: number) {
+  const item = timeline.value[index]
+  if (!item) return
+  // 该条用户消息若是某轮追问的作答，一并清掉「已选」高亮
+  if (item.role === 'user') {
+    for (let i = index - 1; i >= 0; i--) {
+      const round = timeline.value[i]?.clarification?.round
+      if (round === undefined) continue
+      if (selectedOptions.value[round] === item.text) {
+        const next = { ...selectedOptions.value }
+        delete next[round]
+        selectedOptions.value = next
+      }
+      break
+    }
+  }
+  timeline.value.splice(index, 1)
+  if (copiedMessage.value !== null) {
+    if (copiedMessage.value === index) copiedMessage.value = null
+    else if (copiedMessage.value > index) copiedMessage.value -= 1
+  }
+}
+
+/** 删除失败（消息已被删/不存在）时重新拉取会话，让界面与服务端一致。 */
+async function reloadCurrentSession() {
+  if (!sessionId.value) return
+  try {
+    await loadSession(sessionId.value)
+  } catch {
+    // 会话本身不可读取时保持当前界面，错误提示已经给过
+  }
+}
+
+async function deleteMessage(messageId: string) {
+  // 正在朗读这条回答时先停播，避免删完还在出声
+  if (speakingId.value === messageId || speechLoadingId.value === messageId) stopSpeech()
+  try {
+    await $fetch(`/api/v1/chat/messages/${messageId}`, { method: 'DELETE' })
+    // 请求期间时间线可能已被其他操作改动（切会话、再次删除），删完按 id 重新定位
+    removeTimelineItem(timeline.value.findIndex(entry => entry.messageId === messageId))
+    toast.add({ title: '已删除这条消息', color: 'success' })
+  } catch (error) {
+    const status = (error as { statusCode?: number })?.statusCode
+    if (status === 409 || status === 404) {
+      toast.add({ title: '删除失败', description: apiErrorMessage(error, '消息已不存在，已为你刷新。'), color: 'error' })
+      await reloadCurrentSession()
+    } else {
+      toast.add({ title: '删除失败', description: apiErrorMessage(error, '请稍后重试。'), color: 'error' })
+    }
+  }
+}
+
+/** 模板入口：消息还没落库（没有 messageId）时按钮本就不渲染，这里再做一次空值保护。 */
+function armDeleteFor(item: TimelineItem) {
+  if (item.messageId) armDeleteMessage(item.messageId)
+}
+
 /** 模板入口：朗读/停止同一条回答（返回 Promise，交给点击事件即可）。 */
 function toggleSpeechFor(item: TimelineItem) {
   if (item.messageId) void toggleSpeech(item.messageId)
@@ -591,8 +683,9 @@ async function copyMessage(text: string, index: number) {
 
 function newConversation() {
   sessionId.value = undefined
-  // 换会话前停掉朗读
+  // 换会话前停掉朗读、收起待确认删除、丢弃录音状态
   stopSpeech()
+  resetDeleteMessageCandidate()
   timeline.value = []
   route.value = null
   turnObject.value = null
@@ -610,8 +703,9 @@ function newConversation() {
 
 async function loadSession(id: string) {
   if (pending.value) return
-  // 切会话：停掉上一条会话的朗读
+  // 切会话：停掉上一条会话的朗读，并复位待确认删除
   stopSpeech()
+  resetDeleteMessageCandidate()
   loadingSession.value = true
   try {
     const result = await $fetch<any>(`/api/v1/chat/sessions/${id}`)
@@ -722,9 +816,11 @@ function isAbortError(error: unknown): boolean {
 /**
  * 消费一轮回答的 SSE 流（普通提问与重新生成共用）。
  * reuseIndex：重新生成时复用已有的助手气泡；默认 -1 表示等 answer_start 新建气泡。
+ * userMessageIndex：本轮教师提问在 timeline 中的下标；ack 到达后把服务端落库的
+ * userMessageId 写回该气泡（用户消息据此才能删除）。-1 表示本轮没有新建用户消息。
  * 返回最终写入的助手气泡下标（-1 表示本轮没有产生气泡）。
  */
-async function readAssistantStream(response: Response, reuseIndex = -1): Promise<number> {
+async function readAssistantStream(response: Response, reuseIndex = -1, userMessageIndex = -1): Promise<number> {
   let assistantIndex = reuseIndex
   const reader = response.body!.getReader()
   const decoder = new TextDecoder()
@@ -742,6 +838,12 @@ async function readAssistantStream(response: Response, reuseIndex = -1): Promise
         const data = JSON.parse(raw)
         if (event === 'ack') {
           sessionId.value = data.sessionId
+          // 本轮教师提问已落库：把 userMessageId 写回刚才 push 的气泡，用户消息才能删除。
+          // 按「下标 + 角色 + 尚未赋值」三重条件写回，避免其他分支追加气泡后写错对象。
+          if (typeof data.userMessageId === 'string' && userMessageIndex >= 0) {
+            const target = timeline.value[userMessageIndex]
+            if (target && target.role === 'user' && !target.messageId) target.messageId = data.userMessageId
+          }
           turnObject.value = data.turnObject ? { type: data.turnObject.type, id: data.turnObject.id, label: data.turnObject.label } : null
           turnObjectCandidates.value = Array.isArray(data.turnObjectCandidates)
             ? data.turnObjectCandidates.map((item: any) => ({ type: item.type, id: item.id, label: item.label }))
@@ -923,7 +1025,10 @@ async function ask() {
   turnObject.value = null
   turnObjectCandidates.value = []
   suggestedContext.value = null
+  resetDeleteMessageCandidate()
   timeline.value.push({ role: 'user', text })
+  // 记下这条用户消息的位置：ack 事件带回 userMessageId 后写回同一气泡
+  const userMessageIndex = timeline.value.length - 1
   await scrollToLatest()
   const controller = new AbortController()
   abortController.value = controller
@@ -935,7 +1040,7 @@ async function ask() {
       signal: controller.signal
     })
     if (!response.ok || !response.body) throw new Error('助手暂时不可用')
-    assistantIndex = await readAssistantStream(response)
+    assistantIndex = await readAssistantStream(response, -1, userMessageIndex)
     await refreshSessions()
   } catch (error: any) {
     if (isAbortError(error)) markStopped(assistantIndex)
@@ -955,6 +1060,7 @@ async function regenerateAnswer(item: TimelineItem, index: number) {
   if (!messageId || pending.value) return
   // 这条回答正在朗读时先停播：下面的正文会被清空重写
   stopSpeech()
+  resetDeleteMessageCandidate()
   pending.value = true
   pendingLabel.value = 'Agent 正在重新生成…'
   item.text = ''
@@ -1210,6 +1316,8 @@ async function autoRestoreLatestSession() {
 
 onMounted(async () => {
   const query = useRoute().query
+  // 删除确认的复位：点击别处即取消（按钮自身的第二次点击由 data-delete-confirm-armed 放行）
+  document.addEventListener('pointerdown', onMessageDeletePointerDown, true)
   // 会话深链：?sessionId=<uuid> 打开指定会话；归属由 /api/v1/chat/sessions/[id] 服务端校验，跨教师返回 404
   const deepLinkSessionId = typeof query.sessionId === 'string' && query.sessionId ? query.sessionId : ''
   const type = typeof query.contextType === 'string' ? query.contextType : ''
@@ -1254,8 +1362,10 @@ watch(greetingName, () => {
 
 onBeforeUnmount(() => {
   stopGreetingTyping()
-  // 释放麦克风与 AudioContext（丢弃未完成录音、不再上传识别）
+  // 释放麦克风与 AudioContext（丢弃未完成录音、不再上传识别）、复位删除确认
   discardRecording()
+  resetDeleteMessageCandidate()
+  document.removeEventListener('pointerdown', onMessageDeletePointerDown, true)
   sidebarMedia?.removeEventListener('change', syncDesktopSidebar)
   phoneMedia?.removeEventListener('change', syncPhoneLayout)
   bottomNavMedia?.removeEventListener('change', syncBottomNavLayout)
@@ -1423,6 +1533,20 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   <p v-if="item.role === 'assistant' && item.stopped" class="mt-2 flex items-center gap-1 text-[11px] text-slate-400"><UIcon name="i-lucide-circle-stop" class="size-3" />已停止生成</p>
                   <button v-if="item.role === 'assistant'" type="button" class="absolute bottom-2 right-2 flex items-center gap-1 rounded-md bg-white/95 px-1.5 py-1 text-[11px] text-slate-400 opacity-0 shadow-sm transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 focus:opacity-100" :aria-label="copiedMessage === index ? '已复制回答' : '复制回答'" @click="copyMessage(item.text, index)"><UIcon :name="copiedMessage === index ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3" />{{ copiedMessage === index ? '已复制' : '复制' }}</button>
                 </div>
+                <!-- 用户消息操作行：只有落库（拿到 messageId）后才能删除；样式与助手操作行一致（统一的 UButton size=xs） -->
+                <div v-if="item.role === 'user' && item.messageId" class="mt-2 flex justify-end">
+                  <UButton
+                    size="xs"
+                    :color="deleteMessageCandidate === item.messageId ? 'error' : 'neutral'"
+                    :variant="deleteMessageCandidate === item.messageId ? 'soft' : 'ghost'"
+                    icon="i-lucide-trash-2"
+                    :disabled="pending"
+                    :title="deleteMessageCandidate === item.messageId ? '再次点击确认删除' : '删除这条消息'"
+                    :aria-label="deleteMessageCandidate === item.messageId ? '确认删除这条消息' : '删除这条消息'"
+                    :data-delete-confirm-armed="deleteMessageCandidate === item.messageId ? '' : undefined"
+                    @click="armDeleteFor(item)"
+                  >{{ deleteMessageCandidate === item.messageId ? '确认删除' : '删除' }}</UButton>
+                </div>
                 <!-- 量表推荐卡与工具过程、引用来源同一行排布：宽度够时三块同行，不够时卡片整行独占、折叠条另起一行（手机/平板/桌面自适应）。
                      折叠条展开时必须同时给 details 加 open:self-start、给 summary 加 group-open:h-auto：本行用 items-stretch 做等高，
                      被拉伸的 details 高度是确定值，summary 的 h-full 会解析成整个盒高，把展开内容挤到 overflow-hidden 之外而看不见 -->
@@ -1513,7 +1637,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   </div>
                 </div>
                 <div v-if="item.role === 'assistant' && item.planUpdateSuggestions?.length" class="mt-7 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><p class="font-semibold text-amber-900">AI 曾建议更新方案（历史记录）</p><div v-for="(suggestion, suggestionIndex) in item.planUpdateSuggestions" :key="suggestionIndex" class="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><span class="text-slate-600">{{ suggestion.actionTitle || '新增复盘' }}<template v-if="suggestion.newStatus"> → {{ actionStatusLabel(suggestion.newStatus) }}</template><span v-if="suggestion.progressNote" class="mt-1 block text-slate-400">{{ suggestion.progressNote }}</span></span><span class="text-[11px] text-slate-400">{{ suggestion.appliedAt ? '已应用' : '未应用' }}</span></div></div>
-                <div v-if="item.role === 'assistant' && item.messageId" class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton><UButton v-if="ttsEnabled && item.messageId" size="xs" color="neutral" :variant="speakingId === item.messageId ? 'soft' : 'ghost'" :icon="speakingId === item.messageId ? 'i-lucide-square' : 'i-lucide-volume-2'" :loading="speechLoadingId === item.messageId" :aria-label="speakingId === item.messageId ? '停止朗读' : '朗读回答'" @click="toggleSpeechFor(item)">{{ speakingId === item.messageId ? '停止' : '朗读' }}</UButton><UButton v-if="item.answerCompleted && !pending && index === timeline.length - 1" size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" @click="regenerateAnswer(item, index)">重新生成</UButton></div>
+                <div v-if="item.role === 'assistant' && item.messageId" class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton><UButton v-if="ttsEnabled && item.messageId" size="xs" color="neutral" :variant="speakingId === item.messageId ? 'soft' : 'ghost'" :icon="speakingId === item.messageId ? 'i-lucide-square' : 'i-lucide-volume-2'" :loading="speechLoadingId === item.messageId" :aria-label="speakingId === item.messageId ? '停止朗读' : '朗读回答'" @click="toggleSpeechFor(item)">{{ speakingId === item.messageId ? '停止' : '朗读' }}</UButton><UButton v-if="item.messageId" size="xs" :color="deleteMessageCandidate === item.messageId ? 'error' : 'neutral'" :variant="deleteMessageCandidate === item.messageId ? 'soft' : 'ghost'" icon="i-lucide-trash-2" :disabled="pending" :title="deleteMessageCandidate === item.messageId ? '再次点击确认删除' : '删除这条消息'" :aria-label="deleteMessageCandidate === item.messageId ? '确认删除这条消息' : '删除这条消息'" :data-delete-confirm-armed="deleteMessageCandidate === item.messageId ? '' : undefined" @click="armDeleteFor(item)">{{ deleteMessageCandidate === item.messageId ? '确认删除' : '删除' }}</UButton><UButton v-if="item.answerCompleted && !pending && index === timeline.length - 1" size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" @click="regenerateAnswer(item, index)">重新生成</UButton></div>
                 <!-- 追问建议：暂时隐藏（SHOW_FOLLOW_UP_CHIPS=false）；生成逻辑保留，改回开关即恢复 -->
                 <div v-if="item.feedbackOpen" class="mt-3 space-y-3 rounded-xl border border-slate-200 p-3">
                   <p class="text-sm">哪里需要改进？（可选）</p>
