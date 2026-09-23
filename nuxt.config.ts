@@ -49,6 +49,15 @@ export default defineNuxtConfig({
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
     dashscopeBaseUrl: process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     dashscopeApiKey: process.env.DASHSCOPE_API_KEY || '',
+    // 原生 DashScope 端点（与上面的 compatible-mode 不同）：语音合成 qwen3-tts-flash 用
+    dashscopeApiBaseUrl: process.env.DASHSCOPE_API_BASE_URL || 'https://dashscope.aliyuncs.com/api/v1',
+    // 语音输入与回答朗读：总开关关闭、缺 DASHSCOPE_API_KEY 或学校数据模式为 local 时整体不可用
+    speechEnabled: process.env.SPEECH_ENABLED !== 'false',
+    // 识别与朗读都按「模型系列 → 端点/请求体」自动选择，见 server/integrations/dashscope-speech.ts：
+    // qwen-audio-* 与 qwen3-* 的端点、入参与返回结构都不同，换模型只改环境变量即可
+    asrModel: process.env.ASR_MODEL || 'qwen-audio-3.0-asr-flash',
+    ttsModel: process.env.TTS_MODEL || 'qwen-audio-3.0-tts-flash',
+    ttsVoice: process.env.TTS_VOICE || 'longanlingxi',
     embeddingModel: process.env.EMBEDDING_MODEL || 'qwen3-embedding:0.6b',
     embeddingTimeoutMs: Number(process.env.EMBEDDING_TIMEOUT_MS || 8000),
     smsProvider: process.env.SMS_PROVIDER || 'mock',

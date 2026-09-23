@@ -52,6 +52,17 @@ x-app-environment: &app-environment
   NUXT_DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
   DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
   NUXT_DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+  # 语音输入与回答朗读（百炼）：总开关、模型与音色；学校数据模式为 local 时服务端整体禁用
+  DASHSCOPE_API_BASE_URL: ${DASHSCOPE_API_BASE_URL:-https://dashscope.aliyuncs.com/api/v1}
+  NUXT_DASHSCOPE_API_BASE_URL: ${DASHSCOPE_API_BASE_URL:-https://dashscope.aliyuncs.com/api/v1}
+  SPEECH_ENABLED: ${SPEECH_ENABLED:-true}
+  NUXT_SPEECH_ENABLED: ${SPEECH_ENABLED:-true}
+  ASR_MODEL: ${ASR_MODEL:-qwen-audio-3.0-asr-flash}
+  NUXT_ASR_MODEL: ${ASR_MODEL:-qwen-audio-3.0-asr-flash}
+  TTS_MODEL: ${TTS_MODEL:-qwen-audio-3.0-tts-flash}
+  NUXT_TTS_MODEL: ${TTS_MODEL:-qwen-audio-3.0-tts-flash}
+  TTS_VOICE: ${TTS_VOICE:-longanlingxi}
+  NUXT_TTS_VOICE: ${TTS_VOICE:-longanlingxi}
   EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
   NUXT_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
   EMBEDDING_TIMEOUT_MS: ${EMBEDDING_TIMEOUT_MS:-8000}

@@ -3,6 +3,16 @@ import { assistantNavigationSchema, assistantFeedbackReasons, type AssistantFeed
 import { moduleMeta } from '#shared/assessments'
 import type { ModuleId, RouteDecision } from '#shared/contracts'
 import { useModuleScores } from '~/composables/useModuleScores'
+import { useSpeechPlayback } from '~/composables/useSpeechPlayback'
+import {
+  blobToBase64,
+  blobToWav16k,
+  createAudioContext,
+  createLevelMeter,
+  MAX_RECORDING_MS,
+  MAX_RECORDING_SECONDS,
+  type LevelMeter
+} from '~/utils/audio'
 
 interface ClarificationRoundData {
   type: 'clarification'
@@ -116,6 +126,13 @@ const { data: pendingPlanResult } = await useFetch<{ total: number }>('/api/v1/p
   query: { status: 'active', pageSize: 1, sort: 'nextReviewAt', order: 'asc' }
 })
 const pendingPlanTotal = computed(() => pendingPlanResult.value?.total || 0)
+/**
+ * 语音能力（录音识别 / 回答朗读）：服务端按配置返回 speech.asr 与 speech.tts，
+ * 未配置时两者都是 false，前端据此不渲染麦克风与朗读按钮（不留不可用的死按钮）。
+ */
+const { data: speechCapability } = await useFetch<{ speech?: { asr?: boolean, tts?: boolean } }>('/api/v1/chat/status')
+const asrEnabled = computed(() => Boolean(speechCapability.value?.speech?.asr))
+const ttsEnabled = computed(() => Boolean(speechCapability.value?.speech?.tts))
 const { data: governance, refresh: refreshGovernance } = await useFetch<any>('/api/v1/chat/data-governance')
 const { data: contextOptions } = await useFetch<any>('/api/v1/chat/context-options')
 const input = ref('')
@@ -192,6 +209,247 @@ async function bindTurnObject(object: { type: string, id: string, label: string 
 const deleteCandidate = ref<string>()
 const toast = useToast()
 const { moduleLabel, libraryTypeLabel, actionStatusLabel } = useDisplayLabels()
+
+// ---- 语音输入与朗读：录音 → 16kHz WAV → 识别 → 自动发送；回答定稿后按「语音对话」喇叭开关自动朗读 ----
+const { speakingId, loadingId: speechLoadingId, toggle: toggleSpeech, play: playSpeech, stop: stopSpeech } = useSpeechPlayback()
+/**
+ * 「语音对话」总开关（页头「AI 助手」标题后的喇叭图标，亮=开）：打开后每轮回答生成完自动朗读。
+ * 只存在于页面状态里：不落库、不写 localStorage，每次进入页面都从关闭开始，避免教师换个设备突然出声。
+ * 录音识别结果不受这个开关影响：说完即发送，见 finishRecording。
+ */
+const voiceMode = ref(false)
+/** 学校数据模式为 local 时两个语音接口都逐请求返回 403，开关置灰并说明原因 */
+const voiceModeBlocked = computed(() => governance.value?.effectiveMode === 'local')
+/** 切换开关：关闭时立刻停掉正在播放的朗读 */
+function toggleVoiceMode(value: boolean) {
+  voiceMode.value = value
+  if (!value) stopSpeech()
+}
+/**
+ * 手机端输入方式：true=按住说话（默认），false=键盘打字。桌面端不使用（输入框恒显示）。
+ * 只在 ASR 可用时渲染「按住说话」；切到键盘打字后仍可从输入框旁的麦克风按钮切回来。
+ */
+const mobileVoiceInput = ref(true)
+/** 输入区上方的语音提示（麦克风权限、识别失败等），不用 alert */
+const speechError = ref('')
+const recording = ref(false)
+/** 已录制秒数（仅用于界面提示，上限 MAX_RECORDING_SECONDS） */
+const recordingSeconds = ref(0)
+/** 录音瞬时音量（0~1），驱动音量条 */
+const recordingLevel = ref(0)
+/** 录音已停止、正在转写与请求识别 */
+const transcribing = ref(false)
+/** 输入框容器：识别完成后把焦点还给输入框 */
+const composerRef = ref<HTMLElement | null>(null)
+let mediaStream: MediaStream | null = null
+let mediaRecorder: MediaRecorder | null = null
+let audioContext: AudioContext | null = null
+let levelMeter: LevelMeter | null = null
+let recordedChunks: Blob[] = []
+let levelFrame: number | null = null
+let recordTicker: ReturnType<typeof setInterval> | null = null
+/** 本次录音的开始时刻：秒数显示与 60s 上限都按真实耗时算，避免后台节流导致显示停滞/超录 */
+let recordingStartedAt = 0
+/** 录音代次：卸载/丢弃时自增，使已在途的 MediaRecorder stop 回调不再触发转写上传 */
+let recordingGeneration = 0
+
+function focusInput() {
+  void nextTick(() => composerRef.value?.querySelector('textarea')?.focus())
+}
+
+/** 清掉录音计时与音量采样，但不动媒体与 AudioContext（释放由 releaseRecording 负责）。 */
+function clearRecordingTimers() {
+  if (recordTicker) {
+    clearInterval(recordTicker)
+    recordTicker = null
+  }
+  if (levelFrame !== null) {
+    cancelAnimationFrame(levelFrame)
+    levelFrame = null
+  }
+  recordingLevel.value = 0
+}
+
+/** 释放麦克风轨道与 AudioContext：停止录音、组件卸载、页面离开时都要调用。 */
+function releaseRecording() {
+  clearRecordingTimers()
+  levelMeter?.close()
+  levelMeter = null
+  if (audioContext) {
+    void audioContext.close().catch(() => undefined)
+    audioContext = null
+  }
+  mediaStream?.getTracks().forEach(track => track.stop())
+  mediaStream = null
+  mediaRecorder = null
+}
+
+/** 组件卸载/页面离开：丢弃当前录音（不再上传识别），并释放麦克风与 AudioContext。 */
+function discardRecording() {
+  recordingGeneration += 1
+  recording.value = false
+  releaseRecording()
+}
+
+async function startRecording() {
+  if (recording.value || transcribing.value || pending.value) return
+  speechError.value = ''
+  try {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      speechError.value = '当前浏览器不支持录音，请更换浏览器。'
+      return
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    mediaStream = stream
+    const context = createAudioContext()
+    audioContext = context
+    // 音量分析需要 AudioContext 处于 running：用户点击后 resume 通常即时生效
+    await context.resume().catch(() => undefined)
+    levelMeter = createLevelMeter(context, stream)
+    const recorder = new MediaRecorder(stream)
+    mediaRecorder = recorder
+    recordedChunks = []
+    const generation = ++recordingGeneration
+    recorder.addEventListener('dataavailable', (event) => {
+      // 代次不符说明该录音已被丢弃/被新的录音替代，避免把旧音频混进新的一段
+      if (generation !== recordingGeneration) return
+      if (event.data.size > 0) recordedChunks.push(event.data)
+    })
+    // 卸载时已丢弃的录音（代次变化）不再触发转写上传
+    recorder.addEventListener('stop', () => {
+      if (generation === recordingGeneration) void finishRecording()
+    }, { once: true })
+    recorder.start()
+    recording.value = true
+    recordingSeconds.value = 0
+    recordingStartedAt = Date.now()
+    sampleRecordingLevel()
+    // 秒数显示与 60s 上限都用真实耗时判定（后台标签页定时器会被节流，按计数会漏停）
+    recordTicker = setInterval(() => {
+      const elapsed = Date.now() - recordingStartedAt
+      recordingSeconds.value = Math.min(MAX_RECORDING_SECONDS, Math.floor(elapsed / 1000))
+      if (elapsed >= MAX_RECORDING_MS) stopRecording()
+    }, 250)
+  } catch {
+    speechError.value = '无法访问麦克风，请检查浏览器权限。'
+    recording.value = false
+    releaseRecording()
+  }
+}
+
+/** 用分析节点的时域峰值驱动音量条（每帧一次，不做额外平滑）。 */
+function sampleRecordingLevel() {
+  if (!recording.value || !levelMeter) return
+  recordingLevel.value = levelMeter.level()
+  levelFrame = requestAnimationFrame(sampleRecordingLevel)
+}
+
+/** 手动（或到 60s 上限自动）停止录音；真正的转写由 MediaRecorder 的 stop 事件触发。 */
+function stopRecording() {
+  if (!recording.value) return
+  recording.value = false
+  clearRecordingTimers()
+  try {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop()
+    else releaseRecording()
+  } catch {
+    releaseRecording()
+  }
+}
+
+function toggleRecording() {
+  if (transcribing.value) return
+  if (recording.value) stopRecording()
+  else void startRecording()
+}
+
+/**
+ * 按住说话（手机端大按钮）：按下开始录音，松开结束并自动发送。
+ * `holdActive` 兜住「getUserMedia 还在等授权/初始化时教师就已松手」的情况，避免一路录下去。
+ * 键盘按住（Space / Enter）走同一套逻辑；keydown 会连发，只认第一次。
+ */
+let holdActive = false
+function startHoldRecording(event: Event) {
+  if (event instanceof KeyboardEvent && event.repeat) return
+  holdActive = true
+  void beginHoldRecording()
+}
+async function beginHoldRecording() {
+  await startRecording()
+  if (!holdActive && recording.value) stopRecording()
+}
+function endHoldRecording() {
+  holdActive = false
+  if (recording.value) stopRecording()
+}
+
+/** 录音结束：本地转成 16kHz 单声道 WAV → base64 → 识别接口 → 识别文本追加到输入框并直接发送。 */
+async function finishRecording() {
+  const mimeType = mediaRecorder?.mimeType || 'audio/webm'
+  const blob = new Blob(recordedChunks, { type: mimeType })
+  recordedChunks = []
+  releaseRecording()
+  if (!blob.size) {
+    speechError.value = '没有录到声音，请重试。'
+    return
+  }
+  transcribing.value = true
+  try {
+    const wav = await blobToWav16k(blob)
+    const audioBase64 = await blobToBase64(wav)
+    const result = await $fetch<{ text?: string }>('/api/v1/chat/transcriptions', {
+      method: 'POST',
+      body: { audioBase64, mimeType: 'audio/wav' }
+    })
+    const text = (result?.text || '').trim()
+    if (!text) {
+      speechError.value = '没有识别到语音内容，请重试。'
+      return
+    }
+    // 追加到已有内容之后（不覆盖教师已经打了一半的文字）
+    input.value = input.value.trim() ? `${input.value.trim()} ${text}` : text
+    // ask() 在转写中会直接返回，自动发送前必须先复位转写状态
+    transcribing.value = false
+    // 说完即发送：识别结果直接发出，不再要求教师再点一次发送。
+    // 仍走 ask() 这一唯一提问入口，安全规则、会话绑定与危机识别都不变。
+    // 上一轮还在生成时只回填输入框，不插队发送。
+    if (!pending.value) {
+      await nextTick()
+      void ask()
+      return
+    }
+    focusInput()
+  } catch (error) {
+    speechError.value = apiErrorMessage(error, '语音识别暂时不可用，请稍后重试。')
+  } finally {
+    transcribing.value = false
+  }
+}
+
+/** 业务错误一律用服务端返回的中文 message；拿不到时用兜底文案，不暴露内部堆栈。 */
+function apiErrorMessage(error: unknown, fallback: string): string {
+  if (error && typeof error === 'object') {
+    const data = (error as { data?: { message?: unknown } }).data
+    if (data && typeof data.message === 'string' && data.message.trim()) return data.message.trim()
+  }
+  return fallback
+}
+
+/** 模板入口：朗读/停止同一条回答（返回 Promise，交给点击事件即可）。 */
+function toggleSpeechFor(item: TimelineItem) {
+  if (item.messageId) void toggleSpeech(item.messageId)
+}
+
+/**
+ * 「语音对话」自动朗读：回答定稿（answer 事件）后播放这条回答。
+ * 静默失败：浏览器拦截自动播放、服务端 409「没有可朗读的内容」、local 模式 403 都不打扰教师——
+ * 每轮回答都弹一次错误会盖住回答本身；教师仍可手动点「朗读」拿到具体原因。
+ */
+function maybeAutoRead(item: TimelineItem) {
+  if (!voiceMode.value || !ttsEnabled.value || !item.messageId || item.stopped) return
+  void playSpeech(item.messageId, { silent: true })
+}
+
 // 对话页把消息区滚动上报给导航浮层：滚动即收起顶栏与底部菜单（小屏生效）
 // 小屏顶栏浮层滑出时会盖住面板标题行、露出被裁半截的图标：此时把标题行一并淡出；顶栏收起或桌面端恒显示
 const { hidden: headerHidden, enabled: headerAutoHide, reportScroll: reportHeaderScroll } = useAutoHideHeader()
@@ -333,6 +591,8 @@ async function copyMessage(text: string, index: number) {
 
 function newConversation() {
   sessionId.value = undefined
+  // 换会话前停掉朗读
+  stopSpeech()
   timeline.value = []
   route.value = null
   turnObject.value = null
@@ -350,6 +610,8 @@ function newConversation() {
 
 async function loadSession(id: string) {
   if (pending.value) return
+  // 切会话：停掉上一条会话的朗读
+  stopSpeech()
   loadingSession.value = true
   try {
     const result = await $fetch<any>(`/api/v1/chat/sessions/${id}`)
@@ -542,6 +804,8 @@ async function readAssistantStream(response: Response, reuseIndex = -1): Promise
           reviewPending.value = false
           clearReviewHint()
           pending.value = false
+          // 「语音对话」打开时自动朗读这条回答（重新生成同样走这里，读的是新回答）
+          if (assistantIndex >= 0) maybeAutoRead(timeline.value[assistantIndex]!)
           await scrollToLatest()
         }
         if (event === 'module_proportions') {
@@ -647,7 +911,10 @@ function markStopped(index: number) {
 }
 
 async function ask() {
-  if (!input.value.trim() || pending.value) return
+  // 录音/识别期间不允许发送：避免把没识别完的语音和文字混在一轮里
+  if (!input.value.trim() || pending.value || recording.value || transcribing.value) return
+  // 「语音对话」打开时先停掉上一条回答的自动朗读：新问题发出后，读的应该是新回答
+  if (voiceMode.value) stopSpeech()
   const text = input.value.trim()
   input.value = ''
   pending.value = true
@@ -686,6 +953,8 @@ async function ask() {
 async function regenerateAnswer(item: TimelineItem, index: number) {
   const messageId = item.messageId
   if (!messageId || pending.value) return
+  // 这条回答正在朗读时先停播：下面的正文会被清空重写
+  stopSpeech()
   pending.value = true
   pendingLabel.value = 'Agent 正在重新生成…'
   item.text = ''
@@ -985,6 +1254,8 @@ watch(greetingName, () => {
 
 onBeforeUnmount(() => {
   stopGreetingTyping()
+  // 释放麦克风与 AudioContext（丢弃未完成录音、不再上传识别）
+  discardRecording()
   sidebarMedia?.removeEventListener('change', syncDesktopSidebar)
   phoneMedia?.removeEventListener('change', syncPhoneLayout)
   bottomNavMedia?.removeEventListener('change', syncBottomNavLayout)
@@ -1053,6 +1324,23 @@ watch(sessions, autoRestoreLatestSession, { once: true })
           <div class="flex min-w-0 items-center gap-3">
             <div class="grid size-7 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700 sm:size-9 sm:rounded-xl"><UIcon name="i-lucide-sparkles" class="size-4.5" /></div>
             <div class="min-w-0"><div class="flex items-center gap-2"><strong class="text-sm">AI 助手</strong><span class="size-1.5 rounded-full bg-emerald-500" /></div></div>
+            <!-- 语音对话总开关：喇叭亮=打开（每轮回答自动朗读），灭=关闭；未开启 TTS 能力时不渲染（不留死按钮） -->
+            <UButton
+              v-if="ttsEnabled"
+              type="button"
+              size="sm"
+              square
+              icon="i-lucide-volume-2"
+              :color="voiceMode ? 'primary' : 'neutral'"
+              :variant="voiceMode ? 'soft' : 'ghost'"
+              :disabled="voiceModeBlocked"
+              :aria-pressed="voiceMode"
+              :aria-label="voiceMode ? '关闭语音对话朗读' : '打开语音对话朗读'"
+              :title="voiceModeBlocked
+                ? '本校数据模式为本地，语音能力不向外部服务发送数据'
+                : voiceMode ? '语音对话已打开：每轮回答自动朗读' : '打开后每轮回答自动朗读'"
+              @click="toggleVoiceMode(!voiceMode)"
+            />
           </div>
           <div class="flex min-w-0 flex-1 items-center justify-end gap-2">
             <div v-if="selectedContext" class="flex min-w-0 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 sm:py-1.5"><UIcon :name="selectedContext.type === 'student' ? 'i-lucide-user-round' : selectedContext.type === 'class' ? 'i-lucide-users' : 'i-lucide-user-round-check'" class="size-3.5 shrink-0" /><span class="truncate">{{ mentionTypeLabel(selectedContext.type) }} · {{ selectedContext.label }}</span></div>
@@ -1225,7 +1513,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   </div>
                 </div>
                 <div v-if="item.role === 'assistant' && item.planUpdateSuggestions?.length" class="mt-7 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><p class="font-semibold text-amber-900">AI 曾建议更新方案（历史记录）</p><div v-for="(suggestion, suggestionIndex) in item.planUpdateSuggestions" :key="suggestionIndex" class="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><span class="text-slate-600">{{ suggestion.actionTitle || '新增复盘' }}<template v-if="suggestion.newStatus"> → {{ actionStatusLabel(suggestion.newStatus) }}</template><span v-if="suggestion.progressNote" class="mt-1 block text-slate-400">{{ suggestion.progressNote }}</span></span><span class="text-[11px] text-slate-400">{{ suggestion.appliedAt ? '已应用' : '未应用' }}</span></div></div>
-                <div v-if="item.role === 'assistant' && item.messageId" class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton><UButton v-if="item.answerCompleted && !pending && index === timeline.length - 1" size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" @click="regenerateAnswer(item, index)">重新生成</UButton></div>
+                <div v-if="item.role === 'assistant' && item.messageId" class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span>这条回答有帮助吗？</span><UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton><UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton><UButton v-if="ttsEnabled && item.messageId" size="xs" color="neutral" :variant="speakingId === item.messageId ? 'soft' : 'ghost'" :icon="speakingId === item.messageId ? 'i-lucide-square' : 'i-lucide-volume-2'" :loading="speechLoadingId === item.messageId" :aria-label="speakingId === item.messageId ? '停止朗读' : '朗读回答'" @click="toggleSpeechFor(item)">{{ speakingId === item.messageId ? '停止' : '朗读' }}</UButton><UButton v-if="item.answerCompleted && !pending && index === timeline.length - 1" size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" @click="regenerateAnswer(item, index)">重新生成</UButton></div>
                 <!-- 追问建议：暂时隐藏（SHOW_FOLLOW_UP_CHIPS=false）；生成逻辑保留，改回开关即恢复 -->
                 <div v-if="item.feedbackOpen" class="mt-3 space-y-3 rounded-xl border border-slate-200 p-3">
                   <p class="text-sm">哪里需要改进？（可选）</p>
@@ -1311,11 +1599,84 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                 </button>
               </div>
             </div>
-            <div class="rounded-2xl border border-slate-300 bg-white/30 p-1.5 shadow-lg shadow-slate-900/5 backdrop-blur-xl [-webkit-backdrop-filter:blur(24px)] transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100 sm:p-2">
-              <div class="flex items-center gap-2">
+            <div ref="composerRef" class="rounded-2xl border border-slate-300 bg-white/30 p-1.5 shadow-lg shadow-slate-900/5 backdrop-blur-xl [-webkit-backdrop-filter:blur(24px)] transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100 sm:p-2">
+              <!-- 录音/识别状态：录音中显示已录时长与音量条，识别中显示转写提示 -->
+              <div v-if="recording || transcribing" class="mb-1 flex items-center gap-2 px-1 pt-0.5 text-[11px]">
+                <template v-if="recording">
+                  <span class="flex shrink-0 items-center gap-1.5 font-medium text-red-600"><span class="size-1.5 animate-pulse rounded-full bg-red-500" />正在录音 {{ recordingSeconds }}s / {{ MAX_RECORDING_SECONDS }}s</span>
+                  <span class="flex h-1.5 min-w-0 flex-1 items-center overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+                    <span class="h-full rounded-full bg-emerald-500 transition-[width] duration-75" :style="{ width: `${Math.round(recordingLevel * 100)}%` }" />
+                  </span>
+                  <span class="shrink-0 text-slate-400 sm:hidden">松开后自动发送</span>
+                  <span class="hidden shrink-0 text-slate-400 sm:inline">点击麦克风结束，识别后自动发送</span>
+                </template>
+                <span v-else class="flex shrink-0 items-center gap-1.5 text-slate-500"><UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin text-emerald-600" />正在识别语音…</span>
+              </div>
+              <!-- 语音相关错误（权限、识别失败）：就地提示，不用 alert；下一次录音会清空 -->
+              <p v-if="speechError" class="mb-1 flex items-center gap-1.5 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs text-red-600">
+                <UIcon name="i-lucide-circle-alert" class="size-3.5 shrink-0" />
+                <span class="min-w-0 flex-1">{{ speechError }}</span>
+                <button type="button" class="shrink-0 rounded p-0.5 transition hover:bg-red-100" aria-label="关闭提示" @click="speechError = ''"><UIcon name="i-lucide-x" class="size-3" /></button>
+              </p>
+              <!-- 手机端「按住说话」：ASR 可用时替换输入框；按下开始录音、松开自动发送，键盘图标切回打字 -->
+              <div v-if="asrEnabled && mobileVoiceInput" class="flex items-center gap-2 sm:hidden">
+                <UButton
+                  type="button"
+                  size="lg"
+                  class="h-12 min-w-0 flex-1 select-none touch-none text-sm"
+                  :icon="recording ? 'i-lucide-audio-waveform' : 'i-lucide-mic'"
+                  :color="recording ? 'error' : 'neutral'"
+                  :variant="recording ? 'solid' : 'soft'"
+                  :loading="transcribing"
+                  :disabled="pending || transcribing"
+                  :aria-label="recording ? '松开发送' : '按住说话'"
+                  @pointerdown.prevent="startHoldRecording"
+                  @pointerup="endHoldRecording"
+                  @pointercancel="endHoldRecording"
+                  @pointerleave="endHoldRecording"
+                  @keydown.space.prevent="startHoldRecording"
+                  @keydown.enter.prevent="startHoldRecording"
+                  @keyup.space="endHoldRecording"
+                  @keyup.enter="endHoldRecording"
+                  @contextmenu.prevent
+                >{{ recording ? '松开 发送' : '按住说话' }}</UButton>
+                <UButton v-if="pending" type="button" icon="i-lucide-square" size="lg" square class="size-12" color="neutral" variant="soft" aria-label="停止生成" @click="stopGeneration" />
+                <UButton type="button" icon="i-lucide-keyboard" size="lg" square class="size-12" color="neutral" variant="ghost" aria-label="切换到键盘输入" title="切换到键盘输入" @click="mobileVoiceInput = false" />
+              </div>
+              <!-- 输入框：电脑端恒显示；手机端只在键盘输入模式下显示 -->
+              <div class="items-center gap-2" :class="asrEnabled && mobileVoiceInput ? 'hidden sm:flex' : 'flex'">
                 <UTextarea v-model="input" :rows="2" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" aria-label="向 AI 赋能助手提问" @input="handleMentionInput" @keydown.enter.exact.prevent="ask" @keydown.esc="closeMention" />
+                <!-- 手机端此按钮切回「按住说话」：只在键盘输入模式下出现；桌面端不渲染 -->
+                <UButton
+                  v-if="asrEnabled && !mobileVoiceInput"
+                  type="button"
+                  size="lg"
+                  square
+                  icon="i-lucide-mic"
+                  color="neutral"
+                  variant="soft"
+                  class="sm:hidden"
+                  aria-label="切换到按住说话"
+                  title="切换到按住说话"
+                  @click="mobileVoiceInput = true"
+                />
+                <!-- 语音输入（桌面端）：点击开始录音、再点结束，识别完成自动发送；录音/识别期间不可再点 -->
+                <UButton
+                  v-if="asrEnabled"
+                  type="button"
+                  :icon="recording ? 'i-lucide-square' : 'i-lucide-mic'"
+                  size="lg"
+                  square
+                  :color="recording ? 'error' : 'neutral'"
+                  :variant="recording ? 'solid' : 'soft'"
+                  :loading="transcribing"
+                  :disabled="pending || transcribing"
+                  :aria-label="recording ? '结束录音' : '语音输入'"
+                  class="hidden sm:inline-flex"
+                  @click="toggleRecording"
+                />
                 <UButton v-if="pending" type="button" icon="i-lucide-square" size="lg" square color="neutral" variant="soft" aria-label="停止生成" @click="stopGeneration" />
-                <UButton v-else type="submit" icon="i-lucide-arrow-up" size="lg" square :disabled="!input.trim()" aria-label="发送消息" />
+                <UButton v-else type="submit" icon="i-lucide-arrow-up" size="lg" square :disabled="!input.trim() || recording || transcribing" aria-label="发送消息" />
               </div>
               <div class="mt-1 hidden items-center justify-between gap-2 px-1 text-[11px] sm:flex"><span class="text-slate-500">AI 辅助建议，需人工专业判断 · 输入 @ 关联对象</span><span class="shrink-0 text-slate-500">Enter 发送 · Shift + Enter 换行 {{ input.length }}/4000</span></div>
             </div>

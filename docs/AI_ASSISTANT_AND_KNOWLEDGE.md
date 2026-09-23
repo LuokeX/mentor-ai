@@ -105,6 +105,33 @@ EMBEDDING_TIMEOUT_MS=8000
 
 如需重建模块资源向量，使用 `pnpm resources:reindex`。
 
+## 3.2 语音输入与回答朗读（百炼）
+
+首页助手支持「录音提问」与「朗读回答」，两条链路都复用现有的百炼（DashScope）接入，不需要新增密钥：
+
+```env
+# 语音输入与回答朗读（百炼）
+SPEECH_ENABLED=true
+ASR_MODEL=qwen-audio-3.0-asr-flash
+TTS_MODEL=qwen-audio-3.0-tts-flash
+TTS_VOICE=longanlingxi
+DASHSCOPE_API_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+```
+
+模型系列决定端点、请求体与返回结构，代码按模型名前缀自动选择（`server/integrations/dashscope-speech.ts` 的 `asrRequest` / `ttsSynthesisRequest`），换模型只改环境变量、不用改端点，但**两族的差异必须知道**：
+
+- 识别：`qwen3-asr-*`（Qwen-ASR）走 OpenAI 兼容 `/chat/completions`，音频放 `input_audio.data`，结果取 `choices[0].message.content`；`qwen-audio-*`（Qwen-Audio）走原生 `/services/aigc/multimodal-generation/generation`，音频放 `input.messages[].content[].audio`，**必须显式传 `parameters.format`（我们的录音固定 `wav`），否则上游返回 400 `UNSUPPORTED_FORMAT`**；结果取顶层 `text`（多句音频实测能完整返回，不截断），秒数取 `usage.duration`。两族都固定中文并开启数字归一化（`language=zh` / `enable_itn`）。
+- 朗读：`qwen-audio-*`（Qwen-Audio-TTS）与 `cosyvoice-*` 走 `/services/audio/tts/SpeechSynthesizer`（入参 text/voice/format/sample_rate）；`qwen3-tts-*` 走 `/services/aigc/multimodal-generation/generation`（入参带 `language_type`）。用错端点上游直接 400。
+- `TTS_VOICE` 必须是所选系列存在的系统音色；业务空间专属域名与官方域名都可以用，取 `.env` 的 `DASHSCOPE_BASE_URL` / `DASHSCOPE_API_BASE_URL` 当前值。
+
+- 能力开关与门禁：`GET /api/v1/chat/status` 返回 `speech: { asr, tts }`，取值只反映部署侧是否就绪（`SPEECH_ENABLED` 与 `DASHSCOPE_API_KEY`），前端据此决定是否渲染麦克风、朗读按钮与页头的「语音对话」喇叭开关（不留死按钮）；学校数据模式为 `local` 时不在 `status` 里体现，而是在两个语音接口逐请求返回 403——避免把「环境可用」误读成「本校可用」（前端另按 `GET /api/v1/chat/data-governance` 的 `effectiveMode` 把开关置灰并说明原因）。
+- 「语音对话」总开关（对话页页头「AI 助手」标题后的喇叭图标，`app/pages/index.vue`）：喇叭亮=打开，每轮回答定稿自动朗读、发送新问题时先停掉上一条朗读；喇叭灭=关闭，只影响朗读，不影响录音识别后的自动发送。默认关闭且**不落库、不写 localStorage**，每次进入页面都从关闭开始。自动朗读失败一律静默（浏览器拦截自动播放、回答没有可朗读内容返回 409、`local` 模式 403），不逐轮弹错误；教师手动点「朗读」仍会看到失败原因。
+- 语音输入（ASR）：浏览器 `MediaRecorder` 录音（最长 60 秒自动停止）→ `AudioContext` 解码并重采样为 16kHz 单声道 WAV（`app/utils/audio.ts`，无第三方依赖）→ `POST /api/v1/chat/transcriptions`（base64 音频 + `mimeType: audio/wav`）→ 服务端按模型系列调识别接口（默认 `qwen-audio-3.0-asr-flash`：原生端点 + `parameters.format=wav`，结果取顶层 `text`；详见上面的系列差异）。识别文本**追加到输入框后直接发送**（不覆盖教师已打的内容；上一轮还在生成时只回填不插队），仍走同一个提问入口 `ask()`，因此安全规则、上下文装配、会话绑定、危机识别都只在提问入口一处生效，语音不会绕开任何一道门禁。手势分两套：手机端（`sm` 以下）输入区默认是「按住说话」大按钮，按下开始录音、松开结束并发送，旁边的键盘图标可切回打字输入（键盘输入模式下点麦克风图标切回按住说话）；桌面端输入框恒显示，麦克风按钮点击开始、再点结束。服务端限制解码后音频不超过 6MB；静音或没有有效语音时返回 422 让教师重录——`qwen-audio` 系列对静音音频直接返回 400 `ASR_RESPONSE_HAVE_NO_WORDS`，已在集成层按 `no_speech` 归类并与「空文本」统一映射为 422（否则会被误报成「服务不可用」）。
+- 回答朗读（TTS）：`GET /api/v1/chat/messages/{id}/speech?chunk=n` 逐片取音频。服务端解密回答正文 → `shared/speech.ts` 的 `speechTextOf` 清洗成可朗读纯文本（去代码块、链接地址、表格分隔行、强调标记）→ `splitSpeechChunks` 按句末标点切成不超过 300 字的分片（两端共用同一套口径，避免「有朗读按钮却读不出声」）→ 按学校数据模式过 `redactOutboundText` 脱敏 → 调 TTS 合成（默认 `qwen-audio-3.0-tts-flash` + 系统音色 `longanlingxi`；非流式返回 24 小时有效的音频 URL，**服务端取回字节后同源返回 base64**，不把外部音频 URL 暴露给浏览器）。单条回答最多朗读前 20 片（约 6000 字），超出由前端提示。自动朗读与手动朗读共用 `useSpeechPlayback` 的播放循环与分片缓存（`app/composables/useSpeechPlayback.ts`），同一条回答不会重复请求同一片。
+- 音频不落库、不落磁盘；`ai_model_calls` 只记元数据（`provider=dashscope`，`purpose=speech_asr` / `speech_tts`，含 `data_mode`、耗时与错误码 `timeout` / `http:<status>` / `schema` / `oversize` / `unknown`），不记音频与朗读正文；产品事件 `assistant_voice_input_used` / `assistant_voice_playback_used` 同样只记分片位置与数据模式。
+- 数据边界：录音原声无法脱敏，因此语音输入与朗读都只在 `redacted` / `full_context` 模式开放；朗读文本按既有外发口径走 `redactOutboundText`（`redacted` 模式下「X 老师」会被念成「PERSON 老师」，这是与其它外发链路一致的取舍）。
+- 浏览器限制：`getUserMedia` 只在安全上下文可用，**录音仅在 HTTPS 或 `localhost` 下工作**。测试环境的明文 3400 会把浏览器 307 跳到 `https://<主机>:3401`（见 `docs/DEVELOPMENT_AND_PRODUCTION.md` 第 8.5 节），但自签证书需要把 `infra/certs-test/ca.pem` 装到设备信任列表，否则浏览器会先提示证书不受信；`/health/*` 仍可用明文探活。正式环境走 Nginx + TLS，不受限；Nginx 已为 `/api/v1/chat/transcriptions` 单独放宽 `client_max_body_size`（全局仍为 2m）。
+
 ## 4. 三库运营台
 
 平台后台“三库运营台”按 `module + libraryType + scope` 管理模块资源库。`libraryType` 固定为：

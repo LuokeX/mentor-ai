@@ -6,6 +6,18 @@ async function revealMobileNav(page: Page, testInfo: TestInfo) {
   await page.getByRole('button', { name: '显示顶部导航和底部菜单' }).click()
 }
 
+/**
+ * 确保输入框可用：手机端在 ASR 可用时输入区默认是「按住说话」大按钮，
+ * 要打字先点键盘图标切回输入框（该按钮不在时说明输入框本来就在）。
+ */
+async function ensureTextComposer(page: Page) {
+  const composer = page.getByLabel('向 AI 赋能助手提问')
+  const keyboardToggle = page.getByRole('button', { name: '切换到键盘输入', exact: true })
+  await expect(composer.or(keyboardToggle).first()).toBeVisible()
+  if (await keyboardToggle.isVisible()) await keyboardToggle.click()
+  await expect(composer).toBeVisible()
+}
+
 async function login(page: import('@playwright/test').Page, phone: string, options: { password?: string } = {}) {
   const response = await page.request.post('/api/v1/auth/login', {
     data: { phone, password: options.password || 'Mentor@2026' }
@@ -31,7 +43,7 @@ test.describe('四角色核心路径', () => {
     await login(page, '16688096890')
     // 首页就绪判定以输入区为准：无历史会话时显示问候空态，有历史会话时自动恢复最近一次对话，
     // 问候语在恢复会话时不再渲染（账号只要有历史对话就不会出现），两种状态都算正常。
-    await expect(page.getByLabel('向 AI 赋能助手提问')).toBeVisible()
+    await ensureTextComposer(page)
     if (testInfo.project.name === 'mobile-chromium') {
       // 小屏导航默认收起，点悬浮按钮滑出后才能校验底部菜单入口
       await revealMobileNav(page, testInfo)
@@ -55,6 +67,31 @@ test.describe('四角色核心路径', () => {
     if (await toolPanel.count()) {
       await expect(toolPanel.first()).toBeVisible()
     }
+  })
+
+  test('助手页按服务端语音能力开关渲染语音按钮', async ({ page }, testInfo) => {
+    // 语音能力（ASR/TTS）由服务端配置决定。这里不硬编码环境开关，只断言界面与
+    // /api/v1/chat/status 返回的 speech 保持一致：不可用时不留麦克风/朗读死按钮。
+    await login(page, '16688096890')
+    await expect(page.getByLabel('向 AI 赋能助手提问').or(page.getByRole('button', { name: '按住说话', exact: true })).first()).toBeVisible()
+    const statusResponse = await page.request.get('/api/v1/chat/status')
+    expect(statusResponse.ok()).toBeTruthy()
+    const status = await statusResponse.json() as { speech?: { asr?: boolean, tts?: boolean } }
+    // 手机端默认是「按住说话」大按钮，桌面端是点击式麦克风按钮；两端都不该出现对方的死按钮
+    const micButton = page.getByRole('button', { name: '语音输入', exact: true })
+    const holdButton = page.getByRole('button', { name: '按住说话', exact: true })
+    if (status.speech?.asr) {
+      if (testInfo.project.name === 'mobile-chromium') await expect(holdButton).toBeVisible()
+      else await expect(micButton).toBeVisible()
+    } else {
+      await expect(micButton).toHaveCount(0)
+      await expect(holdButton).toHaveCount(0)
+    }
+    // 「语音对话」喇叭开关：TTS 可用时渲染，不可用时不渲染
+    const voiceToggle = page.getByRole('button', { name: '打开语音对话朗读', exact: true })
+    if (status.speech?.tts) await expect(voiceToggle).toBeVisible()
+    else await expect(voiceToggle).toHaveCount(0)
+    if (!status.speech?.tts) await expect(page.getByRole('button', { name: '朗读回答', exact: true })).toHaveCount(0)
   })
 
   test('教师从模块说明进入评估、确认方案并完成执行闭环', async ({ page }) => {
