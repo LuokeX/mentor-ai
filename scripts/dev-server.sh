@@ -127,7 +127,7 @@ case "${1:-start}" in
       done
     fi
     echo "--- 健康检查 ---"
-    curl -s -m 5 http://127.0.0.1:3301/health/ready || echo "3301 无响应"
+    curl -s -m 5 http://127.0.0.1:3305/health/ready || echo "3305 无响应"
     echo
     ;;
   logs)

@@ -56,7 +56,7 @@ pnpm tsx scripts/mock-oidc-idp.ts --port 3400 --phone 16688096890
 OIDC_ISSUER=http://127.0.0.1:3400
 OIDC_CLIENT_ID=mock-client
 OIDC_CLIENT_SECRET=mock-secret
-OIDC_REDIRECT_URI=http://localhost:3301/api/v1/auth/sso/callback
+OIDC_REDIRECT_URI=http://localhost:3305/api/v1/auth/sso/callback
 ```
 
 启动应用后在登录页点击"统一身份登录"，mock IdP 会直接跳回并完成登录。mock 不校验回调地址，仅限本机使用，禁止部署。

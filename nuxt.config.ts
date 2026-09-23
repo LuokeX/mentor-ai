@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url'
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-01',
   devtools: { enabled: true },
-  devServer: { host: '0.0.0.0', port: 3301 },
+  // 本地开发端口 3305：与正式（3300 HTTP / 443 HTTPS）、测试（3400 / 3401）以及 Playwright（3100）都错开
+  devServer: { host: '0.0.0.0', port: 3305 },
   modules: [['@nuxt/ui', { fonts: false }]],
   ui: { fonts: false },
   // 强制浅色：项目未实现夜间主题样式，跟随系统会在暗色系统下出现组件暗、页面浅的混搭。

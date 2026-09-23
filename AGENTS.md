@@ -38,7 +38,7 @@ AI 提示词与运行时配置的事实来源补充：提示词正文的唯一�
 
 - `docs/MANAGEMENT_FRAMEWORK.md` 描述并发控制用请求体 `ManagedPatch<T>`；当前 PATCH 路由实际从查询参数读取 `expectedUpdatedAt`（见 `server/api/v1/school-admin/classes/[id].patch.ts`）。
 - `server/utils/db-helpers.ts` 的 `findOwned` 目前没有调用方；`apiContext`、`uuidParam` 也只在少数路由使用。它们是可选简化，不是必须迁移的强制约定。
-- 本地 dev 端口 `3301`（`nuxt.config.ts` 的 `devServer.port`），Playwright 用 `3100`；容器内 App 端口 `3300`，正式环境宿主端口 `3300`（`.env` 的 `APP_PORT`），测试环境宿主端口 `3400`。
+- 本地 dev 端口 `3305`（`nuxt.config.ts` 的 `devServer.port`），Playwright 用 `3100`；容器内 App 端口 `3300`，正式环境宿主端口 `3300`（`.env` 的 `APP_PORT`）/ HTTPS `443`，测试环境宿主端口 `3400`（HTTPS `3401`）。
 
 ## 3. 当前技术基线
 
@@ -121,7 +121,7 @@ infra/                    PostgreSQL 初始化和 Nginx 配置
 
 默认工作流是「本地 dev 实时查看」，每一步发布动作都需要用户明确授权：
 
-1. 所有改动默认只在本地 dev（3301）热更新生效，改完立即可让用户实时查看；不部署测试、不部署正式。本地 dev 统一用 `bash scripts/dev-server.sh start` 启动（systemd 用户单元 `mentor-ai-dev`，cgroup 硬上限 MemoryMax 16G，固定连本地开发库 `localhost:5434/mentor_ai_dev`，指向见 `.env.dev`）。不要用裸 `pnpm dev` 长期运行：`NODE_OPTIONS` 只约束 V8 堆，2026-09-10 曾因非堆内存涨到 34.4 GiB 触发内核全局 OOM；`pnpm dev --port 3100` 只留给 Playwright。
+1. 所有改动默认只在本地 dev（3305）热更新生效，改完立即可让用户实时查看；不部署测试、不部署正式。本地 dev 统一用 `bash scripts/dev-server.sh start` 启动（systemd 用户单元 `mentor-ai-dev`，cgroup 硬上限 MemoryMax 16G，固定连本地开发库 `localhost:5434/mentor_ai_dev`，指向见 `.env.dev`）。不要用裸 `pnpm dev` 长期运行：`NODE_OPTIONS` 只约束 V8 堆，2026-09-10 曾因非堆内存涨到 34.4 GiB 触发内核全局 OOM；`pnpm dev --port 3100` 只留给 Playwright。
 2. 提交 git：只有用户明确说「提交」时才执行；多个独立改动必须拆分为多个主题提交，一次提交一个主题，不合并提交。
 3. 推送远端：随用户确认的提交执行（用户另有指示时按指示办）。
 4. 部署测试环境（3400）：只有用户明确说「部署测试环境」时才执行；只重建镜像、执行 migration 并重启，**不得用正式库备份覆盖测试库数据**（`scripts/refresh-test-db.sh` 仅限特殊场景经授权手动使用，见 `docs/DEVELOPMENT_AND_PRODUCTION.md` 第 8.4 节）。
@@ -321,7 +321,7 @@ export default defineEventHandler(async (event) => {
 ## 11. 常用命令
 
 ```bash
-bash scripts/dev-server.sh start   # 本地开发服务器（3301）标准启动方式：systemd 单元 + cgroup 内存上限
+bash scripts/dev-server.sh start   # 本地开发服务器（3305）标准启动方式：systemd 单元 + cgroup 内存上限
 bash scripts/dev-server.sh status  # 单元状态、内存上限、健康检查（stop / restart / logs 同理）
 pnpm dev                  # 裸启动 Nuxt（无内存上限，只用于临时调试；见第 5 节说明）
 pnpm build                # 生产构建

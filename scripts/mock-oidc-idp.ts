@@ -155,5 +155,5 @@ server.listen(port, '127.0.0.1', () => {
   console.log(`  OIDC_ISSUER=${issuer}`)
   console.log(`  OIDC_CLIENT_ID=${clientId}`)
   console.log(`  OIDC_CLIENT_SECRET=${clientSecret}`)
-  console.log(`  OIDC_REDIRECT_URI=http://localhost:3301/api/v1/auth/sso/callback`)
+  console.log(`  OIDC_REDIRECT_URI=http://localhost:3305/api/v1/auth/sso/callback`)
 })

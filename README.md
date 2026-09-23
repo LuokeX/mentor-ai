@@ -45,7 +45,7 @@ pnpm dev
 
 `db:seed` 只导入本地演示数据，不得在正式环境执行；**禁止在开发机上执行 `pnpm db:up`**（它会操作正式环境 compose 与正式数据库）。数据库 Schema 变更、应用发布、生产迁移、备份恢复和禁止事项见 [数据库与应用开发、发布和运行规范](docs/DEVELOPMENT_AND_PRODUCTION.md)。
 
-访问 `http://localhost:3301`。演示账号的初始密码均为 `Mentor@2026`（与正式库一致的演示账号，`db:seed` 保证存在）：
+访问 `http://localhost:3305`。演示账号的初始密码均为 `Mentor@2026`（与正式库一致的演示账号，`db:seed` 保证存在）：
 
 | 角色 | 账号（手机号） |
 |---|---|
