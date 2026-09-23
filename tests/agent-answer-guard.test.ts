@@ -27,6 +27,19 @@ describe('answer-guard：清理类规则', () => {
     expect(result.cleaned).not.toContain('ctaLabel')
     expect(result.violations).toContain('internal_field_name')
   })
+
+  it('清理模型复读的外发脱敏占位符', () => {
+    const result = inspectAgentAnswer({ answer: '也帮忙跟两[PERSON]家长说一声，也不[PERSON]家长找他，[PERSON]主动来也要先通气。' })
+    expect(result.cleaned).toBe('也帮忙跟两位家长说一声，也不家长找他，对方主动来也要先通气。')
+    expect(result.violations).toContain('placeholder_leak')
+  })
+
+  it('手机号与邮箱占位符同样不落到教师端', () => {
+    const result = inspectAgentAnswer({ answer: '联系方式见档案（[PHONE]、[EMAIL]）。' })
+    expect(result.cleaned).not.toContain('[PHONE]')
+    expect(result.cleaned).not.toContain('[EMAIL]')
+    expect(result.violations).toContain('placeholder_leak')
+  })
 })
 
 describe('answer-guard：告警类规则（不改写正文）', () => {

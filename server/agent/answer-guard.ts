@@ -3,7 +3,7 @@
  *
  * 背景：提示词已经要求「不输出模块英文 ID、不输出字段名、不在正文写来源标注、不把无依据内容说成平台规定」，
  * 但这些约束此前只靠模型自觉——代码不做任何检查。本模块在回答落库前做一次确定性检查：
- *  - 清理类：确定能安全修正的（来源标注、时长信息、模块英文 ID、内部字段名）直接改掉；
+ *  - 清理类：确定能安全修正的（来源标注、时长信息、模块英文 ID、内部字段名、外发脱敏占位符）直接改掉；
  *  - 告警类：不能自动修正的（诊断性表述、无依据的规范性表述、疑似密钥/哈希）只记录，不改写正文，
  *    由产品事件与 AI 中心观察，避免为了一句措辞把整段回答重写一遍（成本与延迟都不划算）。
  *
@@ -20,6 +20,7 @@ export type AnswerViolationCode =
   | 'internal_field_name'
   | 'source_citation_in_body'
   | 'estimated_minutes_claim'
+  | 'placeholder_leak'
   | 'diagnostic_claim'
   | 'unbacked_policy_claim'
   | 'secret_like_token'
@@ -56,6 +57,9 @@ const POLICY_PATTERNS = [/平台规定/, /平台要求/, /工具库要求/, /学
 
 /** 疑似密钥/哈希：32 位以上连续无空白字符。 */
 const SECRET_LIKE_PATTERNS = [/[A-Za-z0-9+/]{32,}={0,2}/, /[a-f0-9]{32,}/i, /[A-Za-z]+Enc\b/]
+
+/** 脱敏占位符后可能跟随的称谓（与 `deepseek.ts` 的 redactPii 保持同一口径）。 */
+const PERSON_TITLES = '老师|同学|妈妈|爸爸|家长'
 
 /** 删除正文里的来源标注（界面会单独展示引用来源，正文重复标注属于内部结构外泄）。 */
 function stripSourceCitations(text: string): { text: string, hit: boolean } {
@@ -99,6 +103,32 @@ function stripInternalFieldNames(text: string): { text: string, hit: boolean } {
   return { text: result, hit }
 }
 
+/**
+ * 清理外发脱敏占位符：模型偶尔会复读上下文里见过的 [PERSON]/[PHONE]/[EMAIL]（见 deepseek.ts 的 redactPii），
+ * 这些是内部记号，绝不该让教师看到。
+ * 能确定自然说法的先补回量词（「两[PERSON]家长」→「两位家长」），其余删掉占位符、保留称谓。
+ */
+function stripPlaceholderLeaks(text: string): { text: string, hit: boolean } {
+  let result = text
+  let hit = false
+  result = result.replace(
+    new RegExp(`([两二三四五六七八九十各每])\\[PERSON\\](?=${PERSON_TITLES})`, 'g'),
+    (_, quantifier: string) => {
+      hit = true
+      return `${quantifier}位`
+    }
+  )
+  const beforeTitle = new RegExp(`\\[PERSON\\](?=${PERSON_TITLES})`, 'g')
+  if (beforeTitle.test(result)) hit = true
+  result = result.replace(beforeTitle, '')
+  // 不带称谓的残留：用自然指代兜底，避免留下「跟说一声」这类残句
+  if (/\[PERSON\]/.test(result)) hit = true
+  result = result.replace(/\[PERSON\]/g, '对方')
+  if (/\[(?:PHONE|EMAIL)\]/.test(result)) hit = true
+  result = result.replace(/\[(?:PHONE|EMAIL)\]/g, '')
+  return { text: result, hit }
+}
+
 /** 清理残留：空括号、标点前的空格、句首多余标点、连续空行。 */
 function tidyWhitespace(text: string): string {
   return text
@@ -137,6 +167,10 @@ export function inspectAgentAnswer(input: AnswerInspectionInput): AnswerInspecti
     const fields = stripInternalFieldNames(text)
     text = fields.text
     if (fields.hit) violations.push('internal_field_name')
+
+    const placeholders = stripPlaceholderLeaks(text)
+    text = placeholders.text
+    if (placeholders.hit) violations.push('placeholder_leak')
 
     const hasSources = Array.isArray(input.sources) && input.sources.length > 0
     if (!hasSources && POLICY_PATTERNS.some(pattern => pattern.test(text))) {
