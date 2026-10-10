@@ -1,13 +1,29 @@
 <script setup lang="ts">
 import { APP_VERSION } from '#shared/app-version'
+import { roleHomePath, type AppRole } from '~/composables/useAuth'
+import { groupTestAccounts, type TestAccount } from '~/utils/test-accounts'
 definePageMeta({ layout: false })
 const config = useRuntimeConfig()
 const showSsoLogin = config.public.showSsoLogin
+// 仅测试/UAT 环境为 true（docker-compose.test.yml 注入）；正式环境恒为 false，
+// 登录页不渲染任何测试账号，清单与维护口径见 app/utils/test-accounts.ts
+const showTestAccounts = config.public.showTestAccounts
+const testAccountGroups = showTestAccounts ? groupTestAccounts() : []
+const testAccountsOpen = ref(true)
+const pickedAccountPhone = ref('')
 const form = reactive({ phone: '', password: '' })
 const pending = ref(false)
 const hydrated = ref(false)
 const errorMessage = ref('')
 const ssoError = ref(false)
+
+/** 点选测试账号：只填入表单，登录仍走正常手机号+密码流程（不跳过任何认证） */
+function pickTestAccount(account: TestAccount) {
+  form.phone = account.phone
+  form.password = account.password
+  pickedAccountPhone.value = account.phone
+  errorMessage.value = ''
+}
 
 onMounted(() => {
   hydrated.value = true
@@ -22,14 +38,15 @@ async function login() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const result = await $fetch<{ role?: string }>('/api/v1/auth/login', {
+    // role 是登录后的激活角色；roles 为账号持有的全部角色（旧响应可能没有 roles 字段）
+    const result = await $fetch<{ role?: AppRole, roles?: AppRole[] }>('/api/v1/auth/login', {
       method: 'POST',
       body: { phone: form.phone, password: form.password }
     })
     const { refresh } = useAuth()
     await refresh()
-    const homes: Record<string, string> = { teacher: '/', psychologist: '/specialist', school_admin: '/school-admin', platform_admin: '/platform-admin' }
-    await navigateTo(homes[result.role || ''] || '/')
+    // 按激活角色落地；旧响应缺 role 时回落到 roles 的第一项
+    await navigateTo(roleHomePath(result.role ?? result.roles?.[0]))
   } catch (error: any) {
     errorMessage.value = error?.data?.message || error?.data?.statusMessage || error?.message || '登录失败'
   } finally {
@@ -70,6 +87,36 @@ async function login() {
         <p class="text-sm font-semibold text-emerald-700">欢迎回来</p>
         <h2 class="mt-2 text-3xl font-semibold">登录您的工作空间</h2>
         <p class="mt-2 text-sm text-slate-500">封闭试用环境 · 所有敏感操作均会留痕</p>
+        <!-- 选择测试账户：仅测试/UAT 环境渲染（NUXT_PUBLIC_SHOW_TEST_ACCOUNTS=true）。
+             只做表单填充，不绕过手机号+密码认证；清单见 app/utils/test-accounts.ts -->
+        <details v-if="showTestAccounts" :open="testAccountsOpen" class="mt-6 rounded-xl border border-dashed border-amber-300 bg-amber-50/70 p-4">
+          <summary class="flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-amber-900 [&::-webkit-details-marker]:hidden" @click.prevent="testAccountsOpen = !testAccountsOpen">
+            选择测试账户
+            <span class="rounded-full bg-amber-200/70 px-2 py-0.5 text-[11px] font-normal">仅测试环境</span>
+            <UIcon :name="testAccountsOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" class="ml-auto size-4" />
+          </summary>
+          <p class="mt-3 text-xs leading-5 text-amber-900/70">点选账号自动填入手机号与密码，再点下方「安全登录」。这些账号只存在于测试库，正式环境没有此入口。</p>
+          <div class="mt-3 space-y-3">
+            <div v-for="group in testAccountGroups" :key="group.name">
+              <p class="mb-1.5 text-xs font-medium text-slate-500">{{ group.name }}</p>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  v-for="account in group.accounts"
+                  :key="account.phone"
+                  type="button"
+                  class="rounded-lg border px-2.5 py-1.5 text-xs transition"
+                  :class="pickedAccountPhone === account.phone
+                    ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-emerald-500 hover:text-emerald-700'"
+                  @click="pickTestAccount(account)"
+                >
+                  <span class="font-medium">{{ account.label }}</span>
+                  <span class="ml-1.5 text-[11px] text-slate-400">{{ account.phone }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </details>
         <form class="mt-8 space-y-5" @submit.prevent="login">
           <UFormField label="手机号"><UInput v-model="form.phone" size="xl" icon="i-lucide-smartphone" inputmode="numeric" maxlength="11" class="w-full" /></UFormField>
           <UFormField label="密码"><UInput v-model="form.password" type="password" size="xl" icon="i-lucide-lock-keyhole" class="w-full" /></UFormField>

@@ -81,6 +81,9 @@ x-app-environment: &app-environment
   OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
   NUXT_OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
   NUXT_PUBLIC_SHOW_SSO_LOGIN: ${OIDC_ISSUER:+true}
+  # 登录页「选择测试账户」入口：仅测试环境注入，正式编排（docker-compose.yml）不注入该变量。
+  # 点选后只填充手机号与密码，认证仍走正常 /api/v1/auth/login；账号清单见 app/utils/test-accounts.ts
+  NUXT_PUBLIC_SHOW_TEST_ACCOUNTS: 'true'
 
 services:
   postgres:
@@ -109,6 +112,9 @@ services:
       - no-new-privileges:true
 
   migrate:
+    # 镜像显式以 IMAGE_TAG 命名（测试环境用当次构建标签，如 20261010），不再落到 latest；
+    # 日常运维命令（logs/ps/exec/backup）不传 IMAGE_TAG 时用 latest 兜底。
+    image: mentor-ai-test-migrate:${IMAGE_TAG:-latest}
     build: .
     environment:
       <<: *app-environment
@@ -120,6 +126,7 @@ services:
     restart: "no"
 
   app:
+    image: mentor-ai-test-app:${IMAGE_TAG:-latest}
     build: .
     restart: unless-stopped
     environment:

@@ -13,7 +13,7 @@
 #   连「继续访问」的机会都没有。正式环境仍由 default.conf.template 下发 HSTS。
 # - 证书目录用 infra/certs-test/（与正式的 infra/certs/ 分开）：自签证书不会被正式环境误用。
 #
-# 证书文件（由 scripts/gen-test-cert.sh 生成，可替换为学校签发的证书）：
+# 证书文件（由 scripts/gen-cert.sh 生成，可替换为学校签发的证书）：
 #   /etc/nginx/certs-test/fullchain.pem  服务器证书
 #   /etc/nginx/certs-test/privkey.pem    私钥，权限 600
 

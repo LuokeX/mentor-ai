@@ -71,18 +71,33 @@ export default defineNuxtConfig({
       appName: '教师赋能智能平台',
       // 统一身份登录入口：显式开启，或构建时 OIDC 四项齐全（docker 部署由 compose 按 OIDC_ISSUER 联动注入）
       showSsoLogin: process.env.NUXT_PUBLIC_SHOW_SSO_LOGIN === 'true' ||
-        !!(process.env.OIDC_ISSUER && process.env.OIDC_CLIENT_ID && process.env.OIDC_CLIENT_SECRET && process.env.OIDC_REDIRECT_URI)
+        !!(process.env.OIDC_ISSUER && process.env.OIDC_CLIENT_ID && process.env.OIDC_CLIENT_SECRET && process.env.OIDC_REDIRECT_URI),
+      // 登录页「选择测试账户」入口（详见 app/utils/test-accounts.ts）：
+      // 只有测试/UAT 编排（docker-compose.test.yml）注入 true；正式编排 docker-compose.yml 不注入该变量 → 永久关闭。
+      // 仅影响登录页是否渲染预置账号列表，不改变任何接口的认证与鉴权。
+      showTestAccounts: process.env.NUXT_PUBLIC_SHOW_TEST_ACCOUNTS === 'true'
     }
   },
   routeRules: {
     '/school-admin/**': { headers: { 'cache-control': 'no-store, private' } },
     '/platform-admin/**': { headers: { 'cache-control': 'no-store, private' } },
     '/specialist/**': { headers: { 'cache-control': 'no-store, private' } },
-    '/information/**': { headers: { 'cache-control': 'no-store, private' } }
+    '/information/**': { headers: { 'cache-control': 'no-store, private' } },
+    '/dashboard/**': { headers: { 'cache-control': 'no-store, private' } },
+    // 学校管理员的平台使用量看板：含审计日志明细，同样禁止缓存
+    '/usage/**': { headers: { 'cache-control': 'no-store, private' } }
   },
   typescript: {
     strict: true,
-    typeCheck: true
+    /**
+     * 不在开发/构建时跑 Nuxt 自带的类型检查浮层：本项目接口路由已达 200+，
+     * Nitro 生成的路由响应类型（`.nuxt/types/nitro-routes.d.ts` 的 `InternalApi`，
+     * 每个路由都是 `Simplify<Serialize<Awaited<ReturnType<...>>>>`）会让 vue-tsc 在
+     * 实际代码没问题时报 “Type instantiation is excessively deep and possibly infinite”
+     * （上游问题 nuxt/nuxt#33735，2026-09 仍未修复；程序模式检查与 IDE 都不受影响）。
+     * 类型门禁统一走 `pnpm typecheck`，详见 AGENTS.md 第 3 节。
+     */
+    typeCheck: false
   },
   app: {
     head: {

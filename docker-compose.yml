@@ -101,6 +101,9 @@ services:
       - no-new-privileges:true
 
   migrate:
+    # 镜像显式以 IMAGE_TAG 命名（正式发布传 vX.Y.Z），不再落到 latest；
+    # 日常运维命令（logs/ps/exec/backup）不传 IMAGE_TAG 时用 latest 兜底。
+    image: mentor-ai-migrate:${IMAGE_TAG:-latest}
     build: .
     environment:
       <<: *app-environment
@@ -112,16 +115,17 @@ services:
     restart: "no"
 
   app:
+    image: mentor-ai-app:${IMAGE_TAG:-latest}
     build: .
     restart: unless-stopped
     environment: *app-environment
     depends_on:
       migrate:
         condition: service_completed_successfully
+    # 明文端口不再对外发布：唯一入口是 nginx（3300 明文 307 跳 3301 HTTPS），
+    # 应用只在 compose 网络内以 3300 暴露给 nginx（容器健康检查仍走容器内 127.0.0.1:3300）
     expose:
       - "3300"
-    ports:
-      - "0.0.0.0:${APP_PORT:-3300}:3300"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3300/health/ready"]
       interval: 10s
@@ -130,15 +134,20 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # 正式环境的唯一入口（与测试环境 docker-compose.test.yml 的 nginx 入口同一套语义）：
+  # - 3300 明文：307 跳到 https://<同一主机>:3301（但 /health/* 直通，供发布脚本与监控明文探活）
+  # - 3301 HTTPS：TLS 终结后转发 app:3300
+  # 属于默认 profile（不再挂在 tls profile 下），`docker compose up -d` 即随应用一起启动。
+  # 证书用 infra/certs/（与测试的 infra/certs-test/ 分开），由 scripts/gen-cert.sh --env=prod 生成。
   nginx:
     image: nginx:1.29-alpine
     restart: unless-stopped
-    profiles: ["tls"]
     environment:
+      # 证书里的 SAN 才是浏览器校验的依据；server_name 只影响同名多站点的分流，这里单站点，仅作记录
       SERVER_NAME: ${SERVER_NAME:?set SERVER_NAME}
     ports:
-      - "80:80"
-      - "443:443"
+      - "0.0.0.0:3300:3300"
+      - "0.0.0.0:3301:3301"
     volumes:
       - ./infra/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ./infra/certs:/etc/nginx/certs:ro
