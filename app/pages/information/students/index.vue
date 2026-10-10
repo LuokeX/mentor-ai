@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
 import type { ManagedListResult } from '~~/shared/management'
-const { caseLevelLabel, caseLevelColor, caseSolutionStatusLabel, caseSolutionStatusColor, learningLevelLabel, learningLevelColor } = useDisplayLabels()
+const { caseLevelLabel, caseLevelColor, learningLevelLabel, learningLevelColor } = useDisplayLabels()
 
 interface StudentRow {
   id: string
@@ -11,7 +11,6 @@ interface StudentRow {
   gender: string | null
   status: string
   caseLevel: string | null
-  caseSolutionStatus: string | null
   learningLevel: string | null
   studentSnapshot: Record<string, any> | null
   updatedAt: string
@@ -29,7 +28,6 @@ const columns = [
   { key: 'className', label: '班级' },
   { key: 'gender', label: '性别', mobileHidden: true },
   { key: 'caseLevel', label: '关注级别' },
-  { key: 'caseSolutionStatus', label: '解决状态' },
   { key: 'learningLevel', label: '学习问题' },
   { key: 'status', label: '状态', sortable: true },
   { key: 'updatedAt', label: '最近更新', sortable: true, mobileHidden: true },
@@ -141,17 +139,6 @@ function closeDrawer() {
           {{ caseLevelLabel(row.caseLevel) }}
         </UBadge>
         <span v-else class="text-sm text-slate-300">未评估</span>
-      </template>
-      <template #caseSolutionStatus-data="{ row }">
-        <span class="inline-flex items-center gap-1.5 text-sm" :class="{ 'text-slate-500': !row.caseSolutionStatus }">
-          <span class="inline-block size-2 rounded-full" :class="{
-            'bg-red-500': row.caseSolutionStatus === 'unresolved',
-            'bg-yellow-400': row.caseSolutionStatus === 'in_progress',
-            'bg-green-500': row.caseSolutionStatus === 'resolved',
-            'bg-slate-200': !row.caseSolutionStatus,
-          }" />
-          {{ caseSolutionStatusLabel(row.caseSolutionStatus) || '未标记' }}
-        </span>
       </template>
       <template #learningLevel-data="{ row }">
         <UBadge v-if="row.learningLevel" :color="learningLevelColor(row.studentSnapshot?.level || row.learningLevel)" variant="subtle" size="xs">

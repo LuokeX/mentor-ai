@@ -407,6 +407,83 @@
       "when": 1789619277819,
       "tag": "0057_long_toxin",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1790577386355,
+      "tag": "0058_broad_ben_urich",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1790587430960,
+      "tag": "0059_strange_shadowcat",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1790587812199,
+      "tag": "0060_strange_sandman",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1790669829854,
+      "tag": "0061_dashboard_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1790671453777,
+      "tag": "0062_dashboard_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1790760186652,
+      "tag": "0063_dashboard_page_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1790780000000,
+      "tag": "0064_system_admin_role",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1790800000000,
+      "tag": "0065_merge_school_system_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1791526544619,
+      "tag": "0066_easy_glorian",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1791600000000,
+      "tag": "0067_import_create_capability",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1791615994749,
+      "tag": "0068_nappy_landau",
+      "breakpoints": true
     }
   ]
 }

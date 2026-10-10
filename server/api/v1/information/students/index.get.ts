@@ -56,7 +56,6 @@ export default defineEventHandler(async (event) => {
       gender: schema.students.gender, status: schema.students.status,
       /** 最近一次个体支持等级 / 预警级别（评估快照回写） */
       caseLevel: schema.students.caseLevel,
-      caseSolutionStatus: schema.students.caseSolutionStatus,
       /** 最近一次学习问题等级（learning_problem 评估快照回写） */
       learningLevel: schema.students.learningLevel,
       studentSnapshot: schema.students.studentSnapshot,

@@ -88,6 +88,11 @@ export const sessions = pgTable('sessions', {
   ipAddress: varchar('ip_address', { length: 64 }),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
+  /**
+   * 当前会话激活的角色（多角色账号切换用）。
+   * 为空时回落到 users.role（主角色）；权限解析与会话身份都以它为准。
+   */
+  activeRole: varchar('active_role', { length: 30 }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 }, table => [uniqueIndex('sessions_token_hash_uidx').on(table.tokenHash), index('sessions_user_idx').on(table.userId)])
 
@@ -306,8 +311,6 @@ export const students = pgTable('students', {
   caseLevel: varchar('case_level', { length: 40 }),
   /** 最近一次学习问题等级：LP0 危机转介/LP3 系统干预/LP2 深入诊断 */
   learningLevel: varchar('learning_level', { length: 40 }),
-  /** 个体问题解决方案状态：unresolved 未解决（红点）/ in_progress 进行中（黄点）/ resolved 已解决（绿点） */
-  caseSolutionStatus: varchar('case_solution_status', { length: 20 }).default('unresolved').notNull(),
   /** 全量快照：筛查维度分、三层诊断分、命中归因、评估时间 */
   studentSnapshot: jsonb('student_snapshot').$type<Record<string, unknown>>().default({}).notNull(),
   /** 管理员手动修正，评估提交时以新评估为准并清除对应项 */
@@ -414,11 +417,27 @@ export const chatMessages = pgTable('chat_messages', {
    */
   toolTraceEnc: text('tool_trace_enc'),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+  /**
+   * 问答题分类（数据驾驶舱 W2/W3 的统计口径，只写 role='user' 的消息）。
+   * 取值见 server/domain/question-category.ts；source 记录判定方式 rule/model/unknown；
+   * 分类为空表示该提问发生在埋点上线前，统计时归入「其他类」。
+   */
+  questionCategory: varchar('question_category', { length: 40 }),
+  questionCategorySource: varchar('question_category_source', { length: 20 }),
+  questionCategoryConfidence: integer('question_category_confidence'),
+  /**
+   * 分类时抽出的提问关键词/短句（最多 5 个，必须原样出现在提问里）。
+   * 提问正文是加密列，无法用 SQL 聚合，看板的关键词 Top 榜因此依赖这一列。
+   */
+  questionKeywords: jsonb('question_keywords').$type<string[]>().default([]).notNull(),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   deletedBy: uuid('deleted_by').references(() => users.id)
-}, table => [index('chat_messages_session_idx').on(table.sessionId, table.createdAt)])
+}, table => [
+  index('chat_messages_session_idx').on(table.sessionId, table.createdAt),
+  index('chat_messages_school_category_idx').on(table.schoolId, table.questionCategory, table.createdAt)
+])
 
 export const routingDecisions = pgTable('routing_decisions', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -497,7 +516,7 @@ export const studentEvents = pgTable('student_events', {
   schoolId: uuid('school_id').notNull().references(() => schools.id),
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   studentId: uuid('student_id').notNull().references(() => students.id),
-  eventType: varchar('event_type', { length: 30 }).notNull(), // 违纪/冲突/异常行为/学业波动/其他
+  eventType: varchar('event_type', { length: 30 }).notNull(), // E1–E6：学业纪律类/课堂秩序类/行为规范类/身心健康类/欺凌侵害类/其他
   severity: varchar('severity', { length: 20 }).notNull(), // 低/中/高/严重
   title: varchar('title', { length: 200 }).notNull(),
   description: text('description'),
@@ -712,6 +731,8 @@ export const communications = pgTable('communications', {
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
   guardianId: uuid('guardian_id').references(() => guardians.id, { onDelete: 'set null' }),
   studentId: uuid('student_id').references(() => students.id, { onDelete: 'set null' }),
+  /** 沟通渠道：phone/wechat/meeting/home_visit/other；为空表示历史数据未标注 */
+  channel: varchar('channel', { length: 20 }),
   summaryEnc: text('summary_enc').notNull(),
   parentType: varchar('parent_type', { length: 20 }),
   attitudeType: varchar('attitude_type', { length: 20 }),
@@ -1049,7 +1070,11 @@ export const productEvents = pgTable('product_events', {
   targetId: uuid('target_id'),
   metadata: jsonb('metadata').$type<Record<string, string | number | boolean | null>>().default({}).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
-}, table => [index('product_events_school_name_created_idx').on(table.schoolId, table.eventName, table.createdAt)])
+}, table => [
+  index('product_events_school_name_created_idx').on(table.schoolId, table.eventName, table.createdAt),
+  // 活跃心跳的服务端节流查询按 (用户, 事件名, 时间) 过滤（同会话窗口内不重复写）
+  index('product_events_user_name_created_idx').on(table.userId, table.eventName, table.createdAt)
+])
 
 export const notificationOutbox = pgTable('notification_outbox', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -1119,12 +1144,12 @@ export const classEvents = pgTable('class_events', {
 ])
 
 /**
- * 角色权限配置（固定四角色，不引入自定义角色）。
- * 身份判定仍以 users.role 为准；本表只承载「角色能干什么」的权限清单，
- * 由 server/domain/capabilities.ts 先查表、查不到回退硬编码逻辑。
+ * 角色权限配置（系统内置角色，不引入自定义角色）。
+ * 本表承载「角色能干什么」的权限清单，由 server/domain/capabilities.ts 先查表、查不到回退硬编码逻辑。
+ * 账号与角色的对应关系在 user_roles 表（一个账号可持有多个角色）。
  * permissions 结构见 shared/management.ts 的 RolePermissions：
  *   { pages: { <targetType>: Capability[] }, records: { <targetType>: Capability[] } }
- * 四角色默认数据在迁移 SQL 中 INSERT ... ON CONFLICT DO NOTHING（seed 不重复插入）。
+ * 角色默认数据在迁移 SQL 中 INSERT ... ON CONFLICT DO NOTHING（seed 不重复插入）。
  */
 export const roles = pgTable('roles', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -1132,10 +1157,31 @@ export const roles = pgTable('roles', {
   code: varchar('code', { length: 30 }).notNull(),
   name: varchar('name', { length: 80 }).notNull(),
   description: text('description'),
-  /** 系统内置角色标记；当前四角色均为系统角色 */
+  /** 系统内置角色标记；当前角色均为系统角色 */
   isSystem: boolean('is_system').default(true).notNull(),
   permissions: jsonb('permissions').$type<import('../../shared/management').RolePermissions>().notNull(),
   ...timestamps
 }, table => [
   uniqueIndex('roles_code_uidx').on(table.code)
+])
+
+/**
+ * 账号 ↔ 角色关联：一个账号可持有多个角色，同一时刻只有一个「激活角色」
+ * （存在 sessions.active_role，为空时回落到 users.role）。
+ *
+ * users.role 保留为「主角色」：必须是本表中该账号的角色之一，用于兼容既有按角色过滤的 SQL
+ * 与登录默认落地页；权限解析由 server/domain/capabilities.ts 按激活角色执行。
+ * 写入统一走 server/domain/user-roles.ts，不要在各处直接 insert/delete。
+ * scope 承载角色级范围（如学部校长的所辖学部），结构见 shared/management.ts 的 RoleScope。
+ */
+export const userRoles = pgTable('user_roles', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  roleCode: varchar('role_code', { length: 30 }).notNull(),
+  scope: jsonb('scope').$type<import('../../shared/management').RoleScope>().default({}).notNull(),
+  ...timestamps
+}, table => [
+  uniqueIndex('user_roles_user_role_uidx').on(table.userId, table.roleCode),
+  index('user_roles_role_idx').on(table.roleCode),
+  index('user_roles_user_idx').on(table.userId)
 ])

@@ -3,7 +3,7 @@ const route = useRoute()
 const id = String(route.params.id)
 const { data, error, refresh } = await useFetch<any>(`/api/v1/information/classes/${id}`)
 const pending = ref(false)
-const { classStageLabel, classStageColor, caseSolutionStatusLabel } = useDisplayLabels()
+const { classStageLabel, classStageColor } = useDisplayLabels()
 
 // 班级事件
 const drawerOpen = ref(false)

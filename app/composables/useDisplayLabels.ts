@@ -36,12 +36,6 @@ const labels = {
     '蓝色-低风险': '蓝色·低风险',
     '紫色-待观察': '紫色·待观察'
   },
-  /** 个体问题解决方案状态（绿/黄/红点） */
-  caseSolutionStatus: {
-    unresolved: '未解决',
-    in_progress: '进行中',
-    resolved: '已解决'
-  },
   /** 班级系统·四阶当前阶段（class_system 评估等级）：key 为三库数据的等级名，展示文案做合规映射 */
   classStage: {
     '安全危机·立即上报': '安全关注·优先上报',
@@ -158,7 +152,11 @@ const labels = {
     audit: '审计日志',
     import: '导入管理',
     plan_operation: '方案操作',
-    access_request: '应急访问申请'
+    access_request: '应急访问申请',
+    dashboard: '数据驾驶舱 · 数据总览',
+    dashboard_ai_questions: '数据驾驶舱 · AI 问答分析',
+    dashboard_plans: '数据驾驶舱 · 量表与方案',
+    dashboard_alerts: '数据驾驶舱 · 预警看板'
   },
   /** 角色权限能力（roles 权限清单勾选项） */
   capability: {
@@ -328,7 +326,6 @@ const colors: Record<string, Partial<Record<string, BadgeColor>>> = {
     '蓝色-低风险': 'info',
     '紫色-待观察': 'neutral'
   },
-  caseSolutionStatus: { unresolved: 'error', in_progress: 'warning', resolved: 'success' },
   classStage: {
     '安全危机·立即上报': 'error',
     '秩序奠基期': 'warning',
@@ -371,8 +368,6 @@ export function useDisplayLabels() {
     accessStatusColor: (value?: string | null) => colorFrom('accessStatus', value),
     caseLevelLabel: (value?: string | null) => labelFrom('caseLevel', value),
     caseLevelColor: (value?: string | null) => colorFrom('caseLevel', value),
-    caseSolutionStatusLabel: (value?: string | null) => labelFrom('caseSolutionStatus', value),
-    caseSolutionStatusColor: (value?: string | null) => colorFrom('caseSolutionStatus', value),
     classStageLabel: (value?: string | null) => labelFrom('classStage', value),
     classStageColor: (value?: string | null) => colorFrom('classStage', value),
     learningLevelLabel: (value?: string | null) => labelFrom('learningLevel', value),
