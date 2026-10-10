@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
+import { communicationChannelSchema } from '../../../../../shared/contracts'
 import { requireUser } from '../../../../utils/auth'
 import { writeAudit } from '../../../../utils/audit'
 import { encryptSensitive } from '../../../../utils/crypto'
@@ -8,6 +9,7 @@ import { schema, useDb } from '../../../../utils/db'
 
 const bodySchema = z.object({
   summary: z.string().trim().min(5).max(3000).optional(),
+  channel: communicationChannelSchema.nullable().optional(),
   parentType: z.string().trim().max(20).nullable().optional(),
   attitudeType: z.string().trim().max(20).nullable().optional(),
   containerLevel: z.number().int().min(-4).max(4).nullable().optional(),
@@ -23,6 +25,7 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
   const patch: Partial<typeof schema.communications.$inferInsert> = { updatedAt: new Date() }
   if (body.summary !== undefined) patch.summaryEnc = encryptSensitive(body.summary, useRuntimeConfig(event).encryptionKey)
+  if (body.channel !== undefined) patch.channel = body.channel
   if (body.parentType !== undefined) patch.parentType = body.parentType
   if (body.attitudeType !== undefined) patch.attitudeType = body.attitudeType
   if (body.containerLevel !== undefined) patch.containerLevel = body.containerLevel

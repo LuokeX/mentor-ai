@@ -5,9 +5,19 @@ import { and, eq } from 'drizzle-orm'
 import { encryptSensitive, searchableHash } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
 import { issueInvitation } from './invitations'
+import { applyUserRoles } from './user-roles'
 
 export type SchoolImportType = 'users' | 'classes' | 'students' | 'guardians'
 export type ImportError = { row: number, code: string, message: string }
+
+/**
+ * 学校管理员「导入管理」支持的全部类型：
+ * 前四类（账号 / 班级 / 学生 / 家长）走 CSV 链路（本文件），
+ * 后两类业务记录（家校沟通 / 学生事件记录）走信息中心的 xlsx 链路
+ * （`domain/information-imports.ts` + `domain/information-import-io.ts`，范围为全校在册学生）。
+ */
+export const SCHOOL_IMPORT_TYPES = ['users', 'classes', 'students', 'guardians', 'communications', 'student_events'] as const
+export type SchoolImportRequestType = typeof SCHOOL_IMPORT_TYPES[number]
 
 export const importTemplates: Record<SchoolImportType, string> = {
   users: 'name,phone,role\n张老师,13800000001,teacher\n',
@@ -89,12 +99,15 @@ export async function validateSchoolImport(event: H3Event, input: {
   const errors = [...parsed.errors]
   const seen = new Set<string>()
   const db = useDb(event)
-  const [users, classes, students] = await Promise.all([
-    db.select({ phone: schema.users.phone, role: schema.users.role, schoolId: schema.users.schoolId }).from(schema.users),
+  const [users, classes, students, teacherRoleRows] = await Promise.all([
+    db.select({ id: schema.users.id, phone: schema.users.phone, schoolId: schema.users.schoolId }).from(schema.users),
     db.select({ code: schema.classes.externalCode }).from(schema.classes).where(eq(schema.classes.schoolId, input.schoolId)),
-    db.select({ code: schema.students.externalRefSearch }).from(schema.students).where(eq(schema.students.schoolId, input.schoolId))
+    db.select({ code: schema.students.externalRefSearch }).from(schema.students).where(eq(schema.students.schoolId, input.schoolId)),
+    // 教师身份以 user_roles 判定：多角色账号的主角色可能不是 teacher
+    db.select({ userId: schema.userRoles.userId }).from(schema.userRoles).where(eq(schema.userRoles.roleCode, 'teacher'))
   ])
-  const teacherPhones = new Set(users.filter(item => item.role === 'teacher' && item.schoolId === input.schoolId).map(item => item.phone))
+  const teacherUserIds = new Set(teacherRoleRows.map(item => item.userId))
+  const teacherPhones = new Set(users.filter(item => teacherUserIds.has(item.id) && item.schoolId === input.schoolId).map(item => item.phone))
   const usersByPhone = new Map(users.map(item => [item.phone, item]))
   const classCodes = new Set(classes.flatMap(item => item.code ? [item.code] : []))
   const studentCodes = new Set(students.flatMap(item => item.code ? [item.code] : []))
@@ -164,6 +177,13 @@ export async function commitSchoolImport(event: H3Event, input: {
           ))
           updated++
         }
+        // 账号与角色集合同时写入：对象侧过滤（教师/心理专员）以 user_roles 判定，
+        // 只写 users.role 会让导入账号在教师列表、班级归属校验等位置查不到。
+        await applyUserRoles(tx, {
+          userId: userId!,
+          roleCodes: [row.role as 'teacher' | 'psychologist'],
+          primaryRole: row.role as 'teacher' | 'psychologist',
+        })
         const { invitation, token } = await issueInvitation(event, {
           schoolId: input.schoolId,
           userId: userId!,

@@ -14,6 +14,7 @@ import { buildChatTitle } from '../../../domain/chat-titles'
 import { bindChatSessionContext } from '../../../domain/chat-session-binding'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
 import { trackProductEvent } from '../../../domain/product-events'
+import { classifyQuestionCategory } from '../../../domain/question-category'
 import { sendStream } from 'h3'
 import { and, eq } from 'drizzle-orm'
 import type { ModuleId } from '../../../../shared/contracts'
@@ -216,6 +217,19 @@ export default defineEventHandler(async (event) => {
           emit(controller, 'done', { sessionId: ownedSessionId })
           return
         }
+
+        // 提问分类与关键词落库（看板 W2/W3 口径）：与回答生成并行执行，不 await、不阻塞 SSE，
+        // 失败只影响分类、不影响回答。必须在这里传入提问明文（body.message 仍在作用域内）——
+        // 提问正文是加密列，分类与关键词只能在入口明文仍可用时落库。
+        // 本地模式已在上面早退，走到这里必然可以外发，因此 localMode 传 false（规则未命中才调模型）。
+        void classifyQuestionCategory(event, {
+          messageId: question.id,
+          text: body.message,
+          schoolId: user.schoolId!,
+          ownerUserId: user.id,
+          sessionId: ownedSessionId,
+          localMode: false
+        }).catch(() => {})
 
         // 历史装载（含超预算压缩与最近一轮工具轨迹回放）：放在本地模式判断之后，避免本地模式白跑一次数据库读与模型调用
         const switchAt = readContextSwitches(sessionContext?.metadata).at(-1)?.at

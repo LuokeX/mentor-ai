@@ -45,6 +45,7 @@ export default defineEventHandler(async (event) => {
     dataQuery: db.select({
       id: schema.communications.id,
       summaryEnc: schema.communications.summaryEnc,
+      channel: schema.communications.channel,
       parentType: schema.communications.parentType,
       riskLevel: schema.communications.riskLevel,
       attitudeType: schema.communications.attitudeType,

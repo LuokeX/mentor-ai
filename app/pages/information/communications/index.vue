@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
+import { communicationChannelLabels } from '~~/shared/contracts'
+import type { CommunicationChannel } from '~~/shared/contracts'
 import type { ManagedListResult } from '~~/shared/management'
 
 interface CommunicationRow {
@@ -7,6 +9,7 @@ interface CommunicationRow {
   summaryPreview: string
   studentId: string | null
   guardianId: string | null
+  channel: string | null
   parentType: string | null
   riskLevel: string | null
   status: string
@@ -23,6 +26,7 @@ interface CommunicationDetail extends CommunicationRow {
 const list = useManagedList<CommunicationRow>('/api/v1/information/communications')
 const columns = [
   { key: 'summaryPreview', label: '沟通摘要' },
+  { key: 'channel', label: '沟通渠道' },
   { key: 'parentType', label: '家长类型', mobileHidden: true },
   { key: 'riskLevel', label: '风险等级', sortable: true },
   { key: 'status', label: '状态', sortable: true },
@@ -34,12 +38,21 @@ const statusOptions = [
   { label: '有效', value: 'active' },
   { label: '已归档', value: 'archived' },
 ]
+/** 渠道下拉：值为英文码，可留空表示未标注 */
+const channelOptions: { label: string; value: string }[] = (Object.keys(communicationChannelLabels) as CommunicationChannel[])
+  .map(value => ({ label: communicationChannelLabels[value], value }))
+function channelLabel(value: unknown): string {
+  return typeof value === 'string' && value in communicationChannelLabels
+    ? communicationChannelLabels[value as CommunicationChannel]
+    : '未标注'
+}
 const { data: studentData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/information/students', { query: { page: 1, pageSize: 100, status: 'active' } })
 const { data: guardianData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/information/guardians', { query: { page: 1, pageSize: 100, status: 'active' } })
 const studentOptions = computed(() => (studentData.value?.rows || []).map(item => ({ label: item.name, value: item.id })))
 const guardianOptions = computed(() => (guardianData.value?.rows || []).map(item => ({ label: item.name, value: item.id })))
 
 const drawerOpen = ref(false)
+const batchImportOpen = ref(false)
 const editingId = ref<string | null>(null)
 const saving = ref(false)
 const formError = ref('')
@@ -48,6 +61,7 @@ const form = reactive({
   summary: '',
   studentId: '',
   guardianId: '',
+  channel: '',
   parentType: '',
   attitudeType: '',
   riskLevel: '',
@@ -57,7 +71,7 @@ const form = reactive({
 
 function resetForm() {
   Object.assign(form, {
-    summary: '', studentId: '', guardianId: '', parentType: '', attitudeType: '',
+    summary: '', studentId: '', guardianId: '', channel: '', parentType: '', attitudeType: '',
     riskLevel: '', containerLevel: null, updatedAt: '',
   })
 }
@@ -67,6 +81,10 @@ function openCreate() {
   resetForm()
   formError.value = ''
   drawerOpen.value = true
+}
+
+function openBatchImport() {
+  batchImportOpen.value = true
 }
 
 async function openEdit(id: string) {
@@ -79,6 +97,7 @@ async function openEdit(id: string) {
       summary: detail.summary,
       studentId: detail.studentId || '',
       guardianId: detail.guardianId || '',
+      channel: detail.channel || '',
       parentType: detail.parentType || '',
       attitudeType: detail.attitudeType || '',
       riskLevel: detail.riskLevel || '',
@@ -107,6 +126,7 @@ async function saveCommunication() {
         query: { expectedUpdatedAt: form.updatedAt },
         body: {
           summary: form.summary,
+          channel: form.channel || null,
           parentType: form.parentType || null,
           attitudeType: form.attitudeType || null,
           riskLevel: form.riskLevel || null,
@@ -121,6 +141,7 @@ async function saveCommunication() {
           summary: form.summary,
           studentId: form.studentId || undefined,
           guardianId: form.guardianId || undefined,
+          channel: form.channel || undefined,
           parentType: form.parentType || undefined,
           attitudeType: form.attitudeType || undefined,
           riskLevel: form.riskLevel || undefined,
@@ -172,6 +193,10 @@ function closeDrawer() {
     description="以结构化记录维护家校沟通；归档后保留历史且不可继续编辑。"
     :can-create="list.pageCapabilities.value.includes('create')"
     create-label="新增沟通"
+    :create-actions="[
+      { label: '新增沟通', icon: 'i-lucide-pen-line', handle: openCreate },
+      { label: '批量导入沟通记录', icon: 'i-lucide-file-spreadsheet', handle: openBatchImport },
+    ]"
     @create="openCreate"
   >
     <TableToolbar
@@ -191,6 +216,7 @@ function closeDrawer() {
       @row-click="openCommunicationRow"
     >
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '有效' : '已归档' }}</UBadge></template>
+      <template #channel-data="{ value }">{{ channelLabel(value) }}</template>
       <template #riskLevel-data="{ value }"><UBadge v-if="value" color="warning" variant="subtle">{{ value }}</UBadge><span v-else>—</span></template>
       <template #occurredAt-data="{ value }">{{ formatDateTime(value) }}</template>
       <template #actions-data="{ row }">
@@ -214,6 +240,7 @@ function closeDrawer() {
         </div>
         <UFormField label="沟通摘要" required><UTextarea v-model="form.summary" :rows="7" class="w-full" /></UFormField>
         <div class="grid gap-4 sm:grid-cols-2">
+          <UFormField label="沟通渠道"><USelect v-model="form.channel" :items="channelOptions" placeholder="未标注" class="w-full" /></UFormField>
           <UFormField label="家长类型"><UInput v-model="form.parentType" class="w-full" /></UFormField>
           <UFormField label="态度类型"><UInput v-model="form.attitudeType" class="w-full" /></UFormField>
           <UFormField label="风险等级"><UInput v-model="form.riskLevel" class="w-full" /></UFormField>
@@ -233,6 +260,17 @@ function closeDrawer() {
       :loading="saving"
       @close="archiveRow = null"
       @confirm="archiveCommunication"
+    />
+
+    <BatchImportDrawer
+      :open="batchImportOpen"
+      title="批量导入家校沟通"
+      templateUrl="/api/v1/information/communications/import-template"
+      previewUrl="/api/v1/information/communications/import-preview"
+      commitUrl="/api/v1/information/communications/import-commit"
+      :sample-fields="['studentName', 'occurredAt', 'summaryPreview']"
+      @close="batchImportOpen = false"
+      @imported="list.refresh"
     />
   </ManagementPage>
 </template>

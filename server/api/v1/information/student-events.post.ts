@@ -1,12 +1,13 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
+import { studentEventTypeSchema } from '../../../../shared/contracts'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { writeAudit } from '../../../utils/audit'
 
 const createSchema = z.object({
   studentId: z.string().uuid(),
-  eventType: z.enum(['违纪', '冲突', '异常行为', '学业波动', '其他']),
+  eventType: studentEventTypeSchema,
   severity: z.enum(['低', '中', '高', '严重']),
   title: z.string().min(1).max(200),
   description: z.string().optional(),

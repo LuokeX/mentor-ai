@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
+import { studentEventTypeLabels, studentEventTypes } from '~~/shared/contracts'
 import type { ManagedListResult } from '~~/shared/management'
 
 interface EventRow {
@@ -33,7 +34,7 @@ const statusOptions = [
   { label: '已解决', value: 'resolved' },
   { label: '已关闭', value: 'closed' },
 ]
-const eventTypes = ['违纪', '冲突', '异常行为', '学业波动', '其他'].map(value => ({ label: value, value }))
+const eventTypes: { label: string; value: string }[] = studentEventTypes.map(value => ({ label: studentEventTypeLabels[value], value }))
 const severities = ['低', '中', '高', '严重'].map(value => ({ label: value, value }))
 const statuses = [
   { label: '待处理', value: 'open' },
@@ -45,6 +46,7 @@ const { data: studentData } = await useFetch<ManagedListResult<StudentOption>>('
 const studentOptions = computed(() => (studentData.value?.rows || []).map(item => ({ label: item.name, value: item.id })))
 
 const drawerOpen = ref(false)
+const batchImportOpen = ref(false)
 const editingId = ref<string | null>(null)
 const saving = ref(false)
 const formError = ref('')
@@ -133,6 +135,10 @@ function closeDrawer() {
   drawerOpen.value = false
 }
 
+function openBatchImport() {
+  batchImportOpen.value = true
+}
+
 async function archiveEvent(eventId: string) {
   if (!confirm('确定归档这条学生事件吗？归档后历史记录保留，仅归档处理。')) return
   try {
@@ -146,7 +152,17 @@ async function archiveEvent(eventId: string) {
 </script>
 
 <template>
-  <ManagementPage title="学生事件记录" description="记录、解决和关闭学生事件，历史记录不物理删除。" :can-create="list.pageCapabilities.value.includes('create')" create-label="新增学生事件" @create="openCreate">
+  <ManagementPage
+    title="学生事件记录"
+    description="记录、解决和关闭学生事件，历史记录不物理删除。"
+    :can-create="list.pageCapabilities.value.includes('create')"
+    create-label="新增学生事件"
+    :create-actions="[
+      { label: '新增学生事件', icon: 'i-lucide-pen-line', handle: openCreate },
+      { label: '批量导入事件记录', icon: 'i-lucide-file-spreadsheet', handle: openBatchImport },
+    ]"
+    @create="openCreate"
+  >
     <TableToolbar
       :search-value="list.q.value"
       :status-filter="list.statusFilter.value"
@@ -182,5 +198,16 @@ async function archiveEvent(eventId: string) {
         <div class="flex justify-end gap-2"><UButton color="neutral" variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">保存</UButton></div>
       </form>
     </EntityFormDrawer>
+
+    <BatchImportDrawer
+      :open="batchImportOpen"
+      title="批量导入学生事件"
+      templateUrl="/api/v1/information/student-events/import-template"
+      previewUrl="/api/v1/information/student-events/import-preview"
+      commitUrl="/api/v1/information/student-events/import-commit"
+      :sample-fields="['studentName', 'eventType', 'severity', 'occurredAt']"
+      @close="batchImportOpen = false"
+      @imported="list.refresh"
+    />
   </ManagementPage>
 </template>

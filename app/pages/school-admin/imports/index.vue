@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
 
-type ImportType = 'users' | 'classes' | 'students' | 'guardians'
+type ImportType = 'users' | 'classes' | 'students' | 'guardians' | 'communications' | 'student_events'
 interface ImportRow {
   id: string
   importType: ImportType
@@ -44,8 +44,15 @@ const typeOptions = [
   { label: '班级', value: 'classes' },
   { label: '学生', value: 'students' },
   { label: '家长', value: 'guardians' },
+  { label: '家校沟通', value: 'communications' },
+  { label: '学生事件记录', value: 'student_events' },
 ]
 const typeLabels = Object.fromEntries(typeOptions.map(item => [item.value, item.label]))
+/** 家校沟通 / 学生事件记录走信息中心的 xlsx 模板与校验，其余四类仍是 CSV 链路 */
+const isBusinessImport = computed(() => importType.value === 'communications' || importType.value === 'student_events')
+const fileAccept = computed(() => (isBusinessImport.value ? '.xlsx' : '.csv,text/csv'))
+const fileFieldLabel = computed(() => (isBusinessImport.value ? 'Excel 文件' : 'CSV 文件'))
+const templateLabel = computed(() => (isBusinessImport.value ? '下载对应 Excel 模板' : '下载对应 CSV 模板'))
 const drawerOpen = ref(false)
 const saving = ref(false)
 const formError = ref('')
@@ -90,7 +97,7 @@ async function onFileChange(event: Event) {
 
 async function previewImport() {
   if (!contentBase64.value) {
-    formError.value = '请先选择 CSV 文件'
+    formError.value = `请先选择 ${fileFieldLabel.value}`
     return
   }
   saving.value = true
@@ -136,7 +143,7 @@ function activationLink(token: string) {
 </script>
 
 <template>
-  <ManagementPage title="导入管理" description="使用标准 CSV 模板预检后导入；账号导入统一生成 72 小时激活邀请。" :can-create="list.pageCapabilities.value.includes('create')" create-label="新建导入" @create="openImport">
+  <ManagementPage title="导入管理" description="使用标准模板预检后导入（账号/班级/学生/家长用 CSV，家校沟通/学生事件记录用 Excel）；账号导入统一生成 72 小时激活邀请。" :can-create="list.pageCapabilities.value.includes('create')" create-label="新建导入" @create="openImport">
     <TableToolbar :loading="list.loading.value" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value">
       <template #importType-data="{ value }">{{ typeLabels[String(value)] || value }}</template>
@@ -149,9 +156,9 @@ function activationLink(token: string) {
     <EntityFormDrawer :open="drawerOpen" title="新建数据导入" @close="drawerOpen = false">
       <div class="space-y-4">
         <UFormField label="导入类型" required><USelect v-model="importType" :items="typeOptions" :disabled="Boolean(preview)" class="w-full" /></UFormField>
-        <a :href="`/api/v1/school-admin/imports/templates/${importType}`" class="inline-flex items-center gap-1 text-sm text-primary-600 hover:underline"><UIcon name="i-lucide-download" />下载对应 CSV 模板</a>
-        <UFormField label="CSV 文件" required>
-          <input type="file" accept=".csv,text/csv" class="block w-full rounded-lg border border-gray-200 p-3 text-sm" :disabled="Boolean(committed)" @change="onFileChange">
+        <a :href="`/api/v1/school-admin/imports/templates/${importType}`" class="inline-flex items-center gap-1 text-sm text-primary-600 hover:underline"><UIcon name="i-lucide-download" />{{ templateLabel }}</a>
+        <UFormField :label="fileFieldLabel" required>
+          <input type="file" :accept="fileAccept" class="block w-full rounded-lg border border-gray-200 p-3 text-sm" :disabled="Boolean(committed)" @change="onFileChange">
           <p v-if="filename" class="mt-1 text-xs text-gray-500">{{ filename }}</p>
         </UFormField>
         <UButton v-if="!preview" :loading="saving" :disabled="!contentBase64" @click="previewImport">执行预检</UButton>

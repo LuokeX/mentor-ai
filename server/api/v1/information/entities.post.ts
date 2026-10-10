@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
+import { communicationChannelSchema } from '../../../../shared/contracts'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { encryptSensitive, searchableHash } from '../../../utils/crypto'
@@ -17,6 +18,7 @@ const entitySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('guardian'), name: z.string().trim().min(1).max(80), phone: z.string().max(40).optional(), relation: z.string().max(40).optional(), studentIds: z.array(z.string().uuid()).max(6).optional() }),
   z.object({
     type: z.literal('communication'), summary: z.string().trim().min(5).max(3000), guardianId: z.string().uuid().optional(), studentId: z.string().uuid().optional(),
+    channel: communicationChannelSchema.optional(),
     parentType: z.string().max(20).optional(), attitudeType: z.string().max(20).optional(), containerLevel: z.number().int().min(-4).max(4).optional(), riskLevel: z.string().max(20).optional()
   })
 ])
@@ -83,6 +85,7 @@ export default defineEventHandler(async (event) => {
   } else {
     [record] = await db.insert(schema.communications).values({
       schoolId: user.schoolId, ownerUserId: user.id, guardianId: body.guardianId, studentId: body.studentId,
+      channel: body.channel ?? null,
       summaryEnc: encryptSensitive(body.summary, config.encryptionKey), parentType: body.parentType,
       attitudeType: body.attitudeType, containerLevel: body.containerLevel, riskLevel: body.riskLevel
     }).returning({ id: schema.communications.id })
