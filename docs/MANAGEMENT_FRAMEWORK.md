@@ -90,6 +90,10 @@ interface ManagedPatch<T> {
 - `resolveCapabilities(ctx)`: 解析单条记录的全部能力
 - `resolvePageCapabilities(user, area)`: 解析页面级能力
 
+两者都先读 `roles` 表的权限清单（`shared/management.ts` 的纯函数负责归一化与白名单清洗），
+库里没有该目标类型时回退到 `capabilities.ts` 里的硬编码规则；编辑器展示的「生效值」即两者合并后的结果
+（见 `docs/ROLE_MATRIX.md` 开头的三条口径）。
+
 ### 生命周期服务 (`server/domain/lifecycle.ts`)
 
 - `archiveRecord()`: 通用归档操作（含租户、归属和并发控制）
@@ -191,7 +195,7 @@ pnpm scaffold:management --area <area> --entity <entity>
 
 - 教师信息中心：班级、学生、家长、家校沟通、学生事件、个案
 - 学校后台：班级、学生、家长、部门、账号、导入、转介、授权审批、操作与审计
-- 平台后台：学校、全部账户、三库运营台、知识库、AI 中心、平台审计
+- 平台后台：总览、学校与权限管理（学校管理、学校管理员账户、角色权限配置）、知识库管理（向量库、三库运营台）、运营管理（审计日志、AI 管理中心、调研反馈）
 - 心理专员：转介工单列表与既有处置工作台
 
 列表统一返回 `ManagedListResult`，但不同实体的可写动作仍由各领域 API

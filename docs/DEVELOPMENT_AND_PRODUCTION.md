@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | 本地开发 | 编码、调试、单元测试 | 仅使用虚构或脱敏数据 | 允许 | Node.js + 本地专用 Docker PostgreSQL（5434/mentor_ai_dev） |
 | 测试/UAT | 发布前演练：迁移、功能与数据核对 | 测试环境自有数据，跨版本保留，发布时不用正式库覆盖（默认本机回环，经授权可校内局域网） | 禁止 | `docker-compose.test.yml`（5435/mentor_ai；3400 明文 307 跳 3401 HTTPS，见 8.5） |
-| 正式环境 | 校内封闭试用和正式业务 | 真实业务数据 | 禁止 | Docker Compose + Nginx/TLS |
+| 正式环境 | 校内封闭试用和正式业务 | 真实业务数据 | 禁止 | Docker Compose + Nginx 入口（3300 明文 307 跳 3301 HTTPS，见 8.6） |
 
 必须保证：
 
@@ -24,7 +24,7 @@
 | `pnpm env:init` | 为本地 `.env` 替换占位值并生成随机密钥 | 仅本地首次初始化 |
 | `pnpm db:up:local` | 启动本地开发专用 PostgreSQL（`docker-compose.local.yml`，端口 5434） | 本地开发 |
 | `bash scripts/refresh-test-db.sh` | 用正式库备份**覆盖**测试库（`docker-compose.test.yml`，端口 5435）。仅限明确的特殊场景手动执行，不属于发布流程；默认发布测试版本禁止使用 | 仅在获授权的特殊场景 |
-| `docker compose -f docker-compose.test.yml up -d` | 启动测试环境（migrate + app + nginx 入口，访问见 8.5） | 发布演练 |
+| `IMAGE_TAG=<本次构建标签> docker compose -f docker-compose.test.yml up -d --no-build` | 启动测试环境（migrate + app + nginx 入口，访问见 8.5；标签用当天日期等构建标识，不用 latest） | 发布演练 |
 | `pnpm db:up` | 启动正式环境 compose 的 PostgreSQL、Ollama 并执行 migration | 仅正式环境部署流程 |
 | `pnpm db:generate` | 根据 Drizzle Schema 生成新 migration | 本地开发 |
 | `pnpm db:migrate` | 执行尚未执行的 migration | 本地或受控发布流程 |
@@ -187,14 +187,16 @@ chmod 600 .env
 
 `rg` 应无输出。不得把 `.env` 内容输出到工单、聊天或部署日志。
 
-4. 将证书放到 `infra/certs/fullchain.pem` 和 `infra/certs/privkey.pem`，私钥只允许部署账号读取。
-5. 确认校内域名、DeepSeek 出口、短信网关、备份目录和事故联系人已就绪。
+4. 准备 HTTPS 证书：已有学校或公网 CA 签发的证书时，直接放 `infra/certs/fullchain.pem` 和 `infra/certs/privkey.pem`，私钥只允许部署账号读取；没有域名或签发证书时，用 `scripts/gen-cert.sh --env=prod` 生成「本地 CA + 服务器证书」（自签方案，设备需信任 `infra/certs/ca.pem` 才能使用语音输入，见 8.6）。
+5. 确认校内访问地址（域名或 IP，必须与证书 SAN 一致）、DeepSeek 出口、短信网关、备份目录和事故联系人已就绪。
 
 ### 6.2 构建与启动
 
 ```bash
-docker compose --profile tls build
-docker compose --profile tls up -d
+IMAGE_TAG=vX.Y.Z docker compose build app migrate
+docker tag mentor-ai-app:vX.Y.Z mentor-ai-app:latest          # latest 兜底别名跟随部署版本
+docker tag mentor-ai-migrate:vX.Y.Z mentor-ai-migrate:latest
+IMAGE_TAG=vX.Y.Z docker compose up -d --no-build
 docker compose ps -a
 docker compose logs --tail=100 migrate
 ```
@@ -203,10 +205,12 @@ docker compose logs --tail=100 migrate
 
 ```bash
 docker compose exec app node -e "fetch('http://127.0.0.1:3300/health/ready').then(async r => { console.log(r.status, await r.text()); process.exit(r.ok ? 0 : 1) })"
+curl -fsS http://localhost:3300/health/ready    # 3300 明文直通（见 8.6）
+curl -sk  https://localhost:3301/health/ready   # 3301 HTTPS，自签证书用 -k
 docker compose logs --tail=100 app nginx
 ```
 
-最后通过校内域名验证 HTTPS、登录、四角色权限、DeepSeek 降级和真实短信。正式环境禁止执行 `pnpm db:seed`。
+最后通过校内访问地址验证 HTTPS、登录、四角色权限、DeepSeek 降级和真实短信。正式环境禁止执行 `pnpm db:seed`。
 
 ## 7. 正式环境版本更新
 
@@ -217,12 +221,16 @@ docker compose logs --tail=100 app nginx
 3. **测试环境演练**：在测试库现有数据上执行迁移并冒烟。测试库数据跨版本保留，**不得用正式库备份覆盖**（覆盖操作不属于发布流程，见 8.4）：
 
 ```bash
-docker compose -f docker-compose.test.yml build app migrate  # 迁移 SQL 在镜像内，migrate 必须一起重建
-docker compose -f docker-compose.test.yml up -d        # 测试环境执行 migrate + app（含 nginx 入口），保留现有数据
+IMAGE_TAG=<本次构建标签> docker compose -f docker-compose.test.yml build app migrate  # 迁移 SQL 在镜像内，migrate 必须一起重建
+docker tag mentor-ai-test-app:<本次构建标签> mentor-ai-test-app:latest                # latest 兜底别名跟本次构建
+docker tag mentor-ai-test-migrate:<本次构建标签> mentor-ai-test-migrate:latest
+IMAGE_TAG=<本次构建标签> docker compose -f docker-compose.test.yml up -d --no-build   # 测试环境执行 migrate + app（含 nginx 入口），保留现有数据
 curl -s http://127.0.0.1:3400/health/ready             # 期望 200（健康检查在跳转规则之外，明文可探活）
 curl -sk https://127.0.0.1:3401/health/ready           # 期望 200（自签证书用 -k，正式证书可直接校验）
 # 用测试环境已有账号登录，验证迁移后关键功能与数据完整性
 ```
+
+标签用当天日期或当次构建标识（如 `20261010`），并在发布记录里留痕；部署同样显式引用该标签，不用 `latest`。
 
 4. 记录备份文件名和校验和，并在隔离环境验证备份可读取。
 
@@ -233,9 +241,11 @@ gzip -t backups/mentor-ai-YYYYMMDD-HHMMSS.sql.gz
 5. 构建新镜像并部署：
 
 ```bash
-docker compose --profile tls build
-docker compose --profile tls up -d
-docker compose ps -a
+IMAGE_TAG=vX.Y.Z docker compose build app migrate
+docker tag mentor-ai-app:vX.Y.Z mentor-ai-app:latest       # latest 兜底别名跟随本次部署版本
+docker tag mentor-ai-migrate:vX.Y.Z mentor-ai-migrate:latest
+IMAGE_TAG=vX.Y.Z docker compose up -d --no-build
+IMAGE_TAG=vX.Y.Z docker compose ps -a      # 核对 IMAGE 列就是 vX.Y.Z
 docker compose logs --tail=100 migrate app
 ```
 
@@ -252,20 +262,29 @@ docker compose logs --tail=100 migrate app
 BACKUP_DIR=./backups BACKUP_RETENTION_DAYS=14 ./scripts/backup.sh
 ```
 
-备份文件默认权限为 `600`。正式环境至少每日备份，并同步到加密的异机存储；至少每月进行一次隔离恢复演练。
+备份文件默认权限为 `600`。正式环境至少每日备份，并同步到加密的异机存储；至少每月进行一次隔离恢复演练。数据库 + 代码（含提交历史）的日常备份由 `scripts/backup-to-oss.ts` 自动上传阿里云 OSS（配置与恢复步骤见 [运维手册](OPERATIONS.md) 的「自动备份到阿里云 OSS」）。
 
 ### 8.2 应用回滚
 
-应用回滚优先部署上一个已验证镜像或发布版本。数据库 migration 原则上只向前修复，不依赖自动 down migration。所有数据库变更应保持上一个应用版本在短时间内仍可运行。
+应用回滚优先部署上一个已验证镜像或发布版本，显式引用版本标签：
+
+```bash
+IMAGE_TAG=v<上一版本> docker compose up -d --no-build
+docker tag mentor-ai-app:v<上一版本> mentor-ai-app:latest       # latest 别名跟随回滚版本
+docker tag mentor-ai-migrate:v<上一版本> mentor-ai-migrate:latest
+```
+
+数据库 migration 原则上只向前修复，不依赖自动 down migration。所有数据库变更应保持上一个应用版本在短时间内仍可运行。
 
 ### 8.3 数据库恢复
 
 恢复会覆盖现有对象，只用于已批准的事故恢复或演练：
 
 ```bash
+docker compose ps app                              # 记下当前部署的镜像标签（如 mentor-ai-app:vX.Y.Z）
 docker compose stop app nginx
 CONFIRM_RESTORE=RESTORE_MENTOR_AI ./scripts/restore.sh backups/mentor-ai-YYYYMMDD-HHMMSS.sql.gz
-docker compose --profile tls up -d
+IMAGE_TAG=vX.Y.Z docker compose up -d --no-build   # 用恢复前记录的实际部署版本启动
 ```
 
 恢复前必须再次备份当前库，并先在隔离环境验证目标备份。恢复后必须执行 migration、健康检查、抽样数据校验和权限冒烟测试。不得在未验证备份时删除 PostgreSQL 卷。
@@ -284,11 +303,13 @@ docker compose --profile tls up -d
 - **3401 HTTPS**：TLS 终结后转发 `app:3300`，是唯一实际提供应用的入口。**浏览器调用麦克风（语音输入）要求安全上下文，必须走这里**，明文 3400 会被浏览器拒绝。
 - **例外**：`/health/live`、`/health/ready` 在 3400 上直通应用（不跳转），发布流程与监控可继续用明文探活。
 
-证书放在 `infra/certs-test/`（已 gitignore，与正式的 `infra/certs/` 分开，避免自签证书被正式环境误用），由 `scripts/gen-test-cert.sh` 生成「本地 CA + 服务器证书」：
+测试环境的登录页提供「选择测试账户」入口：点选账号自动填入手机号与密码，再点「安全登录」；认证仍走正常 `/api/v1/auth/login`，没有新增接口、也没有绕过口令校验。开关是公共运行时变量 `NUXT_PUBLIC_SHOW_TEST_ACCOUNTS`，**只有 `docker-compose.test.yml` 注入 `true`**，正式编排不注入、`.env` 也不应打开。账号清单维护在 `app/utils/test-accounts.ts`：只放测试库长期保留的演示账号（4 个种子账号、三个学部管理员、三个学部校长、心理专员、教师张忠程），**不要加入真实教师账号**——测试库可能残留正式库数据副本，把账号铺开等于把人员名单放到登录页上。
+
+证书放在 `infra/certs-test/`（已 gitignore，与正式的 `infra/certs/` 分开，避免自签证书被正式环境误用），由 `scripts/gen-cert.sh` 生成「本地 CA + 服务器证书」（不带 `--env` 即测试环境）：
 
 ```bash
-scripts/gen-test-cert.sh              # SAN 自动含 localhost、主机名、127.0.0.1 与本机全部 IPv4
-FORCE=1 scripts/gen-test-cert.sh      # 重签（换 IP、续期）
+scripts/gen-cert.sh                   # SAN 自动含 localhost、主机名、127.0.0.1 与本机全部 IPv4
+FORCE=1 scripts/gen-cert.sh           # 重签（换 IP、续期）
 ```
 
 要让老师们能真正使用录音，必须把 `infra/certs-test/ca.pem` 安装到每台设备的「受信任的根证书颁发机构」；不安装时浏览器会先提示证书不受信（实测点过提示后仍是安全上下文、麦克风可用，但地址栏显示「不安全」，且浏览器策略可能收紧）。已经持有学校或公网 CA 签发的证书时，直接替换 `infra/certs-test/fullchain.pem` 与 `privkey.pem` 即可，不需要本地 CA。
@@ -299,6 +320,36 @@ FORCE=1 scripts/gen-test-cert.sh      # 重签（换 IP、续期）
 curl -sI  http://<主机>:3400/ | grep -i location   # 应看到 307 与 https://<主机>:3401/
 curl -sk https://<主机>:3401/health/ready          # 应返回 200
 docker compose -f docker-compose.test.yml logs --tail=50 nginx
+```
+
+### 8.6 正式环境访问入口（3300 → 3301）
+
+正式环境的唯一入口是 `docker-compose.yml` 里的 `nginx` 服务（属于默认 profile，`docker compose up -d` 即随应用启动），应用容器不再直接发布宿主端口，与测试环境同一套端口规律（测试为 3400 → 3401，见 8.5）：
+
+- **3300 明文**：只做跳转，任何请求返回 `307` 到 `https://<同一主机>:3301<原路径>`；用 `307` 的原因见 8.5。
+- **3301 HTTPS**：TLS 终结后转发 `app:3300`，是唯一实际提供应用的入口。**浏览器调用麦克风（语音输入）要求安全上下文，必须走这里。**
+- **例外**：`/health/live`、`/health/ready` 在 3300 上直通应用，发布流程与监控可继续用明文探活。
+- `.env` 的 `SESSION_COOKIE_SECURE` 应为 `true`：唯一入口是 HTTPS，明文 3300 只做跳转、拿不到会话。
+- 3301 不是标准 HTTPS 端口，所以访问地址、书签、二维码和发给老师的链接必须显式带 `:3301`；Nginx 用 `$http_host` 转发 Host，应用生成的绝对地址不会丢端口。
+
+证书放在 `infra/certs/`（已 gitignore）。没有校内域名或学校签发证书时，用本地 CA 自签：
+
+```bash
+scripts/gen-cert.sh --env=prod            # SAN 自动含 localhost、主机名、127.0.0.1 与本机全部 IPv4
+FORCE=1 scripts/gen-cert.sh --env=prod    # 重签（换 IP、续期；设备只需继续信任同一张 ca.pem）
+```
+
+要让老师们能真正使用录音，必须把 `infra/certs/ca.pem` 安装到每台设备的「受信任的根证书颁发机构」；不安装时浏览器会先提示证书不受信，是否仍能录音取决于浏览器策略（测试环境实测点过提示后可用，但地址栏显示「不安全」，且浏览器策略可能收紧）。接入校内访问地址时，证书 SAN 必须包含该地址，换址要重签。
+
+`infra/nginx/default.conf.template` 里 HSTS 默认保持注释：自签证书阶段一旦被浏览器记住，换证书或证书不受信时会直接硬失败。学校或公网 CA 签发的证书到位后，替换 `fullchain.pem` 与 `privkey.pem` 并取消该行注释。
+
+排查用命令：
+
+```bash
+curl -sI  http://<主机>:3300/ | grep -i location   # 应看到 307 与 https://<主机>:3301/
+curl -fsS http://<主机>:3300/health/ready          # 3300 明文直通，应返回 200
+curl -sk  https://<主机>:3301/health/ready         # 3301 HTTPS，自签证书用 -k
+docker compose logs --tail=50 nginx
 ```
 
 ## 9. 日常正式环境运维

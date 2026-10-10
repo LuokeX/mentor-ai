@@ -86,7 +86,7 @@ DeepSeek 用于语义风险辅助、Agent 助手回答和必要表达润色。Ag
 
 - 提示词正文随代码发布，唯一来源是 `server/domain/ai-prompt-baselines.ts`；平台后台 AI 中心的提示词页只读展示，改文案走代码评审与发版。
 - 数据库 `ai_prompt_templates`（提示词）与 `ai_runtime_settings`（运行时配置）已随迁移 `drizzle/0051_sour_hellfire_club.sql` 删除，不再存在库内来源。
-- 没有 Agent 开关：所有消息一律走 Agent 图；Agent 行为要点（回答先行、先检索再回答、量表优先、不得输出「选项：」列表）在 `server/agent/prompts.ts` 的 `buildFormatInstruction`。「先检索再回答」要求：除寒暄与能力询问外，涉及班主任具体做法、平台量表/工具/SOP/制度的问题必须先调用 `knowledge_search`（必要时再补 `resource_lookup`），回答只能基于工具实际返回的内容——这既保证回答有平台知识依据，也让界面上的「参考知识库 N 条」面板有内容可展示。
+- 没有 Agent 开关：所有消息一律走 Agent 图；Agent 行为要点（回答先行、先检索再回答、量表优先、排版分块、不得输出「选项：」列表）在 `server/agent/prompts.ts` 的 `buildFormatInstruction`。排版口径：用 Markdown 分块——先一句判断，要点/动作单独成段（空行分隔），段首用 `**加粗短句**` 点题，并列做法用短列表；只加粗关键短句、不整段加粗，加粗是给教师扫读找落点，不是公文式小标题（前端 `.markdown-body` 已提供加粗、列表、表格样式；9 月中旬的回答曾因「不要报告腔」约束被模型整体放弃加粗，故 2026-10-08 起把排版要求写进提示词）。「先检索再回答」要求：除寒暄与能力询问外，涉及班主任具体做法、平台量表/工具/SOP/制度的问题必须先调用 `knowledge_search`（必要时再补 `resource_lookup`），回答只能基于工具实际返回的内容——这既保证回答有平台知识依据，也让界面上的「参考知识库 N 条」面板有内容可展示。
 - 用语红线：面向教师的文本不得出现「危机、红线、预警、立即、110、120」这些字样（含空格、谐音或拆字写法），已在 `assistant_chat`、`assessment_report`、`tool_step_polish`、`instrument_recommendation`、`chat_history_summary` 五条提示词里约束（同类含义改用「安全事项 / 重点关注、安全底线、关注提示、尽快 / 第一时间」；紧急处置只引导联系校内心理专员或学校值班负责人，不写报警或急救电话号码）。助手回答目前仍是提示词层的软约束，`server/agent/answer-guard.ts` 尚未对回答做词级清洗兜底，若观测到漏出再考虑加一层替换；方案改写与深度报告两条链路已有确定性防线（见第 7 节「方案正文的术语白话化与两道防线」）。
 
 超时说明：`DEEPSEEK_TIMEOUT_MS` 是全局默认（建议 30000）。评估报告润色是最长输出（完整报告 JSON），走专用逻辑：不低于 360000ms，不受全局短超时影响。运行时参数（模型名、超时、embedding）只来自环境变量与代码默认值。
@@ -131,7 +131,7 @@ DASHSCOPE_API_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 - 回答朗读（TTS）：`GET /api/v1/chat/messages/{id}/speech?chunk=n` 逐片取音频。服务端解密回答正文 → `shared/speech.ts` 的 `speechTextOf` 清洗成可朗读纯文本（去代码块、链接地址、表格分隔行、强调标记）→ `splitSpeechChunks` 按句末标点切成不超过 300 字的分片（两端共用同一套口径，避免「有朗读按钮却读不出声」）→ 按学校数据模式过 `redactOutboundText` 脱敏 → 调 TTS 合成（默认 `qwen-audio-3.0-tts-flash` + 系统音色 `longanlingxi`；非流式返回 24 小时有效的音频 URL，**服务端取回字节后同源返回 base64**，不把外部音频 URL 暴露给浏览器）。单条回答最多朗读前 20 片（约 6000 字），超出由前端提示。自动朗读与手动朗读共用 `useSpeechPlayback` 的播放循环与分片缓存（`app/composables/useSpeechPlayback.ts`），同一条回答不会重复请求同一片。
 - 音频不落库、不落磁盘；`ai_model_calls` 只记元数据（`provider=dashscope`，`purpose=speech_asr` / `speech_tts`，含 `data_mode`、耗时与错误码 `timeout` / `http:<status>` / `schema` / `oversize` / `unknown`），不记音频与朗读正文；产品事件 `assistant_voice_input_used` / `assistant_voice_playback_used` 同样只记分片位置与数据模式。
 - 数据边界：录音原声无法脱敏，因此语音输入与朗读都只在 `redacted` / `full_context` 模式开放；朗读文本按既有外发口径走 `redactOutboundText`（`redacted` 模式下「X 老师」会被念成「PERSON 老师」，这是与其它外发链路一致的取舍）。
-- 浏览器限制：`getUserMedia` 只在安全上下文可用，**录音仅在 HTTPS 或 `localhost` 下工作**。测试环境的明文 3400 会把浏览器 307 跳到 `https://<主机>:3401`（见 `docs/DEVELOPMENT_AND_PRODUCTION.md` 第 8.5 节），但自签证书需要把 `infra/certs-test/ca.pem` 装到设备信任列表，否则浏览器会先提示证书不受信；`/health/*` 仍可用明文探活。正式环境走 Nginx + TLS，不受限；Nginx 已为 `/api/v1/chat/transcriptions` 单独放宽 `client_max_body_size`（全局仍为 2m）。
+- 浏览器限制：`getUserMedia` 只在安全上下文可用，**录音仅在 HTTPS 或 `localhost` 下工作**。测试环境的明文 3400 会把浏览器 307 跳到 `https://<主机>:3401`（见 `docs/DEVELOPMENT_AND_PRODUCTION.md` 第 8.5 节），但自签证书需要把 `infra/certs-test/ca.pem` 装到设备信任列表，否则浏览器会先提示证书不受信；`/health/*` 仍可用明文探活。正式环境走 Nginx + TLS（3300 明文 307 跳 3301 HTTPS，见第 8.6 节），当前同样用 `infra/certs/` 的本地自签证书，教师设备不信任 `infra/certs/ca.pem` 时录音可能被浏览器拒绝（换成学校或公网 CA 证书后不再需要安装）；Nginx 已为 `/api/v1/chat/transcriptions` 单独放宽 `client_max_body_size`（全局仍为 2m）。
 
 ## 4. 三库运营台
 
