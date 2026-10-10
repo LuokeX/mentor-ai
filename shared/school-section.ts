@@ -104,3 +104,21 @@ export function resourceRowsOfVersion(libraryType: string, payload: unknown): Ar
   const rows = (payload as Record<string, unknown> | null | undefined)?.[key]
   return Array.isArray(rows) ? rows as Array<Record<string, unknown>> : []
 }
+
+/** 年级中文标签：1-6 一年级…六年级、7-9 七年级…九年级、10-12 高一/高二/高三；越界返回「N 年级」。 */
+export function gradeLabel(grade: number): string {
+  if (!Number.isFinite(grade)) return '未知年级'
+  const g = Math.trunc(grade)
+  if (g >= 1 && g <= 6) return `${['一', '二', '三', '四', '五', '六'][g - 1]}年级`
+  if (g >= 7 && g <= 9) return `${['七', '八', '九'][g - 7]}年级`
+  if (g >= 10 && g <= 12) return `高${['一', '二', '三'][g - 10]}`
+  return `${g} 年级`
+}
+
+/** 学部（学段）对应的年级集合：复读部没有固定年级，返回空数组。 */
+export function gradesOfSchoolSection(section: SchoolSection): number[] {
+  if (section === 'primary') return [1, 2, 3, 4, 5, 6]
+  if (section === 'junior') return [7, 8, 9]
+  if (section === 'senior') return [10, 11, 12]
+  return []
+}

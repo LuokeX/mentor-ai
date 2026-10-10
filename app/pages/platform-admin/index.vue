@@ -1,12 +1,17 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'default' })
-const { data } = await useFetch<any>('/api/v1/platform-admin/dashboard')
+/**
+ * 平台总览数据：类型来自服务端路由标注的返回类型（`server/api/v1/platform-admin/dashboard.get.ts`），
+ * 因此这里不需要也不该传泛型（传 `any` 会与 Nitro 的 TypedInternalResponse 组合出
+ * 开发态类型检查的 “Type instantiation is excessively deep”）。
+ */
+const { data } = await useFetch('/api/v1/platform-admin/dashboard')
 
 const stats = computed(() => [
   { label: '学校租户', value: data.value?.schools?.length || 0, icon: 'i-lucide-building-2', color: 'blue' },
   { label: '全部账号', value: data.value?.userTotal || 0, icon: 'i-lucide-user-cog', color: 'purple' },
   { label: '应急访问申请', value: data.value?.accessRequests?.length || 0, icon: 'i-lucide-key-round', color: 'amber' },
-  { label: '活跃学校', value: data.value?.schools?.filter((s: any) => s.status === 'active').length || 0, icon: 'i-lucide-school', color: 'green' },
+  { label: '活跃学校', value: data.value?.schools?.filter(s => s.status === 'active').length || 0, icon: 'i-lucide-school', color: 'green' },
 ])
 
 const colorMap: Record<string, { bg: string; text: string }> = {
@@ -59,8 +64,8 @@ const health = computed(() => [
       <h2 class="text-lg font-semibold text-gray-900">管理入口</h2>
       <div class="mt-4 flex flex-wrap gap-2">
         <UButton to="/platform-admin/schools" icon="i-lucide-building-2" variant="soft" color="neutral">学校管理</UButton>
-        <UButton to="/platform-admin/users" icon="i-lucide-user-cog" variant="soft" color="neutral">全部账户</UButton>
-        <UButton to="/platform-admin/roles" icon="i-lucide-shield" variant="soft" color="primary">角色管理</UButton>
+        <UButton to="/platform-admin/users" icon="i-lucide-user-cog" variant="soft" color="neutral">学校管理员账户</UButton>
+        <UButton to="/platform-admin/roles" icon="i-lucide-shield" variant="soft" color="primary">角色权限配置</UButton>
         <UButton to="/platform-admin/audit" icon="i-lucide-list-checks" variant="soft" color="neutral">审计日志</UButton>
         <UButton to="/platform-admin/resources" icon="i-lucide-library" variant="soft" color="neutral">三库运营台</UButton>
         <UButton to="/platform-admin/ai-center" icon="i-lucide-bot" variant="soft" color="neutral">AI 管理中心</UButton>

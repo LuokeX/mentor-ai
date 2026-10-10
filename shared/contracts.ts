@@ -1,6 +1,15 @@
 import { z } from 'zod'
 
-export const roleSchema = z.enum(['teacher', 'psychologist', 'school_admin', 'platform_admin'])
+export const roleSchema = z.enum([
+  'teacher',
+  'psychologist',
+  'school_admin',
+  'division_principal',
+  // 数据驾驶舱角色（一校一学部：德育主任看本校、年级主任只看所辖年级）
+  'moral_education_director',
+  'grade_director',
+  'platform_admin'
+])
 export const moduleIdSchema = z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem'])
 
 /** 登录手机号格式（账号体系统一校验规则） */
@@ -12,6 +21,37 @@ export const PHONE_PATTERN = /^1[3-9]\d{9}$/
  */
 export const severitySchema = z.enum(['low', 'medium', 'high', 'crisis'])
 export type Severity = z.infer<typeof severitySchema>
+
+/**
+ * 学生事件类型。产品确认的六大类口径（E1–E6），存量数据已由迁移 0059 映射到该口径，
+ * 旧值（违纪/冲突/异常行为/学业波动）不再合法。
+ */
+export const studentEventTypeSchema = z.enum(['学业纪律类', '课堂秩序类', '行为规范类', '身心健康类', '欺凌侵害类', '其他'])
+export type StudentEventType = z.infer<typeof studentEventTypeSchema>
+/** 有序取值（E1→E6），供前端下拉渲染 */
+export const studentEventTypes = ['学业纪律类', '课堂秩序类', '行为规范类', '身心健康类', '欺凌侵害类', '其他'] as const satisfies readonly StudentEventType[]
+/** 值 → 中文标签（E1–E6 顺序；当前取值即中文标签） */
+export const studentEventTypeLabels: Record<StudentEventType, string> = {
+  学业纪律类: '学业纪律类',
+  课堂秩序类: '课堂秩序类',
+  行为规范类: '行为规范类',
+  身心健康类: '身心健康类',
+  欺凌侵害类: '欺凌侵害类',
+  其他: '其他'
+}
+
+/** 家校沟通渠道码。值为英文码，空值表示历史数据未标注，不属于本枚举。 */
+export const communicationChannelSchema = z.enum(['phone', 'wechat', 'meeting', 'home_visit', 'other'])
+export type CommunicationChannel = z.infer<typeof communicationChannelSchema>
+/** 渠道码 → 中文标签（phone 电话 / wechat 企微 / meeting 面谈 / home_visit 家访 / other 其他） */
+export const communicationChannelLabels: Record<CommunicationChannel, string> = {
+  phone: '电话',
+  wechat: '企微',
+  meeting: '面谈',
+  home_visit: '家访',
+  other: '其他'
+}
+
 export const libraryTypeSchema = z.enum(['assessment', 'attribution', 'tool', 'output_template', 'keyword_route'])
 export const moduleResourceScopeSchema = z.enum(['global', 'school'])
 export const resourceStatusSchema = z.enum(['draft', 'published', 'retired', 'pending_review'])
@@ -397,10 +437,38 @@ const dateInputSchema = z.string().refine(value => {
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
 }, { message: '无效的日期格式' })
 
-export const schoolAdminUserCreateSchema = z.object({
+/**
+ * 学校账号管理可开通的角色：教师、心理专员，以及两个只读数据驾驶舱角色。
+ * 学校管理员/平台管理员的角色任命不在其中（分别见 platformAdminSchoolAdminCreateSchema
+ * 与 platformAdminSchoolAdminUpdateSchema），学部校长仍由平台侧开通。
+ */
+export const schoolManagedRoleSchema = z.enum([
+  'teacher',
+  'psychologist',
+  'moral_education_director',
+  'grade_director'
+])
+
+/** 所辖年级（角色级 scope.grade，1-12）：年级主任专属，看板按它收窄范围 */
+const roleScopeGradeSchema = z.coerce.number().int().min(1).max(12)
+
+/**
+ * 年级主任必须写明所辖年级：看板范围解析在缺年级时返回 400，
+ * 建号阶段就拦住，避免建出登录即报错的账号。
+ */
+function requireScopeGradeForGradeDirector(
+  value: { role?: z.infer<typeof schoolManagedRoleSchema>, scopeGrade?: number },
+  ctx: z.RefinementCtx
+) {
+  if (value.role === 'grade_director' && value.scopeGrade === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['scopeGrade'], message: '年级主任必须填写所辖年级' })
+  }
+}
+
+const schoolAdminUserBaseSchema = z.object({
   name: z.string().trim().min(2).max(120),
   phone: z.string().trim().regex(PHONE_PATTERN),
-  role: z.enum(['teacher', 'psychologist']),
+  role: schoolManagedRoleSchema,
   /** 初始密码（选填）：提供则直接激活；留空由系统生成随机初始密码并在创建响应中一次性返回 */
   password: z.string().min(8).max(200).optional(),
   employeeNo: z.string().trim().max(80).nullable().optional(),
@@ -413,15 +481,20 @@ export const schoolAdminUserCreateSchema = z.object({
   hiredAt: dateInputSchema.nullable().optional(),
   title: z.string().trim().max(40).nullable().optional(),
   certNote: z.string().trim().max(1000).nullable().optional(),
-  notes: z.string().trim().max(4000).nullable().optional()
+  notes: z.string().trim().max(4000).nullable().optional(),
+  /** 所辖年级（角色级 scope.grade）：仅年级主任需要，建号必填 */
+  scopeGrade: roleScopeGradeSchema.optional()
 })
 
-export const schoolAdminUserInviteSchema = schoolAdminUserCreateSchema.omit({ password: true })
+/** 建号：年级主任必须同时给出所辖年级 */
+export const schoolAdminUserCreateSchema = schoolAdminUserBaseSchema.superRefine(requireScopeGradeForGradeDirector)
+
+export const schoolAdminUserInviteSchema = schoolAdminUserBaseSchema.omit({ password: true })
 
 export const schoolAdminUserUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   phone: z.string().trim().regex(PHONE_PATTERN).optional(),
-  role: z.enum(['teacher', 'psychologist']).optional(),
+  role: schoolManagedRoleSchema.optional(),
   status: z.enum(['active', 'disabled']).optional(),
   employeeNo: z.string().trim().max(80).nullable().optional(),
   gender: z.string().trim().max(20).nullable().optional(),
@@ -437,7 +510,16 @@ export const schoolAdminUserUpdateSchema = z.object({
   /** 手动修正业务状态（如 selfStatusLevel），留痕；评估提交时以新评估为准 */
   overrides: z.record(z.string(), z.string()).optional(),
   /** 重置密码（选填）：管理员为已激活账号设置新密码 */
-  password: z.string().min(8).max(200).optional()
+  password: z.string().min(8).max(200).optional(),
+  /** 所辖年级（角色级 scope.grade）：仅对持有年级主任角色的账号生效 */
+  scopeGrade: roleScopeGradeSchema.optional(),
+  /**
+   * 业务接收教师：账号名下有业务数据（班级/学生/方案等）且换到非业务角色（如德育主任/年级主任）时必填，
+   * 服务端在同一次操作里完成「移交 + 换角色」。
+   */
+  transferToUserId: z.string().uuid().optional(),
+  /** 移交事由（选填，写入移交留痕；缺省由服务端生成） */
+  transferReason: z.string().trim().min(4).max(200).optional()
 }).refine(value => Object.keys(value).length > 0)
 
 /** 平台管理员直接创建学校管理员（school_admin）账号；role 固定为 school_admin，不做邀请 */
@@ -450,7 +532,11 @@ export const platformAdminSchoolAdminCreateSchema = z.object({
   employeeNo: z.string().trim().max(80).nullable().optional()
 })
 
-/** 平台管理员编辑学校管理员基本信息与启停状态；role 固定为 school_admin */
+/**
+ * 平台管理员编辑学校管理员基本信息、启停状态与角色集合。
+ * roles / primaryRole 是「一人多角色」新增的可选字段：不传时保持账号现有角色集合不变（向后兼容）。
+ * 角色编码沿用文件顶部的 roleSchema，角色集合的扩展由角色目录变更统一负责。
+ */
 export const platformAdminSchoolAdminUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   phone: z.string().trim().regex(PHONE_PATTERN).optional(),
@@ -459,8 +545,15 @@ export const platformAdminSchoolAdminUpdateSchema = z.object({
   /** 重置密码：只接受新密码，不返回原密码；重置后该账号现有会话失效 */
   password: z.string().min(8).max(200).optional(),
   /** 停用事由，可选 */
-  reason: z.string().trim().max(500).optional()
+  reason: z.string().trim().max(500).optional(),
+  /** 角色集合（可选）：给出时覆盖账号现有角色集合，至少一个 */
+  roles: z.array(roleSchema).min(1).optional(),
+  /** 主角色（可选）：写回 users.role，必须包含在 roles 内；只改主角色时可在 roles 不变的情况下单独提交 */
+  primaryRole: roleSchema.optional()
 }).refine(value => Object.keys(value).length > 0)
+  .refine(value => !value.roles || !value.primaryRole || value.roles.includes(value.primaryRole), {
+    message: '主角色必须包含在角色集合中'
+  })
 
 export const schoolAdminDepartmentCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
