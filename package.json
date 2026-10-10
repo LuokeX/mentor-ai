@@ -21,6 +21,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "backup:oss": "tsx scripts/backup-to-oss.ts",
     "backfill:plan-titles": "tsx scripts/backfill-plan-titles.ts",
     "backfill:plan-attributions": "tsx scripts/backfill-plan-attributions.ts",
     "backfill:chat-titles": "tsx scripts/backfill-chat-titles.ts",
@@ -29,6 +30,7 @@
     "resources:reindex": "tsx scripts/reindex-module-resource-embeddings.ts",
     "knowledge:export": "tsx scripts/export-knowledge-base.ts",
     "knowledge:import": "tsx scripts/import-knowledge-base.ts",
+    "export:chat-plans": "tsx scripts/export-chat-and-plans.ts",
     "ai:cache-probe": "tsx scripts/ai-cache-probe.ts",
     "import:business-data": "tsx scripts/import-business-data/index.ts",
     "template:build": "tsx scripts/build-template-v4.mjs",
@@ -56,6 +58,7 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "3.1147.0",
     "@iconify-json/lucide": "^1.2.116",
     "@nuxt/test-utils": "latest",
     "@playwright/test": "latest",

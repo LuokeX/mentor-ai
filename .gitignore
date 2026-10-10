@@ -9,16 +9,20 @@ test-results
 .env
 # 同时覆盖 .env.bak.<时间戳> 与 .env.bak-<时间戳> 两种命名（后者曾长期未被忽略，含真实密钥）
 .env.bak*
+# 阿里云 OSS 自动备份凭据（含 RAM AccessKey），一律不进版本库
+.env.backup
 .env.dev
 *.log
 .DS_Store
-backups/*.sql*
+# 备份产物目录（scripts/backup.sh 与 scripts/backup-to-oss.ts 的输出）
+backups/
 .understand-anything/
 .claude/
 .cursor/
 infra/certs/*.pem
 infra/certs/*.key
 infra/certs/*.crt
+infra/certs/*.srl
 # 测试环境 HTTPS 使用的证书与私钥（自签或内部签发），一律不进版本库
 infra/certs-test/
 临时文件/
