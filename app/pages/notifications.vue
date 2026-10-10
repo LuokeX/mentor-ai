@@ -23,7 +23,7 @@ interface CenterEvent {
 }
 
 const toast = useToast()
-const { user } = useAuth()
+const { user, hasRole } = useAuth()
 const { targetTypeLabel } = useDisplayLabels()
 // 从工作台「查看全部」等入口过来时会带 ?tab=actions，之前这个参数没人读，
 // 点进来永远落在「全部」。
@@ -229,8 +229,10 @@ function notificationTargetUrl(item: any) {
   if (item.targetType === 'student') return `/information/students/${item.targetId}`
   if (item.targetType === 'guardian') return `/information/guardians/${item.targetId}`
   if (item.targetType === 'referral') {
-    if (user.value?.role === 'psychologist') return '/specialist'
-    if (user.value?.role === 'school_admin') return '/school-admin'
+    // 转介通知的落地页按「账号是否持有该角色」判断：兼任账号在另一角色激活时
+    // 也能拿到入口，进入后由路由中间件自动切换激活角色。
+    if (hasRole('psychologist')) return '/specialist'
+    if (hasRole('school_admin')) return '/school-admin'
   }
   if (item.targetType === 'conversation') return '/'
   return undefined

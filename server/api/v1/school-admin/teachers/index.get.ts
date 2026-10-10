@@ -6,6 +6,7 @@ import { requireSchoolManagement, countSql, offsetFrom } from '../../../../domai
 import { resolveCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
+import { userHasRole } from '../../../../domain/user-roles'
 
 const SORT_WHITELIST = createSortWhitelist('name', 'phone', 'status', 'activatedAt', 'lastLoginAt', 'classCount', 'studentCount', 'latestActivityAt', 'updatedAt')
 
@@ -20,7 +21,8 @@ export default defineEventHandler(async (event) => {
   const order = (query.order === 'asc' ? 'asc' : 'desc') as 'asc' | 'desc'
   const db = useDb(event)
 
-  const conditions = [eq(schema.users.schoolId, schoolId), eq(schema.users.role, 'teacher')]
+  // 教师列表以 user_roles 判定：兼任教师的账号也要出现在教师管理列表
+  const conditions = [eq(schema.users.schoolId, schoolId), userHasRole(db, 'teacher')]
   if (status !== 'all') conditions.push(eq(schema.users.status, status))
   if (q) conditions.push(or(ilike(schema.users.name, `%${q}%`), ilike(schema.users.phone, `%${q}%`))!)
 

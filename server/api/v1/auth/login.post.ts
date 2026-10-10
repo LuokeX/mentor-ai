@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import { useDb, schema } from '../../../utils/db'
 import { createSession } from '../../../utils/auth'
 import { writeAudit } from '../../../utils/audit'
+import { listUserRoles } from '../../../domain/user-roles'
 import { loginRequestSchema } from '../../../../shared/contracts'
 
 export default defineEventHandler(async (event) => {
@@ -22,5 +23,7 @@ export default defineEventHandler(async (event) => {
   // 登录只更新 lastLoginAt，不触碰 updatedAt（避免并发控制字段被登录行为污染导致 409）
   await useDb(event).update(schema.users).set({ lastLoginAt: new Date() }).where(eq(schema.users.id, user.id))
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'auth.login' })
-  return { ok: true, role: user.role }
+  // role 为登录后的激活角色（默认主角色）；roles 为该账号持有的全部角色，供前端落地与角色切换使用
+  const roles = (await listUserRoles(useDb(event), user.id)).map(entry => entry.roleCode)
+  return { ok: true, role: user.role, roles: roles.length ? roles : [user.role] }
 })

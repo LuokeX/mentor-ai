@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { moduleMeta } from '#shared/assessments'
 import { APP_VERSION } from '#shared/app-version'
+import { ROLE_LABELS, roleHomePath, rolesOf, type AppRole } from '~/composables/useAuth'
 const route = useRoute()
-const { user, refresh, logout } = useAuth()
+const { user, refresh, logout, hasRole, switchRole, roleHome } = useAuth()
+const toast = useToast()
 await refresh()
 
 // 小屏导航（顶栏 + 底部菜单）是浮层：默认收起，点悬浮按钮才滑出，滚动或到点自动收起（桌面端恒显示）
@@ -15,12 +17,47 @@ watch(() => route.fullPath, () => hideNav())
 const { covered: keyboardCovered, bindKeyboardInset } = useKeyboardInset()
 bindKeyboardInset()
 
-const roleHome = computed(() => {
-  if (user.value?.role === 'school_admin') return '/school-admin'
-  if (user.value?.role === 'platform_admin') return '/platform-admin'
-  if (user.value?.role === 'psychologist') return '/specialist'
-  return '/'
-})
+/** 角色切换器图标：与各角色入口按钮保持同一套图标。 */
+const roleIcons: Record<AppRole, string> = {
+  teacher: 'i-lucide-graduation-cap',
+  psychologist: 'i-lucide-heart-handshake',
+  school_admin: 'i-lucide-building-2',
+  division_principal: 'i-lucide-chart-column',
+  moral_education_director: 'i-lucide-chart-column',
+  grade_director: 'i-lucide-chart-column',
+  platform_admin: 'i-lucide-shield-check'
+}
+
+/** 兼任多角色的账号显示角色切换器：只持有单一角色时保持原有顶栏。 */
+const multipleRoles = computed(() => rolesOf(user.value).length > 1)
+/** 看板入口：校长 / 德育主任 / 年级主任三类角色共用「数据驾驶舱」 */
+const dashboardRole = computed(() => ['division_principal', 'moral_education_director', 'grade_director'].some(role => hasRole(role as AppRole)))
+const roleSwitchItems = computed(() => rolesOf(user.value).map(role => ({
+  label: ROLE_LABELS[role],
+  icon: roleIcons[role],
+  description: role === user.value?.role ? '当前身份' : `切换到${ROLE_LABELS[role]}首页`,
+  // 当前激活角色不可再切（重复切换是幂等的，但这里直接置灰更直观）
+  disabled: role === user.value?.role,
+  onSelect: () => { void changeRole(role) }
+})))
+
+/** 切换激活角色并跳到该角色首页；失败时留在当前页并提示。 */
+async function changeRole(role: AppRole) {
+  if (role === user.value?.role) return
+  try {
+    await switchRole(role)
+    toast.add({ title: `已切换为${ROLE_LABELS[role]}`, color: 'success' })
+    await navigateTo(roleHomePath(role))
+  } catch (error) {
+    const message = (error as { data?: { message?: unknown } })?.data?.message
+    toast.add({
+      title: '切换身份失败',
+      description: typeof message === 'string' && message.trim() ? message.trim() : '请稍后重试',
+      color: 'error'
+    })
+  }
+}
+
 const mobileItems = computed(() => {
   if (user.value?.role === 'teacher') return [
     { label: '我的助手', icon: 'i-lucide-house', to: '/' },
@@ -71,28 +108,42 @@ function closeDropdown(event: Event) {
           </span>
         </NuxtLink>
         <nav class="hidden items-center gap-2 md:flex">
-          <NuxtLink v-if="user.role === 'teacher'" to="/" :class="navClass(route.path === '/')"><UIcon name="i-lucide-house" class="size-4" />我的助手</NuxtLink>
-          <details v-if="user.role === 'teacher'" class="relative after:absolute after:inset-x-0 after:top-full after:h-1.5 after:content-['']" @mouseenter="openDropdown" @mouseleave="closeOnLeave">
+          <NuxtLink v-if="hasRole('teacher')" to="/" :class="navClass(route.path === '/')"><UIcon name="i-lucide-house" class="size-4" />我的助手</NuxtLink>
+          <details v-if="hasRole('teacher')" class="relative after:absolute after:inset-x-0 after:top-full after:h-1.5 after:content-['']" @mouseenter="openDropdown" @mouseleave="closeOnLeave">
             <summary :class="[...navClass(route.path.startsWith('/module') || route.path.startsWith('/assessments')), 'cursor-pointer list-none select-none']"><UIcon name="i-lucide-clipboard-list" class="size-4" />专项评估<UIcon name="i-lucide-chevron-down" class="size-3.5 opacity-70" /></summary>
             <div class="absolute left-0 top-full z-30 mt-1.5 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
               <NuxtLink v-for="(item, id) in moduleMeta" :key="id" :to="`/module/${id}`" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon :name="item.icon" class="size-4 text-slate-400" />{{ item.title }}</NuxtLink>
               <NuxtLink to="/assessments" class="mt-1 flex items-center gap-2.5 rounded-lg border-t border-slate-100 px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon name="i-lucide-clipboard-list" class="size-4 text-slate-400" />评估记录</NuxtLink>
             </div>
           </details>
-          <NuxtLink v-if="user.role === 'teacher'" to="/plans" :class="navClass(route.path.startsWith('/plans'))"><UIcon name="i-lucide-file-text" class="size-4" />我的方案</NuxtLink>
-          <NuxtLink v-if="user.role === 'teacher'" to="/information" :class="navClass(route.path.startsWith('/information'))"><UIcon name="i-lucide-folder-open" class="size-4" />信息中心</NuxtLink>
-          <details v-if="user.role === 'teacher'" class="relative after:absolute after:inset-x-0 after:top-full after:h-1.5 after:content-['']" @mouseenter="openDropdown" @mouseleave="closeOnLeave">
+          <NuxtLink v-if="hasRole('teacher')" to="/plans" :class="navClass(route.path.startsWith('/plans'))"><UIcon name="i-lucide-file-text" class="size-4" />我的方案</NuxtLink>
+          <NuxtLink v-if="hasRole('teacher')" to="/information" :class="navClass(route.path.startsWith('/information'))"><UIcon name="i-lucide-folder-open" class="size-4" />信息中心</NuxtLink>
+          <details v-if="hasRole('teacher')" class="relative after:absolute after:inset-x-0 after:top-full after:h-1.5 after:content-['']" @mouseenter="openDropdown" @mouseleave="closeOnLeave">
             <summary :class="[...navClass(route.path.startsWith('/growth') || route.path.startsWith('/notifications')), 'cursor-pointer list-none select-none']"><UIcon name="i-lucide-sprout" class="size-4" />我的成长<UIcon name="i-lucide-chevron-down" class="size-3.5 opacity-70" /></summary>
             <div class="absolute left-0 top-full z-30 mt-1.5 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
               <NuxtLink to="/growth" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon name="i-lucide-heart-pulse" class="size-4 text-slate-400" />自我状态分析</NuxtLink>
               <NuxtLink to="/notifications" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon name="i-lucide-notebook-pen" class="size-4 text-slate-400" />工作日志</NuxtLink>
             </div>
           </details>
-          <UButton v-if="user.role === 'school_admin'" to="/school-admin" :variant="route.path.startsWith('/school-admin') ? 'soft' : 'ghost'" :color="route.path.startsWith('/school-admin') ? 'primary' : 'neutral'">学校管理</UButton>
-          <UButton v-if="user.role === 'platform_admin'" to="/platform-admin" :variant="route.path.startsWith('/platform-admin') ? 'soft' : 'ghost'" :color="route.path.startsWith('/platform-admin') ? 'primary' : 'neutral'">平台管理</UButton>
-          <UButton v-if="user.role === 'psychologist'" to="/specialist" :variant="route.path.startsWith('/specialist') ? 'soft' : 'ghost'" :color="route.path.startsWith('/specialist') ? 'primary' : 'neutral'">转介工作台</UButton>
+          <UButton v-if="hasRole('school_admin')" to="/school-admin" :variant="route.path.startsWith('/school-admin') ? 'soft' : 'ghost'" :color="route.path.startsWith('/school-admin') ? 'primary' : 'neutral'">学校管理</UButton>
+          <UButton v-if="hasRole('school_admin')" to="/usage" :variant="route.path.startsWith('/usage') ? 'soft' : 'ghost'" :color="route.path.startsWith('/usage') ? 'primary' : 'neutral'">使用量看板</UButton>
+          <UButton v-if="dashboardRole" to="/dashboard" :variant="route.path.startsWith('/dashboard') ? 'soft' : 'ghost'" :color="route.path.startsWith('/dashboard') ? 'primary' : 'neutral'">数据驾驶舱</UButton>
+          <UButton v-if="hasRole('platform_admin')" to="/platform-admin" :variant="route.path.startsWith('/platform-admin') ? 'soft' : 'ghost'" :color="route.path.startsWith('/platform-admin') ? 'primary' : 'neutral'">平台管理</UButton>
+          <UButton v-if="hasRole('psychologist')" to="/specialist" :variant="route.path.startsWith('/specialist') ? 'soft' : 'ghost'" :color="route.path.startsWith('/specialist') ? 'primary' : 'neutral'">转介工作台</UButton>
         </nav>
         <div class="flex items-center gap-3">
+          <!-- 兼任账号：顶栏直接切换激活角色并跳到对应首页 -->
+          <UDropdownMenu v-if="multipleRoles" :items="roleSwitchItems">
+            <UButton
+              icon="i-lucide-arrow-left-right"
+              color="neutral"
+              variant="soft"
+              size="sm"
+              trailing-icon="i-lucide-chevron-down"
+              aria-label="切换身份"
+              :title="`切换身份（当前：${ROLE_LABELS[user.role]}）`"
+            />
+          </UDropdownMenu>
           <div class="hidden text-right sm:block">
             <p class="text-sm font-medium">{{ user.name }}</p>
             <p class="text-xs text-slate-500">{{ user.roleLabel }}</p>

@@ -7,6 +7,7 @@ import { writeAudit } from '../../../../utils/audit'
 import { ensurePlanActions } from '../../../../domain/plan-actions'
 import { canReviewPlan, planStatusAfterReview, recordPlanOperationEvent } from '../../../../domain/plan-operations'
 import { trackProductEvent } from '../../../../domain/product-events'
+import { userHasRole } from '../../../../domain/user-roles'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -106,7 +107,8 @@ export default defineEventHandler(async (event) => {
   if (body.decision === 'need_collaboration') {
     const admins = await db.select({ id: schema.users.id }).from(schema.users).where(and(
       eq(schema.users.schoolId, plan.schoolId),
-      eq(schema.users.role, 'school_admin'),
+      // 通知收件人按 user_roles 判定：兼任学校管理员的账号也要收到协同通知
+      userHasRole(db, 'school_admin'),
       eq(schema.users.status, 'active')
     )).limit(20)
     if (admins.length) {

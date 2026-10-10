@@ -21,7 +21,18 @@ interface CreateResult {
   initialPassword?: string
 }
 
-const list = useManagedList<SchoolAdminRow>('/api/v1/platform-admin/users')
+const route = useRoute()
+const router = useRouter()
+/**
+ * 学校筛选（PRD 7.1.3 下拉筛选1）：从学校管理列表的「管理员」入口进来时，
+ * URL 上带 schoolId，本页固定筛选为这所学校；也可以手动切换或选「全部学校」。
+ * 必须在 useManagedList 之前声明：extraQuery 闭包首次求值时会读取它。
+ */
+const schoolFilter = ref(typeof route.query.schoolId === 'string' ? route.query.schoolId : '')
+
+const list = useManagedList<SchoolAdminRow>('/api/v1/platform-admin/users', {
+  extraQuery: () => ({ schoolId: schoolFilter.value || undefined }),
+})
 const columns = [
   { key: 'schoolName', label: '学校', sortable: true },
   { key: 'name', label: '姓名', sortable: true },
@@ -60,6 +71,30 @@ async function loadSchools() {
   })
   schoolOptions.value = (res.rows || []).map(s => ({ label: s.name, value: s.id }))
 }
+
+/** 学校筛选下拉项：全部学校 + 各学校（列表来自学校管理接口）。空值用 'all' 代替——SelectItem 不允许空字符串 */
+const ALL_SCHOOLS = 'all'
+const schoolFilterItems = computed(() => [
+  { label: '全部学校', value: ALL_SCHOOLS },
+  ...schoolOptions.value,
+])
+
+/** 切换学校筛选：重置到第 1 页、同步 URL（便于从「学校管理」带参进入/分享），并重新拉取列表 */
+function onSchoolFilterChange(value: string) {
+  schoolFilter.value = value === ALL_SCHOOLS ? '' : (value || '')
+  void router.replace({
+    query: {
+      ...Object.fromEntries(Object.entries(route.query).map(([key, item]) => [key, Array.isArray(item) ? item[0] : item])),
+      schoolId: schoolFilter.value || undefined,
+      page: '1',
+    },
+  })
+  void list.refresh()
+}
+
+onMounted(async () => {
+  await loadSchools()
+})
 
 function openCreate() {
   editing.value = null
@@ -206,7 +241,19 @@ async function copyInitialPassword() {
       @search="list.onSearch"
       @update:status-filter="list.onStatusChange"
       @refresh="list.refresh"
-    />
+    >
+      <template #filters>
+        <!-- 学校列表未加载完就先不渲染，避免下拉显示成 UUID（值找不到对应选项） -->
+        <USelect
+          v-if="schoolFilterItems.length > 1"
+          :model-value="schoolFilter"
+          :items="schoolFilterItems"
+          size="md"
+          class="w-52"
+          @update:model-value="(value: string) => onSchoolFilterChange(value)"
+        />
+      </template>
+    </TableToolbar>
     <ManagedDataTable
       :columns="columns"
       :rows="list.rows.value"

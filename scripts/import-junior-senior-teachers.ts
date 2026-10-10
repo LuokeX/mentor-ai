@@ -3,6 +3,9 @@
  * 复用 scripts/import-class-teachers.ts 的事务/审计/加密口径，
  * 扩展年级 7-12 与 section 学段（junior/senior）。
  *
+ * 组织模型：学部即学校——初中部行写入 `llschool-junior`（六力学校-初中部），
+ * 高中部行写入 `llschool-senior`（六力学校-高中部），按行内 section 自动选择。
+ *
  * 用法：
  *   pnpm tsx scripts/import-junior-senior-teachers.ts            # dry-run（默认）
  *   pnpm tsx scripts/import-junior-senior-teachers.ts --apply --phone-suffix
@@ -11,7 +14,7 @@ import argon2 from 'argon2'
 import { eq } from 'drizzle-orm'
 import { Pool } from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { auditLogs, classes, schools, users } from '../server/db/schema'
+import { auditLogs, classes, schools, userRoles, users } from '../server/db/schema'
 import { encryptSensitive } from '../server/utils/crypto'
 import { loadLocalEnv } from './load-env'
 
@@ -75,9 +78,12 @@ async function main() {
   try {
     const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.phone, '13800000000')).limit(1)
     if (!admin) throw new Error('未找到平台管理员账号(13800000000)')
-    const [school] = await db.select({ id: schools.id }).from(schools).where(eq(schools.code, 'llschool')).limit(1)
-    if (!school) throw new Error('未找到学校 llschool')
-    const schoolId = school.id
+    // 学部即学校：初中部与高中部分别是独立学校（六力学校-初中部 / -高中部）
+    const [juniorSchool] = await db.select({ id: schools.id }).from(schools).where(eq(schools.code, 'llschool-junior')).limit(1)
+    const [seniorSchool] = await db.select({ id: schools.id }).from(schools).where(eq(schools.code, 'llschool-senior')).limit(1)
+    if (!juniorSchool) throw new Error('未找到学校 llschool-junior（六力学校-初中部）')
+    if (!seniorSchool) throw new Error('未找到学校 llschool-senior（六力学校-高中部）')
+    const schoolIdOf = (section: 'junior' | 'senior') => (section === 'junior' ? juniorSchool.id : seniorSchool.id)
 
     const conflict: string[] = []
     for (const row of ROWS) {
@@ -106,6 +112,7 @@ async function main() {
       let createdClasses = 0
       const byPhone = new Map<string, string>()
       for (const row of ROWS) {
+        const schoolId = schoolIdOf(row.section)
         const passwordHash = await argon2.hash(row.head.phone.slice(-8), { type: argon2.argon2id })
         const [user] = await tx.insert(users).values({
           schoolId,
@@ -119,6 +126,8 @@ async function main() {
           teachingGrades: [row.grade],
           isClassTeacher: true
         }).returning({ id: users.id })
+        // 角色集合与主角色一并写入 user_roles：多角色改造后教师身份以 user_roles 为准
+        await tx.insert(userRoles).values({ userId: user.id, roleCode: 'teacher' }).onConflictDoNothing()
         byPhone.set(row.head.phone, user.id)
         createdUsers++
         await tx.insert(auditLogs).values({

@@ -379,7 +379,7 @@ function onFileChange(event: Event) {
 </script>
 
 <template>
-  <ManagementPage title="知识库" description="管理专业术语、AI 参考文档，支持向量化检索">
+  <ManagementPage title="向量库" description="管理专业术语与 AI 参考文档（知识库内容），支持向量化检索">
     <div class="space-y-6">
       <!-- 筛选栏 -->
       <div class="panel p-4">

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireUser } from '../../../../../utils/auth'
 import { schema, useDb } from '../../../../../utils/db'
 import { writeAudit } from '../../../../../utils/audit'
+import { userHasRole } from '../../../../../domain/user-roles'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['school_admin'])
@@ -13,7 +14,8 @@ export default defineEventHandler(async (event) => {
   const [[psychologist], [referral]] = await Promise.all([
     db.select().from(schema.users).where(and(
       eq(schema.users.id, body.psychologistId), eq(schema.users.schoolId, admin.schoolId),
-      eq(schema.users.role, 'psychologist'), eq(schema.users.status, 'active')
+      // 以 user_roles 判定心理专员身份：兼任账号也能承接转介工单
+      userHasRole(db, 'psychologist'), eq(schema.users.status, 'active')
     )).limit(1),
     db.select().from(schema.referrals).where(and(eq(schema.referrals.id, id), eq(schema.referrals.schoolId, admin.schoolId))).limit(1)
   ])

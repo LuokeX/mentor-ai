@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireUser } from '../../../../../../utils/auth'
 import { schema, useDb } from '../../../../../../utils/db'
 import { writeAudit } from '../../../../../../utils/audit'
+import { userHasRole } from '../../../../../../domain/user-roles'
 
 const bodySchema = z.object({
   ownerUserId: z.string().uuid(),
@@ -17,7 +18,8 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
   const [student] = await db.select({ id: schema.students.id, ownerUserId: schema.students.ownerUserId }).from(schema.students).where(and(eq(schema.students.id, id), eq(schema.students.schoolId, schoolId))).limit(1)
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
-  const [teacher] = await db.select({ id: schema.users.id }).from(schema.users).where(and(eq(schema.users.id, body.ownerUserId), eq(schema.users.schoolId, schoolId), eq(schema.users.role, 'teacher'), eq(schema.users.status, 'active'))).limit(1)
+  // 以 user_roles 判定教师身份：兼任教师也允许被指定为学生负责人
+  const [teacher] = await db.select({ id: schema.users.id }).from(schema.users).where(and(eq(schema.users.id, body.ownerUserId), eq(schema.users.schoolId, schoolId), userHasRole(db, 'teacher'), eq(schema.users.status, 'active'))).limit(1)
   if (!teacher) throw createError({ statusCode: 422, message: '目标教师不存在或不可用' })
   await db.transaction(async (tx) => {
     const [updated] = await tx.update(schema.students).set({ ownerUserId: body.ownerUserId, updatedAt: new Date() }).where(and(

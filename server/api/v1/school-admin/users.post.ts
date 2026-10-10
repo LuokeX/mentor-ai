@@ -3,6 +3,7 @@ import { randomBytes, randomInt } from 'node:crypto'
 import { and, eq, isNull } from 'drizzle-orm'
 import { schoolAdminUserCreateSchema } from '../../../../shared/contracts'
 import { requireSchoolManagement } from '../../../domain/school-management'
+import { applyUserRoles } from '../../../domain/user-roles'
 import { writeAudit } from '../../../utils/audit'
 import { encryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
@@ -93,6 +94,17 @@ export default defineEventHandler(async (event) => {
     }
     if (!createdUser) throw createError({ statusCode: 409, message: '账号创建失败，请重试' })
 
+    // 角色关联：账号的角色集合与主角色（多角色模型下 users.role 只是主角色）
+    // 年级主任的所辖年级写入角色级 scope（看板按它收窄范围）
+    await applyUserRoles(tx, {
+      userId: createdUser.id,
+      roleCodes: [body.role],
+      primaryRole: body.role,
+      scopes: body.role === 'grade_director' && body.scopeGrade
+        ? { grade_director: { grade: body.scopeGrade } }
+        : undefined,
+    })
+
     await writeAudit(event, {
       schoolId,
       actorId: actor.id,
@@ -101,6 +113,8 @@ export default defineEventHandler(async (event) => {
       targetId: createdUser.id,
       metadata: {
         role: createdUser.role,
+        roles: [body.role],
+        scopeGrade: body.role === 'grade_director' ? body.scopeGrade ?? null : null,
         passwordProvided: Boolean(body.password),
         activatedExistingInvitation: Boolean(existing),
         delegatedGrantId,

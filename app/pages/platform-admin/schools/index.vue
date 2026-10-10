@@ -113,7 +113,25 @@ async function copyInitialPassword() {
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '正常' : '停用' }}</UBadge></template>
       <template #updatedAt-data="{ value }">{{ formatDateTime(value) }}</template>
       <template #actions-data="{ row }">
-        <RowActions :capabilities="row._capabilities" :row-id="row.id" @view="openEdit" @edit="openEdit" />
+        <div class="flex items-center gap-1">
+          <RowActions :capabilities="row._capabilities" :row-id="row.id" @view="openEdit" @edit="openEdit" />
+          <!-- 进入该校「学校管理员账户」列表，并固定筛选为这所学校（PRD 7.1.2 / 7.1.3） -->
+          <UButton
+            size="xs"
+            variant="soft"
+            color="primary"
+            icon="i-lucide-user-cog"
+            @click="navigateTo({ path: '/platform-admin/users', query: { schoolId: row.id } })"
+          >管理员</UButton>
+          <!-- 进入该校「账号管理」：教师/心理专员/德育主任/年级主任账号 -->
+          <UButton
+            size="xs"
+            variant="soft"
+            color="neutral"
+            icon="i-lucide-users"
+            @click="navigateTo(`/platform-admin/schools/${row.id}/users`)"
+          >账号</UButton>
+        </div>
       </template>
     </ManagedDataTable>
     <div v-if="list.error.value || formError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ formError || list.error.value }}</div>

@@ -4,6 +4,7 @@ import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { writeAudit } from '../../../utils/audit'
 import { teacherFacingTextAllowed } from '../../../domain/safety'
+import { userHasRole } from '../../../domain/user-roles'
 
 const bodySchema = z.object({
   helpPhone: z.string().max(40).nullable().optional(),
@@ -37,7 +38,8 @@ export default defineEventHandler(async (event) => {
   }
   if (body.referralPsychologistId) {
     const [psych] = await db.select({ id: schema.users.id }).from(schema.users).where(and(
-      eq(schema.users.id, body.referralPsychologistId), eq(schema.users.schoolId, admin.schoolId!), eq(schema.users.role, 'psychologist')
+      // 以 user_roles 判定心理专员身份：兼任账号也能被选为默认转介专员
+      eq(schema.users.id, body.referralPsychologistId), eq(schema.users.schoolId, admin.schoolId!), userHasRole(db, 'psychologist')
     )).limit(1)
     if (!psych) throw createError({ statusCode: 422, message: '心理专员不属于本校' })
   }

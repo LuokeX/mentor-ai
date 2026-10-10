@@ -1,6 +1,7 @@
 import argon2 from 'argon2'
 import { and, eq } from 'drizzle-orm'
 import { platformAdminSchoolAdminCreateSchema } from '../../../../../shared/contracts'
+import { applyUserRoles } from '../../../../domain/user-roles'
 import { requireUser, generateInitialPassword } from '../../../../utils/auth'
 import { writeAudit } from '../../../../utils/audit'
 import { schema, useDb } from '../../../../utils/db'
@@ -24,25 +25,39 @@ export default defineEventHandler(async (event) => {
   }
 
   const password = body.password ?? generateInitialPassword()
-  const [created] = await db.insert(schema.users).values({
-    schoolId: body.schoolId,
-    name: body.name,
-    phone: body.phone,
-    role: 'school_admin',
-    status: 'active',
-    passwordHash: await argon2.hash(password, { type: argon2.argon2id }),
-    employeeNo: body.employeeNo || null,
-    activatedAt: new Date(),
-  }).returning()
-  if (!created) throw createError({ statusCode: 500, message: '学校管理员创建失败' })
+  const passwordHash = await argon2.hash(password, { type: argon2.argon2id })
 
-  await writeAudit(event, {
-    schoolId: body.schoolId,
-    actorId: actor.id,
-    action: 'platform_admin.user.create',
-    targetType: 'user',
-    targetId: created.id,
-    metadata: { role: 'school_admin', generatedPassword: !body.password },
+  // 账号与角色集合在同一事务写入，避免出现没有角色行的账号
+  const createdId = await db.transaction(async (tx) => {
+    const [created] = await tx.insert(schema.users).values({
+      schoolId: body.schoolId,
+      name: body.name,
+      phone: body.phone,
+      role: 'school_admin',
+      status: 'active',
+      passwordHash,
+      employeeNo: body.employeeNo || null,
+      activatedAt: new Date(),
+    }).returning({ id: schema.users.id })
+    if (!created) throw createError({ statusCode: 500, message: '学校管理员创建失败' })
+
+    await applyUserRoles(tx, {
+      userId: created.id,
+      roleCodes: ['school_admin'],
+      primaryRole: 'school_admin',
+    })
+
+    await writeAudit(event, {
+      schoolId: body.schoolId,
+      actorId: actor.id,
+      action: 'platform_admin.user.create',
+      targetType: 'user',
+      targetId: created.id,
+      metadata: { role: 'school_admin', roles: ['school_admin'], generatedPassword: !body.password },
+    }, tx)
+
+    return created.id
   })
-  return { ok: true, id: created.id, ...(body.password ? {} : { initialPassword: password }) }
+
+  return { ok: true, id: createdId, ...(body.password ? {} : { initialPassword: password }) }
 })

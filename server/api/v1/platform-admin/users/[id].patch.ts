@@ -2,6 +2,7 @@ import argon2 from 'argon2'
 import { and, eq, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { platformAdminSchoolAdminUpdateSchema } from '../../../../../shared/contracts'
+import { applyUserRoles, listUserRoles, userHasRole } from '../../../../domain/user-roles'
 import { requireUser } from '../../../../utils/auth'
 import { writeAudit } from '../../../../utils/audit'
 import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
@@ -16,10 +17,11 @@ export default defineEventHandler(async (event) => {
     : undefined
   const db = useDb(event)
 
-  // 平台管理员只能管理 school_admin 角色；teacher/psychologist 视为不存在（避免泄露存在性）
+  // 平台管理员只能管理持有 school_admin 角色的账号：按角色集合判定，多角色账号（如
+  // school_admin + teacher）不会被误判为不存在；其余账号仍视为不存在，避免泄露存在性
   const [target] = await db.select().from(schema.users).where(and(
     eq(schema.users.id, id),
-    eq(schema.users.role, 'school_admin'),
+    userHasRole(db, 'school_admin'),
   )).limit(1)
   if (!target) throw createError({ statusCode: 404, message: '用户不存在' })
   // school_admin 必须归属某所学校
@@ -47,12 +49,32 @@ export default defineEventHandler(async (event) => {
     if (dup) throw createError({ statusCode: 409, message: '该学校已存在相同工号' })
   }
 
+  // 角色集合维护前置校验（roles 未传时不动角色行；只改主角色时按现有集合校验）
+  const currentRoleCodes = (await listUserRoles(db, id)).map(entry => entry.roleCode)
+  if (body.roles && !body.primaryRole && !body.roles.some(role => role === target.role)) {
+    throw createError({ statusCode: 400, message: '新的角色集合不包含账号当前主角色，请同时指定新的主角色' })
+  }
+  if (body.primaryRole && !body.roles && !currentRoleCodes.includes(body.primaryRole)) {
+    throw createError({ statusCode: 400, message: '主角色必须属于账号当前的角色集合' })
+  }
+
   const changedFields: string[] = []
   if (body.name) changedFields.push('name')
   if (body.phone && body.phone !== target.phone) changedFields.push('phone')
   if (body.status) changedFields.push('status')
   if (body.employeeNo !== undefined && body.employeeNo !== target.employeeNo) changedFields.push('employeeNo')
   if (body.password) changedFields.push('password')
+  const rolesChanged = Boolean(
+    (body.roles && (
+      body.roles.length !== currentRoleCodes.length
+      || body.roles.some(role => !currentRoleCodes.includes(role))
+    ))
+    || (body.primaryRole && body.primaryRole !== target.role)
+  )
+  if (rolesChanged) changedFields.push('roles')
+
+  let resultingRoles = currentRoleCodes
+  let resultingPrimaryRole: string = target.role
 
   await db.transaction(async (tx) => {
     const setValues: Record<string, unknown> = { updatedAt: new Date() }
@@ -79,12 +101,25 @@ export default defineEventHandler(async (event) => {
     }
     const finalConditions = [
       eq(schema.users.id, target.id),
-      eq(schema.users.role, 'school_admin'),
+      // 归属条件在最终 UPDATE 重新校验：按角色集合判定，多角色账号不会被漏判
+      userHasRole(tx, 'school_admin'),
     ]
     if (expectedUpdatedAt) finalConditions.push(updatedAtMatches(schema.users.updatedAt, expectedUpdatedAt))
     const [updated] = await tx.update(schema.users).set(setValues).where(and(...finalConditions))
       .returning({ id: schema.users.id })
     if (!updated) throw createError({ statusCode: 409, statusMessage: 'EDIT_CONFLICT', message: '账号已被其他管理员修改，请刷新后重试' })
+
+    // 角色集合维护（可选）：覆盖式写入 user_roles 并同步主角色 users.role
+    if (body.roles || body.primaryRole) {
+      const applied = await applyUserRoles(tx, {
+        userId: target.id,
+        roleCodes: body.roles ?? currentRoleCodes,
+        primaryRole: body.primaryRole,
+      })
+      resultingRoles = applied.roles
+      resultingPrimaryRole = applied.primaryRole
+    }
+
     await writeAudit(event, {
       schoolId: target.schoolId,
       actorId: actor.id,
@@ -93,6 +128,23 @@ export default defineEventHandler(async (event) => {
       targetId: id,
       metadata: { changedFields, status: body.status, reason: body.reason },
     }, tx)
+
+    // 角色集合或主角色变化单独留痕，便于按动作名审计授权变化
+    if (rolesChanged) {
+      await writeAudit(event, {
+        schoolId: target.schoolId,
+        actorId: actor.id,
+        action: 'platform_admin.user.roles.update',
+        targetType: 'user',
+        targetId: id,
+        metadata: {
+          rolesBefore: currentRoleCodes,
+          rolesAfter: resultingRoles,
+          primaryRoleBefore: target.role,
+          primaryRoleAfter: resultingPrimaryRole,
+        },
+      }, tx)
+    }
   })
-  return { ok: true }
+  return { ok: true, roles: resultingRoles, primaryRole: resultingPrimaryRole }
 })

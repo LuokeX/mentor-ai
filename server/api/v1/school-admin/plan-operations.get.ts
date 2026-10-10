@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { schema, useDb } from '../../../utils/db'
+import { userHasRole } from '../../../domain/user-roles'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['school_admin'])
@@ -116,7 +117,11 @@ export default defineEventHandler(async (event) => {
     }).from(schema.users)
       .leftJoin(schema.plans, and(eq(schema.plans.ownerUserId, schema.users.id), eq(schema.plans.schoolId, admin.schoolId)))
       .leftJoin(schema.planActions, eq(schema.planActions.planId, schema.plans.id))
-      .where(and(eq(schema.users.schoolId, admin.schoolId), eq(schema.users.role, 'teacher')))
+      .where(and(
+        eq(schema.users.schoolId, admin.schoolId),
+        // 教师身份以 user_roles 判定：兼任教师的账号也要计入方案运营看板
+        userHasRole(db, 'teacher')
+      ))
       .groupBy(schema.users.id, schema.users.name)
       .orderBy(desc(sql`count(${schema.planActions.id}) filter (where ${schema.planActions.decision} = 'included' and ${schema.planActions.status} in ('pending','in_progress','blocked') and ${schema.planActions.dueAt} < ${now})`))
       .limit(50),

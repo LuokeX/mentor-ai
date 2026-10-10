@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { pathInRoleDomain } from '~/composables/useAuth'
+
 defineProps<{
   title: string
   description?: string
@@ -10,6 +12,7 @@ defineProps<{
 const emit = defineEmits<{ create: [] }>()
 
 const route = useRoute()
+const { user } = useAuth()
 type NavChild = { label: string; to: string; icon: string }
 type NavItem = NavChild & { children?: NavChild[] }
 // 除「总览」外，每项 label 必须与目标页面的 title 一致，否则点进去标题会“变名字”。
@@ -56,6 +59,8 @@ const schoolAdminNav: NavItem[] = [
       { label: '审计日志', to: '/school-admin/audit', icon: 'i-lucide-list-checks' },
     ],
   },
+  // 原「系统管理员」角色已并入学校管理员（2026-10-08），使用量看板作为独立入口保留
+  { label: '平台使用量', to: '/usage', icon: 'i-lucide-chart-line' },
   {
     label: '系统设置',
     to: '/school-admin/operations',
@@ -66,15 +71,42 @@ const schoolAdminNav: NavItem[] = [
     ],
   },
 ]
+/**
+ * 平台后台一级目录（PRD 7.1.1「目录导航栏整合」）：
+ *   总览 / 学校与权限管理 / 知识库管理 / 运营管理
+ * 除「总览」外，二级项 label 必须与目标页面的 title 一致，否则点进去标题会“变名字”。
+ */
 const platformNav: NavItem[] = [
   { label: '总览', to: '/platform-admin', icon: 'i-lucide-layout-dashboard' },
-  { label: '学校管理', to: '/platform-admin/schools', icon: 'i-lucide-building-2' },
-  { label: '学校管理员', to: '/platform-admin/users', icon: 'i-lucide-user-cog' },
-  { label: '三库运营台', to: '/platform-admin/resources', icon: 'i-lucide-library' },
-  { label: '知识库', to: '/platform-admin/knowledge', icon: 'i-lucide-brain' },
-  { label: '审计日志', to: '/platform-admin/audit', icon: 'i-lucide-list-checks' },
-  { label: 'AI 管理中心', to: '/platform-admin/ai-center', icon: 'i-lucide-bot' },
-  { label: '调研反馈', to: '/platform-admin/survey-feedback', icon: 'i-lucide-clipboard-pen-line' },
+  {
+    label: '学校与权限管理',
+    to: '/platform-admin/schools',
+    icon: 'i-lucide-shield-check',
+    children: [
+      { label: '学校管理', to: '/platform-admin/schools', icon: 'i-lucide-building-2' },
+      { label: '学校管理员账户', to: '/platform-admin/users', icon: 'i-lucide-user-cog' },
+      { label: '角色权限配置', to: '/platform-admin/roles', icon: 'i-lucide-key-round' },
+    ],
+  },
+  {
+    label: '知识库管理',
+    to: '/platform-admin/knowledge',
+    icon: 'i-lucide-book-open',
+    children: [
+      { label: '向量库', to: '/platform-admin/knowledge', icon: 'i-lucide-brain' },
+      { label: '三库运营台', to: '/platform-admin/resources', icon: 'i-lucide-library' },
+    ],
+  },
+  {
+    label: '运营管理',
+    to: '/platform-admin/audit',
+    icon: 'i-lucide-activity',
+    children: [
+      { label: '审计日志', to: '/platform-admin/audit', icon: 'i-lucide-list-checks' },
+      { label: 'AI 管理中心', to: '/platform-admin/ai-center', icon: 'i-lucide-bot' },
+      { label: '调研反馈', to: '/platform-admin/survey-feedback', icon: 'i-lucide-clipboard-pen-line' },
+    ],
+  },
 ]
 function dropdownElement(event: Event) {
   const current = event.currentTarget
@@ -96,7 +128,13 @@ function closeDropdown(event: Event) {
   ;(event.currentTarget as HTMLElement | null)?.closest('details')?.removeAttribute('open')
 }
 
-// hover 打开后保持展开，点击下拉外区域统一收起，避免鼠标移向菜单项时误触发关闭
+/** 鼠标离开导航项（含下拉面板）时收起；面板内的鼠标移动不会触发 details 的 mouseleave。 */
+function closeOnLeave(event: Event) {
+  dropdownElement(event)?.removeAttribute('open')
+}
+
+// 悬停展开后，鼠标离开 details（含下拉面板）立即收起；点击下拉外区域同样收起。
+// details 的 after 伪元素在按钮与面板之间补出 6px 高的透明悬停区，鼠标移向面板时不会误关。
 function closeDropdownsOnOutsideClick(event: MouseEvent) {
   if (!(event.target instanceof Element) || !event.target.closest('details')) {
     document.querySelectorAll('details[open]').forEach((el) => el.removeAttribute('open'))
@@ -111,10 +149,26 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', closeDropdownsOnOutsideClick)
 })
 
+/**
+ * 按当前激活角色的路径域过滤学校后台导航：
+ * 学校管理员保留全部（含平台使用量看板），
+ * 避免出现「看得到却点不进去」的业务入口（页面不在其路径域内，接口也会 403）。
+ */
+const visibleSchoolAdminNav = computed(() => {
+  const role = user.value?.role
+  if (!role) return schoolAdminNav
+  return schoolAdminNav
+    .map(item => ({
+      ...item,
+      children: item.children?.filter(child => pathInRoleDomain(role, child.to))
+    }))
+    .filter(item => (item.children ? item.children.length > 0 : pathInRoleDomain(role, item.to)))
+})
+
 const contextualNav = computed(() => route.path.startsWith('/information')
   ? informationNav
   : route.path.startsWith('/school-admin')
-    ? schoolAdminNav
+    ? visibleSchoolAdminNav.value
     : route.path.startsWith('/platform-admin')
       ? platformNav
       : [])
@@ -139,6 +193,7 @@ const contextualNav = computed(() => route.path.startsWith('/information')
           v-else
           class="relative shrink-0 after:absolute after:inset-x-0 after:top-full after:h-1.5 after:content-['']"
           @mouseenter="openDropdown"
+          @mouseleave="closeOnLeave"
         >
           <summary
             :class="[
@@ -179,8 +234,9 @@ const contextualNav = computed(() => route.path.startsWith('/information')
       </div>
       <details
         v-if="canCreate && createActions?.length"
-        class="relative"
+        class="relative after:absolute after:inset-x-0 after:top-full after:h-1.5 after:content-['']"
         @mouseenter="openDropdown"
+        @mouseleave="closeOnLeave"
       >
         <summary
           class="inline-flex cursor-pointer list-none select-none items-center gap-1.5 rounded-xl bg-[var(--ui-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"

@@ -28,6 +28,8 @@ watch(() => props.searchValue, value => {
       class="w-full sm:w-72"
       @update:model-value="(v: string) => emit('search', v)"
     />
+    <!-- 额外筛选（如「学校」下拉），由页面按需注入；排在状态筛选之前，与需求图顺序一致 -->
+    <slot name="filters" />
     <USelect
       v-if="statusOptions"
       :model-value="statusFilter"

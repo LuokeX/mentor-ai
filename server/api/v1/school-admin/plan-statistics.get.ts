@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { schema, useDb } from '../../../utils/db'
+import { userHasRole } from '../../../domain/user-roles'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['school_admin'])
@@ -48,7 +49,8 @@ export default defineEventHandler(async (event) => {
     .where(and(
       eq(schema.plans.schoolId, admin.schoolId),
       eq(schema.planActions.decision, 'included'),
-      eq(schema.users.role, 'teacher')
+      // 教师身份以 user_roles 判定：兼任教师的账号也要计入班主任执行排名
+      userHasRole(db, 'teacher')
     ))
     .groupBy(schema.plans.ownerUserId, schema.users.name)
     .orderBy(desc(sql`count(*) filter (where ${schema.planActions.status} = 'completed' and ${schema.planActions.completedAt} >= ${sevenDaysAgo})`))

@@ -1,8 +1,9 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb, schema } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
 import { requireSchoolManagement } from '../../../../domain/school-management'
+import { userHasAnyRole, SCHOOL_MANAGED_ROLES } from '../../../../domain/user-roles'
 
 export default defineEventHandler(async (event) => {
   const { actor, schoolId, delegatedGrantId } = await requireSchoolManagement(event, ['users'], { allowPlatformAdmin: true })
@@ -10,7 +11,7 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
 
   const [target] = await db.select().from(schema.users).where(and(
-    eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), inArray(schema.users.role, ['teacher', 'psychologist'])
+    eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), userHasAnyRole(db, SCHOOL_MANAGED_ROLES)
   )).limit(1)
   if (!target) throw createError({ statusCode: 404, message: '用户不存在' })
 

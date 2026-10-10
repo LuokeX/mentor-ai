@@ -1,7 +1,8 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { schoolAdminDepartmentMemberSchema } from '../../../../../../../shared/contracts'
 import { requireSchoolManagement } from '../../../../../../domain/school-management'
+import { userHasAnyRole } from '../../../../../../domain/user-roles'
 import { writeAudit } from '../../../../../../utils/audit'
 import { schema, useDb } from '../../../../../../utils/db'
 
@@ -19,7 +20,8 @@ export default defineEventHandler(async (event) => {
     db.select({ id: schema.users.id }).from(schema.users).where(and(
       eq(schema.users.id, body.userId),
       eq(schema.users.schoolId, schoolId),
-      inArray(schema.users.role, ['teacher', 'psychologist', 'school_admin']),
+      // 成员可以是教师、心理专员或学校管理员：以 user_roles 判定，含兼任角色
+      userHasAnyRole(db, ['teacher', 'psychologist', 'school_admin']),
       eq(schema.users.status, 'active')
     )).limit(1)
   ])

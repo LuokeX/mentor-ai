@@ -3,14 +3,18 @@ import type { H3Event } from 'h3'
 import type { AuthUser } from '../../app/composables/useAuth'
 import { targetTypeSchema } from '../../shared/contracts'
 import { useDb, schema } from '../utils/db'
+import { userHasRole } from './user-roles'
 
 export async function resolveTargetSchool(event: H3Event, targetType: string, targetId: string) {
   const db = useDb(event)
-  if (targetType === 'teacher_profile') return (await db.select({ schoolId: schema.users.schoolId }).from(schema.users).where(and(eq(schema.users.id, targetId), eq(schema.users.role, 'teacher'))).limit(1))[0]?.schoolId
+  // 教师档案目标以 user_roles 判定：多角色账号的主角色可能不是 teacher
+  if (targetType === 'teacher_profile') return (await db.select({ schoolId: schema.users.schoolId }).from(schema.users).where(and(eq(schema.users.id, targetId), userHasRole(db, 'teacher'))).limit(1))[0]?.schoolId
   if (targetType === 'assessment') return (await db.select({ schoolId: schema.assessmentAttempts.schoolId }).from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.id, targetId)).limit(1))[0]?.schoolId
   if (targetType === 'conversation') return (await db.select({ schoolId: schema.chatSessions.schoolId }).from(schema.chatSessions).where(eq(schema.chatSessions.id, targetId)).limit(1))[0]?.schoolId
   if (targetType === 'guardian_communication') return (await db.select({ schoolId: schema.communications.schoolId }).from(schema.communications).where(eq(schema.communications.id, targetId)).limit(1))[0]?.schoolId
   if (targetType === 'plan') return (await db.select({ schoolId: schema.plans.schoolId }).from(schema.plans).where(eq(schema.plans.id, targetId)).limit(1))[0]?.schoolId
+  if (targetType === 'student') return (await db.select({ schoolId: schema.students.schoolId }).from(schema.students).where(eq(schema.students.id, targetId)).limit(1))[0]?.schoolId
+  if (targetType === 'guardian') return (await db.select({ schoolId: schema.guardians.schoolId }).from(schema.guardians).where(eq(schema.guardians.id, targetId)).limit(1))[0]?.schoolId
   return null
 }
 

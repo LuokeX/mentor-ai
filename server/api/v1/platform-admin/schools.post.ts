@@ -4,6 +4,7 @@ import { PHONE_PATTERN } from '../../../../shared/contracts'
 import { requireUser, generateInitialPassword } from '../../../utils/auth'
 import { writeAudit } from '../../../utils/audit'
 import { useDb, schema } from '../../../utils/db'
+import { applyUserRoles } from '../../../domain/user-roles'
 
 const bodySchema = z.object({
   name: z.string().trim().min(2).max(160),
@@ -34,6 +35,9 @@ export default defineEventHandler(async (event) => {
         activatedAt: new Date(),
       }).returning()
       if (!schoolAdmin) throw createError({ statusCode: 500, message: '学校管理员创建失败' })
+      // 角色集合与主角色一致写入 user_roles（建校首个管理员同样要能出现在
+      // 学校管理员列表、危机通知收件人与方案协同通知里）
+      await applyUserRoles(tx, { userId: schoolAdmin.id, roleCodes: ['school_admin'], primaryRole: 'school_admin' })
       await tx.insert(schema.schoolSettings).values({ schoolId: school.id })
       await writeAudit(event, {
         actorId: admin.id,

@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { issueInvitation } from '../../../../../../domain/invitations'
+import { applyUserRoles } from '../../../../../../domain/user-roles'
 import { requireUser } from '../../../../../../utils/auth'
 import { writeAudit } from '../../../../../../utils/audit'
 import { schema, useDb } from '../../../../../../utils/db'
@@ -22,22 +23,33 @@ export default defineEventHandler(async (event) => {
   if (!school) throw createError({ statusCode: 404, message: '学校不存在' })
   const [existing] = await db.select().from(schema.users).where(eq(schema.users.phone, body.phone)).limit(1)
   if (existing && (existing.schoolId !== schoolId || existing.status === 'active')) throw createError({ statusCode: 409, message: '该手机号已绑定账号' })
-  let user: typeof schema.users.$inferSelect | undefined
-  if (existing) {
-    user = existing
-  } else {
-    const inserted = await db.insert(schema.users).values({
-      schoolId,
-      name: body.name,
-      phone: body.phone,
-      role: 'school_admin',
-      status: 'invited',
-      passwordHash: await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id })
-    }).returning() as any
-    user = inserted?.[0]
-  }
-  if (!user) throw createError({ statusCode: 500, message: '学校管理员创建失败' })
-  if (existing) await db.update(schema.users).set({ name: body.name, role: 'school_admin', status: 'invited', updatedAt: new Date() }).where(eq(schema.users.id, user.id))
+
+  // 账号与角色集合在同一事务写入；邀请在事务外创建（邀请失败不影响已建账号，可重发邀请）
+  const user = await db.transaction(async (tx) => {
+    const [target] = existing
+      ? await tx.update(schema.users)
+        .set({ name: body.name, role: 'school_admin', status: 'invited', updatedAt: new Date() })
+        .where(eq(schema.users.id, existing.id))
+        .returning({ id: schema.users.id })
+      : await tx.insert(schema.users).values({
+        schoolId,
+        name: body.name,
+        phone: body.phone,
+        role: 'school_admin',
+        status: 'invited',
+        passwordHash: await argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id })
+      }).returning({ id: schema.users.id })
+    if (!target) throw createError({ statusCode: 500, message: '学校管理员创建失败' })
+
+    // 角色关联：邀请阶段先落 school_admin 角色行，激活后即可切换激活角色
+    await applyUserRoles(tx, {
+      userId: target.id,
+      roleCodes: ['school_admin'],
+      primaryRole: 'school_admin',
+    })
+    return target
+  })
+
   const { invitation, token } = await issueInvitation(event, {
     schoolId,
     userId: user.id,
@@ -49,7 +61,7 @@ export default defineEventHandler(async (event) => {
   await writeAudit(event, {
     schoolId, actorId: admin.id, action: 'platform_admin.school_admin.invite',
     targetType: 'user', targetId: user.id,
-    metadata: { invitationId: invitation.id, expiresAt: invitation.expiresAt.toISOString() }
+    metadata: { invitationId: invitation.id, expiresAt: invitation.expiresAt.toISOString(), roles: ['school_admin'] }
   })
   return { ok: true, id: user.id, invitationId: invitation.id, activationToken: token, expiresAt: invitation.expiresAt }
 })

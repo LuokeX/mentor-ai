@@ -114,7 +114,7 @@ function libraryTypeLabel(type: string | null | undefined) {
     <div v-if="document" class="space-y-6">
       <!-- 面包屑 -->
       <div class="flex items-center gap-2 text-sm text-slate-500">
-        <NuxtLink to="/platform-admin/knowledge" class="hover:text-indigo-600">知识库</NuxtLink>
+        <NuxtLink to="/platform-admin/knowledge" class="hover:text-indigo-600">向量库</NuxtLink>
         <span>/</span>
         <span class="text-slate-800">{{ document.title }}</span>
       </div>
@@ -216,7 +216,7 @@ function libraryTypeLabel(type: string | null | undefined) {
 
     <div v-else class="space-y-6">
       <div class="flex items-center gap-2 text-sm text-slate-500">
-        <NuxtLink to="/platform-admin/knowledge" class="hover:text-indigo-600">知识库</NuxtLink>
+        <NuxtLink to="/platform-admin/knowledge" class="hover:text-indigo-600">向量库</NuxtLink>
       </div>
       <div class="panel p-16 text-center">
         <p class="text-sm text-slate-400">加载中...</p>

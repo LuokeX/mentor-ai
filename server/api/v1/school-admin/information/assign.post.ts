@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
 import { writeAudit } from '../../../../utils/audit'
+import { userHasRole } from '../../../../domain/user-roles'
 
 const bodySchema = z.object({
   targetType: z.enum(['class', 'student', 'guardian', 'communication', 'plan']),
@@ -63,7 +64,8 @@ export default defineEventHandler(async (event) => {
   const [teacher] = await db.select({ id: schema.users.id }).from(schema.users).where(and(
     eq(schema.users.id, body.ownerUserId),
     eq(schema.users.schoolId, schoolId),
-    eq(schema.users.role, 'teacher'),
+    // 教师身份以 user_roles 判定：兼任教师也允许被指定为业务负责人
+    userHasRole(db, 'teacher'),
     eq(schema.users.status, 'active')
   )).limit(1)
   if (!teacher) throw createError({ statusCode: 422, message: '目标教师不存在或不可用' })

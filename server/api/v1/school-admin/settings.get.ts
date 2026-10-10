@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
+import { userHasRole } from '../../../domain/user-roles'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['school_admin'])
@@ -8,7 +9,8 @@ export default defineEventHandler(async (event) => {
   const [[settings], psychologists] = await Promise.all([
     db.select().from(schema.schoolSettings).where(eq(schema.schoolSettings.schoolId, admin.schoolId!)).limit(1),
     db.select({ id: schema.users.id, name: schema.users.name }).from(schema.users).where(and(
-      eq(schema.users.schoolId, admin.schoolId!), eq(schema.users.role, 'psychologist'), eq(schema.users.status, 'active')
+      // 心理专员以 user_roles 判定：兼任账号也要能作为默认转介专员
+      eq(schema.users.schoolId, admin.schoolId!), userHasRole(db, 'psychologist'), eq(schema.users.status, 'active')
     ))
   ])
   return {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'default' })
 
-const { data: dashboard } = await useFetch<any>('/api/v1/platform-admin/dashboard')
+// 总览数据的类型由服务端路由标注，不再用 any（any 会与 Nitro 的响应类型推断组合出深层实例化）
+const { data: dashboard } = await useFetch('/api/v1/platform-admin/dashboard')
 const { data: resourceData, refresh: refreshResources } = await useFetch<any>('/api/v1/platform-admin/module-resources')
 const { data: resourceQuality, refresh: refreshResourceQuality } = await useFetch<any>('/api/v1/platform-admin/resource-quality')
 const toast = useToast()
@@ -401,7 +402,7 @@ function fileToBase64(file: File) {
             <div class="grid gap-4 sm:grid-cols-2">
               <UFormField label="模块"><USelect v-model="form.module" :items="moduleOptions" class="w-full" /></UFormField>
               <UFormField label="范围"><USelect v-model="form.scope" :items="scopeOptions" class="w-full" /></UFormField>
-              <UFormField v-if="form.scope === 'school'" label="学校"><USelect v-model="form.schoolId" :items="dashboard?.schools?.map((school:any)=>({label:school.name,value:school.id})) || []" class="w-full" /></UFormField>
+              <UFormField v-if="form.scope === 'school'" label="学校"><USelect v-model="form.schoolId" :items="dashboard?.schools?.map(school => ({ label: school.name, value: school.id })) || []" class="w-full" /></UFormField>
             </div>
             <div class="grid gap-4 sm:grid-cols-2">
               <UFormField label="版本号" help="真实发布版本号，x.y.z 格式（如 1.0.0）；不能与系统中已有版本重复">

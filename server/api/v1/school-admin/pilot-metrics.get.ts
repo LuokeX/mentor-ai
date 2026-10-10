@@ -1,8 +1,10 @@
-import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, gte, isNull, ne, or, sql } from 'drizzle-orm'
 import { moduleIdSchema, libraryTypeSchema } from '../../../../shared/contracts'
 import { buildPilotAcceptance } from '../../../domain/pilot-acceptance'
+import { USAGE_HEARTBEAT_EVENT } from '../../../domain/platform-usage'
 import { requireUser } from '../../../utils/auth'
 import { schema, useDb } from '../../../utils/db'
+import { userHasAnyRole, userHasRole } from '../../../domain/user-roles'
 
 const moduleIds = moduleIdSchema.options
 const libraryTypes = libraryTypeSchema.options
@@ -13,13 +15,18 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
   const weekAgo = new Date(Date.now() - 7 * 86_400_000)
   const [accounts, weeklyActive, firstTasks, moduleUsage, plansWithReviews, crisis, feedback, assistantAnswers, assistantFailures, planFeedbackQuality, reportCompleteness, resourceRows] = await Promise.all([
+    // 试点账号口径：教师/心理专员身份以 user_roles 判定，兼任账号也要纳入激活率分母
     db.select({ status: schema.users.status, count: sql<number>`count(*)::int` }).from(schema.users)
-      .where(and(eq(schema.users.schoolId, admin.schoolId), inArray(schema.users.role, ['teacher', 'psychologist'])))
+      .where(and(eq(schema.users.schoolId, admin.schoolId), userHasAnyRole(db, ['teacher', 'psychologist'])))
       .groupBy(schema.users.status),
     db.select({ count: sql<number>`count(distinct ${schema.productEvents.userId})::int` }).from(schema.productEvents)
       .innerJoin(schema.users, eq(schema.users.id, schema.productEvents.userId))
       .where(and(
-        eq(schema.productEvents.schoolId, admin.schoolId), eq(schema.users.role, 'teacher'), gte(schema.productEvents.createdAt, weekAgo)
+        // 周活跃教师：以 user_roles 判定，兼任教师的账号也要计入；
+        // 排除使用量活跃心跳（`platform_active_beat`），保持「有业务动作」的试点口径不变
+        eq(schema.productEvents.schoolId, admin.schoolId), userHasRole(db, 'teacher'),
+        ne(schema.productEvents.eventName, USAGE_HEARTBEAT_EVENT),
+        gte(schema.productEvents.createdAt, weekAgo)
       )),
     db.select({
       total: sql<number>`count(*)::int`,
@@ -30,7 +37,8 @@ export default defineEventHandler(async (event) => {
           and first_event.created_at between ${schema.users.activatedAt} and ${schema.users.activatedAt} + interval '10 minutes'
       ))::int`
     }).from(schema.users).where(and(
-      eq(schema.users.schoolId, admin.schoolId), eq(schema.users.role, 'teacher'), sql`${schema.users.activatedAt} is not null`
+      // 首任务完成率分母：以 user_roles 判定教师身份，兼任教师也要计入
+      eq(schema.users.schoolId, admin.schoolId), userHasRole(db, 'teacher'), sql`${schema.users.activatedAt} is not null`
     )),
     db.select({ module: schema.assessmentAttempts.module, count: sql<number>`count(*)::int` }).from(schema.assessmentAttempts)
       .where(and(eq(schema.assessmentAttempts.schoolId, admin.schoolId), eq(schema.assessmentAttempts.status, 'submitted')))

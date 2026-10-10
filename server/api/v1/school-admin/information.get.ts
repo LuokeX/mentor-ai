@@ -2,6 +2,7 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { decryptSensitive } from '../../../utils/crypto'
 import { schema, useDb } from '../../../utils/db'
+import { userHasRole } from '../../../domain/user-roles'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['school_admin'])
@@ -10,7 +11,8 @@ export default defineEventHandler(async (event) => {
   const secret = useRuntimeConfig(event).encryptionKey
   const [teachers, classes, studentsRaw, guardiansRaw, relations, communicationsRaw, plansRaw, assignmentsRaw] = await Promise.all([
     db.select({ id: schema.users.id, name: schema.users.name, phone: schema.users.phone, status: schema.users.status }).from(schema.users)
-      .where(and(eq(schema.users.schoolId, schoolId), eq(schema.users.role, 'teacher'))).orderBy(asc(schema.users.name)),
+      // 教师以 user_roles 判定：兼任教师的账号也要进入信息中心教师维度
+      .where(and(eq(schema.users.schoolId, schoolId), userHasRole(db, 'teacher'))).orderBy(asc(schema.users.name)),
     db.select().from(schema.classes).where(eq(schema.classes.schoolId, schoolId)).orderBy(asc(schema.classes.name)),
     db.select().from(schema.students).where(eq(schema.students.schoolId, schoolId)).orderBy(asc(schema.students.createdAt)),
     db.select().from(schema.guardians).where(eq(schema.guardians.schoolId, schoolId)).orderBy(asc(schema.guardians.createdAt)),

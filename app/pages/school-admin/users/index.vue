@@ -6,7 +6,11 @@ interface UserRow {
   id: string
   name: string
   phone: string
-  role: 'teacher' | 'psychologist'
+  role: string
+  /** 账号持有的全部角色（含兼任）；列表接口返回，缺省时按主角色处理 */
+  roles?: string[]
+  /** 角色级范围：年级主任的所辖年级从这里回显 */
+  roleScopes?: Record<string, { grade?: number }>
   status: 'active' | 'invited' | 'disabled'
   activatedAt: string | null
   lastLoginAt: string | null
@@ -21,6 +25,7 @@ interface UserRow {
   selfStatusLevel: string | null
   overrides: Record<string, string>
   updatedAt: string
+  _capabilities?: string[]
 }
 interface OptionRow { id: string; name: string; role?: string }
 interface CreateResult {
@@ -47,8 +52,36 @@ const statusOptions = [
 const roleOptions = [
   { label: '教师', value: 'teacher' },
   { label: '心理专员', value: 'psychologist' },
+  { label: '德育主任', value: 'moral_education_director' },
+  { label: '年级主任', value: 'grade_director' },
 ]
-const roleLabels: Record<string, string> = { teacher: '教师', psychologist: '心理专员' }
+/** 账号角色中文标签：覆盖全部角色，避免列表出现英文角色码（学校管理员/学部校长由平台侧开通） */
+const roleLabels: Record<string, string> = {
+  teacher: '教师',
+  psychologist: '心理专员',
+  school_admin: '学校管理员',
+  division_principal: '学部校长',
+  moral_education_director: '德育主任',
+  grade_director: '年级主任',
+  platform_admin: '平台管理员',
+}
+/** 有业务数据归属的角色：它们的账号停用必须先做业务移交，角色也只能在未激活时调整 */
+const businessRoles = ['teacher', 'psychologist']
+/** 只读数据驾驶舱角色：没有业务数据，停用不需要移交 */
+const dashboardRoles = ['division_principal', 'moral_education_director', 'grade_director']
+/** 所辖年级下拉（1-12），年级主任必填；看板按它收窄范围 */
+const scopeGradeItems = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二']
+  .map((label, index) => ({ label: `${label}年级`, value: index + 1 }))
+function rolesOfRow(row: { role: string, roles?: string[] } | null | undefined) {
+  if (!row) return []
+  return row.roles?.length ? row.roles : [row.role]
+}
+function roleLabelOf(row: { role: string, roles?: string[] } | null | undefined) {
+  return rolesOfRow(row).map(role => roleLabels[role] || role).join(' / ')
+}
+function hasBusinessRoleOfRow(row: { role: string, roles?: string[] } | null | undefined) {
+  return rolesOfRow(row).some(role => businessRoles.includes(role))
+}
 const statusLabels: Record<string, string> = { active: '正常', invited: '待激活', disabled: '已停用' }
 const genderOptions = [
   { label: '未知', value: '__none__' }, { label: '男', value: '男' }, { label: '女', value: '女' },
@@ -78,18 +111,37 @@ const editing = ref<UserRow | null>(null)
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({
-  name: '', phone: '', role: 'teacher' as 'teacher' | 'psychologist', reactivate: false,
+  name: '', phone: '', role: 'teacher' as string, reactivate: false,
   password: '',
   employeeNo: '', gender: '__none__', teachingGrades: [] as string[],
   subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '',
   selfStatusLevel: '__auto__',
+  /** 所辖年级（年级主任必填） */
+  scopeGrade: undefined as number | undefined,
+  /** 业务接收教师：账号名下有业务数据且换到看板角色时填写，服务端会一并完成移交 */
+  transferToUserId: '',
 })
 const createResult = ref<{ id: string; name: string; role: string; generatedPassword?: string } | null>(null)
 const copied = ref(false)
 
+/** 表单里选的是只读看板角色时不展示教师专属字段（任教年级/学科/班主任/自我状态） */
+const formIsDashboardRole = computed(() => dashboardRoles.includes(form.role))
+/** 兼任（多角色）账号的角色集合只在平台后台维护，这里置灰并给出提示 */
+const roleLocked = computed(() => Boolean(editing.value && rolesOfRow(editing.value).length > 1))
+/** 换角色且换到非业务角色、当前账号又持有业务角色时，需要选择业务接收教师（服务端按实际是否有数据兜底校验） */
+const roleChanging = computed(() => Boolean(editing.value && editing.value.role !== form.role))
+const needsTransferPicker = computed(() => Boolean(
+  editing.value
+  && roleChanging.value
+  && !businessRoles.includes(form.role)
+  && hasBusinessRoleOfRow(editing.value)
+))
+
 const disableTarget = ref<UserRow | null>(null)
 const disableForm = reactive({ toUserId: '', newPsychologistId: '__none__', reason: '' })
 const deleteTarget = ref<UserRow | null>(null)
+/** 停用是否需要先移交业务：教师/心理专员需要，只读看板角色不需要 */
+const disableNeedsTransfer = computed(() => hasBusinessRoleOfRow(disableTarget.value))
 
 function openCreate() {
   editing.value = null
@@ -98,9 +150,17 @@ function openCreate() {
     password: '',
     employeeNo: '', gender: '__none__', teachingGrades: [],
     subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '', selfStatusLevel: '__auto__',
+    scopeGrade: undefined,
+    transferToUserId: '',
   })
   formError.value = ''
   drawerOpen.value = true
+}
+
+/** 行内没有编辑能力（学校管理员/平台管理员/学部校长账号）时不打开编辑抽屉 */
+function openRow(row: UserRow) {
+  if (row._capabilities && !row._capabilities.includes('edit')) return
+  openEdit(row)
 }
 
 function openEdit(rowOrId: UserRow | string) {
@@ -116,6 +176,8 @@ function openEdit(rowOrId: UserRow | string) {
     classTeacherYears: row.classTeacherYears != null ? String(row.classTeacherYears) : '',
     hiredAt: row.hiredAt ? row.hiredAt.slice(0, 10) : '', title: row.title || '__none__',
     certNote: '', selfStatusLevel: row.overrides?.selfStatusLevel || '__auto__',
+    scopeGrade: row.roleScopes?.grade_director?.grade,
+    transferToUserId: '',
   })
   formError.value = ''
   drawerOpen.value = true
@@ -128,6 +190,10 @@ function closeDrawer() {
 async function saveUser() {
   if (form.name.trim().length < 2 || !/^1[3-9]\d{9}$/.test(form.phone)) {
     formError.value = '请填写有效的姓名和手机号'
+    return
+  }
+  if (form.role === 'grade_director' && !form.scopeGrade) {
+    formError.value = '请选择年级主任的所辖年级'
     return
   }
   saving.value = true
@@ -147,6 +213,10 @@ async function saveUser() {
     title: form.title === '__none__' ? null : form.title,
     status: editing.value && editing.value.status === 'disabled' && form.reactivate ? 'active' : undefined,
   }
+  // 换角色时的业务接收教师：只在确实需要（换到非业务角色且当前是业务角色）时发送
+  if (needsTransferPicker.value && form.transferToUserId) body.transferToUserId = form.transferToUserId
+  // 所辖年级（角色级 scope）：仅年级主任写入，看板按它收窄范围
+  if (form.role === 'grade_director') body.scopeGrade = form.scopeGrade
   // 电话/心理资质备注是加密字段：编辑时留空表示不修改
   if (form.phone) body.phone = form.phone
   if (form.certNote) body.certNote = form.certNote
@@ -199,8 +269,11 @@ function closeDisable() {
 }
 
 async function transferAndDisable() {
-  if (!disableTarget.value || !disableForm.toUserId || disableForm.reason.trim().length < 10) {
-    formError.value = '请选择业务接收教师，并填写至少 10 个字符的停用事由'
+  const needsTransfer = disableNeedsTransfer.value
+  if (!disableTarget.value || disableForm.reason.trim().length < 10 || (needsTransfer && !disableForm.toUserId)) {
+    formError.value = needsTransfer
+      ? '请选择业务接收教师，并填写至少 10 个字符的停用事由'
+      : '请填写至少 10 个字符的停用事由'
     return
   }
   saving.value = true
@@ -209,7 +282,8 @@ async function transferAndDisable() {
     await $fetch(`/api/v1/school-admin/users/${disableTarget.value.id}/transfer-and-disable`, {
       method: 'POST',
       body: {
-        toUserId: disableForm.toUserId,
+        // 只读看板角色没有业务数据：不传接收教师，服务端跳过业务移交
+        ...(needsTransfer ? { toUserId: disableForm.toUserId } : {}),
         newPsychologistId: disableForm.newPsychologistId === '__none__' ? undefined : disableForm.newPsychologistId,
         reason: disableForm.reason,
       },
@@ -247,10 +321,10 @@ async function copyGeneratedPassword() {
 </script>
 
 <template>
-  <ManagementPage title="账号管理" description="添加、编辑、移交和停用本校教师及心理专员账号。" :can-create="list.pageCapabilities.value.includes('create')" create-label="添加用户" @create="openCreate">
+  <ManagementPage title="账号管理" description="添加、编辑、移交和停用本校教师、心理专员及数据驾驶舱角色（德育主任、年级主任）账号。" :can-create="list.pageCapabilities.value.includes('create')" create-label="添加用户" @create="openCreate">
     <TableToolbar :search-value="list.q.value" :status-filter="list.statusFilter.value" :status-options="statusOptions" search-placeholder="搜索姓名或手机号..." :loading="list.loading.value" @search="list.onSearch" @update:status-filter="list.onStatusChange" @refresh="list.refresh" />
-    <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
-      <template #role-data="{ row }">{{ roleLabels[row.role] || row.role }}</template>
+    <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openRow">
+      <template #role-data="{ row }">{{ roleLabelOf(row) }}</template>
       <template #selfStatusLevel-data="{ row }">
         <UBadge v-if="row.selfStatusLevel" :color="row.selfStatusLevel === '需转介' ? 'error' : row.selfStatusLevel === '需关注' ? 'warning' : row.selfStatusLevel === '关注' ? 'info' : 'success'" variant="subtle">{{ row.selfStatusLevel }}</UBadge>
         <span v-else class="text-xs text-slate-400">未评估</span>
@@ -280,21 +354,37 @@ async function copyGeneratedPassword() {
           <UFormField :label="editing ? '重置密码（选填）' : '初始密码（选填）'" :hint="editing ? '留空表示不修改当前密码' : '留空则系统自动生成 16 位随机密码，创建成功后一次性展示'">
             <UInput v-model="form.password" type="password" minlength="8" maxlength="200" autocomplete="new-password" class="w-full" />
           </UFormField>
-          <UFormField label="角色" required><USelect v-model="form.role" :items="roleOptions" :disabled="Boolean(editing && editing.status !== 'invited')" class="w-full" /></UFormField>
+          <UFormField
+            label="角色"
+            required
+            :hint="roleLocked ? '该账号持有多个角色，请到平台后台「学校管理 → 账号 → 角色维护」调整' : undefined"
+          >
+            <USelect v-model="form.role" :items="roleOptions" :disabled="roleLocked" class="w-full" />
+          </UFormField>
+          <UFormField
+            v-if="needsTransferPicker"
+            label="业务接收教师"
+            hint="该账号名下有业务数据时必填（本次操作会一并完成移交）；若账号没有数据请留空"
+          >
+            <USelect v-model="form.transferToUserId" :items="teacherOptions" class="w-full" />
+          </UFormField>
+          <UFormField v-if="form.role === 'grade_director'" label="所辖年级" required hint="数据驾驶舱按该年级收窄范围">
+            <USelect v-model="form.scopeGrade" :items="scopeGradeItems" placeholder="请选择年级" class="w-full" />
+          </UFormField>
           <UFormField v-if="editing" :label="editing ? '更新手机号（留空表示不修改）' : '手机号'"><UInput v-model="form.phone" class="w-full" /></UFormField>
           <UFormField label="性别"><USelect v-model="form.gender" :items="genderOptions" class="w-full" /></UFormField>
-          <UFormField label="任教年级"><USelectMenu v-model="form.teachingGrades" multiple :items="gradeItems" class="w-full" /></UFormField>
-          <UFormField label="任教学科"><UInput v-model="form.subject" placeholder="如：语文" class="w-full" /></UFormField>
+          <UFormField v-if="!formIsDashboardRole" label="任教年级"><USelectMenu v-model="form.teachingGrades" multiple :items="gradeItems" class="w-full" /></UFormField>
+          <UFormField v-if="!formIsDashboardRole" label="任教学科"><UInput v-model="form.subject" placeholder="如：语文" class="w-full" /></UFormField>
           <UFormField label="职称"><USelect v-model="form.title" :items="titleOptions" class="w-full" /></UFormField>
           <UFormField label="入职时间"><UInput v-model="form.hiredAt" type="date" class="w-full" /></UFormField>
-          <UFormField label="是否班主任"><UCheckbox v-model="form.isClassTeacher" label="当前承担班主任工作" /></UFormField>
-          <UFormField label="班主任年限（年）"><UInput v-model="form.classTeacherYears" type="number" min="0" max="60" placeholder="如：5" class="w-full" /></UFormField>
+          <UFormField v-if="!formIsDashboardRole" label="是否班主任"><UCheckbox v-model="form.isClassTeacher" label="当前承担班主任工作" /></UFormField>
+          <UFormField v-if="!formIsDashboardRole" label="班主任年限（年）"><UInput v-model="form.classTeacherYears" type="number" min="0" max="60" placeholder="如：5" class="w-full" /></UFormField>
         </div>
         <UFormField v-if="editing?.role === 'psychologist'" :label="editing ? '更新资质说明（留空表示不修改）' : '心理资质说明'">
           <UTextarea v-model="form.certNote" :rows="2" placeholder="如：国家二级心理咨询师" class="w-full" />
         </UFormField>
         <UCheckbox v-if="editing?.status === 'disabled'" v-model="form.reactivate" label="重新启用该账号" />
-        <div v-if="editing" class="rounded-lg bg-amber-50/60 p-3">
+        <div v-if="editing && !formIsDashboardRole" class="rounded-lg bg-amber-50/60 p-3">
           <UFormField label="自我状态等级（手动修正）" hint="按最近一次自我成长评估展示；手动指定后将在下次评估前覆盖显示">
             <USelect v-model="form.selfStatusLevel" :items="selfStatusOptions" class="w-full" />
           </UFormField>
@@ -308,7 +398,7 @@ async function copyGeneratedPassword() {
       <template #header><h3 class="text-lg font-semibold">账号已创建</h3></template>
       <template #body>
         <div class="space-y-3">
-          <p class="text-sm text-gray-600">账号 <strong>{{ createResult?.name }}</strong>（{{ createResult?.role === 'psychologist' ? '心理专员' : '教师' }}）已创建并可直接登录。</p>
+          <p class="text-sm text-gray-600">账号 <strong>{{ createResult?.name }}</strong>（{{ roleLabels[createResult?.role || ''] || createResult?.role }}）已创建并可直接登录。</p>
           <div v-if="createResult?.generatedPassword" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
             <p class="text-sm font-medium text-amber-800">系统生成的初始密码仅展示一次，关闭后不再显示，请尽快复制并安全转交。</p>
             <code class="mt-2 block break-all rounded bg-white px-3 py-2 font-mono text-sm">{{ createResult.generatedPassword }}</code>
@@ -320,17 +410,18 @@ async function copyGeneratedPassword() {
     </UModal>
 
     <UModal :open="Boolean(disableTarget)" @update:open="value => { if (!value) disableTarget = null }">
-      <template #header><h3 class="text-lg font-semibold">移交业务并停用账号</h3></template>
+      <template #header><h3 class="text-lg font-semibold">{{ disableNeedsTransfer ? '移交业务并停用账号' : '停用账号' }}</h3></template>
       <template #body>
         <div class="space-y-4">
-          <p class="text-sm text-gray-600">将 {{ disableTarget?.name }} 的全部业务责任链移交后，撤销其登录会话并停用账号。</p>
-          <UFormField label="业务接收教师" required><USelect v-model="disableForm.toUserId" :items="teacherOptions" class="w-full" /></UFormField>
+          <p v-if="disableNeedsTransfer" class="text-sm text-gray-600">将 {{ disableTarget?.name }} 的全部业务责任链移交后，撤销其登录会话并停用账号。</p>
+          <p v-else class="text-sm text-gray-600">{{ disableTarget?.name }} 是只读数据驾驶舱账号（{{ roleLabelOf(disableTarget) }}），没有业务数据需要移交；确认后撤销其登录会话并停用账号。</p>
+          <UFormField v-if="disableNeedsTransfer" label="业务接收教师" required><USelect v-model="disableForm.toUserId" :items="teacherOptions" class="w-full" /></UFormField>
           <UFormField v-if="disableTarget?.role === 'psychologist'" label="未结转介接收心理专员"><USelect v-model="disableForm.newPsychologistId" :items="[{ label: '无未结转介', value: '__none__' }, ...psychologistOptions]" class="w-full" /></UFormField>
           <UFormField label="操作事由" required><UTextarea v-model="disableForm.reason" :rows="3" placeholder="至少 10 个字符" class="w-full" /></UFormField>
           <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         </div>
       </template>
-      <template #footer><div class="flex justify-end gap-2"><UButton variant="outline" @click="closeDisable">取消</UButton><UButton color="error" :loading="saving" @click="transferAndDisable">确认移交并停用</UButton></div></template>
+      <template #footer><div class="flex justify-end gap-2"><UButton variant="outline" @click="closeDisable">取消</UButton><UButton color="error" :loading="saving" @click="transferAndDisable">{{ disableNeedsTransfer ? '确认移交并停用' : '确认停用' }}</UButton></div></template>
     </UModal>
 
     <LifecycleDialog

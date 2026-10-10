@@ -7,6 +7,7 @@ import { resolveCapabilities, resolvePageCapabilities } from '../../../../domain
 import { requireUser } from '../../../../utils/auth'
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
+import { listRolesByUserIds, userHasRole } from '../../../../domain/user-roles'
 
 const SORT_WHITELIST = createSortWhitelist('name', 'phone', 'role', 'status', 'activatedAt', 'lastLoginAt', 'updatedAt', 'createdAt')
 
@@ -25,12 +26,14 @@ export default defineEventHandler(async (event) => {
   const order = (query.order === 'asc' ? 'asc' : 'desc') as 'asc' | 'desc'
   const db = useDb(event)
 
-  const conditions = [eq(schema.users.role, 'school_admin')]
+  // 本页管理的对象是「持有 school_admin 角色」的账号（以 user_roles 判定，含兼任）
+  const conditions = [userHasRole(db, 'school_admin')]
   if (schoolId) conditions.push(eq(schema.users.schoolId, schoolId))
-  if (role !== 'all') conditions.push(eq(schema.users.role, role))
+  if (role !== 'all') conditions.push(userHasRole(db, role))
   if (status !== 'all') conditions.push(eq(schema.users.status, status))
   if (q) conditions.push(or(ilike(schema.users.name, `%${q}%`), ilike(schema.users.phone, `%${q}%`))!)
 
+  // 动态排序列映射（role 排的是账号主角色 users.role，与上方的持有角色筛选不同）
   const sortColMap: Record<string, any> = {
     name: schema.users.name,
     phone: schema.users.phone,
@@ -52,6 +55,7 @@ export default defineEventHandler(async (event) => {
       name: schema.users.name,
       phone: schema.users.phone,
       role: schema.users.role,
+      // 上面是账号主角色（展示用）；账号持有的全部角色（含兼任）见 rows[].roles
       status: schema.users.status,
       activatedAt: schema.users.activatedAt,
       lastLoginAt: schema.users.lastLoginAt,
@@ -76,6 +80,9 @@ export default defineEventHandler(async (event) => {
     pageSize,
   })
 
+  // 账号持有的全部角色（含兼任角色），用于管理端展示；role 仍是主角色
+  const rolesByUser = await listRolesByUserIds(db, result.rows.map(row => row.id))
+
   const rows = await Promise.all(result.rows.map(async (row) => {
     const capabilities: Capability[] = await resolveCapabilities({
       user,
@@ -85,7 +92,11 @@ export default defineEventHandler(async (event) => {
       targetType: 'user',
       targetId: row.id,
     }, event)
-    return { ...row, _capabilities: capabilities }
+    return {
+      ...row,
+      roles: (rolesByUser.get(row.id) ?? []).map(entry => entry.roleCode),
+      _capabilities: capabilities
+    }
   }))
 
   const pageCapabilities: Capability[] = await resolvePageCapabilities(user, 'user', event)

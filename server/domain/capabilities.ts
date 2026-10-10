@@ -16,6 +16,7 @@ import { eq } from 'drizzle-orm'
 import type { AuthUser } from '../../app/composables/useAuth'
 import type { Capability, ManagedTargetType, RolePermissions } from '../../shared/management'
 import { MANAGED_TARGET_TYPES } from '../../shared/management'
+import { DASHBOARD_PAGE_KEYS } from '../../shared/dashboard'
 import { schema, useDb } from '../utils/db'
 
 export type { ManagedTargetType } from '../../shared/management'
@@ -40,6 +41,31 @@ const CAPABILITY_SET = new Set<Capability>([
 /** 只读域目标类型：审计/导入/计划操作/访问申请（业务规则，不允许编辑类能力） */
 const READ_ONLY_TARGET_TYPES: ReadonlySet<string> = new Set(['audit', 'import', 'plan_operation', 'access_request'])
 
+/**
+ * 数据驾驶舱：只读看板，三个看板角色（校长 / 德育主任 / 年级主任）。
+ * 页面维度拆成四个目标类型（`dashboard` 是入口与数据总览，另外三个键对应二级页），
+ * 平台后台「角色权限配置」可按角色逐页勾选「查看」，未勾选的页接口返回 403。
+ * 记录级能力只保留「查看」；`view_sensitive`（个体明细）需平台侧显式勾选才生效，
+ * 默认不勾选（代码回退路径不授予）。
+ */
+export const DASHBOARD_ROLES: ReadonlySet<AuthUser['role']> = new Set([
+  'division_principal',
+  'moral_education_director',
+  'grade_director'
+])
+
+/** 驾驶舱的四个页面级目标类型（入口/数据总览 + 三个二级页）。 */
+export const DASHBOARD_PAGE_TYPES: ReadonlySet<string> = new Set(DASHBOARD_PAGE_KEYS)
+
+/** 驾驶舱记录级能力的净化规则：只允许「查看」与「查看个体明细」。 */
+function dashboardRecordCapabilities(list: Capability[]): Capability[] {
+  return list.filter(c => c === 'view' || c === 'view_sensitive')
+}
+
+function dashboardCapabilities(user: AuthUser): Capability[] {
+  return DASHBOARD_ROLES.has(user.role) ? ['view'] : []
+}
+
 /** 家校沟通类目标类型（教师归档仅 active 状态） */
 const COMMUNICATION_TARGET_TYPES: ReadonlySet<string> = new Set(['communication', 'guardian_communication'])
 
@@ -55,6 +81,9 @@ export function resolveCapabilitiesHardcoded(ctx: CapabilityContext): Capability
     recordStatus,
     targetType,
   } = ctx
+
+  // 数据驾驶舱只有「查看」，且只对看板角色开放（先于各角色分支判定）
+  if (DASHBOARD_PAGE_TYPES.has(targetType)) return dashboardCapabilities(user)
 
   if (user.role !== 'platform_admin' && recordSchoolId && recordSchoolId !== user.schoolId) return []
 
@@ -123,6 +152,7 @@ export function resolvePageCapabilitiesHardcoded(
   user: AuthUser,
   targetType: ManagedTargetType,
 ): Capability[] {
+  if (DASHBOARD_PAGE_TYPES.has(targetType)) return dashboardCapabilities(user)
   if (user.role === 'teacher') {
     return ['student', 'guardian', 'communication', 'student_event', 'class_event'].includes(targetType)
       ? ['view', 'create']
@@ -130,7 +160,9 @@ export function resolvePageCapabilitiesHardcoded(
   }
   if (user.role === 'psychologist') return targetType === 'referral' ? ['view'] : []
   if (user.role === 'school_admin') {
-    return ['audit', 'import', 'plan_operation', 'access_request'].includes(targetType)
+    // 导入管理页可新建导入（CSV/xlsx 预检与提交）；审计与运维类页面只读。
+    if (targetType === 'import') return ['view', 'create']
+    return ['audit', 'plan_operation', 'access_request'].includes(targetType)
       ? ['view']
       : ['view', 'create']
   }
@@ -208,6 +240,10 @@ export function resolveCapabilitiesFromRoleData(ctx: CapabilityContext, perm: Ro
   // ==== 行级业务规则（保留在代码，不数据化）====
   if (user.role !== 'platform_admin' && recordSchoolId && recordSchoolId !== user.schoolId) return []
 
+  // 数据驾驶舱只对三个看板角色开放：其他角色即使在「角色权限配置」里勾了看板页也不放行
+  // （前端路由域同样不包含 /dashboard，两者保持一致）
+  if (DASHBOARD_PAGE_TYPES.has(targetType) && !DASHBOARD_ROLES.has(user.role)) return []
+
   if (user.role === 'teacher') {
     if (!user.schoolId || recordSchoolId !== user.schoolId || recordOwnerUserId !== user.id) return []
     // 归档记录只读
@@ -222,6 +258,12 @@ export function resolveCapabilitiesFromRoleData(ctx: CapabilityContext, perm: Ro
   if (user.role === 'psychologist') {
     // 心理专员仅处理转介（业务边界）
     return targetType === 'referral' ? [...rec] : []
+  }
+
+  if (DASHBOARD_ROLES.has(user.role)) {
+    // 看板角色（校长 / 德育主任 / 年级主任）：只读驾驶舱的四个页面目标类型，
+    // 能力只保留「查看」与「查看个体明细」（后者默认不勾选）；其余目标类型无能力
+    return DASHBOARD_PAGE_TYPES.has(targetType) ? dashboardRecordCapabilities(rec) : []
   }
 
   if (user.role === 'school_admin' || user.role === 'platform_admin') {

@@ -5,6 +5,7 @@ import { requireUser } from '../../../../../utils/auth'
 import { useDb, schema } from '../../../../../utils/db'
 import { requireAdminGrant } from '../../../../../domain/admin-access'
 import { decryptSensitive } from '../../../../../utils/crypto'
+import { userHasRole } from '../../../../../domain/user-roles'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['school_admin', 'platform_admin'])
@@ -17,7 +18,7 @@ export default defineEventHandler(async (event) => {
   let fields: string[] = []
 
   if (targetType === 'teacher_profile') {
-    const [profile] = await db.select({ id: schema.users.id, schoolId: schema.users.schoolId, name: schema.users.name, phone: schema.users.phone, role: schema.users.role, status: schema.users.status, lastLoginAt: schema.users.lastLoginAt, createdAt: schema.users.createdAt }).from(schema.users).where(and(eq(schema.users.id, targetId), eq(schema.users.role, 'teacher'), eq(schema.users.schoolId, grant.schoolId))).limit(1)
+    const [profile] = await db.select({ id: schema.users.id, schoolId: schema.users.schoolId, name: schema.users.name, phone: schema.users.phone, role: schema.users.role, status: schema.users.status, lastLoginAt: schema.users.lastLoginAt, createdAt: schema.users.createdAt }).from(schema.users).where(and(eq(schema.users.id, targetId), userHasRole(db, 'teacher'), eq(schema.users.schoolId, grant.schoolId))).limit(1)
     if (!profile) throw createError({ statusCode: 404, message: '教师不存在' })
     const [assessments, conversations, communicationRows, planRows, planReviewRows] = await Promise.all([
       db.select().from(schema.assessmentAttempts).where(eq(schema.assessmentAttempts.ownerUserId, targetId)).orderBy(desc(schema.assessmentAttempts.createdAt)).limit(50),

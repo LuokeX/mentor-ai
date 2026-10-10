@@ -3,8 +3,24 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { requireUser } from '../utils/auth'
 import { schema, useDb } from '../utils/db'
+import { writeRecordAssignment } from './record-assignments'
+import { userHasRole } from './user-roles'
 
-export async function requireSchoolManagement(event: H3Event, _scopes: string[], opts?: { allowPlatformAdmin?: boolean }) {
+/**
+ * 学校级管理入口的统一鉴权。
+ *
+ * 角色：
+ * - 学校管理员（school_admin）：全部作用域（账号开通与维护、业务实体管理、受控只读业务档案）。
+ *   2026-10-08 起原「学校系统管理员」（system_admin）已并入本角色，使用量看板入口随之下放；
+ * - 平台管理员（platform_admin）：按 `allowPlatformAdmin` 决定，必须用 `schoolId` 指定目标学校。
+ *
+ * `scopes` 参数保留以兼容既有调用点（历史上用于限制系统管理员只能管理账号），当前不参与判定。
+ */
+export async function requireSchoolManagement(
+  event: H3Event,
+  scopes: string[] = [],
+  opts?: { allowPlatformAdmin?: boolean }
+) {
   const user = await requireUser(event, ['school_admin', 'platform_admin'])
   if (user.role === 'school_admin') {
     if (!user.schoolId) throw createError({ statusCode: 400, message: '管理员未关联学校' })
@@ -22,10 +38,12 @@ export async function requireSchoolManagement(event: H3Event, _scopes: string[],
 }
 
 export async function assertActiveTeacher(event: H3Event, schoolId: string, teacherId: string) {
-  const [teacher] = await useDb(event).select({ id: schema.users.id }).from(schema.users).where(and(
+  const db = useDb(event)
+  const [teacher] = await db.select({ id: schema.users.id }).from(schema.users).where(and(
     eq(schema.users.id, teacherId),
     eq(schema.users.schoolId, schoolId),
-    eq(schema.users.role, 'teacher'),
+    // 以 user_roles 判定教师身份：多角色账号的主角色可能不是 teacher
+    userHasRole(db, 'teacher'),
     eq(schema.users.status, 'active')
   )).limit(1)
   if (!teacher) throw createError({ statusCode: 422, message: '目标教师不存在或不可用' })
@@ -73,16 +91,7 @@ export async function writeAssignment(
     metadata?: Record<string, unknown>
   }
 ) {
-  await db.insert(schema.recordAssignments).values({
-    schoolId: input.schoolId,
-    targetType: input.targetType,
-    targetId: input.targetId,
-    fromUserId: input.fromUserId || null,
-    toUserId: input.toUserId,
-    assignedBy: input.assignedBy,
-    reason: input.reason,
-    metadata: input.metadata || {}
-  })
+  await writeRecordAssignment(db, input)
 }
 
 export async function transferPlans(db: ReturnType<typeof useDb>, schoolId: string, toUserId: string, where: ReturnType<typeof eq>) {

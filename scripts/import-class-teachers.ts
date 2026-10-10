@@ -7,6 +7,7 @@
  *   pnpm tsx scripts/import-class-teachers.ts --apply --password <统一初始密码> [--file <data.json>]
  *   pnpm tsx scripts/import-class-teachers.ts --apply --random   # 每人随机密码，执行后打印清单
  *   pnpm tsx scripts/import-class-teachers.ts --apply --phone-suffix  # 初始密码 = 各账号手机号后 8 位
+ *   --school <code>   目标学校 code，默认 llschool-primary（六力学校-小学部）
  *
  * --file <data.json>：ClassRow 数组 [{ className, grade, head: {name, phone}, deputy: {name, phone}|null }]；
  * 不传则使用脚本内置的班主任/副班主任开通表数据。
@@ -20,7 +21,7 @@ import { randomBytes, randomInt } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { Pool } from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { auditLogs, classes, schools, users } from '../server/db/schema'
+import { auditLogs, classes, schools, userRoles, users } from '../server/db/schema'
 import { encryptSensitive } from '../server/utils/crypto'
 import { loadLocalEnv } from './load-env'
 
@@ -135,6 +136,9 @@ async function main() {
 
   const fileIdx = args.indexOf('--file')
   const filePath = fileIdx >= 0 ? args[fileIdx + 1] : undefined
+  // 目标学校：学部即学校，默认小学部
+  const schoolIdx = args.indexOf('--school')
+  const schoolCode = schoolIdx >= 0 ? args[schoolIdx + 1] : 'llschool-primary'
   const rows: ClassRow[] = filePath
     ? JSON.parse(readFileSync(filePath, 'utf8')) as ClassRow[]
     : ROWS
@@ -177,8 +181,9 @@ async function main() {
   try {
     const [admin] = await db.select({ id: users.id }).from(users).where(eq(users.phone, '13800000000')).limit(1)
     if (!admin) throw new Error('未找到平台管理员账号(13800000000)')
-    const [school] = await db.select({ id: schools.id }).from(schools).where(eq(schools.code, 'llschool')).limit(1)
-    if (!school) throw new Error('未找到学校 llschool')
+    // 组织模型：学部即学校——小学部班主任默认写入 llschool-primary（可用 --school 覆盖）
+    const [school] = await db.select({ id: schools.id }).from(schools).where(eq(schools.code, schoolCode)).limit(1)
+    if (!school) throw new Error(`未找到学校 ${schoolCode}`)
     const schoolId = school.id
 
     // 与正式库现有账号/班级冲突检查
@@ -235,6 +240,8 @@ async function main() {
             teachingGrades: [row.grade],
             isClassTeacher: kind === '班主任'
           }).returning({ id: users.id })
+          // 角色集合与主角色一并写入 user_roles：多角色改造后教师身份以 user_roles 为准
+          await tx.insert(userRoles).values({ userId: user.id, roleCode: 'teacher' }).onConflictDoNothing()
           byPhone.set(t.phone, user.id)
           createdUsers++
           await tx.insert(auditLogs).values({

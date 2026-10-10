@@ -5,6 +5,7 @@ import { useDb, schema } from './db'
 import { hashToken } from './crypto'
 import type { AppRole, AuthUser } from '../../app/composables/useAuth'
 import { ROLE_LABELS } from './role-labels'
+import { listUserRoles } from '../domain/user-roles'
 
 /** 生成 16 位混合字符初始密码：保证包含大写、小写、数字、符号各至少一个，去除易混淆字符 */
 export function generateInitialPassword(length = 16) {
@@ -46,9 +47,13 @@ const sessionCookieOptions = (expiresAt: Date) => ({
 export async function createSession(event: H3Event, userId: string) {
   const token = randomBytes(32).toString('base64url')
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS)
+  // 会话记录登录时的主角色作为激活角色（多角色账号由 switch-role 接口切换）
+  const [account] = await useDb(event).select({ role: schema.users.role })
+    .from(schema.users).where(eq(schema.users.id, userId)).limit(1)
   await useDb(event).insert(schema.sessions).values({
     userId,
     tokenHash: hashToken(token),
+    activeRole: account?.role ?? null,
     userAgent: getHeader(event, 'user-agent') || null,
     ipAddress: getRequestIP(event, { xForwardedFor: true }) || null,
     expiresAt
@@ -63,6 +68,26 @@ export async function destroySession(event: H3Event) {
 }
 
 export async function currentUser(event: H3Event): Promise<AuthUser | null> {
+  const auth = await currentAuth(event)
+  return auth?.user ?? null
+}
+
+/** 会话内部信息：供需要会话 id 的服务端逻辑使用（如切换激活角色），不要直接返回给客户端。 */
+export interface CurrentAuth {
+  user: AuthUser
+  /** 当前会话 id（sessions.id），不对外暴露。 */
+  sessionId: string
+  /** 会话上显式记录的激活角色；为空表示尚未切换过，按主角色解析。 */
+  sessionActiveRole: AppRole | null
+}
+
+/**
+ * 解析当前会话身份：账号主角色、全部角色与「激活角色」。
+ *
+ * 激活角色规则（多角色账号）：会话显式记录的角色优先，其次账号主角色，最后取角色集合首个。
+ * 账号的权限解析、路由落地与 requireUser 都以激活角色为准。
+ */
+export async function currentAuth(event: H3Event): Promise<CurrentAuth | null> {
   const token = getCookie(event, COOKIE_NAME)
   if (!token) return null
   const [row] = await useDb(event)
@@ -90,16 +115,29 @@ export async function currentUser(event: H3Event): Promise<AuthUser | null> {
       .where(eq(schema.sessions.id, row.session.id))
     setCookie(event, COOKIE_NAME, token, sessionCookieOptions(new Date(now.getTime() + SESSION_TTL_MS)))
   }
-  const role = row.user.role as AppRole
+  const roleEntries = await listUserRoles(useDb(event), row.user.id)
+  const primaryRole = row.user.role as AppRole
+  // 迁移已保证每个账号至少一行角色；这里对历史/异常数据保留主角色兜底，避免登录被卡住
+  const roles = roleEntries.length ? roleEntries.map(entry => entry.roleCode) : [primaryRole]
+  if (!roles.includes(primaryRole)) roles.push(primaryRole)
+  const sessionActiveRole = (row.session.activeRole as AppRole | null) ?? null
+  const activeRole = sessionActiveRole && roles.includes(sessionActiveRole)
+    ? sessionActiveRole
+    : (roles.includes(primaryRole) ? primaryRole : roles[0]!)
   return {
-    id: row.user.id,
-    schoolId: row.user.schoolId,
-    phone: row.user.phone ?? '',
-    name: row.user.name,
-    role,
-    roleLabel: ROLE_LABELS[role],
-    // 任教年级：随会话用户一起带出（同一行数据，不额外查询），供按学段筛选资源使用
-    teachingGrades: row.user.teachingGrades ?? []
+    sessionId: row.session.id,
+    sessionActiveRole,
+    user: {
+      id: row.user.id,
+      schoolId: row.user.schoolId,
+      phone: row.user.phone ?? '',
+      name: row.user.name,
+      role: activeRole,
+      roles,
+      roleLabel: ROLE_LABELS[activeRole],
+      // 任教年级：随会话用户一起带出（同一行数据，不额外查询），供按学段筛选资源使用
+      teachingGrades: row.user.teachingGrades ?? []
+    }
   }
 }
 
