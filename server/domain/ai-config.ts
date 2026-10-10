@@ -121,6 +121,15 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
       { key: 'previousSummary', label: '已有摘要', description: '上一版摘要正文；首次压缩时为空。' },
       { key: 'newMessages', label: '待并入的较早对话', description: '已按数据模式脱敏的历史消息文本。' }
     ]
+  },
+  {
+    code: 'assistant_question_category',
+    name: '提问分类提示词',
+    description: '把教师提问归入看板 6 分类并抽出原样出现的关键词/短句（看板 AI 问答分布与关键词 Top 榜的数据来源）。后台调用，与回答生成并行；规则未命中且非本地模式时才调用，失败/非法一律降级为「其他类」+ unknown，不影响回答。',
+    placeholders: [
+      { key: 'question', label: '脱敏后的教师提问', description: '已脱敏（电话/邮箱/人名）的提问正文，截断后外发。' },
+      { key: 'jsonFormat', label: '输出 JSON 结构示例', description: '{"category":"…","keywords":[…],"confidence":85} 形式的结构示例。' }
+    ]
   }
 ]
 

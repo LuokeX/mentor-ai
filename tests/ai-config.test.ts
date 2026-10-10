@@ -13,13 +13,14 @@ const AI_CENTER_CODES = [
   'semantic_safety_review',
   'instrument_recommendation',
   'chat_history_summary',
+  'assistant_question_category',
 ]
 
 /** 代码基线读取不查库，事件对象仅用于保持调用签名一致。 */
 const fakeEvent = {} as H3Event
 
 describe('PROMPT_REGISTRY 提示词注册表', () => {
-  it('覆盖全部 9 个 AI 调用点且 code 唯一', () => {
+  it('覆盖全部 10 个 AI 调用点且 code 唯一', () => {
     const codes = PROMPT_REGISTRY.map(item => item.code)
     expect(codes).toEqual(AI_CENTER_CODES)
     expect(new Set(codes).size).toBe(codes.length)
@@ -34,7 +35,7 @@ describe('PROMPT_REGISTRY 提示词注册表', () => {
 })
 
 describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () => {
-  it('9 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
+  it('10 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
     expect(Object.keys(AI_PROMPT_BASELINES).sort()).toEqual([...AI_CENTER_CODES].sort())
     for (const code of AI_CENTER_CODES) {
       const text = getPromptBaseline(code)
@@ -70,6 +71,16 @@ describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () =
     expect(review).toContain('{{userText}}')
     expect(review).toContain('{{candidateRisks}}')
     expect(review).toContain('按不成立处理')
+  })
+
+  it('提问分类提示词带 6 个分类与关键词防编造约束', () => {
+    const text = getPromptBaseline('assistant_question_category')!
+    for (const category of ['学生学习问题', '学生个体问题', '班级系统建设', '自我成长赋能', '德育类问题', '其他类']) {
+      expect(text).toContain(category)
+    }
+    expect(text).toContain('原样')
+    expect(text).toContain('{{question}}')
+    expect(text).toContain('{{jsonFormat}}')
   })
 
   it('基线正文占位符都在注册表声明范围内', () => {

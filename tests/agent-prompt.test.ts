@@ -82,6 +82,18 @@ describe('Agent 行为要点（formatInstruction）', () => {
     expect(text).toContain('首先/其次/最后')
   })
 
+  it('排版便于扫读：加粗短句分块、并列做法用短列表，且不写成公文式小标题', () => {
+    const text = buildFormatInstruction({})
+    expect(text).toContain('排版便于扫读')
+    expect(text).toContain('**加粗短句**')
+    expect(text).toContain('短列表')
+    expect(text).toContain('不要整段加粗')
+    // 与「避免报告腔」共存的边界：加粗是扫读落点，不是公文式小标题
+    expect(text).toContain('不是公文式小标题')
+    // 简单问答不必套用固定结构，避免与「不套用固定栏目模板」冲突
+    expect(text).toContain('不套用固定栏目模板')
+  })
+
   it('保留不做诊断、不碰确定性规则结论等既有约束', () => {
     const text = buildFormatInstruction({})
     expect(text).toContain('不做精神、医学、法律诊断')

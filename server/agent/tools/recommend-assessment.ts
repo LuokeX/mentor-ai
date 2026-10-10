@@ -12,6 +12,7 @@ import {
   type InstrumentOption
 } from '../../domain/assessment-instruments'
 import { getModulePlaybookText } from '../module-playbooks'
+import { trackProductEvent } from '../../domain/product-events'
 import type { ActionCard, AgentTool, AgentToolContext } from '../types'
 import { pickModuleByKeywords } from './module-route'
 const recommendAssessmentSchema = z.object({
@@ -146,6 +147,7 @@ export const recommendAssessmentTool: AgentTool = {
       }
 
       const reason = buildInstrumentReason(picked, module, redirectedFrom)
+      const alternatives = buildAlternatives(options, picked.code)
       const actionCard: ActionCard = {
         kind: 'recommend_assessment',
         module,
@@ -154,6 +156,21 @@ export const recommendAssessmentTool: AgentTool = {
         reason,
         ctaLabel: '开始作答'
       }
+      // 推荐量表作答率埋点：只记模块、本次展示过的量表编码与是否带咨询对象，
+      // 不记学生姓名、提问正文或量表内容；写入失败不影响推荐结果。
+      await trackProductEvent(ctx.event, {
+        schoolId: ctx.user.schoolId,
+        userId: ctx.user.userId,
+        eventName: 'assistant_assessment_recommended',
+        targetType: 'chat_session',
+        targetId: ctx.user.sessionId,
+        metadata: {
+          module,
+          // 首选量表在前，其余为同轮展示的候选；答其中任意一张都算回应了本次推荐
+          instruments: [picked.code, ...alternatives.map(option => option.code)].join(','),
+          hasObject: Boolean(context)
+        }
+      })
       return {
         module,
         assessmentCode: picked.code,
@@ -162,7 +179,7 @@ export const recommendAssessmentTool: AgentTool = {
         /** 触发条件命中时的实测依据（分数/结论/时间），模型据此说明原因 */
         triggerEvidence: picked.triggerEvidence,
         actionCard,
-        alternatives: buildAlternatives(options, picked.code),
+        alternatives,
         playbook
       }
     } catch (error) {

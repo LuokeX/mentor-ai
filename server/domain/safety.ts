@@ -2,6 +2,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { encryptSensitive } from '../utils/crypto'
 import { type DbClient, type DbTx, useDb, schema } from '../utils/db'
+import { userHasRole } from './user-roles'
 
 const CRISIS_PATTERNS: Array<[string, RegExp]> = [
   ['SAFE-SUICIDE', /(不想活|想死|自杀|结束生命|活着没意思)/i],
@@ -106,10 +107,10 @@ async function runCreateSafetyReferral(
         targetType: 'referral', targetId: referral.id, deduplicationKey: `referral-assigned:${referral.id}`
       })
     }
-    // 通知学校管理员
+    // 通知学校管理员（以 user_roles 判定，兼任管理员同样收通知）
     const schoolAdmins = await db.select({ id: schema.users.id })
       .from(schema.users)
-      .where(and(eq(schema.users.schoolId, input.schoolId), eq(schema.users.role, 'school_admin')))
+      .where(and(eq(schema.users.schoolId, input.schoolId), userHasRole(db, 'school_admin')))
     for (const admin of schoolAdmins) {
       await db.insert(schema.notifications).values({
         schoolId: input.schoolId, userId: admin.id, type: 'crisis_alert',
