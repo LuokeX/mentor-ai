@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
  * 环形占比图（纯 SVG，不引入图表依赖）：按 stroke-dasharray 画弧，中心显示合计。
- * 用于「提问分类分布」「方案风险等级分布」这类占比场景。
+ * 用于「提问分类分布」「方案风险等级分布」这类占比场景；悬停分段或图例时高亮该段并在中心读出数值。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 interface DonutSegment {
   label: string
@@ -43,6 +43,12 @@ const arcs = computed(() => {
     return arc
   })
 })
+
+/** 悬停的分段：环形分段与图例项共用同一份索引，两侧互相联动。 */
+const hoverIndex = ref<number | null>(null)
+const activeArc = computed(() => (hoverIndex.value === null ? null : arcs.value[hoverIndex.value] ?? null))
+/** 悬停到值为 0 的分段（只能从图例点到）时不淡化其他分段，否则整个环看起来像空的。 */
+const dimOthers = computed(() => !!activeArc.value && activeArc.value.value > 0)
 </script>
 
 <template>
@@ -51,7 +57,7 @@ const arcs = computed(() => {
       <g transform="rotate(-90 80 80)">
         <circle cx="80" cy="80" :r="RADIUS" fill="none" stroke="#f1f5f9" :stroke-width="STROKE" />
         <circle
-          v-for="arc in hasData ? arcs : []"
+          v-for="(arc, index) in hasData ? arcs : []"
           :key="arc.label"
           cx="80"
           cy="80"
@@ -61,15 +67,32 @@ const arcs = computed(() => {
           :stroke-width="STROKE"
           :stroke-dasharray="arc.dash"
           :stroke-dashoffset="arc.offset"
+          class="transition-all duration-150"
+          :style="{ strokeWidth: `${activeArc === arc ? STROKE + 4 : STROKE}px`, opacity: dimOthers && activeArc !== arc ? 0.25 : 1 }"
+          @mouseenter="hoverIndex = index"
+          @mouseleave="hoverIndex = null"
         />
       </g>
-      <text x="80" y="76" text-anchor="middle" font-size="10" fill="#94a3b8">{{ centerLabel }}</text>
-      <text x="80" y="94" text-anchor="middle" font-size="18" font-weight="600" fill="#1e293b">{{ total }}</text>
+      <template v-if="activeArc">
+        <text x="80" y="72" text-anchor="middle" font-size="10" fill="#94a3b8">{{ activeArc.percent }}%</text>
+        <text x="80" y="92" text-anchor="middle" font-size="18" font-weight="600" :fill="activeArc.color">{{ activeArc.value }}</text>
+      </template>
+      <template v-else>
+        <text x="80" y="76" text-anchor="middle" font-size="10" fill="#94a3b8">{{ centerLabel }}</text>
+        <text x="80" y="94" text-anchor="middle" font-size="18" font-weight="600" fill="#1e293b">{{ total }}</text>
+      </template>
     </svg>
     <ul class="w-full space-y-1.5 text-sm">
-      <li v-for="arc in arcs" :key="`legend-${arc.label}`" class="flex items-center gap-2">
+      <li
+        v-for="(arc, index) in arcs"
+        :key="`legend-${arc.label}`"
+        class="-mx-1.5 flex items-center gap-2 rounded-md px-1.5 py-0.5 transition-colors"
+        :class="activeArc === arc ? 'bg-slate-50' : ''"
+        @mouseenter="hoverIndex = index"
+        @mouseleave="hoverIndex = null"
+      >
         <span class="size-2.5 shrink-0 rounded-full" :style="{ backgroundColor: arc.color }" />
-        <span class="flex-1 truncate text-slate-600">{{ arc.label }}</span>
+        <span class="flex-1 truncate" :class="activeArc === arc ? 'text-slate-800' : 'text-slate-600'">{{ arc.label }}</span>
         <span class="font-medium text-slate-800">{{ arc.value }}</span>
         <span class="w-12 text-right text-xs text-slate-400">{{ arc.percent }}%</span>
       </li>
