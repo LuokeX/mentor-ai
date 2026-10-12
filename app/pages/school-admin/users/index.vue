@@ -91,11 +91,14 @@ const titleOptions = [
   { label: '一级', value: '一级' }, { label: '二级', value: '二级' },
 ]
 const gradeItems = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'].map(g => `${g} 年级`)
-/** 自我状态等级修正：未操作不发送；显式“改回按评估结果”清除；选择具体等级写入 */
+/**
+ * 自我状态等级修正：未操作不发送；显式“改回按评估结果”清除；选择具体等级写入。
+ * 评估五档等级中只有「需转介」对应红线（会生成转介工单），其余等级不转介，故只在该项标注。
+ */
 const selfStatusOptions = [
   { label: '（当前按评估结果）', value: '__auto__' },
   { label: '改回按评估结果', value: '__clear__' },
-  { label: '需转介', value: '需转介' }, { label: '需关注', value: '需关注' }, { label: '关注', value: '关注' }, { label: '良好', value: '良好' },
+  { label: '需转介（红线·对应转介工单）', value: '需转介' }, { label: '需关注', value: '需关注' }, { label: '关注', value: '关注' }, { label: '良好', value: '良好' },
 ]
 
 const { data: teacherData } = await useFetch<ManagedListResult<OptionRow>>('/api/v1/school-admin/teachers', {
@@ -326,7 +329,12 @@ async function copyGeneratedPassword() {
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openRow">
       <template #role-data="{ row }">{{ roleLabelOf(row) }}</template>
       <template #selfStatusLevel-data="{ row }">
-        <UBadge v-if="row.selfStatusLevel" :color="row.selfStatusLevel === '需转介' ? 'error' : row.selfStatusLevel === '需关注' ? 'warning' : row.selfStatusLevel === '关注' ? 'info' : 'success'" variant="subtle">{{ row.selfStatusLevel }}</UBadge>
+        <UBadge
+          v-if="row.selfStatusLevel"
+          :color="row.selfStatusLevel === '需转介' ? 'error' : row.selfStatusLevel === '需关注' ? 'warning' : row.selfStatusLevel === '关注' ? 'info' : 'success'"
+          variant="subtle"
+          :title="row.selfStatusLevel === '需转介' ? '转介等级：评估命中红线时已生成安全事件与转介工单，由心理专员处置' : undefined"
+        >{{ row.selfStatusLevel }}</UBadge>
         <span v-else class="text-xs text-slate-400">未评估</span>
       </template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : row.status === 'invited' ? 'info' : 'neutral'" variant="subtle">{{ statusLabels[row.status] || row.status }}</UBadge></template>
@@ -388,6 +396,9 @@ async function copyGeneratedPassword() {
           <UFormField label="自我状态等级（手动修正）" hint="按最近一次自我成长评估展示；手动指定后将在下次评估前覆盖显示">
             <USelect v-model="form.selfStatusLevel" :items="selfStatusOptions" class="w-full" />
           </UFormField>
+          <p class="mt-2 text-xs leading-relaxed text-amber-800">
+            只有「需转介」会到转介：评估命中红线时中断并展示转介指引，同时生成安全事件与转介工单、通知心理专员。评估判出的其他等级（状态良好 / 轻度关注 / 明显消耗 / 重度风险）都不转介；这里手动修正只覆盖展示等级，不会生成或关闭转介工单。
+          </p>
         </div>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         <div class="flex justify-end gap-2"><UButton color="neutral" variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">{{ editing ? '保存' : '添加账号' }}</UButton></div>
