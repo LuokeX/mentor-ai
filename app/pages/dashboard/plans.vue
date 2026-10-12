@@ -313,11 +313,6 @@ const totalPages = computed(() => Math.max(1, Math.ceil((data.value?.table.total
             与明细表的高 / 中 / 低风险列同源：安全关注并入高风险；原型四档里的「健康」在现行方案报告口径里没有独立取值，并入低风险。
           </p>
         </div>
-        <div class="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 class="mb-3 text-sm font-medium text-slate-700">模块分布</h2>
-          <DashboardRankTable :rows="(data?.byModule ?? []).map(item => ({ label: item.category, value: item.count }))" value-label="个" />
-          <p class="mt-2 text-[11px] text-slate-400">按方案模块统计；明细表的「量表分类」按提问分类口径，家校沟通并入自我成长赋能。</p>
-        </div>
       </section>
 
       <section class="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
