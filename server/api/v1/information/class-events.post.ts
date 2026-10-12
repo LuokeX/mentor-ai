@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
+import { eventStatusSchema } from '../../../../shared/contracts'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { writeAudit } from '../../../utils/audit'
@@ -12,6 +13,8 @@ const createSchema = z.object({
   description: z.string().optional(),
   occurredAt: z.string().datetime().optional(),
   resolution: z.string().optional(),
+  // 允许登记时直接给状态（例如补录一条已处理完的事件），不传默认「待处理」
+  status: eventStatusSchema.optional(),
 })
 
 export default defineEventHandler(async (event) => {
@@ -42,7 +45,7 @@ export default defineEventHandler(async (event) => {
     description: body.description || null,
     occurredAt: body.occurredAt ? new Date(body.occurredAt) : new Date(),
     resolution: body.resolution || null,
-    status: 'open',
+    status: body.status ?? 'open',
   }).returning()
 
   if (!record) throw createError({ statusCode: 500, message: '创建班级事件失败' })
@@ -53,7 +56,7 @@ export default defineEventHandler(async (event) => {
     action: 'class_event.create',
     targetType: 'class_event',
     targetId: record.id,
-    metadata: { eventType: body.eventType, severity: body.severity, classId: body.classId }
+    metadata: { eventType: body.eventType, severity: body.severity, status: record.status, classId: body.classId }
   })
 
   return record

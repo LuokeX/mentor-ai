@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { eventStatuses, eventStatusLabels } from '~~/shared/contracts'
+
 const route = useRoute()
 const id = String(route.params.id)
 const { data, error, refresh } = await useFetch<any>(`/api/v1/information/classes/${id}`)
@@ -21,12 +23,8 @@ const form = reactive({
 })
 const eventTypes = ['德育活动', '班级冲突', '集体异常', '班级建设', '其他'].map(value => ({ label: value, value }))
 const severities = ['低', '中', '高', '严重'].map(value => ({ label: value, value }))
-const statuses = [
-  { label: '待处理', value: 'open' },
-  { label: '已解决', value: 'resolved' },
-  { label: '已关闭', value: 'closed' },
-]
-const eventStatusLabel = (s: string) => s === 'open' ? '待处理' : s === 'resolved' ? '已解决' : s === 'closed' ? '已关闭' : s === 'archived' ? '已归档' : s
+const statuses: { label: string, value: string }[] = eventStatuses.map(value => ({ label: eventStatusLabels[value], value }))
+const eventStatusLabel = (s: string) => (s in eventStatusLabels ? eventStatusLabels[s as keyof typeof eventStatusLabels] : s === 'archived' ? '已归档' : s)
 
 function openCreate() {
   editingId.value = null
@@ -79,6 +77,7 @@ async function saveEvent() {
         body: {
           classId: id, title: form.title, eventType: form.eventType, severity: form.severity,
           description: form.description || undefined,
+          status: form.status,
           occurredAt: parseBeijingInput(form.occurredAt)?.toISOString() ?? undefined,
         },
       })

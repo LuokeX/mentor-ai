@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
-import { studentEventTypeLabels, studentEventTypes } from '~~/shared/contracts'
+import { eventStatuses, eventStatusLabels, studentEventTypeLabels, studentEventTypes } from '~~/shared/contracts'
 import type { ManagedListResult } from '~~/shared/management'
 
 interface EventRow {
@@ -36,11 +36,7 @@ const statusOptions = [
 ]
 const eventTypes: { label: string; value: string }[] = studentEventTypes.map(value => ({ label: studentEventTypeLabels[value], value }))
 const severities = ['低', '中', '高', '严重'].map(value => ({ label: value, value }))
-const statuses = [
-  { label: '待处理', value: 'open' },
-  { label: '已解决', value: 'resolved' },
-  { label: '已关闭', value: 'closed' },
-]
+const statuses: { label: string, value: string }[] = eventStatuses.map(value => ({ label: eventStatusLabels[value], value }))
 
 const { data: studentData } = await useFetch<ManagedListResult<StudentOption>>('/api/v1/information/students', { query: { page: 1, pageSize: 100, status: 'active' } })
 const studentOptions = computed(() => (studentData.value?.rows || []).map(item => ({ label: item.name, value: item.id })))
@@ -189,7 +185,7 @@ async function archiveEvent(eventId: string) {
         <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="类型"><USelect v-model="form.eventType" :items="eventTypes" class="w-full" /></UFormField>
           <UFormField label="严重程度"><USelect v-model="form.severity" :items="severities" class="w-full" /></UFormField>
-          <UFormField label="状态"><USelect v-model="form.status" :items="statuses" :disabled="!editingId" class="w-full" /></UFormField>
+          <UFormField label="状态"><USelect v-model="form.status" :items="statuses" class="w-full" /></UFormField>
           <UFormField label="发生时间"><UInput v-model="form.occurredAt" type="datetime-local" class="w-full" /></UFormField>
         </div>
         <UFormField label="事件说明"><UTextarea v-model="form.description" :rows="4" class="w-full" /></UFormField>

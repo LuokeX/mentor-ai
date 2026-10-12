@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { studentEventTypeSchema } from '../../../../../shared/contracts'
+import { eventStatusSchema, studentEventTypeSchema } from '../../../../../shared/contracts'
 import { requireUser } from '../../../../utils/auth'
 import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
 import { useDb, schema } from '../../../../utils/db'
@@ -13,7 +13,7 @@ const updateSchema = z.object({
   description: z.string().optional(),
   occurredAt: z.string().datetime().optional(),
   resolution: z.string().optional(),
-  status: z.enum(['open', 'resolved', 'closed']).optional(),
+  status: eventStatusSchema.optional(),
 })
 
 export default defineEventHandler(async (event) => {

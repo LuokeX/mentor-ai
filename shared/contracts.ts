@@ -40,6 +40,23 @@ export const studentEventTypeLabels: Record<StudentEventType, string> = {
   其他: '其他'
 }
 
+/**
+ * 学生事件 / 班级事件共用的处理状态：待处理 → 已解决 → 已关闭。
+ * 创建与编辑共用同一套取值（创建时不传即默认 open）；归档是独立生命周期动作，不在本枚举内。
+ * 安全事件只有 open/closed，不适用本枚举；批量导入的文本归一化见
+ * server/domain/information-imports.ts 的 normalizeStudentEventStatus。
+ */
+export const eventStatusSchema = z.enum(['open', 'resolved', 'closed'])
+export type EventStatus = z.infer<typeof eventStatusSchema>
+/** 有序取值（待处理→已解决→已关闭），供前端下拉渲染 */
+export const eventStatuses = ['open', 'resolved', 'closed'] as const satisfies readonly EventStatus[]
+/** 值 → 中文标签 */
+export const eventStatusLabels: Record<EventStatus, string> = {
+  open: '待处理',
+  resolved: '已解决',
+  closed: '已关闭'
+}
+
 /** 家校沟通渠道码。值为英文码，空值表示历史数据未标注，不属于本枚举。 */
 export const communicationChannelSchema = z.enum(['phone', 'wechat', 'meeting', 'home_visit', 'other'])
 export type CommunicationChannel = z.infer<typeof communicationChannelSchema>

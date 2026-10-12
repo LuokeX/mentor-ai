@@ -22,6 +22,7 @@ import {
   type BusinessImportDeps,
 } from '../server/domain/information-imports'
 import { searchableHash } from '../server/utils/crypto'
+import { eventStatuses, eventStatusLabels } from '../shared/contracts'
 
 const SECRET = 'test-encryption-key'
 
@@ -339,6 +340,13 @@ describe('渠道 / 风险等级 / 容纳水平归一化', () => {
     expect(normalizeStudentEventStatus('resolved')).toBe('resolved')
     expect(normalizeStudentEventStatus('已关闭')).toBe('closed')
     expect(normalizeStudentEventStatus('已归档')).toBeUndefined()
+  })
+  it('共享事件状态清单与导入归一化口径一致', () => {
+    // 表单下拉（英文码）与导入模板（中文标签）必须收敛到同一套取值，否则同一条事件走两条链路会落库不一致
+    for (const value of eventStatuses) {
+      expect(normalizeStudentEventStatus(value)).toBe(value)
+      expect(normalizeStudentEventStatus(eventStatusLabels[value])).toBe(value)
+    }
   })
 })
 
