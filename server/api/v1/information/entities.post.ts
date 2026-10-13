@@ -19,7 +19,7 @@ const entitySchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('communication'), summary: z.string().trim().min(5).max(3000), guardianId: z.string().uuid().optional(), studentId: z.string().uuid().optional(),
     channel: communicationChannelSchema.optional(),
-    parentType: z.string().max(20).optional(), attitudeType: z.string().max(20).optional(), containerLevel: z.number().int().min(-4).max(4).optional(), riskLevel: z.string().max(20).optional()
+    parentType: z.string().max(20).optional(), attitudeType: z.string().max(20).optional(), riskLevel: z.string().max(20).optional()
   })
 ])
 
@@ -87,7 +87,7 @@ export default defineEventHandler(async (event) => {
       schoolId: user.schoolId, ownerUserId: user.id, guardianId: body.guardianId, studentId: body.studentId,
       channel: body.channel ?? null,
       summaryEnc: encryptSensitive(body.summary, config.encryptionKey), parentType: body.parentType,
-      attitudeType: body.attitudeType, containerLevel: body.containerLevel, riskLevel: body.riskLevel
+      attitudeType: body.attitudeType, riskLevel: body.riskLevel
     }).returning({ id: schema.communications.id })
   }
   if (!record) throw createError({ statusCode: 500, message: '资料保存失败' })

@@ -56,7 +56,6 @@ export const IMPORT_TEMPLATE_COLUMNS: Record<InformationImportType, Array<{ head
     { header: '家长类型', required: false, example: '母亲' },
     { header: '态度类型', required: false, example: '配合' },
     { header: '风险等级', required: false, example: '低风险' },
-    { header: '容纳水平', required: false, example: '0' },
   ],
   student_events: [
     { header: '学生姓名', required: true, example: '张三' },
@@ -153,9 +152,6 @@ const HEADER_ALIASES: Record<InformationImportType, Record<string, string>> = {
     '风险等级': 'riskLevel',
     '风险': 'riskLevel',
     'risklevel': 'riskLevel',
-    '容纳水平': 'containerLevel',
-    '容纳度': 'containerLevel',
-    'containerlevel': 'containerLevel',
   },
   student_events: {
     '学生姓名': 'studentName',
@@ -586,15 +582,6 @@ export function normalizeCommunicationRiskLevel(value: string): string | null | 
   return codes.find(code => code === lower) ?? codes.find(code => COMMUNICATION_RISK_LABELS[code] === text)
 }
 
-/** 容纳水平：空值返回 null，-4~4 整数返回数字，其余返回 undefined */
-export function parseContainerLevel(value: string): number | null | undefined {
-  const text = value.trim()
-  if (!text) return null
-  if (!/^[+-]?\d+$/.test(text)) return undefined
-  const num = Number(text)
-  return num >= -4 && num <= 4 ? num : undefined
-}
-
 /** 事件类型：中文类型名或 E1~E6（E1=学业纪律类…E6=其他）都接受；空值默认「其他」，无法识别返回 undefined */
 export function normalizeStudentEventType(value: string): StudentEventType | undefined {
   const text = value.trim()
@@ -625,7 +612,6 @@ export interface CommunicationImportRowValues {
   parentType: string | null
   attitudeType: string | null
   riskLevel: string | null
-  containerLevel: number | null
 }
 
 export interface BusinessImportResolvedRow<TValues> {
@@ -656,7 +642,6 @@ export function validateCommunicationRows(
     const parentType = cell(raw, 'parentType')
     const attitudeType = cell(raw, 'attitudeType')
     const riskLevelText = cell(raw, 'riskLevel')
-    const containerLevelText = cell(raw, 'containerLevel')
 
     if (!studentName) { addError(errors, line, 'REQUIRED_FIELD', '学生姓名为空'); return }
     if (studentName.length > 80) { addError(errors, line, 'INVALID_NAME', '学生姓名长度不能超过 80'); return }
@@ -671,17 +656,15 @@ export function validateCommunicationRows(
     }
     const channel = normalizeCommunicationChannel(channelText)
     const riskLevel = normalizeCommunicationRiskLevel(riskLevelText)
-    const containerLevel = parseContainerLevel(containerLevelText)
     const parentTypeValid = parentType.length <= 20
     const attitudeTypeValid = attitudeType.length <= 20
     if (channel === undefined) addError(errors, line, 'INVALID_CHANNEL', `沟通渠道「${channelText}」无法识别，请填写：${COMMUNICATION_CHANNEL_OPTIONS}`)
     if (riskLevel === undefined) addError(errors, line, 'INVALID_RISK_LEVEL', `风险等级「${riskLevelText}」无法识别，请填写：安全关注 / 高风险 / 中风险 / 低风险`)
-    if (containerLevel === undefined) addError(errors, line, 'INVALID_CONTAINER_LEVEL', '容纳水平必须是 -4 至 4 的整数')
     if (!parentTypeValid) addError(errors, line, 'TOO_LONG', '家长类型长度不能超过 20')
     if (!attitudeTypeValid) addError(errors, line, 'TOO_LONG', '态度类型长度不能超过 20')
     const matched = matchStudent(studentName, className, deps.students, deps.secret)
     if (matched.reason !== 'ok') addStudentMatchError(errors, line, studentName, className, matched, deps.studentScopeLabel)
-    if (channel === undefined || riskLevel === undefined || containerLevel === undefined || !parentTypeValid || !attitudeTypeValid || !matched.student) return
+    if (channel === undefined || riskLevel === undefined || !parentTypeValid || !attitudeTypeValid || !matched.student) return
     const student = matched.student
     const key = `${student.id}|${occurredAt.getTime()}|${summary.replace(/\s+/g, '')}`
     if (seenInFile.has(key)) { addError(errors, line, 'DUPLICATE_IN_FILE', '文件内存在重复沟通记录（同学生、同时间、同摘要）'); return }
@@ -693,7 +676,7 @@ export function validateCommunicationRows(
       values: {
         studentName, className, occurredAtText, occurredAt, summary,
         channel: channel ?? null, parentType: parentType || null, attitudeType: attitudeType || null,
-        riskLevel: riskLevel ?? null, containerLevel: containerLevel ?? null,
+        riskLevel: riskLevel ?? null,
       },
     })
   })
@@ -819,9 +802,8 @@ const TEMPLATE_NOTES: Record<InformationImportType, string[]> = {
     '3. 学生姓名必须与「我负责的学生」中的姓名一致；存在多个同名时请填写「班级」列区分。',
     '4. 沟通时间填写如「2026-10-08 15:30」，只填日期按当天 00:00 处理；不早于 2000 年、不晚于明天。',
     '5. 沟通渠道可填「电话 / 企微 / 面谈 / 家访 / 其他」；风险等级可填「安全关注 / 高风险 / 中风险 / 低风险」，留空表示未标注。',
-    '6. 容纳水平为 -4 至 4 的整数，留空表示未填写。',
-    '7. 导入的记录只会新增，不会覆盖或修改已有沟通记录；同一文件内的重复行会被拒绝。',
-    '8. 单次最多 2,000 行，文件不超过 2 MB，仅支持 .xlsx。',
+    '6. 导入的记录只会新增，不会覆盖或修改已有沟通记录；同一文件内的重复行会被拒绝。',
+    '7. 单次最多 2,000 行，文件不超过 2 MB，仅支持 .xlsx。',
   ],
   student_events: [
     '1. 第一行是表头，请勿修改表头名称；示例行为演示数据，导入前请删除或替换。',

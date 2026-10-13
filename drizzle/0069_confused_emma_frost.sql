@@ -1,0 +1,1 @@
+ALTER TABLE "communications" DROP COLUMN "container_level";

@@ -20,7 +20,6 @@ interface OptionRow { id: string; name: string }
 interface CommunicationDetail extends CommunicationRow {
   summary: string
   attitudeType: string | null
-  containerLevel: number | null
 }
 
 const list = useManagedList<CommunicationRow>('/api/v1/information/communications')
@@ -65,14 +64,13 @@ const form = reactive({
   parentType: '',
   attitudeType: '',
   riskLevel: '',
-  containerLevel: null as number | null,
   updatedAt: '',
 })
 
 function resetForm() {
   Object.assign(form, {
     summary: '', studentId: '', guardianId: '', channel: '', parentType: '', attitudeType: '',
-    riskLevel: '', containerLevel: null, updatedAt: '',
+    riskLevel: '', updatedAt: '',
   })
 }
 
@@ -101,7 +99,6 @@ async function openEdit(id: string) {
       parentType: detail.parentType || '',
       attitudeType: detail.attitudeType || '',
       riskLevel: detail.riskLevel || '',
-      containerLevel: detail.containerLevel,
       updatedAt: detail.updatedAt,
     })
     drawerOpen.value = true
@@ -130,7 +127,6 @@ async function saveCommunication() {
           parentType: form.parentType || null,
           attitudeType: form.attitudeType || null,
           riskLevel: form.riskLevel || null,
-          containerLevel: form.containerLevel,
         },
       })
     } else {
@@ -145,7 +141,6 @@ async function saveCommunication() {
           parentType: form.parentType || undefined,
           attitudeType: form.attitudeType || undefined,
           riskLevel: form.riskLevel || undefined,
-          containerLevel: form.containerLevel ?? undefined,
         },
       })
     }
@@ -244,7 +239,6 @@ function closeDrawer() {
           <UFormField label="家长类型"><UInput v-model="form.parentType" class="w-full" /></UFormField>
           <UFormField label="态度类型"><UInput v-model="form.attitudeType" class="w-full" /></UFormField>
           <UFormField label="风险等级"><UInput v-model="form.riskLevel" class="w-full" /></UFormField>
-          <UFormField label="容纳水平（-4 至 4）"><UInput v-model.number="form.containerLevel" type="number" :min="-4" :max="4" class="w-full" /></UFormField>
         </div>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         <div class="flex justify-end gap-2">

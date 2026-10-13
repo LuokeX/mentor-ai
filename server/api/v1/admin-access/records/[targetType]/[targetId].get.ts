@@ -52,7 +52,7 @@ export default defineEventHandler(async (event) => {
   } else if (targetType === 'guardian_communication') {
     const row = (await db.select().from(schema.communications).where(eq(schema.communications.id, targetId)).limit(1))[0]
     record = row ? { ...row, summary: decryptSensitive(row.summaryEnc, secret), summaryEnc: undefined } : null
-    fields = ['summary', 'parentType', 'attitudeType', 'containerLevel', 'riskLevel']
+    fields = ['summary', 'parentType', 'attitudeType', 'riskLevel']
   } else {
     const row = (await db.select().from(schema.plans).where(eq(schema.plans.id, targetId)).limit(1))[0]
     const reviews = row ? await db.select().from(schema.planReviews).where(eq(schema.planReviews.planId, targetId)).orderBy(desc(schema.planReviews.reviewAt)) : []

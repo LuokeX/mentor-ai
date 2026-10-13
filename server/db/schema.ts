@@ -736,7 +736,6 @@ export const communications = pgTable('communications', {
   summaryEnc: text('summary_enc').notNull(),
   parentType: varchar('parent_type', { length: 20 }),
   attitudeType: varchar('attitude_type', { length: 20 }),
-  containerLevel: integer('container_level'),
   riskLevel: varchar('risk_level', { length: 20 }),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   occurredAt: timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull(),

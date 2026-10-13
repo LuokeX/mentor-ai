@@ -10,7 +10,6 @@ const bodySchema = z.object({
   guardianId: z.string().uuid().optional(),
   parentType: z.string().max(20).optional(),
   attitudeType: z.string().max(20).optional(),
-  containerLevel: z.number().int().min(-4).max(4).optional(),
   riskLevel: z.string().max(20).optional()
 })
 
@@ -34,7 +33,6 @@ export default defineEventHandler(async (event) => {
     summaryEnc: encryptSensitive(body.summary, secret),
     parentType: body.parentType,
     attitudeType: body.attitudeType,
-    containerLevel: body.containerLevel,
     riskLevel: body.riskLevel
   }).returning({ id: schema.communications.id })
   if (!record) throw createError({ statusCode: 500, message: '沟通记录保存失败' })

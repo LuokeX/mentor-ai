@@ -302,7 +302,6 @@ export async function commitBusinessImport(event: H3Event, input: {
           summaryEnc: encryptSensitive(values.summary, deps.secret),
           parentType: values.parentType,
           attitudeType: values.attitudeType,
-          containerLevel: values.containerLevel,
           riskLevel: values.riskLevel,
           occurredAt: values.occurredAt,
           status: 'active',

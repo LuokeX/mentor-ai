@@ -12,7 +12,6 @@ const bodySchema = z.object({
   channel: communicationChannelSchema.nullable().optional(),
   parentType: z.string().trim().max(20).nullable().optional(),
   attitudeType: z.string().trim().max(20).nullable().optional(),
-  containerLevel: z.number().int().min(-4).max(4).nullable().optional(),
   riskLevel: z.string().trim().max(20).nullable().optional(),
 }).refine(body => Object.keys(body).length > 0)
 
@@ -28,7 +27,6 @@ export default defineEventHandler(async (event) => {
   if (body.channel !== undefined) patch.channel = body.channel
   if (body.parentType !== undefined) patch.parentType = body.parentType
   if (body.attitudeType !== undefined) patch.attitudeType = body.attitudeType
-  if (body.containerLevel !== undefined) patch.containerLevel = body.containerLevel
   if (body.riskLevel !== undefined) patch.riskLevel = body.riskLevel
 
   const [updated] = await db.update(schema.communications).set(patch).where(and(

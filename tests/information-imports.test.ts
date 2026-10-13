@@ -11,7 +11,6 @@ import {
   normalizeCommunicationRiskLevel,
   normalizeStudentEventStatus,
   normalizeStudentEventType,
-  parseContainerLevel,
   parseGrade,
   parseImportDateTime,
   parseWorkbookRows,
@@ -305,7 +304,7 @@ describe('matchStudent 学生匹配', () => {
   })
 })
 
-describe('渠道 / 风险等级 / 容纳水平归一化', () => {
+describe('渠道 / 风险等级归一化', () => {
   it('沟通渠道接受中文标签与英文码', () => {
     expect(normalizeCommunicationChannel('电话')).toBe('phone')
     expect(normalizeCommunicationChannel('wechat')).toBe('wechat')
@@ -318,13 +317,6 @@ describe('渠道 / 风险等级 / 容纳水平归一化', () => {
     expect(normalizeCommunicationRiskLevel('')).toBeNull()
     expect(normalizeCommunicationRiskLevel('无')).toBeNull()
     expect(normalizeCommunicationRiskLevel('很高')).toBeUndefined()
-  })
-  it('容纳水平只允许 -4~4 整数', () => {
-    expect(parseContainerLevel('0')).toBe(0)
-    expect(parseContainerLevel('-2')).toBe(-2)
-    expect(parseContainerLevel('')).toBeNull()
-    expect(parseContainerLevel('5')).toBeUndefined()
-    expect(parseContainerLevel('1.5')).toBeUndefined()
   })
   it('事件类型接受 E 码与中文名，空值默认其他', () => {
     expect(normalizeStudentEventType('E1')).toBe('学业纪律类')
@@ -360,7 +352,6 @@ describe('validateCommunicationRows 沟通行校验', () => {
     parentType: '母亲',
     attitudeType: '配合',
     riskLevel: '低风险',
-    containerLevel: '0',
   }
 
   it('合法行通过并归一化渠道、风险等级与时间', () => {
@@ -369,13 +360,13 @@ describe('validateCommunicationRows 沟通行校验', () => {
     expect(resolved).toHaveLength(1)
     expect(resolved[0]?.studentId).toBe('s3')
     expect(resolved[0]?.ownerUserId).toBe('u1')
-    expect(resolved[0]?.values).toMatchObject({ channel: 'phone', riskLevel: 'low', containerLevel: 0 })
+    expect(resolved[0]?.values).toMatchObject({ channel: 'phone', riskLevel: 'low' })
     expect(resolved[0]?.values.occurredAt.toISOString()).toBe('2026-10-08T07:30:00.000Z')
   })
   it('选填列为空时落 null，不会报错', () => {
-    const { errors, resolved } = validateCommunicationRows([{ ...validRow, channel: '', riskLevel: '', containerLevel: '', parentType: '', attitudeType: '' }], businessDeps, NOW)
+    const { errors, resolved } = validateCommunicationRows([{ ...validRow, channel: '', riskLevel: '', parentType: '', attitudeType: '' }], businessDeps, NOW)
     expect(errors).toHaveLength(0)
-    expect(resolved[0]?.values).toMatchObject({ channel: null, riskLevel: null, containerLevel: null, parentType: null, attitudeType: null })
+    expect(resolved[0]?.values).toMatchObject({ channel: null, riskLevel: null, parentType: null, attitudeType: null })
   })
   it('学生不存在 / 同名歧义 / 班级不符分别报错', () => {
     expect(validateCommunicationRows([{ ...validRow, studentName: '王五' }], businessDeps, NOW).errors[0]?.code).toBe('STUDENT_NOT_FOUND')
@@ -391,7 +382,6 @@ describe('validateCommunicationRows 沟通行校验', () => {
     expect(validateCommunicationRows([{ ...validRow, occurredAt: '前天' }], businessDeps, NOW).errors[0]?.code).toBe('INVALID_TIME')
     expect(validateCommunicationRows([{ ...validRow, channel: '短信' }], businessDeps, NOW).errors.some(item => item.code === 'INVALID_CHANNEL')).toBe(true)
     expect(validateCommunicationRows([{ ...validRow, riskLevel: '很高' }], businessDeps, NOW).errors.some(item => item.code === 'INVALID_RISK_LEVEL')).toBe(true)
-    expect(validateCommunicationRows([{ ...validRow, containerLevel: '5' }], businessDeps, NOW).errors.some(item => item.code === 'INVALID_CONTAINER_LEVEL')).toBe(true)
     expect(validateCommunicationRows([{ ...validRow, parentType: 'x'.repeat(21) }], businessDeps, NOW).errors.some(item => item.code === 'TOO_LONG')).toBe(true)
   })
   it('文件内重复（同学生、同时间、同摘要）报错', () => {
@@ -472,7 +462,7 @@ describe('两类业务记录模板与预检示例', () => {
     const summary = '这是一条用于验证示例截断的较长沟通摘要，长度明显超过四十个字符，需要被截断展示（补充说明文字）。'
     const { resolved } = validateCommunicationRows([{
       studentName: '李四', className: '', occurredAt: '2026-10-08 15:30', summary,
-      channel: '面谈', parentType: '', attitudeType: '', riskLevel: '', containerLevel: '',
+      channel: '面谈', parentType: '', attitudeType: '', riskLevel: '',
     }], businessDeps, NOW)
     const sample = buildCommunicationImportSample(resolved)
     expect(Object.keys(sample[0]!).sort()).toEqual(['occurredAt', 'row', 'studentName', 'summaryPreview'])
