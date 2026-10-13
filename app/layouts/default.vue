@@ -7,11 +7,8 @@ const { user, refresh, logout, hasRole, switchRole, roleHome } = useAuth()
 const toast = useToast()
 await refresh()
 
-// 小屏导航（顶栏 + 底部菜单）是浮层：默认收起，点悬浮按钮才滑出，滚动或到点自动收起（桌面端恒显示）
-const { hidden: headerHidden, reveal: revealNav, hide: hideNav, bindAutoHideHeader } = useAutoHideHeader()
-bindAutoHideHeader()
-// 页面切换后收起浮层导航，保持内容优先
-watch(() => route.fullPath, () => hideNav())
+// 小屏导航（顶栏 + 底部菜单）常显：老师一眼能看到全部入口，不再需要先点悬浮按钮唤出。
+// main 用小屏顶部留白给固定顶栏让位；底部菜单固定在最下方，内容底部的留白由 main 的 pb 提供。
 // 手机端键盘状态：covered 表示底部被键盘挡住，此时底部菜单必须藏在键盘后面，
 // 不能让浏览器把它拖到键盘上方（inset 供对话页把面板底部对齐到键盘上沿）
 const { covered: keyboardCovered, bindKeyboardInset } = useKeyboardInset()
@@ -95,7 +92,7 @@ function closeDropdown(event: Event) {
 
 <template>
   <div class="min-h-screen">
-    <header v-if="user" class="fixed inset-x-0 top-0 z-40 border-b border-emerald-950/5 bg-[#f8faf6] shadow-[0_12px_32px_-24px_rgba(15,42,35,0.55)] backdrop-blur-xl transition-transform duration-200 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-gradient-to-b after:from-[#f8faf6]/95 after:to-transparent lg:sticky lg:bg-[#f8faf6]/90 lg:shadow-none lg:after:hidden" :class="headerHidden ? '-translate-y-full' : ''">
+    <header v-if="user" class="fixed inset-x-0 top-0 z-40 border-b border-emerald-950/5 bg-[#f8faf6] shadow-[0_12px_32px_-24px_rgba(15,42,35,0.55)] backdrop-blur-xl lg:sticky lg:bg-[#f8faf6]/90 lg:shadow-none">
       <div class="mx-auto flex max-w-7xl items-center justify-between px-5 py-3">
         <NuxtLink :to="roleHome" class="flex items-center gap-3">
           <span class="grid size-10 place-items-center rounded-2xl bg-emerald-800 text-lg text-white">六</span>
@@ -107,7 +104,7 @@ function closeDropdown(event: Event) {
             <small class="text-xs text-slate-500">AI · 安全 · 成长</small>
           </span>
         </NuxtLink>
-        <nav class="hidden items-center gap-2 md:flex">
+        <nav class="hidden items-center gap-2 lg:flex">
           <NuxtLink v-if="hasRole('teacher')" to="/" :class="navClass(route.path === '/')"><UIcon name="i-lucide-house" class="size-4" />我的助手</NuxtLink>
           <details v-if="hasRole('teacher')" class="relative after:absolute after:inset-x-0 after:top-full after:h-1.5 after:content-['']" @mouseenter="openDropdown" @mouseleave="closeOnLeave">
             <summary :class="[...navClass(route.path.startsWith('/module') || route.path.startsWith('/assessments')), 'cursor-pointer list-none select-none']"><UIcon name="i-lucide-clipboard-list" class="size-4" />专项评估<UIcon name="i-lucide-chevron-down" class="size-3.5 opacity-70" /></summary>
@@ -152,29 +149,20 @@ function closeDropdown(event: Event) {
         </div>
       </div>
     </header>
-    <main class="pb-[4.5rem] lg:pb-0">
+    <!-- 小屏（<lg，含平板）顶栏固定常显（实测高 4.375rem），main 用 pt-[4.5rem] 让位；底部导航固定常显，main 的 pb 给它留白 -->
+    <main class="pt-[4.5rem] pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:pt-0 lg:pb-0">
       <slot />
     </main>
     <footer v-if="user && route.path !== '/'" class="mx-auto max-w-7xl px-5 pt-2 pb-[calc(4.5rem+env(safe-area-inset-bottom))] print:block lg:pb-6">
       <p class="text-center text-xs text-slate-400">AI 辅助建议，需人工专业判断</p>
     </footer>
     <SurveyFeedbackButton v-if="user" />
-    <!-- 小屏导航默认收起，点右侧这个悬浮按钮才滑出顶栏与底部菜单；滚动或 6 秒后自动收起 -->
-    <button
-      v-if="user"
-      type="button"
-      class="fixed right-3 bottom-[calc(env(safe-area-inset-bottom)+7rem)] z-50 grid size-10 place-items-center rounded-full border border-slate-200/80 bg-white/90 text-slate-500 shadow-lg shadow-slate-900/10 backdrop-blur-xl transition-all duration-200 active:scale-95 lg:hidden"
-      :class="headerHidden && !keyboardCovered ? 'opacity-100' : 'pointer-events-none translate-x-3 opacity-0'"
-      aria-label="显示顶部导航和底部菜单"
-      @click="revealNav()"
-    >
-      <UIcon name="i-lucide-menu" class="size-4" />
-    </button>
-    <nav v-if="user" class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 px-[max(1rem,env(safe-area-inset-left))] pb-[env(safe-area-inset-bottom)] backdrop-blur-xl transition-transform duration-200 md:hidden" :class="[headerHidden || keyboardCovered ? 'translate-y-full' : '', keyboardCovered ? 'invisible' : '']">
+    <!-- 小屏（<lg）底部导航常显：实心底色 + 上扬阴影，与页面内容明确分层；只在手机键盘弹出时让位（隐藏到键盘后面） -->
+    <nav v-if="user" class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white px-[max(1rem,env(safe-area-inset-left))] pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_28px_-20px_rgba(15,42,35,0.45)] transition-transform duration-200 lg:hidden" :class="[keyboardCovered ? 'translate-y-full' : '', keyboardCovered ? 'invisible' : '']">
       <div class="mx-auto grid w-full max-w-md" :style="{ gridTemplateColumns: `repeat(${mobileItems.length || 1}, minmax(0, 1fr))` }">
         <template v-for="item in mobileItems" :key="item.to">
           <details v-if="item.to === '/growth'" class="relative">
-            <summary :class="['flex min-h-16 min-w-0 cursor-pointer list-none select-none flex-col items-center justify-center gap-1 px-0.5 text-[10px]', route.path.startsWith('/growth') || route.path.startsWith('/notifications') ? '!text-emerald-700' : 'text-slate-500']">
+            <summary :class="['flex min-h-16 min-w-0 cursor-pointer list-none select-none flex-col items-center justify-center gap-1 px-0.5 text-[10px]', route.path.startsWith('/growth') || route.path.startsWith('/notifications') ? '!text-emerald-700 font-medium' : 'text-slate-600']">
               <UIcon name="i-lucide-sprout" class="size-5" /><span class="max-w-full whitespace-nowrap">我的成长</span>
             </summary>
             <div class="absolute bottom-full right-0 z-[60] mb-2 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
@@ -182,7 +170,7 @@ function closeDropdown(event: Event) {
               <NuxtLink to="/notifications" class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800" @click="closeDropdown"><UIcon name="i-lucide-notebook-pen" class="size-4 text-slate-400" />工作日志</NuxtLink>
             </div>
           </details>
-          <NuxtLink v-else :to="item.to" class="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-0.5 text-[10px] text-slate-500" active-class="!text-emerald-700">
+          <NuxtLink v-else :to="item.to" class="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-0.5 text-[10px] text-slate-600" active-class="!text-emerald-700 font-medium">
             <UIcon :name="item.icon" class="size-5" /><span class="max-w-full whitespace-nowrap">{{ item.label }}</span>
           </NuxtLink>
         </template>

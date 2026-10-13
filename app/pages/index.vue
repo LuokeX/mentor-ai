@@ -542,38 +542,28 @@ function maybeAutoRead(item: TimelineItem) {
   void playSpeech(item.messageId, { silent: true })
 }
 
-// 对话页把消息区滚动上报给导航浮层：滚动即收起顶栏与底部菜单（小屏生效）
-// 小屏顶栏浮层滑出时会盖住面板标题行、露出被裁半截的图标：此时把标题行一并淡出；顶栏收起或桌面端恒显示
-const { hidden: headerHidden, enabled: headerAutoHide, reportScroll: reportHeaderScroll } = useAutoHideHeader()
-const panelHeaderFaded = computed(() => headerAutoHide.value && !headerHidden.value)
 // 键盘遮挡高度：键盘以浮层覆盖，面板主动缩短，输入框才不会被盖住
 const { inset: keyboardInset, covered: keyboardCovered } = useKeyboardInset()
 // 手机端浏览器有时会为了露出输入框平移可视视口，键盘收起后必须归零，否则整窗看起来上移了
 watch([keyboardCovered, keyboardInset], () => { if (typeof window !== 'undefined' && window.scrollY !== 0) window.scrollTo(0, 0) })
-/** 是否手机窄屏（<640px，与 Tailwind 的 sm 断点一致）：手机上面板四周只留 2px。 */
+/** 是否手机窄屏（<640px，与 Tailwind 的 sm 断点一致）：面板上方只留 2px 间距，≥sm 留 1.5rem。 */
 const phoneLayout = ref(false)
 let phoneMedia: MediaQueryList | null = null
 function syncPhoneLayout(event?: MediaQueryListEvent) {
   phoneLayout.value = event ? event.matches : Boolean(phoneMedia?.matches)
 }
-/** 是否有底部菜单（<768px，与 Tailwind 的 md 断点一致）：它默认收起，只有滑出时才需要抬高输入框。 */
-const bottomNavLayout = ref(false)
-let bottomNavMedia: MediaQueryList | null = null
-function syncBottomNavLayout(event?: MediaQueryListEvent) {
-  bottomNavLayout.value = event ? event.matches : Boolean(bottomNavMedia?.matches)
-}
-/** 对话面板高度：默认用 class 里的高度；键盘弹出时用内联高度补偿，其余情况高度恒定（导航显隐不挤压内容）。 */
+/**
+ * 对话面板高度：默认用 class 里的高度；键盘弹出时用内联高度补偿，其余情况高度恒定。
+ * 顶栏与底部菜单在小屏都常显（固定定位），面板高度必须把两者扣掉，否则输入框会被底部菜单盖住。
+ */
 const panelHeightStyle = computed(() => {
   if (!keyboardCovered.value) return undefined
-  // 键盘弹出时底部菜单已经藏到键盘后面，面板底部直接贴到键盘上沿。
-  // 手机窄屏面板只留 2px 顶边距；≥sm 沿用原有基准。
-  const base = phoneLayout.value ? '2px' : '1.9rem'
+  // 键盘弹出时底部菜单已经藏到键盘后面，面板底部直接贴到键盘上沿；
+  // 顶部仍要给常显顶栏（4.5rem）与页面留白（手机 2px / ≥sm 1.5rem）让位。
+  const base = phoneLayout.value ? '4.5rem + 2px' : '6rem'
   const inset = keyboardInset.value > 0 ? ` - ${keyboardInset.value}px` : ''
   return { height: `calc(100dvh - ${base}${inset})` }
 })
-
-/** 底部菜单浮层滑出时输入框上移：菜单悬浮在聊天窗口之上，但不盖住输入框（≥md 没有底部菜单，不需要抬高）。 */
-const inputLifted = computed(() => bottomNavLayout.value && !headerHidden.value && !keyboardCovered.value)
 
 // 对话页按视口高度布局、滚动只发生在消息区内：锁掉窗口滚动，手机端手势不会把整个窗口拖走
 useHead({ htmlAttrs: { class: 'overflow-hidden' }, bodyAttrs: { class: 'overflow-hidden' } })
@@ -652,12 +642,6 @@ const contextPayload = computed(() => selectedContext.value ? { contextType: sel
 async function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
   await nextTick()
   messageViewport.value?.scrollTo({ top: messageViewport.value.scrollHeight, behavior })
-}
-
-/** 消息区滚动 → 顶栏自动收起/滑出（小屏生效）。 */
-function onMessageViewportScroll(event: Event) {
-  const el = event.target as HTMLElement
-  reportHeaderScroll(el.scrollTop, el.scrollHeight - el.clientHeight)
 }
 
 function sendClarificationSelection(option: string) {
@@ -1350,9 +1334,6 @@ onMounted(async () => {
   phoneMedia = window.matchMedia('(max-width: 639px)')
   syncPhoneLayout()
   phoneMedia.addEventListener('change', syncPhoneLayout)
-  bottomNavMedia = window.matchMedia('(max-width: 767px)')
-  syncBottomNavLayout()
-  bottomNavMedia.addEventListener('change', syncBottomNavLayout)
 })
 
 // 教师姓名晚于首屏到达时重新播放一次，避免标题停留在默认称呼
@@ -1368,7 +1349,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onMessageDeletePointerDown, true)
   sidebarMedia?.removeEventListener('change', syncDesktopSidebar)
   phoneMedia?.removeEventListener('change', syncPhoneLayout)
-  bottomNavMedia?.removeEventListener('change', syncBottomNavLayout)
 })
 
 // 客户端 useFetch 可能晚于 onMounted 完成，列表就绪后再兜底恢复一次
@@ -1422,7 +1402,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
       </aside>
 
       <div
-        class="panel relative flex h-[calc(100dvh-env(safe-area-inset-bottom)-4px)] min-w-0 flex-col overflow-hidden transition-[height] duration-200 sm:h-[calc(100dvh-3rem)] lg:h-[calc(100dvh-7.5rem)]"
+        class="panel relative flex h-[calc(100dvh-9.25rem-env(safe-area-inset-bottom))] min-w-0 flex-col overflow-hidden transition-[height] duration-200 sm:h-[calc(100dvh-12rem-env(safe-area-inset-bottom))] lg:h-[calc(100dvh-7.5rem)]"
         :style="panelHeightStyle"
       >
         <div class="flex items-center gap-2 border-b border-slate-100 bg-white/95 px-3 py-1.5 lg:hidden">
@@ -1430,7 +1410,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
           <p class="min-w-0 flex-1 truncate text-sm font-medium text-slate-700">{{ activeSessionTitle }}</p>
           <UButton icon="i-lucide-message-square-plus" color="primary" variant="soft" size="sm" aria-label="新对话" @click="newConversation" />
         </div>
-        <div class="flex items-center justify-between gap-3 border-b border-slate-100 bg-white/90 px-3 py-1.5 transition-opacity duration-200 sm:px-6 sm:py-3" :class="panelHeaderFaded ? 'opacity-0' : ''" :aria-hidden="panelHeaderFaded">
+        <div class="flex items-center justify-between gap-3 border-b border-slate-100 bg-white/90 px-3 py-1.5 sm:px-6 sm:py-3">
           <div class="flex min-w-0 items-center gap-3">
             <div class="grid size-7 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700 sm:size-9 sm:rounded-xl"><UIcon name="i-lucide-sparkles" class="size-4.5" /></div>
             <div class="min-w-0"><div class="flex items-center gap-2"><strong class="text-sm">AI 助手</strong><span class="size-1.5 rounded-full bg-emerald-500" /></div></div>
@@ -1498,7 +1478,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
 
-        <div ref="messageViewport" class="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-slate-50/70 to-white px-3 pt-4 sm:px-6 sm:pt-6" :class="[inputLifted ? 'pb-40 sm:pb-44' : 'pb-40 sm:pb-36', {'opacity-60':loadingSession}]" @scroll="onMessageViewportScroll">
+        <div ref="messageViewport" class="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-slate-50/70 to-white px-3 pt-4 pb-40 sm:px-6 sm:pt-6 sm:pb-36" :class="{'opacity-60':loadingSession}">
           <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-5 sm:space-y-7">
             <template v-for="(item, index) in timeline" :key="index">
             <!-- 会话内换绑咨询对象：分隔条标明从这条起谈的是另一个对象（历史消息保留） -->
@@ -1743,7 +1723,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
           </div>
         </div>
 
-        <form class="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pt-4 transition-[padding] duration-200 sm:px-6 lg:pb-6" :class="inputLifted ? 'pb-[4.5rem]' : 'pb-5'" @submit.prevent="ask">
+        <form class="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pt-4 pb-5 transition-[padding] duration-200 sm:px-6 lg:pb-6" @submit.prevent="ask">
           <div class="pointer-events-auto relative">
             <div v-if="mentionOpen" class="fixed inset-0 z-20" @click="closeMention" />
             <div v-if="mentionOpen" class="absolute bottom-full left-0 right-0 z-30 mb-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">

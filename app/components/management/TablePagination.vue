@@ -15,9 +15,9 @@ const sizeOptions = ALLOWED_PAGE_SIZES.map((s) => ({ label: `${s} 条/页`, valu
 </script>
 
 <template>
-  <div class="flex items-center justify-between pt-2">
+  <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-2">
     <div class="text-base text-gray-500">共 {{ total }} 条</div>
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <USelect
         :model-value="pageSize"
         :items="sizeOptions"
