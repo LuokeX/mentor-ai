@@ -108,6 +108,12 @@ export type ChatContextType = z.infer<typeof chatContextTypeSchema>
  */
 export const CHAT_CONTEXT_MAX = 5
 
+/**
+ * 单条业务记录（学生事件 / 家校沟通）最多关联的对象数（含主对象）。
+ * 服务端校验与前端提示共用，避免两侧各写一份上限。
+ */
+export const RECORD_RELATED_TARGET_MAX = 10
+
 export const chatMessageSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(4000),

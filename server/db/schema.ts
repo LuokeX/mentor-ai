@@ -541,6 +541,10 @@ export const studentEvents = pgTable('student_events', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  /**
+   * 主学生：看板班级归属、通知跳转、导入等既有链路都按它读取。
+   * 多选学生时首个选中的学生写这里，其余写 student_event_students（关联学生）。
+   */
   studentId: uuid('student_id').notNull().references(() => students.id),
   eventType: varchar('event_type', { length: 30 }).notNull(), // E1–E6：学业纪律类/课堂秩序类/行为规范类/身心健康类/欺凌侵害类/其他
   severity: varchar('severity', { length: 20 }).notNull(), // 低/中/高/严重
@@ -549,6 +553,9 @@ export const studentEvents = pgTable('student_events', {
   occurredAt: timestamp('occurred_at', { withTimezone: true }),
   resolution: text('resolution'),
   status: varchar('status', { length: 20 }).default('open').notNull(), // open/resolved/closed
+  /** 来源会话/消息：从 AI 对话「转存」创建时记录（可回跳原对话），手工创建为空 */
+  sourceChatSessionId: uuid('source_chat_session_id').references(() => chatSessions.id, { onDelete: 'set null' }),
+  sourceChatMessageId: uuid('source_chat_message_id').references(() => chatMessages.id, { onDelete: 'set null' }),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   archivedBy: uuid('archived_by').references(() => users.id),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
@@ -556,7 +563,24 @@ export const studentEvents = pgTable('student_events', {
 }, table => [
   index('student_events_student_idx').on(table.studentId),
   index('student_events_owner_idx').on(table.ownerUserId),
-  index('student_events_school_idx').on(table.schoolId, table.occurredAt)
+  index('student_events_school_idx').on(table.schoolId, table.occurredAt),
+  index('student_events_source_message_idx').on(table.sourceChatMessageId)
+])
+
+/**
+ * 学生事件关联学生（主学生之外的其余学生，2026-10-16 支持多选学生）。
+ * 主学生仍存在 student_events.student_id；本表只存增量，避免双写漂移。
+ * 看板聚合与个体明细按下述口径读取：聚合按主学生，个体明细则「主学生或关联学生命中」。
+ */
+export const studentEventStudents = pgTable('student_event_students', {
+  eventId: uuid('event_id').notNull().references(() => studentEvents.id, { onDelete: 'cascade' }),
+  studentId: uuid('student_id').notNull().references(() => students.id, { onDelete: 'cascade' }),
+  schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('student_event_student_uidx').on(table.eventId, table.studentId),
+  index('student_event_students_student_idx').on(table.studentId),
+  index('student_event_students_school_idx').on(table.schoolId)
 ])
 
 export const plans = pgTable('plans', {
@@ -755,6 +779,10 @@ export const communications = pgTable('communications', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),
   ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
+  /**
+   * 主家长 / 主学生：看板聚合（沟通覆盖率、重点学生）与既有读取链路都按它们统计。
+   * 多选时首个选中的对象写这里，其余写 communication_guardians / communication_students。
+   */
   guardianId: uuid('guardian_id').references(() => guardians.id, { onDelete: 'set null' }),
   studentId: uuid('student_id').references(() => students.id, { onDelete: 'set null' }),
   /** 沟通渠道：phone/wechat/meeting/home_visit/other；为空表示历史数据未标注 */
@@ -765,12 +793,40 @@ export const communications = pgTable('communications', {
   riskLevel: varchar('risk_level', { length: 20 }),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   occurredAt: timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull(),
+  /** 来源会话/消息：从 AI 对话「转存」创建时记录（可回跳原对话），手工创建为空 */
+  sourceChatSessionId: uuid('source_chat_session_id').references(() => chatSessions.id, { onDelete: 'set null' }),
+  sourceChatMessageId: uuid('source_chat_message_id').references(() => chatMessages.id, { onDelete: 'set null' }),
   dataClassification: varchar('data_classification', { length: 30 }).default('highly_sensitive').notNull(),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   archivedBy: uuid('archived_by').references(() => users.id),
   ...timestamps
 }, table => [
-  index('communications_school_owner_status_updated_idx').on(table.schoolId, table.ownerUserId, table.status, table.updatedAt)
+  index('communications_school_owner_status_updated_idx').on(table.schoolId, table.ownerUserId, table.status, table.updatedAt),
+  index('communications_source_message_idx').on(table.sourceChatMessageId)
+])
+
+/** 家校沟通关联学生（主学生之外的其余学生，2026-10-16 支持多选学生）。 */
+export const communicationStudents = pgTable('communication_students', {
+  communicationId: uuid('communication_id').notNull().references(() => communications.id, { onDelete: 'cascade' }),
+  studentId: uuid('student_id').notNull().references(() => students.id, { onDelete: 'cascade' }),
+  schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('communication_student_uidx').on(table.communicationId, table.studentId),
+  index('communication_students_student_idx').on(table.studentId),
+  index('communication_students_school_idx').on(table.schoolId)
+])
+
+/** 家校沟通关联家长（主家长之外的其余家长，2026-10-16 支持多选家长）。 */
+export const communicationGuardians = pgTable('communication_guardians', {
+  communicationId: uuid('communication_id').notNull().references(() => communications.id, { onDelete: 'cascade' }),
+  guardianId: uuid('guardian_id').notNull().references(() => guardians.id, { onDelete: 'cascade' }),
+  schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('communication_guardian_uidx').on(table.communicationId, table.guardianId),
+  index('communication_guardians_guardian_idx').on(table.guardianId),
+  index('communication_guardians_school_idx').on(table.schoolId)
 ])
 
 export const contentPackages = pgTable('content_packages', {

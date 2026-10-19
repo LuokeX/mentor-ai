@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
-import { communicationChannelLabels } from '~~/shared/contracts'
+import { RECORD_RELATED_TARGET_MAX, communicationChannelLabels } from '~~/shared/contracts'
 import type { CommunicationChannel } from '~~/shared/contracts'
 import type { ManagedListResult } from '~~/shared/management'
 
@@ -9,22 +9,36 @@ interface CommunicationRow {
   summaryPreview: string
   studentId: string | null
   guardianId: string | null
+  /** 主学生 / 主家长（看板与统计按主对象归属） */
+  studentName: string | null
+  guardianName: string | null
+  /** 主对象在前的完整名单（支持多选学生 / 多选家长） */
+  studentNames: string[]
+  guardianNames: string[]
   channel: string | null
   parentType: string | null
   riskLevel: string | null
   status: string
   occurredAt: string
   updatedAt: string
+  /** 来源（从 AI 对话转存时写入）：可回跳原对话 */
+  sourceChatSessionId: string | null
+  sourceChatMessageId: string | null
 }
 interface OptionRow { id: string; name: string }
 interface CommunicationDetail extends CommunicationRow {
   summary: string
   attitudeType: string | null
+  studentIds: string[]
+  guardianIds: string[]
 }
 
 const list = useManagedList<CommunicationRow>('/api/v1/information/communications')
 const columns = [
-  { key: 'summaryPreview', label: '沟通摘要' },
+  // 摘要列固定宽度：列表预览最长 80 字，不设限会把整张表撑出横向滚动（与方案/评估列表同口径）
+  { key: 'summaryPreview', label: '沟通摘要', class: 'w-96 max-w-96 min-w-0' },
+  { key: 'studentNames', label: '关联学生' },
+  { key: 'guardianNames', label: '关联家长', mobileHidden: true },
   { key: 'channel', label: '沟通渠道' },
   { key: 'parentType', label: '家长类型', mobileHidden: true },
   { key: 'riskLevel', label: '风险等级', sortable: true },
@@ -58,20 +72,27 @@ const formError = ref('')
 const archiveRow = ref<CommunicationRow | null>(null)
 const form = reactive({
   summary: '',
-  studentId: '',
-  guardianId: '',
+  /** 关联学生 / 关联家长（首个为主对象；编辑时不改关联，与既有行为一致） */
+  studentIds: [] as string[],
+  guardianIds: [] as string[],
   channel: '',
   parentType: '',
   attitudeType: '',
   riskLevel: '',
   updatedAt: '',
+  sourceChatSessionId: null as string | null,
+  sourceChatMessageId: null as string | null,
 })
+const editingStudentNames = ref<string[]>([])
+const editingGuardianNames = ref<string[]>([])
 
 function resetForm() {
   Object.assign(form, {
-    summary: '', studentId: '', guardianId: '', channel: '', parentType: '', attitudeType: '',
-    riskLevel: '', updatedAt: '',
+    summary: '', studentIds: [], guardianIds: [], channel: '', parentType: '', attitudeType: '',
+    riskLevel: '', updatedAt: '', sourceChatSessionId: null, sourceChatMessageId: null,
   })
+  editingStudentNames.value = []
+  editingGuardianNames.value = []
 }
 
 function openCreate() {
@@ -85,21 +106,53 @@ function openBatchImport() {
   batchImportOpen.value = true
 }
 
+/** 列表「关联学生 / 关联家长」列：主对象在前，超过 2 人折叠为「张三 等 N 人」。 */
+function namesColumnLabel(names: string[] | null | undefined): string {
+  const list = (names || []).filter(Boolean)
+  if (!list.length) return '—'
+  return list.length > 2 ? `${list[0]} 等 ${list.length} 人` : list.join('、')
+}
+
+/**
+ * 从 AI 对话转存：读取 ?chatSessionId=&chatMessageId=，打开新建抽屉并预填。
+ * 摘要用消息全文（截 3000 字），关联学生 / 关联家长用本轮对象（回退会话对象），可在表单里改。
+ */
+useChatRecordPrefill({
+  withGuardians: true,
+  apply: (prefill) => {
+    openCreate()
+    if (!prefill.text.trim()) return
+    form.summary = truncateRecordText(prefill.text, 3000)
+    form.studentIds = prefill.students.map(item => item.id)
+    form.guardianIds = prefill.guardians.map(item => item.id)
+    form.sourceChatSessionId = prefill.sessionId
+    form.sourceChatMessageId = prefill.messageId
+  }
+})
+
 async function openEdit(id: string) {
   saving.value = true
   formError.value = ''
   try {
     const detail = await $fetch<CommunicationDetail>(`/api/v1/information/communications/${id}`)
     editingId.value = id
+    editingStudentNames.value = detail.studentNames?.length
+      ? detail.studentNames
+      : (detail.studentIds?.length ? detail.studentIds.map(() => '已关联学生') : [])
+    editingGuardianNames.value = detail.guardianNames?.length
+      ? detail.guardianNames
+      : (detail.guardianIds?.length ? detail.guardianIds.map(() => '已关联家长') : [])
     Object.assign(form, {
       summary: detail.summary,
-      studentId: detail.studentId || '',
-      guardianId: detail.guardianId || '',
+      studentIds: detail.studentIds ?? (detail.studentId ? [detail.studentId] : []),
+      guardianIds: detail.guardianIds ?? (detail.guardianId ? [detail.guardianId] : []),
       channel: detail.channel || '',
       parentType: detail.parentType || '',
       attitudeType: detail.attitudeType || '',
       riskLevel: detail.riskLevel || '',
       updatedAt: detail.updatedAt,
+      sourceChatSessionId: detail.sourceChatSessionId ?? null,
+      sourceChatMessageId: detail.sourceChatMessageId ?? null,
     })
     drawerOpen.value = true
   } catch (error: unknown) {
@@ -112,6 +165,10 @@ async function openEdit(id: string) {
 async function saveCommunication() {
   if (form.summary.trim().length < 5) {
     formError.value = '沟通摘要至少填写 5 个字符'
+    return
+  }
+  if (form.studentIds.length > RECORD_RELATED_TARGET_MAX || form.guardianIds.length > RECORD_RELATED_TARGET_MAX) {
+    formError.value = `关联学生与关联家长各最多 ${RECORD_RELATED_TARGET_MAX} 个`
     return
   }
   saving.value = true
@@ -135,12 +192,15 @@ async function saveCommunication() {
         body: {
           type: 'communication',
           summary: form.summary,
-          studentId: form.studentId || undefined,
-          guardianId: form.guardianId || undefined,
+          studentIds: form.studentIds.length ? form.studentIds : undefined,
+          guardianIds: form.guardianIds.length ? form.guardianIds : undefined,
           channel: form.channel || undefined,
           parentType: form.parentType || undefined,
           attitudeType: form.attitudeType || undefined,
           riskLevel: form.riskLevel || undefined,
+          ...(form.sourceChatSessionId && form.sourceChatMessageId
+            ? { sourceChatSessionId: form.sourceChatSessionId, sourceChatMessageId: form.sourceChatMessageId }
+            : {}),
         },
       })
     }
@@ -210,7 +270,14 @@ function closeDrawer() {
       @sort="list.onSortChange"
       @row-click="openCommunicationRow"
     >
+      <template #summaryPreview-data="{ row }">
+        <UTooltip :text="row.summaryPreview" class="block min-w-0" :popper="{ placement: 'top', strategy: 'fixed' }">
+          <span class="block truncate">{{ row.summaryPreview }}</span>
+        </UTooltip>
+      </template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '有效' : '已归档' }}</UBadge></template>
+      <template #studentNames-data="{ row }">{{ namesColumnLabel(row.studentNames) }}</template>
+      <template #guardianNames-data="{ row }">{{ namesColumnLabel(row.guardianNames) }}</template>
       <template #channel-data="{ value }">{{ channelLabel(value) }}</template>
       <template #riskLevel-data="{ value }"><UBadge v-if="value" color="warning" variant="subtle">{{ value }}</UBadge><span v-else>—</span></template>
       <template #occurredAt-data="{ value }">{{ formatDateTime(value) }}</template>
@@ -229,9 +296,22 @@ function closeDrawer() {
 
     <EntityFormDrawer :open="drawerOpen" :title="editingId ? '编辑沟通记录' : '新增沟通记录'" @close="drawerOpen = false">
       <form class="space-y-4" @submit.prevent="saveCommunication">
-        <div v-if="!editingId" class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="关联学生"><USelect v-model="form.studentId" :items="studentOptions" class="w-full" /></UFormField>
-          <UFormField label="关联家长"><USelect v-model="form.guardianId" :items="guardianOptions" class="w-full" /></UFormField>
+        <!-- 编辑时不允许改关联对象（与既有行为一致）：只读展示完整名单 -->
+        <div v-if="editingId" class="grid gap-4 sm:grid-cols-2">
+          <UFormField label="关联学生">
+            <p class="text-sm text-slate-600">{{ editingStudentNames.length ? editingStudentNames.join('、') : '未指定' }}</p>
+          </UFormField>
+          <UFormField label="关联家长">
+            <p class="text-sm text-slate-600">{{ editingGuardianNames.length ? editingGuardianNames.join('、') : '未指定' }}</p>
+          </UFormField>
+        </div>
+        <div v-else class="grid gap-4 sm:grid-cols-2">
+          <UFormField label="关联学生" description="可多选，首个为主学生">
+            <USelectMenu v-model="form.studentIds" :items="studentOptions" multiple searchable value-key="value" class="w-full" placeholder="可多选" />
+          </UFormField>
+          <UFormField label="关联家长" description="可多选，首个为主家长">
+            <USelectMenu v-model="form.guardianIds" :items="guardianOptions" multiple searchable value-key="value" class="w-full" placeholder="可多选" />
+          </UFormField>
         </div>
         <UFormField label="沟通摘要" required><UTextarea v-model="form.summary" :rows="7" class="w-full" /></UFormField>
         <div class="grid gap-4 sm:grid-cols-2">
@@ -240,6 +320,11 @@ function closeDrawer() {
           <UFormField label="态度类型"><UInput v-model="form.attitudeType" class="w-full" /></UFormField>
           <UFormField label="风险等级"><UInput v-model="form.riskLevel" class="w-full" /></UFormField>
         </div>
+        <p v-if="form.sourceChatSessionId" class="flex items-center gap-1.5 text-xs text-slate-500">
+          <UIcon name="i-lucide-message-square-quote" class="size-3.5" />
+          来源：AI 对话
+          <NuxtLink :to="`/?sessionId=${form.sourceChatSessionId}`" class="text-emerald-700 hover:underline">回看原对话</NuxtLink>
+        </p>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         <div class="flex justify-end gap-2">
           <UButton color="neutral" variant="outline" @click="closeDrawer">取消</UButton>

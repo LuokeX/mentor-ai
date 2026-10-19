@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
-import { eventStatuses, eventStatusLabels, studentEventTypeLabels, studentEventTypes } from '~~/shared/contracts'
+import { RECORD_RELATED_TARGET_MAX, eventStatuses, eventStatusLabels, studentEventTypeLabels, studentEventTypes } from '~~/shared/contracts'
 import type { ManagedListResult } from '~~/shared/management'
 
 interface EventRow {
   id: string
   studentId: string
   studentName: string
+  /** 主学生 + 关联学生（主学生在前）：一行事件可关联多名学生 */
+  studentNames: string[]
+  relatedStudentNames: string[]
   eventType: string
   severity: string
   title: string
@@ -15,6 +18,9 @@ interface EventRow {
   occurredAt: string
   status: string
   updatedAt: string
+  /** 来源（从 AI 对话转存时写入）：可回跳原对话 */
+  sourceChatSessionId: string | null
+  sourceChatMessageId: string | null
 }
 interface StudentOption { id: string; name: string }
 
@@ -44,10 +50,12 @@ const studentOptions = computed(() => (studentData.value?.rows || []).map(item =
 const drawerOpen = ref(false)
 const batchImportOpen = ref(false)
 const editingId = ref<string | null>(null)
+const editingStudentNames = ref<string[]>([])
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({
-  studentId: '',
+  /** 关联学生（首个为主学生；编辑时不改关联，与既有行为一致） */
+  studentIds: [] as string[],
   title: '',
   eventType: '其他',
   severity: '低',
@@ -56,14 +64,18 @@ const form = reactive({
   status: 'open',
   occurredAt: '',
   updatedAt: '',
+  sourceChatSessionId: null as string | null,
+  sourceChatMessageId: null as string | null,
 })
 
 function openCreate() {
   editingId.value = null
+  editingStudentNames.value = []
   Object.assign(form, {
-    studentId: '', title: '', eventType: '其他', severity: '低',
+    studentIds: [], title: '', eventType: '其他', severity: '低',
     description: '', resolution: '', status: 'open',
     occurredAt: toBeijingInput(new Date()), updatedAt: '',
+    sourceChatSessionId: null, sourceChatMessageId: null,
   })
   formError.value = ''
   drawerOpen.value = true
@@ -73,8 +85,9 @@ function openEdit(rowOrId: EventRow | string) {
   const row = typeof rowOrId === 'string' ? list.rows.value.find(item => item.id === rowOrId) : rowOrId
   if (!row) return
   editingId.value = row.id
+  editingStudentNames.value = row.studentNames?.length ? row.studentNames : [row.studentName]
   Object.assign(form, {
-    studentId: row.studentId,
+    studentIds: [row.studentId],
     title: row.title,
     eventType: row.eventType,
     severity: row.severity,
@@ -83,14 +96,27 @@ function openEdit(rowOrId: EventRow | string) {
     status: row.status,
     occurredAt: toBeijingInput(row.occurredAt),
     updatedAt: row.updatedAt,
+    sourceChatSessionId: row.sourceChatSessionId ?? null,
+    sourceChatMessageId: row.sourceChatMessageId ?? null,
   })
   formError.value = ''
   drawerOpen.value = true
 }
 
+/** 列表「学生」列：主学生在前，超过 2 人折叠为「张三 等 N 人」。 */
+function studentColumnLabel(row: EventRow): string {
+  const names = row.studentNames?.length ? row.studentNames : (row.studentName ? [row.studentName] : [])
+  if (!names.length) return '—'
+  return names.length > 2 ? `${names[0]} 等 ${names.length} 人` : names.join('、')
+}
+
 async function saveEvent() {
-  if (!form.studentId || !form.title.trim()) {
+  if (!form.studentIds.length || !form.title.trim()) {
     formError.value = '请选择学生并填写事件标题'
+    return
+  }
+  if (form.studentIds.length > RECORD_RELATED_TARGET_MAX) {
+    formError.value = `一次最多关联 ${RECORD_RELATED_TARGET_MAX} 名学生`
     return
   }
   saving.value = true
@@ -114,7 +140,13 @@ async function saveEvent() {
     } else {
       await $fetch('/api/v1/information/student-events', {
         method: 'POST',
-        body: { ...body, studentId: form.studentId },
+        body: {
+          ...body,
+          studentIds: form.studentIds,
+          ...(form.sourceChatSessionId && form.sourceChatMessageId
+            ? { sourceChatSessionId: form.sourceChatSessionId, sourceChatMessageId: form.sourceChatMessageId }
+            : {}),
+        },
       })
     }
     drawerOpen.value = false
@@ -134,6 +166,22 @@ function closeDrawer() {
 function openBatchImport() {
   batchImportOpen.value = true
 }
+
+/**
+ * 从 AI 对话转存：读取 ?chatSessionId=&chatMessageId=，打开新建抽屉并预填。
+ * 标题取消息首行（截 40 字），说明用全文；关联学生用本轮对象（回退会话对象），可在表单里改。
+ */
+useChatRecordPrefill({
+  apply: (prefill) => {
+    openCreate()
+    if (!prefill.text.trim()) return
+    form.title = deriveRecordTitle(prefill.text)
+    form.description = truncateRecordText(prefill.text, 4000)
+    form.studentIds = prefill.students.map(item => item.id)
+    form.sourceChatSessionId = prefill.sessionId
+    form.sourceChatMessageId = prefill.messageId
+  }
+})
 
 async function archiveEvent(eventId: string) {
   if (!confirm('确定归档这条学生事件吗？归档后历史记录保留，仅归档处理。')) return
@@ -170,6 +218,7 @@ async function archiveEvent(eventId: string) {
       @refresh="list.refresh"
     />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value" :sort="list.sort.value" :order="list.order.value" @sort="list.onSortChange" @row-click="openEdit">
+      <template #studentName-data="{ row }"><span class="truncate">{{ studentColumnLabel(row) }}</span></template>
       <template #severity-data="{ value }"><UBadge :color="value === '严重' ? 'error' : value === '高' ? 'warning' : 'neutral'" variant="subtle">{{ value }}</UBadge></template>
       <template #status-data="{ value }"><UBadge :color="value === 'open' ? 'warning' : value === 'resolved' ? 'success' : value === 'archived' ? 'neutral' : 'neutral'" variant="subtle">{{ value === 'open' ? '待处理' : value === 'resolved' ? '已解决' : value === 'archived' ? '已归档' : '已关闭' }}</UBadge></template>
       <template #occurredAt-data="{ value }">{{ formatDateTime(value) }}</template>
@@ -180,7 +229,13 @@ async function archiveEvent(eventId: string) {
 
     <EntityFormDrawer :open="drawerOpen" :title="editingId ? '编辑学生事件' : '新增学生事件'" @close="drawerOpen = false">
       <form class="space-y-4" @submit.prevent="saveEvent">
-        <UFormField label="学生" required><USelect v-model="form.studentId" :items="studentOptions" :disabled="Boolean(editingId)" class="w-full" /></UFormField>
+        <!-- 编辑时不允许改关联学生（与既有行为一致）：只读展示完整名单 -->
+        <UFormField v-if="editingId" label="学生">
+          <p class="text-sm text-slate-600">{{ editingStudentNames.join('、') }}<span class="ml-2 text-xs text-slate-400">编辑不改关联学生</span></p>
+        </UFormField>
+        <UFormField v-else label="学生" required description="可选择多名学生，首个为主学生（看板与统计按主学生归属）">
+          <USelectMenu v-model="form.studentIds" :items="studentOptions" multiple searchable value-key="value" class="w-full" placeholder="选择一名或多名学生" />
+        </UFormField>
         <UFormField label="标题" required><UInput v-model="form.title" class="w-full" /></UFormField>
         <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="类型"><USelect v-model="form.eventType" :items="eventTypes" class="w-full" /></UFormField>
@@ -190,6 +245,11 @@ async function archiveEvent(eventId: string) {
         </div>
         <UFormField label="事件说明"><UTextarea v-model="form.description" :rows="4" class="w-full" /></UFormField>
         <UFormField label="处理结果"><UTextarea v-model="form.resolution" :rows="3" class="w-full" /></UFormField>
+        <p v-if="form.sourceChatSessionId" class="flex items-center gap-1.5 text-xs text-slate-500">
+          <UIcon name="i-lucide-message-square-quote" class="size-3.5" />
+          来源：AI 对话
+          <NuxtLink :to="`/?sessionId=${form.sourceChatSessionId}`" class="text-emerald-700 hover:underline">回看原对话</NuxtLink>
+        </p>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         <div class="flex justify-end gap-2"><UButton color="neutral" variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">保存</UButton></div>
       </form>

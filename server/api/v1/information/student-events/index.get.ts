@@ -1,7 +1,7 @@
 /**
  * 教师端学生事件列表 API
  */
-import { and, asc, desc, eq, ilike } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
@@ -66,11 +66,38 @@ export default defineEventHandler(async (event) => {
     page: query.page, pageSize: query.pageSize,
   })
   const secret = useRuntimeConfig(event).encryptionKey
+  // 关联学生（主学生之外的其余学生）：按本页事件 id 批量取一次，避免逐行查询
+  const eventIds = result.rows.map(row => row.id)
+  const relatedByEvent = new Map<string, string[]>()
+  if (eventIds.length) {
+    const relatedRows = await db.select({
+      eventId: schema.studentEventStudents.eventId,
+      nameEnc: schema.students.nameEnc
+    }).from(schema.studentEventStudents)
+      .innerJoin(schema.students, and(
+        eq(schema.students.id, schema.studentEventStudents.studentId),
+        eq(schema.students.schoolId, user.schoolId)
+      ))
+      .where(and(
+        inArray(schema.studentEventStudents.eventId, eventIds),
+        eq(schema.studentEventStudents.schoolId, user.schoolId)
+      ))
+    for (const item of relatedRows) {
+      const list = relatedByEvent.get(item.eventId) || []
+      list.push(decryptSensitive(item.nameEnc, secret))
+      relatedByEvent.set(item.eventId, list)
+    }
+  }
   const rows = await Promise.all(result.rows.map(async (row) => {
     const { studentNameEnc, ...safeRow } = row
+    const primaryName = decryptSensitive(studentNameEnc, secret)
+    const relatedStudentNames = relatedByEvent.get(row.id) || []
     return {
       ...safeRow,
-      studentName: decryptSensitive(studentNameEnc, secret),
+      studentName: primaryName,
+      relatedStudentNames,
+      // 主学生在前：界面上直接展示这一列即可（超过 2 人时前端折叠为「张三 等 N 人」）
+      studentNames: [primaryName, ...relatedStudentNames],
       _capabilities: await resolveCapabilities({ user, recordSchoolId: row.schoolId, recordOwnerUserId: row.ownerUserId, recordStatus: row.status, targetType: 'student_event', targetId: row.id }, event),
     }
   }))

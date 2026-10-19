@@ -47,4 +47,22 @@ describe('management migration safety', () => {
     expect(sql).toContain("p.\"accepted_at\" IS NOT NULL")
     expect(decisionIndex).toBeGreaterThan(acceptedBackfill)
   })
+
+  it('creates session object and record relation tables for multi-object support', () => {
+    // 迁移 A：会话关联对象（主对象之外的其余对象，@ 多名学生）
+    const sessionObjects = readFileSync(new URL('../drizzle/0070_next_mephistopheles.sql', import.meta.url), 'utf8')
+    expect(sessionObjects).toContain('CREATE TABLE "chat_session_objects"')
+    expect(sessionObjects).toContain('CREATE UNIQUE INDEX "chat_session_object_uidx"')
+    expect(sessionObjects).toContain('ON DELETE cascade')
+    // 迁移 B：学生事件关联学生 + 家校沟通关联学生/家长 + 记录来源列（AI 对话转存）
+    const recordRelations = readFileSync(new URL('../drizzle/0071_greedy_invisible_woman.sql', import.meta.url), 'utf8')
+    expect(recordRelations).toContain('CREATE TABLE "student_event_students"')
+    expect(recordRelations).toContain('CREATE TABLE "communication_students"')
+    expect(recordRelations).toContain('CREATE TABLE "communication_guardians"')
+    expect(recordRelations).toContain('CREATE UNIQUE INDEX "student_event_student_uidx"')
+    expect(recordRelations).toContain('CREATE UNIQUE INDEX "communication_student_uidx"')
+    expect(recordRelations).toContain('CREATE UNIQUE INDEX "communication_guardian_uidx"')
+    expect(recordRelations).toContain('ALTER TABLE "student_events" ADD COLUMN "source_chat_message_id" uuid')
+    expect(recordRelations).toContain('ALTER TABLE "communications" ADD COLUMN "source_chat_session_id" uuid')
+  })
 })
