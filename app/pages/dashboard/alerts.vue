@@ -1,14 +1,20 @@
 <script setup lang="ts">
 /**
- * 数据驾驶舱 · 预警看板（默认近 7 天 + 只看待解决，最长 1 年）。
+ * 数据驾驶舱 · 预警看板（默认近 7 天 + 只看待解决 + 只看高风险明细，最长 1 年）。
  *
  * 合并安全事项（对话助手 / 量表提交命中安全规则）与学生事件（E1–E6）。
  * 学生列由服务端脱敏为「学生 A/B/C」（周期内稳定编号）；本页不提供导出，
  * 避免把脱敏前的明细带出看板。
+ * 状态与风险等级筛选只作用于明细表，KPI 卡与趋势保持统计范围口径。
  */
 import {
+  ALERT_DEFAULT_RISK_LEVEL,
+  ALERT_RISK_LEVEL_FILTER_LABELS,
+  ALERT_RISK_LEVEL_FILTERS,
   DASHBOARD_INDIVIDUAL_TARGET_LABELS,
   DASHBOARD_PERIOD_LIMITS,
+  alertRiskLevelTone,
+  type AlertRiskLevelFilter,
   type AlertsResponse,
   type AlertSource,
   type DashboardIndividualDetailResponse,
@@ -24,7 +30,13 @@ const { context } = await useDashboardPageAccess('dashboard_alerts')
 const { grade, classIds } = useDashboardFilters()
 
 const status = ref<'open' | 'resolved' | 'closed' | 'all'>('open')
-const sources = ref<AlertSource[]>([])
+/** 风险等级筛选：默认只看高风险（含安全关注 / 严重），与 KPI 的高危口径同源。 */
+const riskLevel = ref<AlertRiskLevelFilter>(ALERT_DEFAULT_RISK_LEVEL)
+/**
+ * 来源默认勾选前四类（安全事项 / 学生事件 / 高风险家校沟通），方案逾期两类默认不勾。
+ * 注意：全部取消勾选时服务端按「不筛选来源」处理，会显示六类来源。
+ */
+const sources = ref<AlertSource[]>(['safety_chat', 'safety_assessment', 'student_event', 'communication_risk'])
 const page = ref(1)
 const pageSize = ref(20)
 const sort = ref('occurredAt')
@@ -37,6 +49,7 @@ const params = computed(() => compactDashboardQuery({
   classIds: classIds.value,
   status: status.value,
   sources: sources.value,
+  riskLevel: riskLevel.value,
   page: page.value,
   pageSize: pageSize.value,
   sort: sort.value,
@@ -53,14 +66,13 @@ const classOptions = computed(() => (context.value?.classes ?? [])
   .filter(item => grade.value === '' || item.grade === grade.value)
   .map(item => ({ value: item.id, label: item.name, group: item.gradeLabel })))
 
-watch([status, sources], () => { page.value = 1 })
+watch([status, riskLevel, sources], () => { page.value = 1 })
 watch([start, end], () => { page.value = 1 })
 watch(grade, () => { page.value = 1 })
 watch(classIds, () => { page.value = 1 })
 
 const kpis = computed(() => data.value?.kpis ?? null)
 const trend = computed(() => data.value?.byDay ?? [])
-const studentEventTypes = computed(() => data.value?.studentEventTypes ?? [])
 const communication = computed(() => data.value?.communication ?? null)
 const presets: DashboardPeriodPreset[] = [
   { label: '近 7 天', days: 7 },
@@ -131,6 +143,14 @@ function toggleSort(column: TableColumn) {
 const cellValue = (row: Record<string, unknown>, key: string) => {
   const value = row[key]
   return value === null || value === undefined || value === '' ? '—' : String(value)
+}
+
+/** 风险等级列的文字色：高风险 / 安全关注 / 严重标红，中风险标黄，低风险与逾期未闭环保持默认灰。 */
+function riskLevelClass(level: string): string {
+  const tone = alertRiskLevelTone(level)
+  if (tone === 'high') return 'text-red-600'
+  if (tone === 'medium') return 'text-yellow-600'
+  return 'text-slate-600'
 }
 
 const totalPages = computed(() => Math.max(1, Math.ceil((data.value?.table.total ?? 0) / pageSize.value)))
@@ -303,6 +323,17 @@ async function loadIndividualDetail(target: IndividualTargetRef, grantId: string
           </select>
         </label>
         <DashboardMultiSelect v-model="classIds" label="班级（多选）" :options="classOptions" />
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-slate-500">风险等级</span>
+          <select
+            v-model="riskLevel"
+            class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 focus:border-emerald-400 focus:outline-none"
+          >
+            <option v-for="value in ALERT_RISK_LEVEL_FILTERS" :key="value" :value="value">
+              {{ ALERT_RISK_LEVEL_FILTER_LABELS[value] }}
+            </option>
+          </select>
+        </label>
         <fieldset class="flex flex-col gap-1">
           <span class="text-xs text-slate-500">来源</span>
           <div class="flex flex-wrap gap-x-3 gap-y-1.5 pb-1">
@@ -322,12 +353,12 @@ async function loadIndividualDetail(target: IndividualTargetRef, grantId: string
 
     <template v-else>
       <section class="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
-        <DashboardStatCard label="预警总数" :value="kpis?.total ?? 0" unit="项" hint="周期内全部来源" />
+        <DashboardStatCard label="预警总数" :value="kpis?.total ?? 0" unit="项" hint="周期内所选来源（默认前四类）" />
         <DashboardStatCard label="待解决" :value="kpis?.open ?? 0" unit="项" hint="状态不为已关闭" />
         <DashboardStatCard label="高风险未闭环" :value="kpis?.highRiskOpen ?? 0" unit="项" hint="安全事项 + 高/严重学生事件 + 高风险沟通" />
         <DashboardStatCard label="高危闭环率" :value="kpis?.highRiskClosedRate ?? null" unit="%" hint="已关闭高危 / 高危总数（不受上方状态筛选影响）" />
         <DashboardStatCard label="心理高风险学生" :value="kpis?.studentRiskHigh ?? 0" unit="人" hint="周期内最近一次量表等级折算为高风险的学生" />
-        <DashboardStatCard label="方案逾期未闭环" :value="kpis?.overdueOpen ?? 0" unit="项" hint="执行项逾期 + 复盘逾期" />
+        <DashboardStatCard label="方案逾期未闭环" :value="kpis?.overdueOpen ?? 0" unit="项" hint="执行项逾期 + 复盘逾期（需勾选对应来源）" />
         <DashboardStatCard label="时间范围" :value="rangeDays" unit="天" :hint="`${period.start} ~ ${period.end}（含首尾）`" />
       </section>
 
@@ -343,33 +374,7 @@ async function loadIndividualDetail(target: IndividualTargetRef, grantId: string
               { name: '方案逾期', values: trend.map(item => item.overdue) }
             ]"
           />
-          <p class="mt-2 text-[11px] text-slate-400">按记录时间（逾期项按到期时间）落东八区自然日；含已关闭记录，与上方 KPI 口径一致。</p>
-        </div>
-        <div class="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 class="mb-3 text-sm font-medium text-slate-700">学生事件类型分布</h2>
-          <DashboardDonutChart
-            :segments="studentEventTypes.map(item => ({ label: item.eventType, value: item.count }))"
-            center-label="学生事件"
-          />
-          <p class="mt-2 text-[11px] text-slate-400">
-            E1–E6 六大类；德育口径下只统计行为规范 / 课堂秩序 / 欺凌侵害类。
-            周期内共 {{ data?.studentEvents.importers ?? 0 }} 位教师录入学生事件。
-          </p>
-        </div>
-        <div class="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 class="mb-3 text-sm font-medium text-slate-700">家校沟通渠道分布</h2>
-          <DashboardDonutChart
-            :segments="(communication?.channels ?? []).map(item => ({ label: item.label, value: item.count }))"
-            center-label="沟通记录"
-          />
-          <p class="mt-2 text-[11px] text-slate-400">只统计渠道与时间等结构化字段，不读取沟通正文与摘要。</p>
-        </div>
-        <div class="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 class="mb-3 text-sm font-medium text-slate-700">家校沟通每日趋势</h2>
-          <DashboardLineChart
-            :labels="(communication?.byDay ?? []).map(item => item.date)"
-            :series="[{ name: '沟通记录', values: (communication?.byDay ?? []).map(item => item.count) }]"
-          />
+          <p class="mt-2 text-[11px] text-slate-400">按记录时间（逾期项按到期时间）落东八区自然日；含已关闭记录，与上方 KPI 口径一致。学生事件类型分布与家校沟通渠道分布改在「数据总览」聚合卡展示。</p>
         </div>
         <div class="rounded-xl border border-slate-200 bg-white p-4">
           <h2 class="mb-3 text-sm font-medium text-slate-700">家校沟通覆盖率与重点学生</h2>
@@ -433,8 +438,11 @@ async function loadIndividualDetail(target: IndividualTargetRef, grantId: string
                 <td
                   v-for="column in visibleColumns"
                   :key="column.key"
-                  class="py-2 pr-3 text-slate-600"
-                  :class="column.align === 'right' ? 'text-right' : ''"
+                  class="py-2 pr-3"
+                  :class="[
+                    column.align === 'right' ? 'text-right' : '',
+                    column.key === 'riskLevel' ? riskLevelClass(row.riskLevel) : 'text-slate-600'
+                  ]"
                 >
                   <template v-if="column.key === 'studentLabel'">
                     <span>{{ cellValue(row, column.key) }}</span>
@@ -480,7 +488,7 @@ async function loadIndividualDetail(target: IndividualTargetRef, grantId: string
             <button type="button" class="rounded-lg border border-slate-200 px-2.5 py-1 disabled:opacity-40" :disabled="page >= totalPages" @click="page += 1">下一页</button>
           </div>
         </div>
-        <p class="text-[11px] text-slate-400">学生列按周期内首次出现顺序编号（学生 A/B/C），不展示姓名；本页不提供导出。</p>
+        <p class="text-[11px] text-slate-400">学生列按周期内首次出现顺序编号（学生 A/B/C），不展示姓名；本页不提供导出。状态与风险等级筛选只作用于明细表；KPI 与趋势按周期内所选来源累计。</p>
         <p v-if="individualEnabled" class="text-[11px] text-slate-400">
           已开通个体明细：学生、记录教师与关联家长可分别展开，需填写查看事由并获 15 分钟有效期，全程写入审计。
         </p>

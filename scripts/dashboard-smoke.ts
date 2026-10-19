@@ -467,12 +467,25 @@ async function main() {
       && typeof alertsShape.kpis?.overdueOpen === 'number',
     `趋势 ${alertsShape.byDay?.length ?? 0} 天；事件类型 ${alertsShape.studentEventTypes?.length ?? 0} 类；沟通渠道 ${alertsShape.communication?.channels?.length ?? 0} 类；overdueOpen=${alertsShape.kpis?.overdueOpen ?? '—'}`)
 
-    // 5.4) 逾期来源筛选（执行项逾期 / 复盘逾期）
-    const overdueResponse = await main.get('/api/v1/dashboard/alerts?sources=plan_action_overdue,plan_review_overdue&status=all')
+    // 5.4) 逾期来源筛选（执行项逾期 / 复盘逾期）；riskLevel=all 关掉「默认只看高风险」的明细筛选
+    const overdueResponse = await main.get('/api/v1/dashboard/alerts?sources=plan_action_overdue,plan_review_overdue&status=all&riskLevel=all')
     const overdueBody = await overdueResponse.json() as { table?: { rows?: Array<{ source?: string }> } }
     const wrongSource = (overdueBody.table?.rows ?? []).filter(row => row.source !== 'plan_action_overdue' && row.source !== 'plan_review_overdue')
     record('逾期来源筛选生效', overdueResponse.status === 200 && wrongSource.length === 0,
       `HTTP ${overdueResponse.status}；逾期行 ${overdueBody.table?.rows?.length ?? 0} 条；越界来源 ${wrongSource.length} 条`)
+
+    // 5.4.1) 风险等级筛选（默认高风险档）：高风险档只出高风险 / 安全关注 / 严重，中风险的档位同样收口
+    const highRiskResponse = await main.get('/api/v1/dashboard/alerts?status=all&riskLevel=high&pageSize=100')
+    const highRiskBody = await highRiskResponse.json() as { table?: { rows?: Array<{ riskLevel?: string }> } }
+    const highRiskRows = highRiskBody.table?.rows ?? []
+    const highRiskOk = highRiskResponse.status === 200
+      && highRiskRows.every(row => ['高风险', '安全关注', '严重'].includes(row.riskLevel ?? ''))
+    const mediumRiskResponse = await main.get('/api/v1/dashboard/alerts?status=all&riskLevel=medium&pageSize=100')
+    const mediumRiskBody = await mediumRiskResponse.json() as { table?: { rows?: Array<{ riskLevel?: string }> } }
+    const mediumRiskRows = mediumRiskBody.table?.rows ?? []
+    const mediumRiskOk = mediumRiskResponse.status === 200 && mediumRiskRows.every(row => row.riskLevel === '中风险')
+    record('风险等级筛选生效（默认高风险档）', highRiskOk && mediumRiskOk,
+      `高风险档 ${highRiskRows.length} 条；中风险档 ${mediumRiskRows.length} 条`)
 
     // 5.5) 年级 / 班级对比（W8）：年级层级 → 下钻班级 → 越界班级不生效
     const juniorClassIdSet = new Set((classesBySchool.get('llschool-junior') ?? []).map(item => item.id))
@@ -548,7 +561,7 @@ async function main() {
     record('看板角色不能进平台使用量看板', usageForbidden.status === 403, `HTTP ${usageForbidden.status}`)
 
     // 9) 学生标号脱敏：预警明细里不允许出现学生姓名列
-    const alerts = await main.get('/api/v1/dashboard/alerts?status=all')
+    const alerts = await main.get('/api/v1/dashboard/alerts?status=all&riskLevel=all')
     const alertsBody = await alerts.json() as { table?: { rows?: Array<Record<string, unknown>> } }
     const leaked = (alertsBody.table?.rows ?? []).filter(row => 'studentName' in row || 'name' in row)
     const labels = [...new Set((alertsBody.table?.rows ?? []).map(row => String(row.studentLabel ?? '')).filter(Boolean))]
@@ -604,7 +617,7 @@ async function main() {
       // 预警区间默认近 7 天，这里放宽到近一年，避免因为本期没有学生事件而拿不到可下钻的行
       const studentEventEnd = new Date()
       const studentEventStart = new Date(studentEventEnd.getTime() - 364 * 86_400_000)
-      const studentEventQuery = `status=all&pageSize=100&start=${studentEventStart.toISOString().slice(0, 10)}&end=${studentEventEnd.toISOString().slice(0, 10)}`
+      const studentEventQuery = `status=all&pageSize=100&riskLevel=all&start=${studentEventStart.toISOString().slice(0, 10)}&end=${studentEventEnd.toISOString().slice(0, 10)}`
       const offAlerts = await (await main.get(`/api/v1/dashboard/alerts?${studentEventQuery}`)).json() as {
         table?: { rows?: Array<{ source?: string, studentId?: string | null }> }
       }

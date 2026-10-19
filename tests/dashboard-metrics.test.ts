@@ -29,6 +29,7 @@ import {
   previousMonthRange,
   previousWeekRange,
   resolveDashboardRange,
+  SAFETY_RISK_LABEL,
   safetySourceOf,
   shanghaiDateKey,
   shanghaiDayEnd,
@@ -37,11 +38,17 @@ import {
   studentEventRiskLabel,
   visibleQuestionCategories,
   DASHBOARD_TABLE_DEFAULTS,
+  type AlertRiskLevelFilter,
   type DashboardComparisonRow,
   type RawAlert
 } from '../server/domain/dashboard-metrics'
 import {
   AI_QUESTION_TABLE_DIMENSION_LABELS,
+  ALERT_DEFAULT_RISK_LEVEL,
+  ALERT_OVERDUE_RISK_LABEL,
+  ALERT_RISK_LEVEL_FILTERS,
+  ALERT_RISK_LEVEL_FILTER_LABELS,
+  COMMUNICATION_RISK_LABELS,
   DASHBOARD_COMPARISON_METRIC_LABELS,
   DASHBOARD_COMPARISON_CHART_METRICS,
   DASHBOARD_COMPARISON_METRICS,
@@ -60,6 +67,8 @@ import {
   PLAN_RISK_LABELS,
   PLAN_TABLE_DIMENSION_LABELS,
   QUESTION_CATEGORY_VALUES,
+  alertRiskLevelMatches,
+  alertRiskLevelTone,
   isOverdueAlertSource,
   moralLineIncludes,
   dashboardKpiDelta,
@@ -277,6 +286,43 @@ describe('方案风险等级与预警风险映射', () => {
     expect(normalizeAlertStatus('resolved')).toBe('resolved')
     expect(normalizeAlertStatus('closed')).toBe('closed')
     expect(normalizeAlertStatus(undefined)).toBe('open')
+  })
+})
+
+describe('预警明细的风险等级档位（筛选与列色共用）', () => {
+  it('六类来源的展示标签分别落在预期档位（与 KPI 高危口径同源）', () => {
+    // 安全事项恒为「安全关注」；高风险家校沟通只会是「高风险 / 安全关注」
+    expect(alertRiskLevelTone(SAFETY_RISK_LABEL)).toBe('high')
+    expect(alertRiskLevelTone(COMMUNICATION_RISK_LABELS.high)).toBe('high')
+    expect(alertRiskLevelTone(COMMUNICATION_RISK_LABELS.crisis)).toBe('high')
+    // 学生事件：高 / 严重 进高危，严重度缺失回落中风险
+    expect(alertRiskLevelTone(studentEventRiskLabel('高'))).toBe('high')
+    expect(alertRiskLevelTone(studentEventRiskLabel('严重'))).toBe('high')
+    expect(alertRiskLevelTone(studentEventRiskLabel('中'))).toBe('medium')
+    expect(alertRiskLevelTone(studentEventRiskLabel(null))).toBe('medium')
+    expect(alertRiskLevelTone(studentEventRiskLabel('低'))).toBe('low')
+    // 方案逾期是「逾期未闭环」标签，单独一档（不计入高危）
+    expect(alertRiskLevelTone(ALERT_OVERDUE_RISK_LABEL)).toBe('overdue')
+    expect(alertRiskLevelTone('未来新增的等级')).toBe('other')
+  })
+
+  it('档位筛选只保留本档行，全部档不过滤（未知标签只在全部档出现）', () => {
+    const levels = ['高风险', '安全关注', '严重', '中风险', '低风险', ALERT_OVERDUE_RISK_LABEL, '未来新增的等级']
+    const matched = (filter: AlertRiskLevelFilter) => levels.filter(level => alertRiskLevelMatches(level, filter))
+    expect(matched('high')).toEqual(['高风险', '安全关注', '严重'])
+    expect(matched('medium')).toEqual(['中风险'])
+    expect(matched('low')).toEqual(['低风险'])
+    expect(matched('overdue')).toEqual([ALERT_OVERDUE_RISK_LABEL])
+    expect(matched('all')).toEqual(levels)
+  })
+
+  it('筛选档位清单、默认档位与下拉文案一一对应', () => {
+    expect([...ALERT_RISK_LEVEL_FILTERS]).toEqual(['high', 'medium', 'low', 'overdue', 'all'])
+    expect(ALERT_DEFAULT_RISK_LEVEL).toBe('high')
+    for (const value of ALERT_RISK_LEVEL_FILTERS) expect(ALERT_RISK_LEVEL_FILTER_LABELS[value]).toBeTruthy()
+    expect(ALERT_RISK_LEVEL_FILTER_LABELS.overdue).toBe(ALERT_OVERDUE_RISK_LABEL)
+    // 高风险档的文案显式标注含安全关注，避免与明细行展示的「安全关注」对不上
+    expect(ALERT_RISK_LEVEL_FILTER_LABELS.high).toContain('安全关注')
   })
 })
 

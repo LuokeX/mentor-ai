@@ -3,11 +3,17 @@
  *
  * 合并两类记录：安全事项（对话助手 / 量表提交命中安全规则）与学生事件（E1–E6）。
  * 学生列只返回「学生 A/B/C」脱敏标号（周期内稳定），不返回姓名；
- * 默认只看待解决（status=open），周期默认近 7 天、最长 1 年。
+ * 默认只看待解决（status=open）与高风险明细（riskLevel=high，含安全关注 / 严重），
+ * 周期默认近 7 天、最长 1 年；status 与 riskLevel 都只作用于明细表。
  */
 import { z } from 'zod'
 import { DEFAULT_PAGE_SIZE } from '../../../../shared/management'
-import { DASHBOARD_DEFAULT_DAYS, DASHBOARD_PERIOD_LIMITS } from '../../../../shared/dashboard'
+import {
+  ALERT_DEFAULT_RISK_LEVEL,
+  ALERT_RISK_LEVEL_FILTERS,
+  DASHBOARD_DEFAULT_DAYS,
+  DASHBOARD_PERIOD_LIMITS
+} from '../../../../shared/dashboard'
 import {
   loadAlerts,
   parseAlertSourceParam,
@@ -28,6 +34,8 @@ const querySchema = z.object({
   classIds: z.string().trim().max(4000).optional(),
   status: z.enum(['open', 'resolved', 'closed', 'all']).default('open'),
   sources: z.string().trim().max(200).optional(),
+  /** 明细表风险档位：默认只看高风险（含安全关注 / 严重），与页面默认一致。 */
+  riskLevel: z.enum(ALERT_RISK_LEVEL_FILTERS).default(ALERT_DEFAULT_RISK_LEVEL),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().refine(value => [20, 50, 100].includes(value)).default(DEFAULT_PAGE_SIZE),
   sort: z.string().trim().max(40).optional(),
@@ -46,7 +54,8 @@ export default defineEventHandler(async (event) => {
     grade: query.grade,
     classIds: parseClassIdParam(query.classIds),
     status: query.status,
-    sources: parseAlertSourceParam(query.sources)
+    sources: parseAlertSourceParam(query.sources),
+    riskLevel: query.riskLevel
   }
   const table: DashboardTableQuery = { page: query.page, pageSize: query.pageSize, sort: query.sort ?? 'occurredAt', order: query.order }
   await trackDashboardView(event, {

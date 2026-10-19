@@ -1016,6 +1016,62 @@ export const STUDENT_EVENT_RISK_LABELS: Record<string, string> = {
   严重: '严重'
 }
 
+// ===== 预警明细的风险等级档位（筛选与列色共用一份口径） =====
+
+/**
+ * 预警明细行的风险等级档位。
+ * 「高风险」档与 KPI 的高危口径同源（`isHighRiskAlert`）：安全关注（安全事项 / 危机沟通）、
+ * 高风险、以及学生事件的「严重」；方案逾期行展示「逾期未闭环」，单独一档（不计入高危）。
+ */
+export type AlertRiskLevelFilter = 'high' | 'medium' | 'low' | 'overdue' | 'all'
+
+export const ALERT_RISK_LEVEL_FILTERS = ['high', 'medium', 'low', 'overdue', 'all'] as const satisfies readonly AlertRiskLevelFilter[]
+
+/** 预警看板风险等级筛选的默认档位：只看高风险（含安全关注 / 严重）。 */
+export const ALERT_DEFAULT_RISK_LEVEL: AlertRiskLevelFilter = 'high'
+
+/**
+ * 筛选下拉的展示文案：高风险档显式标注含安全关注与「严重」，
+ * 避免与明细行展示的「安全关注」对不上（档位归并不改展示标签）。
+ */
+export const ALERT_RISK_LEVEL_FILTER_LABELS: Record<AlertRiskLevelFilter, string> = {
+  high: '高风险（含安全关注 / 严重）',
+  medium: '中风险',
+  low: '低风险',
+  overdue: ALERT_OVERDUE_RISK_LABEL,
+  all: '全部风险等级'
+}
+
+/** 各档位命中的展示标签（由现有标签映射去重归并，避免与来源口径漂移）。 */
+const ALERT_RISK_LEVEL_GROUPS: Record<'high' | 'medium' | 'low', readonly string[]> = {
+  high: [...new Set([
+    PLAN_RISK_LABELS.high,
+    PLAN_RISK_LABELS.crisis,
+    COMMUNICATION_RISK_LABELS['high']!,
+    COMMUNICATION_RISK_LABELS['crisis']!,
+    STUDENT_EVENT_RISK_LABELS['高']!,
+    STUDENT_EVENT_RISK_LABELS['严重']!
+  ])],
+  medium: [...new Set([PLAN_RISK_LABELS.medium, COMMUNICATION_RISK_LABELS['medium']!, STUDENT_EVENT_RISK_LABELS['中']!])],
+  low: [...new Set([PLAN_RISK_LABELS.low, COMMUNICATION_RISK_LABELS['low']!, STUDENT_EVENT_RISK_LABELS['低']!])]
+}
+
+/** 明细行风险等级所属档位；未知标签归 'other'（只在「全部风险等级」档出现）。 */
+export type AlertRiskLevelTone = 'high' | 'medium' | 'low' | 'overdue' | 'other'
+
+export function alertRiskLevelTone(riskLevel: string): AlertRiskLevelTone {
+  if (riskLevel === ALERT_OVERDUE_RISK_LABEL) return 'overdue'
+  if (ALERT_RISK_LEVEL_GROUPS.high.includes(riskLevel)) return 'high'
+  if (ALERT_RISK_LEVEL_GROUPS.medium.includes(riskLevel)) return 'medium'
+  if (ALERT_RISK_LEVEL_GROUPS.low.includes(riskLevel)) return 'low'
+  return 'other'
+}
+
+/** 明细行是否命中当前风险档位（'all' 不过滤）。 */
+export function alertRiskLevelMatches(riskLevel: string, filter: AlertRiskLevelFilter): boolean {
+  return filter === 'all' || alertRiskLevelTone(riskLevel) === filter
+}
+
 /**
  * 模块 → 问答题分类的折算（推荐量表作答率按分类统计时用）。
  * 家校沟通类提问在分类口径里并入「自我成长赋能」（含沟通话术类）。

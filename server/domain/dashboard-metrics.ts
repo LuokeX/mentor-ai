@@ -50,6 +50,7 @@ import {
   PLAN_QUESTION_CATEGORIES,
   PLAN_RISK_DISTRIBUTION_LEVELS,
   PLAN_TABLE_DIMENSION_LABELS,
+  alertRiskLevelMatches,
   isOverdueAlertSource,
   moralLineIncludes,
   PLAN_RISK_LABELS,
@@ -64,6 +65,7 @@ import {
   type AlertCommunicationStats,
   type AlertEventTypeStat,
   type AlertKpis,
+  type AlertRiskLevelFilter,
   type AlertRow,
   type AlertSource,
   type AlertsResponse,
@@ -1725,11 +1727,18 @@ export interface AlertFilters {
   classIds?: string[]
   status: 'open' | 'resolved' | 'closed' | 'all'
   sources?: AlertSource[]
+  /**
+   * 明细表的风险等级档位（默认只看高风险，见 `ALERT_DEFAULT_RISK_LEVEL`）。
+   * 与 status 一样只作用于明细表：KPI、趋势与沟通分析区块保持统计范围口径，
+   * 否则「筛高风险」时卡片会与明细行数恒等、失去汇总意义。
+   */
+  riskLevel: AlertRiskLevelFilter
 }
 
 /**
- * 聚合口径消费的预警筛选（只认年级）：status / sources 只作用于明细表，
- * 分析区块与 KPI 不按状态筛选（见 loadAlerts 的 KPI 口径）。
+ * 聚合口径（DB 侧）消费的预警筛选：只认年级——家校沟通分析、高危闭环率、
+ * 心理高风险学生数与事件导入教师数都只看统计范围，不吃明细表的筛选；
+ * KPI 卡与 byDay 趋势则跟随来源筛选收口（见 loadAlerts）。
  */
 export type AlertScopeFilters = Pick<AlertFilters, 'grade'>
 
@@ -1846,7 +1855,10 @@ export async function loadAlerts(
     keyStudentMessagesPerStudent: average(keyStudents.keyStudentMessages, keyStudents.keyStudents)
   }
 
-  const filtered = filters.status === 'all' ? all : all.filter(row => row.status === filters.status)
+  // 明细表筛选：风险档位与状态都只作用于明细行（KPI / 趋势 / 分析区块保持统计范围口径）
+  const filtered = all
+    .filter(row => alertRiskLevelMatches(row.riskLevel, filters.riskLevel))
+    .filter(row => filters.status === 'all' || row.status === filters.status)
   const sorted = sortAlerts(filtered, table.sort, table.order)
   const offset = (table.page - 1) * table.pageSize
   const pageRows = sorted.slice(offset, offset + table.pageSize)

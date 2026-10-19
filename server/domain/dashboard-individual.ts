@@ -15,7 +15,7 @@
  * - 家长：身份 + 关系 + 关联学生 + 沟通结构化字段。
  * 三类都不返回助手回答正文、沟通正文与摘要、量表原始作答。
  */
-import { and, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, exists, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import type { AuthUser } from '../../app/composables/useAuth'
 import { communicationChannelLabels, type CommunicationChannel } from '../../shared/contracts'
@@ -309,7 +309,11 @@ async function scopedGuardianCommunications(
           from classes c
           where c.school_id = ${scope.schoolId} and c.status = 'active'
           order by c.owner_user_id, c.created_at asc, c.id asc) pc on pc.owner_user_id = cm.owner_user_id
-    where cm.guardian_id = ${guardianId}
+    where (cm.guardian_id = ${guardianId}
+        or exists (
+          select 1 from communication_guardians cg
+          where cg.communication_id = cm.id and cg.guardian_id = ${guardianId}
+        ))
       and cm.status = 'active' and cm.archived_at is null
       and coalesce(c.id, pc.id) in (${sql.join(scope.classIds.map(id => sql`${id}::uuid`), sql`, `)})
     order by cm.occurred_at desc
@@ -374,7 +378,17 @@ async function loadStudentDetail(
       createdAt: schema.studentEvents.createdAt,
       status: schema.studentEvents.status
     }).from(schema.studentEvents)
-      .where(and(eq(schema.studentEvents.studentId, student.id), isNull(schema.studentEvents.archivedAt)))
+      .where(and(
+        or(
+          eq(schema.studentEvents.studentId, student.id),
+          // 多选学生的事件：该学生作为关联对象时也要出现在他自己的个体明细里
+          exists(db.select({ value: sql`1` }).from(schema.studentEventStudents).where(and(
+            eq(schema.studentEventStudents.eventId, schema.studentEvents.id),
+            eq(schema.studentEventStudents.studentId, student.id)
+          )))
+        ),
+        isNull(schema.studentEvents.archivedAt)
+      ))
       .orderBy(desc(schema.studentEvents.createdAt))
       .limit(DASHBOARD_INDIVIDUAL_LIMIT + 1),
     db.select({
@@ -395,7 +409,14 @@ async function loadStudentDetail(
       guardianId: schema.communications.guardianId
     }).from(schema.communications)
       .where(and(
-        eq(schema.communications.studentId, student.id),
+        or(
+          eq(schema.communications.studentId, student.id),
+          // 多选学生的沟通记录：该学生作为关联对象时也要出现在他自己的个体明细里
+          exists(db.select({ value: sql`1` }).from(schema.communicationStudents).where(and(
+            eq(schema.communicationStudents.communicationId, schema.communications.id),
+            eq(schema.communicationStudents.studentId, student.id)
+          )))
+        ),
         eq(schema.communications.status, 'active'),
         isNull(schema.communications.archivedAt)
       ))
