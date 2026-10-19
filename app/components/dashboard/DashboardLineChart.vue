@@ -8,7 +8,8 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 interface LineSeries {
   name: string
-  values: number[]
+  /** null 表示该天没有数据（如心跳未上线），折线在该点断开，悬停显示「—」 */
+  values: Array<number | null>
   color?: string
 }
 
@@ -51,7 +52,7 @@ onBeforeUnmount(() => {
 })
 
 const colored = computed(() => props.series.map((item, index) => ({ ...item, color: item.color ?? PALETTE[index % PALETTE.length]! })))
-const hasData = computed(() => props.labels.length > 0 && colored.value.some(item => item.values.some(value => value > 0)))
+const hasData = computed(() => props.labels.length > 0 && colored.value.some(item => item.values.some(value => value !== null && value > 0)))
 const innerW = computed(() => Math.max(1, viewW.value - PAD.left - PAD.right))
 const innerH = computed(() => props.height - PAD.top - PAD.bottom)
 
@@ -65,7 +66,7 @@ function niceMax(raw: number): number {
   return step * base
 }
 
-const maxValue = computed(() => niceMax(Math.max(0, ...colored.value.flatMap(item => item.values))))
+const maxValue = computed(() => niceMax(Math.max(0, ...colored.value.flatMap(item => item.values.filter((value): value is number => value !== null)))))
 const ticks = computed(() => Array.from({ length: GRID_TICKS + 1 }, (_, index) => {
   const ratio = index / GRID_TICKS
   return { value: Math.round(maxValue.value * ratio), y: PAD.top + innerH.value * (1 - ratio) }
@@ -77,10 +78,32 @@ const xOf = (index: number) => {
 }
 const yOf = (value: number) => PAD.top + innerH.value * (1 - value / maxValue.value)
 
-const lines = computed(() => colored.value.map(item => ({
-  ...item,
-  points: item.values.map((value, index) => `${xOf(index)},${yOf(value)}`).join(' ')
-})))
+interface ChartSegment {
+  key: string
+  name: string
+  color: string
+  points: string
+}
+
+/** 折线按非空值切段：null 处断开，避免把「无数据」画成 0。 */
+const segments = computed<ChartSegment[]>(() => colored.value.flatMap((item, seriesIndex) => {
+  const result: ChartSegment[] = []
+  let points: string[] = []
+  const flush = () => {
+    if (!points.length) return
+    result.push({ key: `${seriesIndex}-${result.length}`, name: item.name, color: item.color, points: points.join(' ') })
+    points = []
+  }
+  item.values.forEach((value, index) => {
+    if (value === null || !Number.isFinite(value)) {
+      flush()
+      return
+    }
+    points.push(`${xOf(index)},${yOf(value)}`)
+  })
+  flush()
+  return result
+}))
 
 /** X 轴标签最多显示 7 个，避免挤在一起。 */
 const labelStep = computed(() => Math.max(1, Math.ceil(props.labels.length / 7)))
@@ -98,14 +121,18 @@ const hover = computed(() => {
     x,
     xPercent: (x / viewW.value) * 100,
     label: props.labels[index] ?? '',
-    items: colored.value.map(item => ({ name: item.name, value: item.values[index] ?? 0, color: item.color }))
+    items: colored.value.map(item => ({ name: item.name, value: item.values[index] ?? null, color: item.color }))
   }
 })
 
 const hoverDots = computed(() => {
   const index = hoverIndex.value
   if (index === null || index < 0 || index >= props.labels.length) return []
-  return colored.value.map(item => ({ name: item.name, color: item.color, y: yOf(item.values[index] ?? 0) }))
+  return colored.value.flatMap(item => {
+    const value = item.values[index]
+    if (value === null || value === undefined || !Number.isFinite(value)) return []
+    return [{ name: item.name, color: item.color, y: yOf(value) }]
+  })
 })
 
 /**
@@ -147,16 +174,16 @@ function clearHover() {
           <line :x1="PAD.left" :x2="viewW - PAD.right" :y1="tick.y" :y2="tick.y" stroke="#e2e8f0" stroke-width="1" />
           <text :x="PAD.left - 6" :y="tick.y + 4" text-anchor="end" font-size="10" fill="#94a3b8">{{ tick.value }}</text>
         </g>
-        <g v-for="(line, index) in lines" :key="line.name">
-          <polyline :points="line.points" fill="none" :stroke="line.color" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        <g v-for="segment in segments" :key="segment.key">
+          <polyline :points="segment.points" fill="none" :stroke="segment.color" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
           <template v-if="labels.length <= 31">
             <circle
-              v-for="(point, pointIndex) in line.points.split(' ')"
-              :key="`${index}-${pointIndex}`"
+              v-for="(point, pointIndex) in segment.points.split(' ')"
+              :key="`${segment.key}-${pointIndex}`"
               :cx="point.split(',')[0]"
               :cy="point.split(',')[1]"
               r="2.5"
-              :fill="line.color"
+              :fill="segment.color"
             />
           </template>
         </g>
@@ -214,7 +241,7 @@ function clearHover() {
     </div>
     <p v-else class="py-10 text-center text-sm text-slate-400">{{ emptyText }}</p>
     <ul v-if="hasData" class="mt-2 flex flex-wrap gap-4 px-1 text-xs text-slate-500">
-      <li v-for="line in lines" :key="`legend-${line.name}`" class="flex items-center gap-1.5">
+      <li v-for="line in colored" :key="`legend-${line.name}`" class="flex items-center gap-1.5">
         <span class="size-2.5 rounded-full" :style="{ backgroundColor: line.color }" />
         {{ line.name }}<span v-if="suffix" class="text-slate-400">（{{ suffix }}）</span>
       </li>

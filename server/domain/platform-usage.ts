@@ -85,6 +85,60 @@ export function averageMinutesPerUser(minutes: number, users: number): number | 
   return Math.round((minutes / users) * 10) / 10
 }
 
+/** 按产品事件估算的每日访问人次（仅心跳上线前的趋势补位）。 */
+export interface UsageEstimatedVisitDay {
+  date: string
+  visits: number
+}
+
+/**
+ * 纯计算：把 (日, 账号) 的估算段数汇总到每日并补零。
+ * 段数由 SQL 按「同账号相邻产品事件间隔超过空闲阈值」切分，口径与心跳不同。
+ */
+export function summarizeEstimatedVisits(
+  buckets: ReadonlyArray<{ day: string, visits: number }>,
+  dateKeys: readonly string[]
+): UsageEstimatedVisitDay[] {
+  const byDay = new Map<string, number>()
+  for (const bucket of buckets) byDay.set(bucket.day, (byDay.get(bucket.day) ?? 0) + Math.max(0, bucket.visits))
+  return dateKeys.map(date => ({ date, visits: byDay.get(date) ?? 0 }))
+}
+
+/**
+ * 心跳上线前的访问人次估算：取产品事件（提问 / 量表 / 方案等，不含心跳），
+ * 按 (东八区自然日, 账号) 的空闲间隔切段。只用于趋势参考，不并入真实访问人次。
+ */
+export async function loadEstimatedVisits(
+  db: DbClient,
+  input: { schoolId: string, startKey: string, endKey: string, start: Date, end: Date }
+): Promise<UsageEstimatedVisitDay[]> {
+  const buckets = await rowsOf<{ day: string, visits: number }>(db.execute(sql`
+    with events as (
+      select ((pe.created_at at time zone 'Asia/Shanghai')::date) as day,
+             pe.user_id,
+             pe.created_at,
+             lag(pe.created_at) over (
+               partition by ((pe.created_at at time zone 'Asia/Shanghai')::date), pe.user_id
+               order by pe.created_at
+             ) as prev_at
+      from product_events pe
+      where pe.school_id = ${input.schoolId}
+        and pe.user_id is not null
+        and pe.event_name <> ${USAGE_HEARTBEAT_EVENT}
+        and pe.created_at >= ${input.start}
+        and pe.created_at <= ${input.end}
+    )
+    select to_char(day, 'YYYY-MM-DD') as day,
+           sum(case
+             when prev_at is null or created_at - prev_at > ${USAGE_VISIT_IDLE_MINUTES} * interval '1 minute' then 1
+             else 0
+           end)::int as visits
+    from events
+    group by 1
+  `))
+  return summarizeEstimatedVisits(buckets, enumerateDateKeys(input.startKey, input.endKey))
+}
+
 /**
  * 读取区间内的活跃心跳并按「日 + 账号」聚合。
  *

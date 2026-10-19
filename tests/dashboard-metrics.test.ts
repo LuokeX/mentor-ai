@@ -70,6 +70,8 @@ import {
   QUESTION_CATEGORY_VALUES,
   alertRiskLevelMatches,
   alertRiskLevelTone,
+  canonicalCommunicationRiskLevel,
+  communicationRiskLabel,
   isOverdueAlertSource,
   moralLineIncludes,
   dashboardKpiDelta,
@@ -724,5 +726,31 @@ describe('推荐量表作答转化（推荐后作答率）', () => {
     expect(summary.totalRecommended).toBe(2)
     expect(summary.totalAnswered).toBe(1)
     expect(summary.byCategory.get('学生学习问题')).toEqual({ recommended: 2, answered: 1 })
+  })
+})
+
+
+describe('沟通风险等级兼容（历史自由文本 → 看板口径）', () => {
+  it('规范码与历史中文/旧编码都归一到 crisis / high / medium / low', () => {
+    expect(canonicalCommunicationRiskLevel('crisis')).toBe('crisis')
+    expect(canonicalCommunicationRiskLevel('安全关注')).toBe('crisis')
+    expect(canonicalCommunicationRiskLevel('high')).toBe('high')
+    expect(canonicalCommunicationRiskLevel('HIGH')).toBe('high')
+    expect(canonicalCommunicationRiskLevel('高')).toBe('high')
+    expect(canonicalCommunicationRiskLevel('高风险')).toBe('high')
+    expect(canonicalCommunicationRiskLevel('中')).toBe('medium')
+    expect(canonicalCommunicationRiskLevel('低')).toBe('low')
+    expect(canonicalCommunicationRiskLevel('无')).toBe('low')
+    expect(canonicalCommunicationRiskLevel('D')).toBe('low')
+  })
+
+  it('空值与无法识别的值不进入高危口径，展示时保留原文或「未标注」', () => {
+    expect(canonicalCommunicationRiskLevel(null)).toBeNull()
+    expect(canonicalCommunicationRiskLevel('')).toBeNull()
+    expect(canonicalCommunicationRiskLevel('很高')).toBeNull()
+    expect(communicationRiskLabel('高')).toBe('高风险')
+    expect(communicationRiskLabel('低')).toBe('低风险')
+    expect(communicationRiskLabel('')).toBe('未标注')
+    expect(communicationRiskLabel('自填等级')).toBe('自填等级')
   })
 })

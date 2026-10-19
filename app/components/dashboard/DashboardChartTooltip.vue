@@ -7,7 +7,8 @@ import { computed } from 'vue'
 
 interface TooltipItem {
   name: string
-  value: number
+  /** null 表示该天没有数据（如心跳未上线），显示「—」 */
+  value: number | null
   color: string
 }
 
@@ -44,7 +45,7 @@ const topPercent = computed(() => Math.min(90, Math.max(10, props.yPercent)))
       <li v-for="item in items" :key="item.name" class="flex items-center gap-2 text-slate-600">
         <span class="size-2 shrink-0 rounded-full" :style="{ backgroundColor: item.color }" />
         <span class="whitespace-nowrap">{{ item.name }}</span>
-        <span class="ml-auto pl-2 font-medium tabular-nums text-slate-800">{{ item.value }}{{ suffix }}</span>
+        <span class="ml-auto pl-2 font-medium tabular-nums text-slate-800">{{ item.value === null ? '—' : `${item.value}${suffix}` }}</span>
       </li>
     </ul>
   </div>

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import XLSX from 'xlsx'
 import { communicationChannelLabels, studentEventTypes, type CommunicationChannel, type StudentEventType } from '../../shared/contracts'
-import { COMMUNICATION_RISK_LABELS } from '../../shared/dashboard'
+import { canonicalCommunicationRiskLevel } from '../../shared/dashboard'
 import { searchableHash as nameSearchHash } from '../utils/crypto'
 
 /**
@@ -573,13 +573,11 @@ export function normalizeCommunicationChannel(value: string): string | null | un
   return codes.find(code => code === lower) ?? codes.find(code => communicationChannelLabels[code] === text)
 }
 
-/** 风险等级：中文标签与英文码都接受，落英文码；空值/「无」返回 null，无法识别返回 undefined */
+/** 风险等级：中文标签、历史自由文本与英文码都接受，落英文码；空值/「无」返回 null，无法识别返回 undefined */
 export function normalizeCommunicationRiskLevel(value: string): string | null | undefined {
   const text = value.trim()
   if (!text || text === '无' || text === '未标注') return null
-  const codes = Object.keys(COMMUNICATION_RISK_LABELS)
-  const lower = text.toLowerCase()
-  return codes.find(code => code === lower) ?? codes.find(code => COMMUNICATION_RISK_LABELS[code] === text)
+  return canonicalCommunicationRiskLevel(text) ?? undefined
 }
 
 /** 事件类型：中文类型名或 E1~E6（E1=学业纪律类…E6=其他）都接受；空值默认「其他」，无法识别返回 undefined */

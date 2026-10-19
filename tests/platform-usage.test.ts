@@ -8,6 +8,7 @@ import {
   USAGE_MAX_MINUTES_PER_USER_DAY,
   averageMinutesPerUser,
   summarizeUsageActivity,
+  summarizeEstimatedVisits,
   type UsageBeatBucket
 } from '../server/domain/platform-usage'
 
@@ -49,5 +50,25 @@ describe('averageMinutesPerUser', () => {
   it('按人数平均并保留一位小数', () => {
     expect(averageMinutesPerUser(45, 2)).toBe(22.5)
     expect(averageMinutesPerUser(10, 3)).toBe(3.3)
+  })
+})
+
+
+describe('summarizeEstimatedVisits', () => {
+  it('按日期汇总估算段数并按 dateKeys 补零', () => {
+    const days = summarizeEstimatedVisits([
+      { day: '2026-10-01', visits: 3 },
+      { day: '2026-10-01', visits: 2 },
+      { day: '2026-09-30', visits: 9 }
+    ], ['2026-10-01', '2026-10-02'])
+    expect(days).toEqual([
+      { date: '2026-10-01', visits: 5 },
+      { date: '2026-10-02', visits: 0 }
+    ])
+  })
+
+  it('负数按 0 处理，避免脏数据把估算值拉低', () => {
+    const days = summarizeEstimatedVisits([{ day: '2026-10-01', visits: -3 }], ['2026-10-01'])
+    expect(days[0]?.visits).toBe(0)
   })
 })

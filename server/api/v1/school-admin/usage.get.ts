@@ -27,7 +27,7 @@ import { ROLE_LABELS } from '../../../utils/role-labels'
 import { requireUser } from '../../../utils/auth'
 import { schema, useDb } from '../../../utils/db'
 import { trackProductEvent } from '../../../domain/product-events'
-import { USAGE_HEARTBEAT_EVENT, averageMinutesPerUser, loadUsageActivity } from '../../../domain/platform-usage'
+import { USAGE_HEARTBEAT_EVENT, averageMinutesPerUser, loadEstimatedVisits, loadUsageActivity } from '../../../domain/platform-usage'
 
 const querySchema = z.object({
   start: z.string().trim().max(10).optional(),
@@ -60,7 +60,7 @@ export default defineEventHandler(async (event): Promise<SchoolUsageResponse> =>
   const schoolId = user.schoolId
   const db = useDb(event)
 
-  const [accountRows, roleRows, trendRows, planRows, auditRows, auditTotalRows, activeUsersRow, loginActiveRow, activity] = await Promise.all([
+  const [accountRows, roleRows, trendRows, planRows, auditRows, auditTotalRows, activeUsersRow, loginActiveRow, activity, estimatedActivity] = await Promise.all([
     rowsOf<{ status: string, value: number }>(db.execute(sql`
       select status, count(*)::int as value
       from users
@@ -147,7 +147,9 @@ export default defineEventHandler(async (event): Promise<SchoolUsageResponse> =>
         and last_login_at >= ${start} and last_login_at <= ${end}
     `)),
     // S2：活跃心跳（访问人次 + 使用时长），口径见 server/domain/platform-usage.ts
-    loadUsageActivity(db, { schoolId, startKey, endKey, start, end })
+    loadUsageActivity(db, { schoolId, startKey, endKey, start, end }),
+    // 心跳上线前的访问人次补位：产品事件按账号 30 分钟空闲切段（仅趋势参考）
+    loadEstimatedVisits(db, { schoolId, startKey, endKey, start, end })
   ])
 
   const statusCount = (status: string) => accountRows.find(row => row.status === status)?.value ?? 0
@@ -159,6 +161,7 @@ export default defineEventHandler(async (event): Promise<SchoolUsageResponse> =>
   const dateKeys = enumerateDateKeys(startKey, endKey)
   const trendMap = new Map(trendRows.map(row => [row.day, row]))
   const activityMap = new Map(activity.days.map(day => [day.date, day]))
+  const estimatedMap = new Map(estimatedActivity.map(day => [day.date, day.visits]))
   const trend: UsageTrendPoint[] = dateKeys.map(date => {
     const dayActivity = activityMap.get(date)
     return {
@@ -166,6 +169,7 @@ export default defineEventHandler(async (event): Promise<SchoolUsageResponse> =>
       activeUsers: trendMap.get(date)?.active_users ?? 0,
       aiQuestions: trendMap.get(date)?.ai_questions ?? 0,
       visits: dayActivity?.visits ?? 0,
+      estimatedVisits: estimatedMap.get(date) ?? 0,
       avgDurationMinutes: dayActivity ? averageMinutesPerUser(dayActivity.minutes, dayActivity.users) : null
     }
   })

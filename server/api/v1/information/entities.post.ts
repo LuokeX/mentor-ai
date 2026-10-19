@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import { communicationChannelSchema } from '../../../../shared/contracts'
+import { canonicalCommunicationRiskLevel } from '../../../../shared/dashboard'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { encryptSensitive, searchableHash } from '../../../utils/crypto'
@@ -103,7 +104,7 @@ export default defineEventHandler(async (event) => {
         studentId: communicationTargets.studentIds[0] ?? null,
         channel: body.channel ?? null,
         summaryEnc: encryptSensitive(body.summary, config.encryptionKey), parentType: body.parentType,
-        attitudeType: body.attitudeType, riskLevel: body.riskLevel,
+        attitudeType: body.attitudeType, riskLevel: canonicalCommunicationRiskLevel(body.riskLevel),
         sourceChatSessionId: source?.sessionId ?? null,
         sourceChatMessageId: source?.messageId ?? null
       }).returning({ id: schema.communications.id })

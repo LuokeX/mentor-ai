@@ -4,6 +4,7 @@ import { requireUser } from '../../../../../utils/auth'
 import { encryptSensitive } from '../../../../../utils/crypto'
 import { schema, useDb } from '../../../../../utils/db'
 import { writeAudit } from '../../../../../utils/audit'
+import { canonicalCommunicationRiskLevel } from '../../../../../../shared/dashboard'
 
 const bodySchema = z.object({
   summary: z.string().trim().min(5).max(3000),
@@ -33,7 +34,7 @@ export default defineEventHandler(async (event) => {
     summaryEnc: encryptSensitive(body.summary, secret),
     parentType: body.parentType,
     attitudeType: body.attitudeType,
-    riskLevel: body.riskLevel
+    riskLevel: canonicalCommunicationRiskLevel(body.riskLevel)
   }).returning({ id: schema.communications.id })
   if (!record) throw createError({ statusCode: 500, message: '沟通记录保存失败' })
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.student.communication.create', targetType: 'communication', targetId: record.id, metadata: { studentId: id, guardianId: body.guardianId } })

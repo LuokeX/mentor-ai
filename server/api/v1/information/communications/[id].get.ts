@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireUser } from '../../../../utils/auth'
 import { decryptSensitive } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
+import { canonicalCommunicationRiskLevel } from '../../../../../shared/dashboard'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -49,6 +50,7 @@ export default defineEventHandler(async (event) => {
   const { summaryEnc, ...safeRecord } = record
   return {
     ...safeRecord,
+    riskLevel: canonicalCommunicationRiskLevel(safeRecord.riskLevel) ?? safeRecord.riskLevel,
     summary: decryptSensitive(summaryEnc, secret),
     studentName: primaryStudent ? decryptSensitive(primaryStudent.nameEnc, secret) : null,
     guardianName: primaryGuardian ? decryptSensitive(primaryGuardian.nameEnc, secret) : null,

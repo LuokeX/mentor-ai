@@ -3,6 +3,7 @@ import { useManagedList } from '~/composables/useManagedList'
 import { RECORD_RELATED_TARGET_MAX, communicationChannelLabels } from '~~/shared/contracts'
 import type { CommunicationChannel } from '~~/shared/contracts'
 import type { ManagedListResult } from '~~/shared/management'
+import { COMMUNICATION_RISK_OPTIONS, canonicalCommunicationRiskLevel, communicationRiskLabel } from '~~/shared/dashboard'
 
 interface CommunicationRow {
   id: string
@@ -54,6 +55,10 @@ const statusOptions = [
 /** 渠道下拉：值为英文码，可留空表示未标注 */
 const channelOptions: { label: string; value: string }[] = (Object.keys(communicationChannelLabels) as CommunicationChannel[])
   .map(value => ({ label: communicationChannelLabels[value], value }))
+const riskLevelOptions: Array<{ label: string, value: string }> = [...COMMUNICATION_RISK_OPTIONS]
+function riskLabel(value: unknown): string {
+  return communicationRiskLabel(typeof value === 'string' ? value : null)
+}
 function channelLabel(value: unknown): string {
   return typeof value === 'string' && value in communicationChannelLabels
     ? communicationChannelLabels[value as CommunicationChannel]
@@ -149,7 +154,7 @@ async function openEdit(id: string) {
       channel: detail.channel || '',
       parentType: detail.parentType || '',
       attitudeType: detail.attitudeType || '',
-      riskLevel: detail.riskLevel || '',
+      riskLevel: canonicalCommunicationRiskLevel(detail.riskLevel) ?? '',
       updatedAt: detail.updatedAt,
       sourceChatSessionId: detail.sourceChatSessionId ?? null,
       sourceChatMessageId: detail.sourceChatMessageId ?? null,
@@ -279,7 +284,7 @@ function closeDrawer() {
       <template #studentNames-data="{ row }">{{ namesColumnLabel(row.studentNames) }}</template>
       <template #guardianNames-data="{ row }">{{ namesColumnLabel(row.guardianNames) }}</template>
       <template #channel-data="{ value }">{{ channelLabel(value) }}</template>
-      <template #riskLevel-data="{ value }"><UBadge v-if="value" color="warning" variant="subtle">{{ value }}</UBadge><span v-else>—</span></template>
+      <template #riskLevel-data="{ value }"><UBadge v-if="value" color="warning" variant="subtle">{{ riskLabel(value) }}</UBadge><span v-else>—</span></template>
       <template #occurredAt-data="{ value }">{{ formatDateTime(value) }}</template>
       <template #actions-data="{ row }">
         <RowActions
@@ -318,7 +323,7 @@ function closeDrawer() {
           <UFormField label="沟通渠道"><USelect v-model="form.channel" :items="channelOptions" placeholder="未标注" class="w-full" /></UFormField>
           <UFormField label="家长类型"><UInput v-model="form.parentType" class="w-full" /></UFormField>
           <UFormField label="态度类型"><UInput v-model="form.attitudeType" class="w-full" /></UFormField>
-          <UFormField label="风险等级"><UInput v-model="form.riskLevel" class="w-full" /></UFormField>
+          <UFormField label="风险等级"><USelect v-model="form.riskLevel" :items="riskLevelOptions" placeholder="未标注" class="w-full" /></UFormField>
         </div>
         <p v-if="form.sourceChatSessionId" class="flex items-center gap-1.5 text-xs text-slate-500">
           <UIcon name="i-lucide-message-square-quote" class="size-3.5" />

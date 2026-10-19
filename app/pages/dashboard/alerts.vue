@@ -14,6 +14,7 @@ import {
   DASHBOARD_INDIVIDUAL_TARGET_LABELS,
   DASHBOARD_PERIOD_LIMITS,
   alertRiskLevelTone,
+  communicationRiskLabel,
   type AlertRiskLevelFilter,
   type AlertsResponse,
   type AlertSource,
@@ -624,7 +625,7 @@ async function loadIndividualDetail(target: IndividualTargetRef, grantId: string
                 <tbody>
                   <tr v-for="item in studentDetail.communications" :key="item.id" class="border-b border-slate-50 last:border-0">
                     <td class="py-1.5 pr-3 text-slate-600">{{ item.channelLabel }}</td>
-                    <td class="py-1.5 pr-3 text-slate-500">{{ item.riskLevel ?? '—' }}</td>
+                    <td class="py-1.5 pr-3 text-slate-500">{{ item.riskLevel ? communicationRiskLabel(item.riskLevel) : '—' }}</td>
                     <td class="py-1.5 pr-3 text-slate-500">{{ formatTime(item.occurredAt) }}</td>
                     <td class="py-1.5 text-right">
                       <button
@@ -694,7 +695,7 @@ async function loadIndividualDetail(target: IndividualTargetRef, grantId: string
                 <tbody>
                   <tr v-for="item in guardianDetail.communications" :key="item.id" class="border-b border-slate-50 last:border-0">
                     <td class="py-1.5 pr-3 text-slate-600">{{ item.channelLabel }}</td>
-                    <td class="py-1.5 pr-3 text-slate-500">{{ item.riskLevel ?? '—' }}</td>
+                    <td class="py-1.5 pr-3 text-slate-500">{{ item.riskLevel ? communicationRiskLabel(item.riskLevel) : '—' }}</td>
                     <td class="py-1.5 text-slate-500">{{ formatTime(item.occurredAt) }}</td>
                   </tr>
                 </tbody>

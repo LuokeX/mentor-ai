@@ -10,6 +10,8 @@
 // 访问人次 = 同一 (用户, 会话) 的心跳按空闲超过 USAGE_VISIT_IDLE_MINUTES 分钟切段后的段数，
 // 人均使用时长 = 当日个人时长（心跳数 × 上报间隔，单人单日封顶 24 小时）÷ 当日去重账号数。
 // 心跳只含时间与会话标识，不含任何业务内容。
+// 心跳上线前没有真实访问人次与时长：趋势里另给「按产品事件估算的访问人次」补位，
+// 口径与心跳不同（按账号 30 分钟空闲切段），仅用于观察历史趋势，不并入总访问人次。
 import type { Capability, ManagedListResult } from './management'
 
 /** 使用量看板的默认与最长统计天数（自然日，东八区）。 */
@@ -55,6 +57,11 @@ export interface UsageTrendPoint {
   aiQuestions: number
   /** 当天访问人次（活跃心跳按空闲切段） */
   visits: number
+  /**
+   * 当天按产品事件（提问 / 量表 / 方案等，不含心跳）估算的访问人次。
+   * 仅用于心跳上线前的趋势补位：口径与心跳不同，按账号 30 分钟空闲切段，数值偏保守。
+   */
+  estimatedVisits: number
   /** 当天人均使用时长（分钟；心跳未积累时 null） */
   avgDurationMinutes: number | null
 }

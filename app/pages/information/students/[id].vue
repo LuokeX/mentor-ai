@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { COMMUNICATION_RISK_OPTIONS, communicationRiskLabel } from '~~/shared/dashboard'
 const route = useRoute()
 const id = String(route.params.id)
 const { data, error, refresh } = await useFetch<any>(`/api/v1/information/students/${id}`)
@@ -30,7 +31,8 @@ const emptyProfile = () => ({
 })
 const form = reactive({ name: '', gender: '', notes: '', classId: '', enrolledAt: '', address: '', profile: emptyProfile() })
 const linkGuardianId = ref('')
-const communication = reactive({ guardianId: '', summary: '', parentType: '', attitudeType: '', riskLevel: '低风险' })
+const riskLevelOptions: Array<{ label: string, value: string }> = [...COMMUNICATION_RISK_OPTIONS]
+const communication = reactive({ guardianId: '', summary: '', parentType: '', attitudeType: '', riskLevel: 'low' })
 const NONE_VALUE = '__none__'
 const genderSelect = computed({
   get: () => form.gender || NONE_VALUE,
@@ -120,7 +122,7 @@ async function createCommunication() {
         riskLevel: communication.riskLevel || undefined
       }
     })
-    Object.assign(communication, { guardianId: '', summary: '', parentType: '', attitudeType: '', riskLevel: '低风险' })
+    Object.assign(communication, { guardianId: '', summary: '', parentType: '', attitudeType: '', riskLevel: 'low' })
     await refresh()
   } finally { pending.value = false }
 }
@@ -152,7 +154,7 @@ async function createCommunication() {
       </div></section>
       <section class="panel p-6"><h2 class="text-xl font-semibold">关联家长</h2><div class="mt-5 space-y-3"><div v-for="guardian in data?.guardians" :key="guardian.id" class="rounded-2xl border border-slate-100 p-4"><div class="flex items-start justify-between gap-3"><div><NuxtLink :to="`/information/guardians/${guardian.id}`" class="font-semibold hover:text-emerald-700">{{ guardian.name }}</NuxtLink><p class="mt-1 text-xs text-slate-500">{{ guardian.relation || '关系未填' }} · {{ guardian.phone || '电话未填' }}</p></div><UButton size="xs" color="neutral" variant="ghost" :loading="pending" @click="unlinkGuardian(guardian.id)">解除</UButton></div></div><p v-if="!data?.guardians?.length" class="rounded-2xl bg-slate-50 p-4 text-center text-sm text-slate-400">暂无关联家长</p></div><div class="mt-5 flex gap-2"><USelect v-model="linkGuardianId" :items="(data?.guardianOptions || []).filter((item:any)=>!(data?.guardians || []).some((g:any)=>g.id===item.id)).map((item:any)=>({label:`${item.name}${item.relation ? ` · ${item.relation}` : ''}`,value:item.id}))" placeholder="选择已有家长" class="min-w-0 flex-1" /><UButton :disabled="!linkGuardianId" :loading="pending" @click="linkGuardian">关联</UButton></div></section>
     </div>
-    <section class="panel mt-6 p-6"><div class="flex items-center justify-between"><h2 class="text-xl font-semibold">家校沟通时间线</h2><UBadge color="neutral" variant="soft">{{ data?.communications?.length || 0 }} 条</UBadge></div><div class="mt-5 grid gap-4 lg:grid-cols-[1fr_.9fr]"><div class="space-y-4"><div v-for="item in data?.communications" :key="item.id" class="rounded-2xl border border-amber-100 bg-amber-50/50 p-4"><div class="flex flex-wrap gap-2"><UBadge v-if="item.guardianName" color="neutral" variant="soft">{{ item.relation || '家长' }}：{{ item.guardianName }}</UBadge><UBadge v-if="item.riskLevel" color="error" variant="soft">{{ riskLevelLabel(item.riskLevel) }}</UBadge></div><p class="mt-3 text-sm leading-7">{{ item.summary }}</p><p class="mt-2 text-xs text-slate-400">{{ formatDateTime(item.occurredAt) }}</p></div><p v-if="!data?.communications?.length" class="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-400">暂无沟通记录</p></div><div class="rounded-2xl border border-slate-100 p-4"><h3 class="font-semibold">新增沟通记录</h3><div class="mt-4 space-y-3"><USelect v-model="communicationGuardianSelect" :items="[{label:'不指定家长',value:NONE_VALUE}, ...(data?.guardians || []).map((item:any)=>({label:item.name,value:item.id}))]" class="w-full" /><div class="grid gap-3 md:grid-cols-3"><UInput v-model="communication.parentType" placeholder="家长类型" /><UInput v-model="communication.attitudeType" placeholder="态度类型" /><UInput v-model="communication.riskLevel" placeholder="风险等级" /></div><UTextarea v-model="communication.summary" :rows="6" class="w-full" placeholder="记录沟通背景、家长诉求、教师回应和后续动作" /><button type="button" class="w-full rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="communication.summary.trim().length < 5" @click="createCommunication">保存沟通记录</button></div></div></div></section>
+    <section class="panel mt-6 p-6"><div class="flex items-center justify-between"><h2 class="text-xl font-semibold">家校沟通时间线</h2><UBadge color="neutral" variant="soft">{{ data?.communications?.length || 0 }} 条</UBadge></div><div class="mt-5 grid gap-4 lg:grid-cols-[1fr_.9fr]"><div class="space-y-4"><div v-for="item in data?.communications" :key="item.id" class="rounded-2xl border border-amber-100 bg-amber-50/50 p-4"><div class="flex flex-wrap gap-2"><UBadge v-if="item.guardianName" color="neutral" variant="soft">{{ item.relation || '家长' }}：{{ item.guardianName }}</UBadge><UBadge v-if="item.riskLevel" color="error" variant="soft">{{ communicationRiskLabel(item.riskLevel) }}</UBadge></div><p class="mt-3 text-sm leading-7">{{ item.summary }}</p><p class="mt-2 text-xs text-slate-400">{{ formatDateTime(item.occurredAt) }}</p></div><p v-if="!data?.communications?.length" class="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-400">暂无沟通记录</p></div><div class="rounded-2xl border border-slate-100 p-4"><h3 class="font-semibold">新增沟通记录</h3><div class="mt-4 space-y-3"><USelect v-model="communicationGuardianSelect" :items="[{label:'不指定家长',value:NONE_VALUE}, ...(data?.guardians || []).map((item:any)=>({label:item.name,value:item.id}))]" class="w-full" /><div class="grid gap-3 md:grid-cols-3"><UInput v-model="communication.parentType" placeholder="家长类型" /><UInput v-model="communication.attitudeType" placeholder="态度类型" /><USelect v-model="communication.riskLevel" :items="riskLevelOptions" placeholder="未标注" /></div><UTextarea v-model="communication.summary" :rows="6" class="w-full" placeholder="记录沟通背景、家长诉求、教师回应和后续动作" /><button type="button" class="w-full rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="communication.summary.trim().length < 5" @click="createCommunication">保存沟通记录</button></div></div></div></section>
     <section v-if="learningSnapshot" class="panel mt-6 p-6">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div><h2 class="text-xl font-semibold">学习问题档案</h2><p class="mt-2 text-sm text-slate-500">来自学习问题三层诊断评估的投影与干预追踪；不构成学习障碍诊断。</p></div>

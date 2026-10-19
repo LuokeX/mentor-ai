@@ -718,13 +718,54 @@ export interface CommunicationByDay {
   count: number
 }
 
-/** 家校沟通风险等级标签（communications.risk_level 取值）。 */
+/** 家校沟通风险等级标签（看板口径：crisis / high / medium / low）。 */
 export const COMMUNICATION_RISK_LABELS: Record<string, string> = {
   crisis: '安全关注',
   high: '高风险',
   medium: '中风险',
   low: '低风险'
 }
+
+/** 家校沟通风险等级（看板与录入共用的规范取值）。 */
+export const COMMUNICATION_RISK_LEVELS = ['crisis', 'high', 'medium', 'low'] as const
+export type CommunicationRiskLevel = (typeof COMMUNICATION_RISK_LEVELS)[number]
+
+/** 沟通风险等级下拉选项：值统一写英文码，显示中文标签。 */
+export const COMMUNICATION_RISK_OPTIONS: ReadonlyArray<{ label: string, value: CommunicationRiskLevel }> = [
+  { label: '安全关注', value: 'crisis' },
+  { label: '高风险', value: 'high' },
+  { label: '中风险', value: 'medium' },
+  { label: '低风险', value: 'low' }
+]
+
+/**
+ * 沟通风险等级归一：历史记录里存在「高 / 低 / 无 / D」等自由文本，
+ * 统一折算到看板口径；空值与无法识别的值返回 null（按「未标注」展示，不进入高危口径）。
+ */
+export function canonicalCommunicationRiskLevel(value: string | null | undefined): CommunicationRiskLevel | null {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) return null
+  const lower = text.toLowerCase()
+  if (lower === 'crisis' || text === '安全关注') return 'crisis'
+  if (lower === 'high' || text === '高' || text === '高风险') return 'high'
+  if (lower === 'medium' || text === '中' || text === '中风险') return 'medium'
+  if (lower === 'low' || text === '低' || text === '低风险' || text === '无' || lower === 'd') return 'low'
+  return null
+}
+
+/** 风险等级展示名（兼容历史自由文本；无法识别时原样展示，空值显示「未标注」）。 */
+export function communicationRiskLabel(value: string | null | undefined): string {
+  const canonical = canonicalCommunicationRiskLevel(value)
+  if (canonical) return COMMUNICATION_RISK_LABELS[canonical]!
+  const raw = typeof value === 'string' ? value.trim() : ''
+  return raw || COMMUNICATION_CHANNEL_UNLABELED
+}
+
+/**
+ * 高危沟通在数据库里的实际取值：除规范码外，还兼容历史中文标签。
+ * 只用于 SQL 过滤，避免历史「高」记录被高危口径漏掉。
+ */
+export const COMMUNICATION_HIGH_RISK_DB_VALUES = ['crisis', 'high', '安全关注', '高', '高风险'] as const
 
 /** 家校沟通未标注渠道的展示标签。 */
 export const COMMUNICATION_CHANNEL_UNLABELED = '未标注'

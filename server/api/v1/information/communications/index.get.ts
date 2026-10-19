@@ -11,6 +11,7 @@ import { countSql, offsetFrom } from '../../../../domain/school-management'
 import { resolveCapabilities, resolvePageCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 import { decryptSensitive } from '../../../../utils/crypto'
+import { canonicalCommunicationRiskLevel } from '../../../../../shared/dashboard'
 
 const SORT_WHITELIST = createSortWhitelist('riskLevel', 'parentType', 'occurredAt', 'status', 'updatedAt', 'createdAt')
 const querySchema = z.object({
@@ -18,7 +19,7 @@ const querySchema = z.object({
   pageSize: z.coerce.number().int().refine((v) => [20, 50, 100].includes(v)).default(DEFAULT_PAGE_SIZE),
   q: z.string().trim().max(120).optional(),
   status: z.enum(['active', 'archived', 'all']).default('all'),
-  riskLevel: z.enum(['low', 'medium', 'high', 'all']).default('all'),
+  riskLevel: z.enum(['crisis', 'high', 'medium', 'low', 'all']).default('all'),
   sort: z.string().trim().max(40).default('updatedAt'),
   order: z.enum(['asc', 'desc']).default('desc'),
 })
@@ -31,7 +32,15 @@ export default defineEventHandler(async (event) => {
 
   const conditions = [eq(schema.communications.schoolId, user.schoolId), eq(schema.communications.ownerUserId, user.id)]
   if (query.status !== 'all') conditions.push(eq(schema.communications.status, query.status))
-  if (query.riskLevel !== 'all') conditions.push(eq(schema.communications.riskLevel, query.riskLevel))
+  if (query.riskLevel !== 'all') {
+    const riskValues: Record<string, string[]> = {
+      crisis: ['crisis', '安全关注'],
+      high: ['high', '高', '高风险'],
+      medium: ['medium', '中', '中风险'],
+      low: ['low', '低', '低风险', '无', 'D', 'd']
+    }
+    conditions.push(inArray(schema.communications.riskLevel, riskValues[query.riskLevel] ?? []))
+  }
 
   const validSort = validateSort(query.sort, SORT_WHITELIST, 'updatedAt')
   const sortCol = validSort === 'riskLevel' ? schema.communications.riskLevel
@@ -126,6 +135,7 @@ export default defineEventHandler(async (event) => {
     const primaryGuardianName = row.guardianId ? guardianNameById.get(row.guardianId) || null : null
     return {
       ...safeRow,
+      riskLevel: canonicalCommunicationRiskLevel(safeRow.riskLevel) ?? safeRow.riskLevel,
       summaryPreview: summary.length > 80 ? `${summary.slice(0, 80)}…` : summary,
       studentName: primaryStudentName,
       guardianName: primaryGuardianName,

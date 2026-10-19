@@ -94,7 +94,7 @@ watch(q, () => {
         <DashboardStatCard label="已停用" :value="overview?.disabled ?? 0" unit="个" />
         <DashboardStatCard label="周期内活跃（登录）" :value="overview?.activeInPeriod ?? 0" unit="个" hint="最近登录时间落在区间内" />
         <DashboardStatCard label="周期内活跃（使用）" :value="overview?.activeByEvents ?? 0" unit="个" hint="按平台使用事件去重的账号数（不含活跃心跳）" />
-        <DashboardStatCard label="访问人次" :value="overview?.visitsInPeriod ?? 0" unit="次" hint="活跃心跳按空闲 30 分钟切段，同一账号多次进出算多次" />
+        <DashboardStatCard label="访问人次" :value="overview?.visitsInPeriod ?? 0" unit="次" hint="活跃心跳按空闲 30 分钟切段；心跳上线前的历史趋势见下方估算曲线" />
         <DashboardStatCard label="人均使用时长" :value="overview?.avgDurationMinutes ?? null" unit="分钟" hint="当日总时长 ÷ 当日去重账号数；按 5 分钟心跳折算" />
         <DashboardStatCard label="教师提问数" :value="overview?.aiQuestions ?? 0" unit="条" hint="周期内提问次数（不含已删除）" />
         <DashboardStatCard label="新建方案数" :value="overview?.plans ?? 0" unit="个" />
@@ -106,23 +106,24 @@ watch(q, () => {
           <DashboardLineChart
             :labels="trend.map(item => item.date)"
             :series="[
-              { name: '访问人次', values: trend.map(item => item.visits) },
+              { name: '访问人次（心跳）', values: trend.map(item => item.visits) },
+              { name: '访问人次（估算）', values: trend.map(item => item.estimatedVisits) },
               { name: '活跃账号', values: trend.map(item => item.activeUsers) }
             ]"
           />
           <p class="mt-2 text-[11px] text-slate-400">
-            访问人次来自客户端活跃心跳（页面可见时每 5 分钟一次，同一账号同一会话空闲超过 30 分钟算新的一次访问）；活跃账号按平台使用事件去重。
+            心跳口径：页面可见时每 5 分钟一次，同一账号同一会话空闲超过 30 分钟算新的一次访问。心跳上线前没有真实数据，图中「访问人次（估算）」按产品事件（提问 / 量表 / 方案等）以账号 30 分钟空闲切段补位，口径不同，仅用于观察趋势。活跃账号按平台使用事件去重。
           </p>
         </div>
         <div class="rounded-xl border border-slate-200 bg-white p-4">
           <h2 class="mb-3 text-sm font-medium text-slate-700">分日人均使用时长</h2>
           <DashboardLineChart
             :labels="trend.map(item => item.date)"
-            :series="[{ name: '人均使用时长', values: trend.map(item => item.avgDurationMinutes ?? 0) }]"
+            :series="[{ name: '人均使用时长', values: trend.map(item => item.avgDurationMinutes) }]"
             suffix=" 分钟"
           />
           <p class="mt-2 text-[11px] text-slate-400">
-            按 5 分钟心跳折算累计时长（单账号单日封顶 24 小时），再除以当天去重账号数；心跳上线前没有数据。
+            按 5 分钟心跳折算累计时长（单账号单日封顶 24 小时），再除以当天去重账号数；心跳上线前的日期显示为「—」，没有可还原的真实时长。
           </p>
         </div>
         <div class="rounded-xl border border-slate-200 bg-white p-4">

@@ -35,8 +35,10 @@ import {
   ALERT_SOURCE_LABELS,
   ASSESSMENT_LEVEL_RISK,
   COMMUNICATION_CHANNEL_UNLABELED,
+  COMMUNICATION_HIGH_RISK_DB_VALUES,
   COMMUNICATION_HIGH_RISK_LEVELS,
-  COMMUNICATION_RISK_LABELS,
+  canonicalCommunicationRiskLevel,
+  communicationRiskLabel,
   DASHBOARD_COMPARISON_METRICS,
   DASHBOARD_COMPARE_KINDS,
   DASHBOARD_EXPORT_LABELS,
@@ -1860,7 +1862,7 @@ export async function loadAlerts(
     riskLevel: isOverdueAlertSource(row.source)
       ? ALERT_OVERDUE_RISK_LABEL
       : row.source === 'communication_risk'
-        ? (COMMUNICATION_RISK_LABELS[row.severity ?? ''] ?? SAFETY_RISK_LABEL)
+        ? communicationRiskLabel(row.severity)
         : row.source === 'student_event' ? studentEventRiskLabel(row.severity) : SAFETY_RISK_LABEL,
     // 看板是只读聚合视图：行级能力恒为空数组（不参与统一管理框架）
     _capabilities: []
@@ -2195,7 +2197,7 @@ async function loadPlanOverdueAlertsRaw(db: DbClient, query: ScopedQuery, filter
 async function loadCommunicationAlertsRaw(db: DbClient, query: ScopedQuery, filters: AlertFilters): Promise<RawAlert[]> {
   const { schoolId, classIds, range } = query
   const gradeCondition = filters.grade ? sql` and coalesce(c.grade, pc.grade) = ${filters.grade}` : sql``
-  const levels = sql.join(COMMUNICATION_HIGH_RISK_LEVELS.map(item => sql`${item}`), sql`, `)
+  const levels = sql.join(COMMUNICATION_HIGH_RISK_DB_VALUES.map(item => sql`${item}`), sql`, `)
   const rows = await rowsOf<{
     id: string
     risk_level: string | null
@@ -2297,11 +2299,18 @@ async function loadCommunicationStats(
     label: row.channel ? communicationChannelLabels[row.channel as CommunicationChannel] ?? row.channel : COMMUNICATION_CHANNEL_UNLABELED,
     count: row.value
   }))
-  const riskLevels: CommunicationRiskStat[] = riskRows.map(row => ({
-    riskLevel: row.risk_level ?? '',
-    label: row.risk_level ? COMMUNICATION_RISK_LABELS[row.risk_level] ?? row.risk_level : COMMUNICATION_CHANNEL_UNLABELED,
-    count: row.value
-  }))
+  const riskMap = new Map<string, number>()
+  for (const row of riskRows) {
+    const level = canonicalCommunicationRiskLevel(row.risk_level) ?? ''
+    riskMap.set(level, (riskMap.get(level) ?? 0) + row.value)
+  }
+  const riskLevels: CommunicationRiskStat[] = [...riskMap.entries()]
+    .map(([level, count]) => ({
+      riskLevel: level,
+      label: level ? communicationRiskLabel(level) : COMMUNICATION_CHANNEL_UNLABELED,
+      count
+    }))
+    .sort((a, b) => b.count - a.count || a.riskLevel.localeCompare(b.riskLevel))
   const dayMap = new Map(dayRows.map(row => [row.day, row.value]))
   const byDay: CommunicationByDay[] = dates.map(date => ({ date, count: dayMap.get(date) ?? 0 }))
 
@@ -2397,7 +2406,7 @@ async function loadKeyStudentCommunicationStats(
       join ${primaryClassSource(schoolId)} pc on pc.owner_user_id = cm.owner_user_id
       where cm.school_id = ${schoolId} and cm.status = 'active' and cm.archived_at is null
         and cm.student_id is not null
-        and cm.risk_level in (${sql.join(COMMUNICATION_HIGH_RISK_LEVELS.map(level => sql`${level}`), sql`, `)})
+        and cm.risk_level in (${sql.join(COMMUNICATION_HIGH_RISK_DB_VALUES.map(level => sql`${level}`), sql`, `)})
         and ${timeWindow(sql`cm.occurred_at`, range)}
         and coalesce(kc.id, pc.id) ${classIdIn(classIds)}${communicationGrade}
     )
@@ -2496,7 +2505,7 @@ function highRiskAlertUnionSql(
       left join classes c on c.id = st.class_id
       join ${primaryClassSource(schoolId)} pc on pc.owner_user_id = cm.owner_user_id
       where cm.school_id = ${schoolId}
-        and cm.risk_level in (${sql.join(COMMUNICATION_HIGH_RISK_LEVELS.map(level => sql`${level}`), sql`, `)})
+        and cm.risk_level in (${sql.join(COMMUNICATION_HIGH_RISK_DB_VALUES.map(level => sql`${level}`), sql`, `)})
         and ${timeWindow(sql`cm.occurred_at`, range)}
         and coalesce(c.id, pc.id) ${classIdIn(classIds)}${communicationGrade}
   `

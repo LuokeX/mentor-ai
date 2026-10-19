@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { communicationChannelSchema } from '../../../../../shared/contracts'
+import { canonicalCommunicationRiskLevel } from '../../../../../shared/dashboard'
 import { requireUser } from '../../../../utils/auth'
 import { writeAudit } from '../../../../utils/audit'
 import { encryptSensitive } from '../../../../utils/crypto'
@@ -27,7 +28,7 @@ export default defineEventHandler(async (event) => {
   if (body.channel !== undefined) patch.channel = body.channel
   if (body.parentType !== undefined) patch.parentType = body.parentType
   if (body.attitudeType !== undefined) patch.attitudeType = body.attitudeType
-  if (body.riskLevel !== undefined) patch.riskLevel = body.riskLevel
+  if (body.riskLevel !== undefined) patch.riskLevel = canonicalCommunicationRiskLevel(body.riskLevel)
 
   const [updated] = await db.update(schema.communications).set(patch).where(and(
     eq(schema.communications.id, id),

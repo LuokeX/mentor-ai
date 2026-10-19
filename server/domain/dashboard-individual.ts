@@ -38,7 +38,8 @@ import {
   type DashboardIndividualTargetType,
   type DashboardIndividualTeacher,
   type DashboardIndividualTeacherDetail,
-  type PlanRiskSeverity
+  type PlanRiskSeverity,
+  canonicalCommunicationRiskLevel
 } from '../../shared/dashboard'
 import { gradeLabel } from '../../shared/school-section'
 import { useDb, schema, type DbClient } from '../utils/db'
@@ -329,7 +330,7 @@ async function scopedGuardianCommunications(
   }>).map(row => ({
     id: row.id,
     channel: row.channel,
-    riskLevel: row.risk_level,
+    riskLevel: canonicalCommunicationRiskLevel(row.risk_level) ?? row.risk_level,
     occurredAt: new Date(row.occurred_at),
     guardianId: row.guardian_id,
     studentId: row.student_id
@@ -454,7 +455,7 @@ async function loadStudentDetail(
     id: row.id,
     channel: row.channel,
     channelLabel: channelLabel(row.channel),
-    riskLevel: row.riskLevel,
+    riskLevel: canonicalCommunicationRiskLevel(row.riskLevel) ?? row.riskLevel,
     occurredAt: row.occurredAt.toISOString(),
     guardianId: row.guardianId
   }))
@@ -625,7 +626,7 @@ async function loadGuardianDetail(
     id: row.id,
     channel: row.channel,
     channelLabel: channelLabel(row.channel),
-    riskLevel: row.riskLevel,
+    riskLevel: canonicalCommunicationRiskLevel(row.riskLevel) ?? row.riskLevel,
     occurredAt: row.occurredAt.toISOString(),
     guardianId: row.guardianId
   }))

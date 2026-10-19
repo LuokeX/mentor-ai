@@ -314,6 +314,9 @@ describe('渠道 / 风险等级归一化', () => {
   it('风险等级接受中文标签与英文码，空值/「无」落 null', () => {
     expect(normalizeCommunicationRiskLevel('安全关注')).toBe('crisis')
     expect(normalizeCommunicationRiskLevel('HIGH')).toBe('high')
+    expect(normalizeCommunicationRiskLevel('高')).toBe('high')
+    expect(normalizeCommunicationRiskLevel('低')).toBe('low')
+    expect(normalizeCommunicationRiskLevel('D')).toBe('low')
     expect(normalizeCommunicationRiskLevel('')).toBeNull()
     expect(normalizeCommunicationRiskLevel('无')).toBeNull()
     expect(normalizeCommunicationRiskLevel('很高')).toBeUndefined()
