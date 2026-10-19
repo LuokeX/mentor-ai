@@ -2,6 +2,7 @@ import { and, asc, eq, isNull, ne } from 'drizzle-orm'
 import { requireUser } from '../../../../utils/auth'
 import { decryptSensitive } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
+import { loadSessionContexts } from '../../../../domain/chat-session-contexts'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -18,6 +19,8 @@ export default defineEventHandler(async (event) => {
     .limit(1)
   if (!session) throw createError({ statusCode: 404, message: '对话不存在' })
   const config = useRuntimeConfig(event)
+  // 会话对象集（主对象 + 关联对象）：前端据此恢复输入框上方的多枚对象胶囊
+  const contexts = await loadSessionContexts(event, id, session)
   const messages = await db.select({
     id: schema.chatMessages.id,
     role: schema.chatMessages.role,
@@ -33,7 +36,7 @@ export default defineEventHandler(async (event) => {
     ))
     .orderBy(asc(schema.chatMessages.createdAt))
   return {
-    session,
+    session: { ...session, contexts },
     messages: messages.map(item => ({
       id: item.id,
       role: item.role,

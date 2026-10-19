@@ -1,7 +1,7 @@
 import { assessmentNavigation } from '../navigation'
 import { z } from 'zod'
-import { readAssessmentHistoryForAssistant, type AssistantObjectRef } from '../../domain/assistant-readers'
-import { effectiveObject, toAssistantReaderUser } from './record-context'
+import { readAssessmentHistoryForAssistant } from '../../domain/assistant-readers'
+import { effectiveObjects, scopeMarker, toAssistantReaderUser } from './record-context'
 import type { AgentTool, AgentToolContext } from '../types'
 
 const assessmentHistorySchema = z.object({
@@ -29,16 +29,16 @@ export const assessmentHistoryTool: AgentTool = {
     if (!parsed.success) {
       return { submitted: [], drafts: [], openSessions: [], message: '查询参数无效（module 与 limit 需在允许范围内）。' }
     }
-    // 对象收口：教师选择「不带档案咨询」时 businessContext 为 null，此时按教师维度返回并逐条标注对象
-    const scoped = effectiveObject(ctx.user)
-    const object: AssistantObjectRef | null = scoped ? { type: scoped.type, id: scoped.id } : null
+    // 对象收口：教师选择「不带档案咨询」时没有绑定对象，此时按教师维度返回并逐条标注对象
+    const scoped = effectiveObjects(ctx.user).map(item => ({ type: item.type, id: item.id }))
     try {
       const result = await readAssessmentHistoryForAssistant(ctx.event, toAssistantReaderUser(ctx), {
         ...parsed.data,
-        object
+        objects: scoped
       })
       const withCards = { ...result, actionCards: assessmentNavigation(result, ctx.user.currentQuestion ?? '') }
-      return object ? { ...withCards, scope: 'current_object' } : withCards
+      const marker = scopeMarker(scoped)
+      return marker ? { ...withCards, scope: marker } : withCards
     } catch (error) {
       console.error('[agent:assessment_history] 读取评估历史失败，返回空结果:', error instanceof Error ? error.message : error)
       return { status: 'error',

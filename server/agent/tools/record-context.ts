@@ -1,4 +1,5 @@
 import type { AuthUser } from '../../../app/composables/useAuth'
+import { CHAT_CONTEXT_MAX } from '../../../shared/contracts'
 import { buildAssistantBusinessContext, type AssistantContextType } from '../../domain/assistant-context'
 import { governBusinessContext } from '../../domain/ai-governance'
 import type { AssistantReaderUser } from '../../domain/assistant-readers'
@@ -17,16 +18,18 @@ export function toAssistantReaderUser(ctx: AgentToolContext): AssistantReaderUse
 }
 
 /**
- * 本轮回答按哪个对象收口：会话绑定的对象优先，其次是本轮消息里识别出的对象。
+ * 本轮回答按哪些对象收口：会话绑定的对象集优先，其次是本轮消息里识别出的对象集。
  *
  * 为什么会话绑定优先：绑定是教师的显式选择，跨会话记忆、摘要与方案收口都按它建立；
  * 一句顺带的提及不应该改变这些作用范围。只有在会话还没有绑定对象时，
  * 才用本轮识别到的对象兜底，解决「教师直接写学生姓名、助手却不查档案」的割裂。
  */
-export function effectiveObject(
-  user: Pick<AgentUserContext, 'businessContext' | 'turnContext'>
-): { type: 'student' | 'class' | 'guardian', id: string, label?: string } | null {
-  return user.businessContext ?? user.turnContext ?? null
+export function effectiveObjects(
+  user: Pick<AgentUserContext, 'businessContexts' | 'turnContexts'>
+): Array<{ type: 'student' | 'class' | 'guardian', id: string, label?: string }> {
+  const business = user.businessContexts ?? []
+  if (business.length) return business
+  return user.turnContexts ?? []
 }
 
 /** 读取层按对象收口时可选用的对象字段。 */
@@ -36,8 +39,15 @@ export interface ObjectScopedArgs {
   guardianId?: string
 }
 
+/** 工具的对象收口结果：显式参数优先；否则给出应传给读取层的对象列表（已按工具能力过滤）。 */
+export interface AssistantScope<T extends ObjectScopedArgs> {
+  args: T
+  /** 非空表示读取层要按这组对象收口（主对象在前）；为空表示按显式参数或教师维度 */
+  objects: Array<{ type: 'student' | 'guardian' | 'class', id: string }>
+}
+
 /**
- * 模型没有显式指定咨询对象时，用当前会话绑定的对象兜底过滤。
+ * 模型没有显式指定咨询对象时，用当前会话绑定的对象集兜底过滤。
  *
  * 为什么要兜底：同一教师手上可能有多个学生/家长的方案、评估与沟通记录，
  * 不限定对象时工具会把不同对象的记录混在一起返回，模型无法分辨、容易把别人的情况讲成当前对象的。
@@ -46,17 +56,27 @@ export interface ObjectScopedArgs {
  *
  * supportedTypes：该工具的查询能力支持哪些对象类型（沟通记录没有班级维度，只支持学生与家长）。
  */
-export function resolveObjectScopedArgs<T extends ObjectScopedArgs>(
-  businessContext: { type: string, id: string } | null | undefined,
+export function resolveAssistantScope<T extends ObjectScopedArgs>(
+  objects: Array<{ type: string, id: string }>,
   args: T,
   supportedTypes: ReadonlyArray<'student' | 'guardian' | 'class'> = ['student', 'guardian', 'class']
-): { args: T, scopedObject: { type: 'student' | 'guardian' | 'class', id: string } | null } {
+): AssistantScope<T> {
   const hasExplicit = Boolean(args.studentId || args.classId || args.guardianId)
-  if (hasExplicit || !businessContext) return { args, scopedObject: null }
-  const type = businessContext.type as 'student' | 'guardian' | 'class'
-  if (!supportedTypes.includes(type)) return { args, scopedObject: null }
-  const field = type === 'student' ? 'studentId' : type === 'guardian' ? 'guardianId' : 'classId'
-  return { args: { ...args, [field]: businessContext.id }, scopedObject: { type, id: businessContext.id } }
+  if (hasExplicit || !objects.length) return { args, objects: [] }
+  const scoped = objects
+    .filter(item => (supportedTypes as ReadonlyArray<string>).includes(item.type))
+    .slice(0, CHAT_CONTEXT_MAX)
+    .map(item => ({ type: item.type as 'student' | 'guardian' | 'class', id: item.id }))
+  return { args, objects: scoped }
+}
+
+/**
+ * 读取层返回体里的 scope 标记：按对象收口时为 current_object（单个）/ current_objects（多个）；
+ * 未收口返回 null。
+ */
+export function scopeMarker(objects: Array<{ type: string, id: string }>): 'current_object' | 'current_objects' | null {
+  if (!objects.length) return null
+  return objects.length === 1 ? 'current_object' : 'current_objects'
 }
 
 /**

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, ilike, lte, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, exists, gte, ilike, lte, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
@@ -34,7 +34,18 @@ export default defineEventHandler(async (event) => {
   const conditions = [eq(schema.chatSessions.schoolId, user.schoolId)]
   if (status !== 'all') conditions.push(eq(schema.chatSessions.status, status))
   if (q) conditions.push(ilike(schema.users.name, `%${q}%`))
-  if (contextType) conditions.push(eq(schema.chatSessions.contextType, contextType))
+  if (contextType) {
+    // 按对象类型筛选：命中主对象，或该对象作为关联对象被 @ 进会话（多对象绑定）
+    conditions.push(or(
+      eq(schema.chatSessions.contextType, contextType),
+      exists(
+        db.select({ value: sql`1` }).from(schema.chatSessionObjects).where(and(
+          eq(schema.chatSessionObjects.sessionId, schema.chatSessions.id),
+          eq(schema.chatSessionObjects.objectType, contextType)
+        ))
+      )
+    )!)
+  }
   if (fromRaw) conditions.push(gte(schema.chatSessions.updatedAt, new Date(fromRaw)))
   if (toRaw) conditions.push(lte(schema.chatSessions.updatedAt, new Date(toRaw)))
 

@@ -268,13 +268,16 @@ export interface RunAssistantTurnInput {
   message: string
   /** 是否不引入档案 */
   withoutRecord: boolean
-  /** 当前会话绑定的咨询对象（已校验归属） */
-  businessContext: { type: 'student' | 'class' | 'guardian', id: string, label: string } | null
   /**
-   * 本轮对象：教师本轮消息里唯一命中的学生/班级（服务端确定性识别）。
+   * 当前会话绑定的咨询对象集（已校验归属，主对象在前，可为空数组）。
+   * 读工具按这组对象收口；档案正文由 record_snapshot 等工具按需查询，不进 system 段。
+   */
+  businessContexts: Array<{ type: 'student' | 'class' | 'guardian', id: string, label: string }>
+  /**
+   * 本轮对象集：教师本轮消息里命中的学生/班级（服务端确定性识别，可多名）。
    * 只作用于本轮的记录查询；不改变会话绑定，也不进 system 段（否则每轮前缀都会分叉）。
    */
-  turnContext?: { type: 'student' | 'class', id: string, label: string } | null
+  turnContexts?: Array<{ type: 'student' | 'class', id: string, label: string }>
   /**
    * 会话中途换过咨询对象时的持续提示（由入口按会话元数据生成）：
    * 声明历史消息属于旧对象、当前对象以工具返回为准。有值后每轮都传，保持 system 前缀稳定。
@@ -301,8 +304,8 @@ export interface RunAssistantTurnInput {
  * 否则 system 前缀会再次分叉（见 server/domain/chat-context-switch.ts）。
  */
 export function buildBusinessContextText(input: {
-  /** 已按数据模式脱敏的咨询对象指针；教师选择不带档案时为 null */
-  recordBinding: { type: 'student' | 'class' | 'guardian', label: string } | null
+  /** 已按数据模式脱敏的咨询对象指针（可多名，首个为主对象）；教师选择不带档案时为空数组 */
+  recordBindings: Array<{ type: 'student' | 'class' | 'guardian', label: string }>
   /** 本轮教师是否选择不引入档案数据 */
   withoutRecord: boolean
   /** 会话是否绑定过咨询对象（用于区分「未绑定」与「选择不带档案」） */
@@ -310,8 +313,11 @@ export function buildBusinessContextText(input: {
   /** 会话中途换过咨询对象的持续提示 */
   contextSwitchNote?: string | null
 }): string | null {
-  const bindingText = input.recordBinding
-    ? `当前咨询对象：${contextTypeLabel(input.recordBinding.type)}「${input.recordBinding.label}」。涉及该对象的具体事实（基本信息、家长关系、最近沟通、在跟方案与复盘）必须先调用 record_snapshot 工具查询，未查询时不要凭印象描述。`
+  const described = input.recordBindings
+    .map(item => `${contextTypeLabel(item.type)}「${item.label}」`)
+    .join('、')
+  const bindingText = described
+    ? `当前咨询对象：${described}。涉及这些对象的具体事实（基本信息、家长关系、最近沟通、在跟方案与复盘）必须先调用 record_snapshot 工具查询，未查询时不要凭印象描述；多个对象时逐条说明属于谁，不要把不同对象的信息混在一起。`
     : input.hasBinding && input.withoutRecord
       ? '本轮教师选择不引入档案数据：不要查询或引用学生/班级/家长档案细节。'
       : null
@@ -334,13 +340,17 @@ export function buildBusinessContextText(input: {
   const outbound = (text: string) => redactOutboundText(text, dataMode)
 
   // system 静态化：只放会话内稳定的指针，档案细节由 record_snapshot 工具按需查询
-  const recordBinding = input.businessContext && !input.withoutRecord
-    ? { type: input.businessContext.type, id: input.businessContext.id, label: outbound(input.businessContext.label) }
-    : null
+  const recordBindings = input.withoutRecord
+    ? []
+    : input.businessContexts.map(item => ({
+      type: item.type,
+      id: item.id,
+      label: outbound(item.label)
+    }))
   const contextText = buildBusinessContextText({
-    recordBinding,
+    recordBindings,
     withoutRecord: input.withoutRecord,
-    hasBinding: Boolean(input.businessContext),
+    hasBinding: input.businessContexts.length > 0,
     contextSwitchNote: input.contextSwitchNote
   })
   const knowledgeContext = '知识检索由运行时工具完成：仅当工具返回已发布的资源片段时才可引用并标注来源；未命中时只能基于通用班主任工作方法或工具返回的资源目录回答，不得编造平台手册、量表、SOP、等级、制度、数据或来源。'
@@ -359,9 +369,9 @@ export function buildBusinessContextText(input: {
     sessionId,
     teachingGrades: user.teachingGrades ?? [],
     businessContextText: contextText,
-    businessContext: recordBinding,
+    businessContexts: recordBindings,
     // 本轮对象只在未绑定会话时生效：绑定是教师的显式选择，不能被一句提及改写
-    turnContext: recordBinding ? null : (input.turnContext ?? null),
+    turnContexts: recordBindings.length ? [] : (input.turnContexts ?? []),
     teacherProfileText: input.teacherProfileText,
     lastModuleScores: input.lastModuleScores,
     dataMode,
@@ -420,7 +430,8 @@ export function buildBusinessContextText(input: {
         finishReason: call.finishReason ?? null,
         errorCode: call.errorCode ?? null,
         dataMode,
-        contextType: input.businessContext?.type ?? null,
+        // 只记主对象的类型（多对象时看板与审计仍按主对象口径）
+        contextType: input.businessContexts[0]?.type ?? null,
         noticeVersion: governance.noticeVersion
       })))
     } catch (auditError) {
@@ -491,7 +502,13 @@ export function buildBusinessContextText(input: {
       sources,
       moduleProportions: result.moduleProportions,
       // 本轮对象只记类型/ID/展示名，用于回看「这次按谁回答」与统计；不含档案正文
-      ...(userCtx.turnContext ? { turnObject: { type: userCtx.turnContext.type, id: userCtx.turnContext.id, label: userCtx.turnContext.label } } : {}),
+      ...(userCtx.turnContexts?.length
+        ? {
+            turnObjects: userCtx.turnContexts.map(item => ({ type: item.type, id: item.id, label: item.label })),
+            // 兼容只读单个字段的历史消费方（转存预填等新逻辑用 turnObjects）
+            turnObject: { type: userCtx.turnContexts[0]!.type, id: userCtx.turnContexts[0]!.id, label: userCtx.turnContexts[0]!.label }
+          }
+        : {}),
       ...(inspection.violations.length ? { answerViolations: inspection.violations } : {})
     }
   }).returning({ id: schema.chatMessages.id })

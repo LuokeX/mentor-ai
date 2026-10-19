@@ -1,11 +1,12 @@
 /**
  * 会话内切换咨询对象（@ 换对象）的元数据与提示文案。
  *
- * 规则：一个会话默认只绑定一个咨询对象；教师可以在会话中途 @ 另一个对象，
- * 此时保留既有消息（不新建会话、不清空记录），从下一条消息起绑定新对象。
+ * 规则：一个会话绑定一组咨询对象（主对象 + 关联对象，最多 CHAT_CONTEXT_MAX 个）；
+ * 教师可以在会话中途 @ 另一组对象，此时保留既有消息（不新建会话、不清空记录），
+ * 从下一条消息起绑定新的对象集。历史单对象会话照常读取（旧条目里的 from/to 是单个对象）。
  *
  * 换绑必须同时做两件事：
- * 1. 元数据留痕 `contextSwitches`（谁 → 谁、发生在什么时候），前端据此在时间线里插分隔条；
+ * 1. 元数据留痕 `contextSwitches`（从哪组对象 → 哪组对象、发生在什么时候），前端据此在时间线里插分隔条；
  * 2. system 提示里持续声明「历史消息属于旧对象」——切换后每轮都带同一段文案，
  *    保持请求前缀逐轮稳定（前缀一旦每轮分叉，DeepSeek 前缀缓存会全部落空，
  *    见 docs/AI_ASSISTANT_AND_KNOWLEDGE.md 的对话记忆口径）。
@@ -13,8 +14,9 @@
  * 边界：本模块只处理元数据与文案，不读写数据库、不做归属校验（归属由入口用
  * buildAssistantBusinessContext 完成）；换绑不改变历史消息，也不重建会话摘要。
  */
+import type { ChatContextType } from '../../shared/contracts'
 
-export type ChatContextType = 'student' | 'class' | 'guardian'
+export type { ChatContextType }
 
 export interface ChatContextRef {
   type: ChatContextType
@@ -23,12 +25,12 @@ export interface ChatContextRef {
   label: string | null
 }
 
-/** 一次换绑：from 为切换前的绑定（会话创建时未留名时可能为 null），to 为切换后的绑定。 */
+/** 一次换绑：from 为切换前的绑定对象集（会话创建时未留名时可能为空），to 为切换后的对象集（首个为主对象）。 */
 export interface ChatContextSwitchEntry {
   /** ISO 时间戳：换绑发生在该时刻，前端据此把分隔条插到其后第一条消息之前 */
   at: string
-  from: ChatContextRef | null
-  to: ChatContextRef
+  from: ChatContextRef[]
+  to: ChatContextRef[]
 }
 
 /** 元数据里最多保留的换绑条数（超出丢弃最早的，只用于展示与提示，不影响业务数据）。 */
@@ -50,6 +52,22 @@ function normalizeRef(value: unknown): ChatContextRef | null {
   }
 }
 
+/** 把元数据里的 from/to 归一化为对象集：兼容历史单对象写法，丢弃非法条目。 */
+function normalizeRefList(value: unknown): ChatContextRef[] {
+  const raw = Array.isArray(value) ? value : [value]
+  const refs: ChatContextRef[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    const ref = normalizeRef(item)
+    if (!ref) continue
+    const key = `${ref.type}:${ref.id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    refs.push(ref)
+  }
+  return refs
+}
+
 /** 把数据库里的 (type, id, label) 归一化成引用；类型不在白名单或缺 id 时返回 null。 */
 export function toContextRef(type?: string | null, id?: string | null, label?: string | null): ChatContextRef | null {
   const normalized = type === 'student' || type === 'class' || type === 'guardian' ? type : null
@@ -65,11 +83,17 @@ export function readContextSwitches(metadata: unknown): ChatContextSwitchEntry[]
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue
     const record = item as Record<string, unknown>
-    const to = normalizeRef(record.to)
-    if (!to || typeof record.at !== 'string' || !record.at) continue
-    entries.push({ at: record.at, from: normalizeRef(record.from), to })
+    const to = normalizeRefList(record.to)
+    if (!to.length || typeof record.at !== 'string' || !record.at) continue
+    entries.push({ at: record.at, from: normalizeRefList(record.from), to })
   }
   return entries
+}
+
+/** 对象集是否包含某对象（允许传入 null/undefined：历史元数据里的 from 可能缺失）。 */
+export function contextSetHas(refs: ChatContextRef[] | null | undefined, binding: { type: string, id: string }): boolean {
+  if (!Array.isArray(refs)) return false
+  return refs.some(ref => ref.type === binding.type && ref.id === binding.id)
 }
 
 /** 会话当前绑定对象的展示名（会话创建或换绑时写入，历史会话可能为空）。 */
@@ -90,12 +114,12 @@ export function appendContextSwitch(
   const entries = [...readContextSwitches(base), entry].slice(-CONTEXT_SWITCH_LIMIT)
   return {
     ...base,
-    contextLabel: entry.to.label || base.contextLabel || null,
+    contextLabel: entry.to[0]?.label || base.contextLabel || null,
     contextSwitches: entries
   }
 }
 
-function describeRef(ref: ChatContextRef | null): string | null {
+function describeRef(ref: ChatContextRef | null | undefined): string | null {
   if (!ref) return null
   const label = ref.label ? `「${ref.label}」` : ''
   return `${contextTypeLabel(ref.type)}${label}`
@@ -106,21 +130,38 @@ function describeRef(ref: ChatContextRef | null): string | null {
  *
  * 会话中途换绑过对象时，同一条会话里既有旧对象的消息也有新对象的消息；
  * 实体记忆按会话当前绑定取消息，若不过滤就会把旧对象的内容说成当前对象的沟通史。
- * 规则：只看换绑到该对象之后（含）的消息；从未换绑的会话全部算数。
+ * 规则：只看该对象处于绑定期间（含换入时刻）产生的消息；从未换绑的会话全部算数。
+ * 对象集可能「加入后又移出」，因此按区间判断，不能只看最后一次换入的时刻。
  */
 export function isMessageAfterBindingSwitch(
   entries: ChatContextSwitchEntry[],
   binding: { type: string, id: string },
   createdAt: Date
 ): boolean {
-  let boundary: number | null = null
+  if (!entries.length) return true
+  const first = entries[0]!
+  // 会话开始（第一条换绑记录之前）该对象是否属于绑定集
+  let bound = contextSetHas(first.from, binding)
+  let intervalStart = Number.NEGATIVE_INFINITY
   for (const entry of entries) {
-    if (entry.to.type !== binding.type || entry.to.id !== binding.id) continue
     const at = Date.parse(entry.at)
     if (Number.isNaN(at)) continue
-    if (boundary === null || at > boundary) boundary = at
+    const next = contextSetHas(entry.to, binding)
+    if (bound && !next) {
+      if (createdAt.getTime() >= intervalStart && createdAt.getTime() < at) return true
+      bound = false
+    } else if (!bound && next) {
+      bound = true
+      intervalStart = at
+    }
   }
-  return boundary === null || createdAt.getTime() >= boundary
+  return bound && createdAt.getTime() >= intervalStart
+}
+
+/** 把对象集描述成中文短语（如「学生「张三」、学生「李四」」）；空集返回 null。 */
+export function describeContextRefs(refs: ChatContextRef[]): string | null {
+  const described = refs.map(describeRef).filter((item): item is string => Boolean(item))
+  return described.length ? described.join('、') : null
 }
 
 /**
@@ -133,10 +174,10 @@ export function buildContextSwitchNote(entries: ChatContextSwitchEntry[]): strin
   if (!entries.length) return null
   const previous: string[] = []
   for (const entry of entries) {
-    const described = describeRef(entry.from)
+    const described = describeContextRefs(entry.from)
     if (described && previous[previous.length - 1] !== described) previous.push(described)
   }
-  const current = describeRef(entries[entries.length - 1]!.to)
+  const current = describeContextRefs(entries[entries.length - 1]!.to) || '其他对象'
   const previousText = previous.length ? previous.slice(-3).join('、') : '其他对象'
   return `本会话中途切换过咨询对象：此前讨论的是${previousText}，当前咨询对象是${current}。`
     + '历史消息只作为这段对话的背景，不要把两者的信息混用；当前对象的具体事实必须先调用 record_snapshot 等工具查询，未查询时不要凭印象描述。'

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { ModuleId } from '../../../shared/contracts'
 import { moduleMeta } from '../../../shared/assessments'
 import { topModuleFromScores } from '../../domain/chat-clarification'
-import { effectiveObject } from './record-context'
+import { effectiveObjects } from './record-context'
 import {
   describeTriggerEvidence,
   filterTeacherVisibleInstruments,
@@ -104,7 +104,8 @@ export const recommendAssessmentTool: AgentTool = {
     try {
       // 本轮回答收口的对象（会话绑定优先，其次本轮消息里识别到的对象）：
       // 对象级量表（per_case / 红线检查）的触发条件只认同一对象的提交，避免重复推荐已做过的量表
-      const binding = effectiveObject(ctx.user)
+      // 多对象（@ 多名学生）时以主对象为准：量表一次只能给一个对象做，推荐理由必须指向确切的某一个
+      const binding = effectiveObjects(ctx.user)[0] ?? null
       const context: AssessmentContextRef | null = binding ? { type: binding.type, id: binding.id } : null
       const options = filterTeacherVisibleInstruments(await listInstrumentOptions(ctx.event, module, {
         id: ctx.user.userId,

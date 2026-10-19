@@ -1,7 +1,7 @@
 import { planNavigation } from '../navigation'
 import { z } from 'zod'
 import { readPlansForAssistant } from '../../domain/assistant-readers'
-import { effectiveObject, resolveObjectScopedArgs, toAssistantReaderUser } from './record-context'
+import { effectiveObjects, resolveAssistantScope, scopeMarker, toAssistantReaderUser } from './record-context'
 import type { AgentTool, AgentToolContext } from '../types'
 
 const planLookupSchema = z.object({
@@ -33,15 +33,16 @@ export const planLookupTool: AgentTool = {
     if (!parsed.success) {
       return { plans: [], message: '查询参数无效，请提供学生 id、班级 id 或家长 id（或都不提供以查看当前对象或最近的方案）。' }
     }
-    const { args: scopedArgs, scopedObject } = resolveObjectScopedArgs(effectiveObject(ctx.user), parsed.data)
+    const { args: scopedArgs, objects } = resolveAssistantScope(effectiveObjects(ctx.user), parsed.data)
     try {
-      const found = await readPlansForAssistant(ctx.event, toAssistantReaderUser(ctx), scopedArgs)
+      const found = await readPlansForAssistant(ctx.event, toAssistantReaderUser(ctx), { ...scopedArgs, objects })
       const result = { ...found, actionCards: planNavigation(found.plans, ctx.user.currentQuestion ?? '') }
-      if (!scopedObject) return result
+      const marker = scopeMarker(objects)
+      if (!marker) return result
       return {
         ...result,
-        scope: 'current_object',
-        // 该对象没有关联方案时说明还有未挂对象的方案，避免模型答成「没有方案」或把别的对象的方案当成本次对象的
+        scope: marker,
+        // 该组对象没有关联方案时说明还有未挂对象的方案，避免模型答成「没有方案」或把别的对象的方案当成本次对象的
         ...(result.plans.length === 0 && result.unscopedPlanCount > 0
           ? { message: `当前咨询对象没有关联的在跟方案；教师另有 ${result.unscopedPlanCount} 条在跟方案未关联具体学生/家长/班级，不要把它们当作本次对象的方案。` }
           : {})

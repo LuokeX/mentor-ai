@@ -17,7 +17,7 @@ beforeEach(() => {
 })
 const input = {
   event: {} as never, user: { id: 'u', schoolId: 's', name: '合成教师', role: 'teacher', phone: '', roleLabel: '教师' } as const,
-  sessionId: 'c', message: '怎么调整？', withoutRecord: false, businessContext: null,
+  sessionId: 'c', message: '怎么调整？', withoutRecord: false, businessContexts: [],
   governance: { effectiveMode: 'redacted', noticeVersion: 'v1' } as never,
   history: [{ role: 'user' as const, content: '试过了', toolTrace: [{ type: 'tool' as const, toolCallId: 'call1', content: '{"plans":[]}' }] }],
   contextSummary: null, lastModuleScores: {} as never, emit: () => {}, isAborted: () => false

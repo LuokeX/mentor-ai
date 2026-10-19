@@ -74,8 +74,8 @@ interface TimelineItem {
   answerCompleted?: boolean
   /** 教师中途停止生成：保留已流入的部分文本并显示「已停止」标记 */
   stopped?: boolean
-  /** 会话内换绑咨询对象的分隔条（role=system）：标记这条之后谈的是另一个对象 */
-  contextSwitch?: { type: string, label: string }
+  /** 会话内换绑咨询对象的分隔条（role=system）：标记这条之后谈的是哪一组对象（可多名） */
+  contextSwitch?: { objects: Array<{ type: string, label: string }> }
 }
 
 /** 空态「今日建议」条目（服务端确定性生成，不经过模型）。 */
@@ -168,36 +168,45 @@ const lastUserMessage = computed(() => {
   return ''
 })
 const selectedOptions = ref<Record<number, string>>({})
-const selectedContextKey = ref('none')
-const suppressContextWatch = ref(false)
 /**
- * 本轮对象：会话未绑定对象时，服务端从本轮消息里识别出的学生/班级（未改变会话绑定）。
+ * 已选咨询对象集（key = `type:id`，首项为主对象；@ 多名学生时有多项）。
+ * 上限与 shared/contracts.ts 的 CHAT_CONTEXT_MAX 一致（5），超出时界面提示且不追加。
+ */
+const selectedContextKeys = ref<string[]>([])
+/** key → 展示名：来自会话 / ack / 上下文选项，用于不在选项列表里的历史对象也能显示名字 */
+const contextLabelMap = ref<Record<string, string>>({})
+/**
+ * 本轮对象：会话未绑定对象时，服务端从本轮消息里识别出的学生/班级（未改变会话绑定，可多名）。
  * 用于消除「教师直接写学生姓名，助手却不查档案」的割裂；教师认可后可一键固定为会话对象。
  */
-const turnObject = ref<{ type: string, id: string, label: string } | null>(null)
+const turnObjects = ref<Array<{ type: string, id: string, label: string }>>([])
 const turnObjectCandidates = ref<Array<{ type: string, id: string, label: string }>>([])
-/** 会话已绑定对象、本轮又提到另一个唯一对象：只提示是否切换，不自动切换 */
-const suggestedContext = ref<{ type: string, id: string, label: string } | null>(null)
+/** 会话已绑定对象、本轮又提到不同的一组对象：只提示是否整组切换，不自动切换 */
+const suggestedContexts = ref<Array<{ type: string, id: string, label: string }>>([])
 const bindingTurnObject = ref(false)
 
-/** 把本轮对象固定为会话绑定对象（后续轮次的记忆、方案与评估都按它收口）。 */
-async function bindTurnObject(object: { type: string, id: string, label: string }, options: { switched?: boolean } = {}) {
-  if (!sessionId.value || bindingTurnObject.value) return
+const SHOW_ALL_CONTEXT_KEYS = 3
+
+/** 把一组对象固定为会话绑定对象（后续轮次的记忆、方案与评估都按它们收口）。 */
+async function bindTurnObject(objects: Array<{ type: string, id: string, label: string }>, options: { switched?: boolean } = {}) {
+  const picked = objects.slice(0, CONTEXT_KEYS_MAX)
+  if (!picked.length || !sessionId.value || bindingTurnObject.value) return
   bindingTurnObject.value = true
   try {
     await $fetch(`/api/v1/chat/sessions/${sessionId.value}/context`, {
       method: 'POST',
-      body: { contextType: object.type, contextId: object.id }
+      body: {
+        contexts: picked.map(item => ({ type: item.type, id: item.id }))
+      }
     })
-    selectedContextKey.value = `${object.type}:${object.id}`
-    turnObject.value = null
+    replaceSelectedContexts(picked)
+    turnObjects.value = []
     turnObjectCandidates.value = []
-    suggestedContext.value = null
+    suggestedContexts.value = []
+    const names = picked.map(item => `${mentionTypeLabel(item.type)}「${item.label}」`).join('、')
     toast.add({
-      title: options.switched
-        ? `已切换到${mentionTypeLabel(object.type)}「${object.label}」`
-        : `已固定为${mentionTypeLabel(object.type)}「${object.label}」`,
-      description: '之后的提问都会读取该对象的记录；本轮回答如需按它重来，可点回答下方的「重新生成」。',
+      title: options.switched ? `已切换到${names}` : `已固定为${names}`,
+      description: '之后的提问都会读取这些对象的记录；本轮回答如需按它们重来，可点回答下方的「重新生成」。',
       color: 'success'
     })
   } catch {
@@ -632,12 +641,58 @@ const allContextOptions = computed(() => [
   ...((contextOptions.value?.classes || []).map((item: any) => ({ ...item, type: 'class' }))),
   ...((contextOptions.value?.guardians || []).map((item: any) => ({ ...item, type: 'guardian' })))
 ])
-const selectedContext = computed(() => {
-  if (selectedContextKey.value === 'none') return null
-  const [type, id] = selectedContextKey.value.split(':')
-  return allContextOptions.value.find((item: any) => item.type === type && item.id === id) || null
-})
-const contextPayload = computed(() => selectedContext.value ? { contextType: selectedContext.value.type, contextId: selectedContext.value.id } : {})
+/** 对象集上限（与 shared/contracts.ts 的 CHAT_CONTEXT_MAX 一致）。 */
+const CONTEXT_KEYS_MAX = 5
+
+/** 已选对象集（带展示名；首项为主对象）。展示名优先取上下文选项，其次取会话/ack 回带的标签。 */
+const selectedContexts = computed(() => selectedContextKeys.value.map((key) => {
+  const [type, id] = key.split(':')
+  const option = allContextOptions.value.find((item: any) => item.type === type && item.id === id)
+  return {
+    key,
+    type: type || '',
+    id: id || '',
+    label: String(option?.label || contextLabelMap.value[key] || '该对象')
+  }
+}))
+/** 主对象（首个）：动作卡跳转、模块页带参等既有链路只带一个对象。 */
+const primaryContext = computed(() => selectedContexts.value[0] || null)
+/** 兼容旧渲染的别名（模板与动作卡里沿用 selectedContext 语义 = 主对象）。 */
+const selectedContext = primaryContext
+const contextPayload = computed(() => selectedContexts.value.length
+  ? { contexts: selectedContexts.value.map(item => ({ type: item.type, id: item.id })) }
+  : {})
+/** 用一整组对象替换当前选择（会话加载 / 固定为本会话对象时用），并缓存展示名。 */
+function replaceSelectedContexts(objects: Array<{ type: string, id: string, label?: string | null }>) {
+  const keys: string[] = []
+  const labels: Record<string, string> = { ...contextLabelMap.value }
+  for (const item of objects) {
+    const key = `${item.type}:${item.id}`
+    if (keys.includes(key)) continue
+    keys.push(key)
+    if (item.label) labels[key] = item.label
+    if (keys.length >= CONTEXT_KEYS_MAX) break
+  }
+  selectedContextKeys.value = keys
+  contextLabelMap.value = labels
+}
+/** 追加 / 移除一个对象（@ 选择器点击时用）。 */
+function toggleSelectedContext(object: { type: string, id: string, label?: string | null }) {
+  const key = `${object.type}:${object.id}`
+  if (selectedContextKeys.value.includes(key)) {
+    selectedContextKeys.value = selectedContextKeys.value.filter(item => item !== key)
+    return
+  }
+  if (selectedContextKeys.value.length >= CONTEXT_KEYS_MAX) {
+    toast.add({ title: `一次最多关联 ${CONTEXT_KEYS_MAX} 个对象`, color: 'warning' })
+    return
+  }
+  selectedContextKeys.value = [...selectedContextKeys.value, key]
+  if (object.label) contextLabelMap.value = { ...contextLabelMap.value, [key]: object.label }
+}
+function removeSelectedContext(key: string) {
+  selectedContextKeys.value = selectedContextKeys.value.filter(item => item !== key)
+}
 
 async function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
   await nextTick()
@@ -672,11 +727,11 @@ function newConversation() {
   resetDeleteMessageCandidate()
   timeline.value = []
   route.value = null
-  turnObject.value = null
+  turnObjects.value = []
   turnObjectCandidates.value = []
-  suggestedContext.value = null
+  suggestedContexts.value = []
   selectedOptions.value = {}
-  selectedContextKey.value = 'none'
+  selectedContextKeys.value = []
   mentionOpen.value = false
   mentionQuery.value = ''
   playGreetingTyping()
@@ -694,15 +749,17 @@ async function loadSession(id: string) {
   try {
     const result = await $fetch<any>(`/api/v1/chat/sessions/${id}`)
     sessionId.value = id
-    turnObject.value = null
+    turnObjects.value = []
     turnObjectCandidates.value = []
-    suggestedContext.value = null
-    suppressContextWatch.value = true
-    selectedContextKey.value = result.session.contextType && result.session.contextType !== 'none' && result.session.contextId
-      ? `${result.session.contextType}:${result.session.contextId}`
-      : 'none'
+    suggestedContexts.value = []
+    // 会话对象集：优先用接口返回的 contexts（主对象 + 关联对象），老接口只带主对象时回退到 contextType/contextId
+    const sessionContexts: any[] = Array.isArray(result.session.contexts) && result.session.contexts.length
+      ? result.session.contexts
+      : (result.session.contextType && result.session.contextType !== 'none' && result.session.contextId
+          ? [{ type: result.session.contextType, id: result.session.contextId, label: result.session.metadata?.contextLabel ?? null }]
+          : [])
+    replaceSelectedContexts(sessionContexts)
     await nextTick()
-    suppressContextWatch.value = false
     route.value = null
     const mapped: TimelineItem[] = result.messages.map((item: any) => {
       const base: TimelineItem = {
@@ -750,19 +807,25 @@ async function loadSession(id: string) {
 
     // 会话内的咨询对象换绑：把分隔条插到换绑后第一条消息之前（换绑后还没发消息时追加到末尾）
     const switches: any[] = Array.isArray(result.session?.metadata?.contextSwitches) ? result.session.metadata.contextSwitches : []
-    const validSwitches = switches.filter((entry: any) => entry && typeof entry.at === 'string' && entry.to?.type)
+    const switchTargets = (entry: any) => {
+      const raw = Array.isArray(entry?.to) ? entry.to : (entry?.to ? [entry.to] : [])
+      return raw
+        .filter((item: any) => item && typeof item.type === 'string' && typeof item.id === 'string')
+        .map((item: any) => ({ type: item.type, id: item.id, label: item.label || null }))
+    }
+    const validSwitches = switches.filter((entry: any) => entry && typeof entry.at === 'string' && switchTargets(entry).length)
     const withDividers: TimelineItem[] = []
     let switchIndex = 0
     result.messages.forEach((raw: any, index: number) => {
       const createdAt = Date.parse(raw?.createdAt)
       while (switchIndex < validSwitches.length && Date.parse(validSwitches[switchIndex].at) <= createdAt) {
-        withDividers.push(contextSwitchItem(validSwitches[switchIndex].to.type, validSwitches[switchIndex].to.label))
+        withDividers.push(contextSwitchItem(switchTargets(validSwitches[switchIndex])))
         switchIndex += 1
       }
       withDividers.push(mapped[index]!)
     })
     while (switchIndex < validSwitches.length) {
-      withDividers.push(contextSwitchItem(validSwitches[switchIndex].to.type, validSwitches[switchIndex].to.label))
+      withDividers.push(contextSwitchItem(switchTargets(validSwitches[switchIndex])))
       switchIndex += 1
     }
     timeline.value = withDividers
@@ -828,19 +891,30 @@ async function readAssistantStream(response: Response, reuseIndex = -1, userMess
             const target = timeline.value[userMessageIndex]
             if (target && target.role === 'user' && !target.messageId) target.messageId = data.userMessageId
           }
-          turnObject.value = data.turnObject ? { type: data.turnObject.type, id: data.turnObject.id, label: data.turnObject.label } : null
+          // 兼容：老服务端只回 context/turnObject/suggestedContext（单对象）
+          const ackContexts: any[] = Array.isArray(data.contexts)
+            ? data.contexts
+            : (data.context ? [data.context] : [])
+          const ackTurnObjects: any[] = Array.isArray(data.turnObjects)
+            ? data.turnObjects
+            : (data.turnObject ? [data.turnObject] : [])
+          const ackSuggested: any[] = Array.isArray(data.suggestedContexts)
+            ? data.suggestedContexts
+            : (data.suggestedContext ? [data.suggestedContext] : [])
+          turnObjects.value = ackTurnObjects.map((item: any) => ({ type: item.type, id: item.id, label: item.label }))
           turnObjectCandidates.value = Array.isArray(data.turnObjectCandidates)
             ? data.turnObjectCandidates.map((item: any) => ({ type: item.type, id: item.id, label: item.label }))
             : []
-          suggestedContext.value = data.suggestedContext
-            ? { type: data.suggestedContext.type, id: data.suggestedContext.id, label: data.suggestedContext.label }
-            : null
-          if (data.context) {
-            suppressContextWatch.value = true
-            selectedContextKey.value = `${data.context.type}:${data.context.id}`
+          suggestedContexts.value = ackSuggested.map((item: any) => ({ type: item.type, id: item.id, label: item.label }))
+          if (ackContexts.length) {
+                    // 服务端回带的标签写进映射，保证历史/已归档对象也能显示名字
+            for (const item of ackContexts) {
+              if (item?.type && item?.id && item?.label) {
+                contextLabelMap.value = { ...contextLabelMap.value, [`${item.type}:${item.id}`]: item.label }
+              }
+            }
             await nextTick()
-            suppressContextWatch.value = false
-          }
+                  }
         }
         if (event === 'answer_start') {
           // Agent 模式：保持 pending 状态条（文案随 thinking 变化），气泡先建立供工具/引用/卡片挂载。
@@ -1006,9 +1080,9 @@ async function ask() {
   pending.value = true
   pendingLabel.value = 'Agent 正在分析问题…'
   route.value = null
-  turnObject.value = null
+  turnObjects.value = []
   turnObjectCandidates.value = []
-  suggestedContext.value = null
+  suggestedContexts.value = []
   resetDeleteMessageCandidate()
   timeline.value.push({ role: 'user', text })
   // 记下这条用户消息的位置：ack 事件带回 userMessageId 后写回同一气泡
@@ -1178,26 +1252,29 @@ function applyMention(type: string, id: string) {
   if (at) {
     input.value = input.value.slice(0, at.index) + input.value.slice(at.index + 1 + at.query.length)
   }
-  const key = `${type}:${id}`
   mentionOpen.value = false
   mentionQuery.value = ''
-  if (key === selectedContextKey.value) return
   const option = allContextOptions.value.find((item: any) => item.type === type && item.id === id)
-  selectedContextKey.value = key
-  // 会话内换对象：保留当前对话（历史由服务端保留、下一条消息换绑），只插入分隔条说明从这条起谈的是新对象
+  const before = [...selectedContextKeys.value]
+  toggleSelectedContext({ type, id, label: option?.label ?? null })
+  // 选择没有变化（点的是同一项但已达上限等）时不插分隔条
+  if (before.join('|') === selectedContextKeys.value.join('|')) return
+  // 会话内换对象集：保留当前对话（历史由服务端保留、下一条消息换绑），只插入分隔条说明从这条起谈的是哪些对象
   if (!sessionId.value || !timeline.value.length) return
   // 还没发消息就连着切换时，只保留最后一条分隔条
   if (timeline.value[timeline.value.length - 1]?.contextSwitch) timeline.value.pop()
-  timeline.value.push(contextSwitchItem(type, option?.label))
+  timeline.value.push(contextSwitchItem(selectedContexts.value.map(item => ({ type: item.type, id: item.id, label: item.label }))))
   nextTick(() => scrollToLatest())
 }
 
-/** 换绑咨询对象的时间线分隔条（role=system，仅用于展示，不落库）。 */
-function contextSwitchItem(type: string, label?: string | null): TimelineItem {
+/** 换绑咨询对象的时间线分隔条（role=system，仅用于展示，不落库；可多名）。 */
+function contextSwitchItem(objects: Array<{ type: string, id?: string, label?: string | null }>): TimelineItem {
   return {
     role: 'system',
     text: '',
-    contextSwitch: { type, label: label || '该对象' }
+    contextSwitch: {
+      objects: objects.map(item => ({ type: item.type, label: item.label || '该对象' }))
+    }
   }
 }
 function closeMention() {
@@ -1216,11 +1293,17 @@ const mentionOptions = computed(() => {
 })
 const mentionTypeLabel = (type: string) => type === 'student' ? '学生' : type === 'class' ? '班级' : '家长'
 
-/** 会话列表里显示每条对话当前绑定的咨询对象（列表接口已返回 contextType/contextId）。 */
+/** 会话列表里显示每条对话当前绑定的咨询对象集（列表接口已返回 contexts，老接口回退 contextType/contextId）。 */
 function sessionContextLabel(item: any) {
-  if (!item?.contextId || !item?.contextType || item.contextType === 'none') return ''
-  const matched = allContextOptions.value.find((option: any) => option.type === item.contextType && option.id === item.contextId)
-  return (item.contextType === 'student' ? '学生' : item.contextType === 'class' ? '班级' : '家长') + ' · ' + (matched?.label || '已关联对象')
+  const contexts: any[] = Array.isArray(item?.contexts) && item.contexts.length
+    ? item.contexts
+    : (item?.contextId && item?.contextType && item.contextType !== 'none' ? [{ type: item.contextType, id: item.contextId }] : [])
+  if (!contexts.length) return ''
+  const described = contexts.slice(0, SHOW_ALL_CONTEXT_KEYS).map((ctx: any) => {
+    const matched = allContextOptions.value.find((option: any) => option.type === ctx.type && option.id === ctx.id)
+    return `${mentionTypeLabel(ctx.type)} · ${ctx.label || matched?.label || '已关联对象'}`
+  })
+  return described.join('、') + (contexts.length > described.length ? ` 等 ${contexts.length} 个` : '')
 }
 
 async function acceptPrivacyNotice() {
@@ -1229,6 +1312,27 @@ async function acceptPrivacyNotice() {
     await refreshGovernance()
     toast.add({ title: '隐私告知已确认', color: 'success' })
   } catch (error: any) { toast.add({ title: '确认失败', description: error?.data?.message || '请稍后重试', color: 'error' }) }
+}
+
+/**
+ * 「转存」：把这条消息带到目标记录页的新建抽屉（预填由 app/composables/useChatRecordPrefill.ts 完成）。
+ * 只传会话与消息 id，正文与关联对象由目标页按归属校验后读取，避免把长正文塞进 URL。
+ */
+function transferMessage(item: TimelineItem, target: 'student_event' | 'communication') {
+  if (!sessionId.value || !item.messageId) return
+  toast.add({ title: '正在打开新建页面…', color: 'neutral' })
+  void navigateTo({
+    path: target === 'student_event' ? '/information/events' : '/information/communications',
+    query: { chatSessionId: sessionId.value, chatMessageId: item.messageId }
+  })
+}
+
+/** 消息转存菜单项（AI 回答与教师提问共用）。 */
+function transferMenuItems(item: TimelineItem) {
+  return [[
+    { label: '转存为学生事件', icon: 'i-lucide-clipboard-list', onSelect: () => transferMessage(item, 'student_event') },
+    { label: '转存为家校沟通', icon: 'i-lucide-messages-square', onSelect: () => transferMessage(item, 'communication') }
+  ]]
 }
 
 async function submitFeedback(item: TimelineItem, rating: 'helpful' | 'not_helpful', details = false) {
@@ -1317,10 +1421,14 @@ onMounted(async () => {
     await loadSession(deepLinkSessionId)
   } else if (type && id) {
     autoRestored.value = true
-    selectedContextKey.value = `${type}:${id}`
+    replaceSelectedContexts([{ type, id, label: typeof query.contextLabel === 'string' ? query.contextLabel : null }])
   } else if (prefill?.contextKey) {
     autoRestored.value = true
-    selectedContextKey.value = prefill.contextKey
+    // 兼容旧格式 contextKey（`type:id`，可含逗号分隔的多项）
+    replaceSelectedContexts(String(prefill.contextKey).split(',').map((key: string) => {
+      const [contextType, contextId] = key.split(':')
+      return { type: contextType || '', id: contextId || '', label: null }
+    }).filter((item: { type: string, id: string }) => item.type && item.id))
   } else {
     // 无深链/上下文/预填时自动恢复最近一次对话：刷新或隔一段时间回来仍能看到历史记录
     await autoRestoreLatestSession()
@@ -1433,21 +1541,38 @@ watch(sessions, autoRestoreLatestSession, { once: true })
             />
           </div>
           <div class="flex min-w-0 flex-1 items-center justify-end gap-2">
-            <div v-if="selectedContext" class="flex min-w-0 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 sm:py-1.5"><UIcon :name="selectedContext.type === 'student' ? 'i-lucide-user-round' : selectedContext.type === 'class' ? 'i-lucide-users' : 'i-lucide-user-round-check'" class="size-3.5 shrink-0" /><span class="truncate">{{ mentionTypeLabel(selectedContext.type) }} · {{ selectedContext.label }}</span></div>
-            <span v-else class="min-w-0 truncate text-xs text-slate-500 sm:text-sm"><span class="sm:hidden"><span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长</span><span class="hidden sm:inline">未指定对象 · 输入框输入 <span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长</span></span>
+            <div v-if="selectedContexts.length" class="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+              <span
+                v-for="ctx in selectedContexts"
+                :key="ctx.key"
+                class="flex min-w-0 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 sm:py-1.5"
+              >
+                <UIcon :name="ctx.type === 'student' ? 'i-lucide-user-round' : ctx.type === 'class' ? 'i-lucide-users' : 'i-lucide-user-round-check'" class="size-3.5 shrink-0" />
+                <span class="max-w-[7rem] truncate sm:max-w-[12rem]">{{ mentionTypeLabel(ctx.type) }} · {{ ctx.label }}</span>
+                <button
+                  type="button"
+                  class="rounded-full text-emerald-600 transition hover:text-emerald-900"
+                  :aria-label="`移除${ctx.label}`"
+                  :title="`移除${ctx.label}`"
+                  @click="removeSelectedContext(ctx.key)"
+                ><UIcon name="i-lucide-x" class="size-3.5" /></button>
+              </span>
+              <span v-if="selectedContexts.length >= CONTEXT_KEYS_MAX" class="text-[11px] text-slate-400">已达上限 {{ CONTEXT_KEYS_MAX }}</span>
+            </div>
+            <span v-else class="min-w-0 truncate text-xs text-slate-500 sm:text-sm"><span class="sm:hidden"><span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长</span><span class="hidden sm:inline">未指定对象 · 输入框输入 <span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长（可多名）</span></span>
           </div>
         </div>
-        <!-- 本轮对象：服务端按本轮消息识别，不改变会话绑定；命中多个时由教师点选，不替教师猜 -->
+        <!-- 本轮对象：服务端按本轮消息识别（可多名），不改变会话绑定；同名档案等无法确认时由教师点选，不替教师猜 -->
         <div
-          v-if="!selectedContext && (turnObject || turnObjectCandidates.length)"
+          v-if="!selectedContexts.length && (turnObjects.length || turnObjectCandidates.length)"
           class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-100 bg-emerald-50/60 px-3 py-2 text-xs sm:px-6"
         >
-          <template v-if="turnObject">
+          <template v-if="turnObjects.length">
             <span class="flex min-w-0 items-center gap-1.5 text-emerald-900">
               <UIcon name="i-lucide-link" class="size-3.5 shrink-0" />
-              <span class="truncate">本次按{{ mentionTypeLabel(turnObject.type) }}「{{ turnObject.label }}」回答</span>
+              <span class="truncate">本次按{{ turnObjects.map(item => `${mentionTypeLabel(item.type)}「${item.label}」`).join('、') }}回答</span>
             </span>
-            <UButton size="xs" color="primary" variant="soft" :loading="bindingTurnObject" @click="bindTurnObject(turnObject)">固定为本会话对象</UButton>
+            <UButton size="xs" color="primary" variant="soft" :loading="bindingTurnObject" @click="bindTurnObject(turnObjects)">固定为本会话对象</UButton>
           </template>
           <template v-else>
             <span class="flex min-w-0 items-center gap-1.5 text-amber-900">
@@ -1458,23 +1583,23 @@ watch(sessions, autoRestoreLatestSession, { once: true })
               v-for="candidate in turnObjectCandidates"
               :key="`${candidate.type}:${candidate.id}`"
               size="xs" color="neutral" variant="soft" :loading="bindingTurnObject"
-              @click="bindTurnObject(candidate)"
+              @click="bindTurnObject([candidate])"
             >{{ candidate.label }}</UButton>
           </template>
         </div>
-        <!-- 会话已绑定对象、本轮又提到另一个唯一对象：只提示是否切换，避免静默混用两个学生的信息 -->
+        <!-- 会话已绑定对象、本轮又提到不同的一组对象：只提示是否切换，避免静默混用两组对象的信息 -->
         <div
-          v-if="suggestedContext"
+          v-if="suggestedContexts.length"
           class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-amber-100 bg-amber-50/70 px-3 py-2 text-xs sm:px-6"
         >
           <span class="flex min-w-0 items-center gap-1.5 text-amber-900">
             <UIcon name="i-lucide-replace" class="size-3.5 shrink-0" />
-            <span class="truncate">本轮提到的{{ mentionTypeLabel(suggestedContext.type) }}「{{ suggestedContext.label }}」与当前对象不同，是否切换？</span>
+            <span class="truncate">本轮提到的{{ suggestedContexts.map(item => `${mentionTypeLabel(item.type)}「${item.label}」`).join('、') }}与当前对象不同，是否切换？</span>
           </span>
-          <UButton size="xs" color="warning" variant="soft" :loading="bindingTurnObject" @click="bindTurnObject(suggestedContext, { switched: true })">
-            切到「{{ suggestedContext.label }}」
+          <UButton size="xs" color="warning" variant="soft" :loading="bindingTurnObject" @click="bindTurnObject(suggestedContexts, { switched: true })">
+            切到这一组
           </UButton>
-          <UButton size="xs" color="neutral" variant="ghost" @click="suggestedContext = null">保持当前对象</UButton>
+          <UButton size="xs" color="neutral" variant="ghost" @click="suggestedContexts = []">保持当前对象</UButton>
         </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
 
@@ -1484,7 +1609,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
             <!-- 会话内换绑咨询对象：分隔条标明从这条起谈的是另一个对象（历史消息保留） -->
             <div v-if="item.contextSwitch" class="flex items-center gap-3 py-1 text-[11px] text-slate-400">
               <span class="h-px flex-1 bg-slate-200" />
-              <span class="flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50/70 px-3 py-1 font-medium text-emerald-700"><UIcon name="i-lucide-link" class="size-3" />以下开始谈：{{ mentionTypeLabel(item.contextSwitch.type) }} · {{ item.contextSwitch.label }}</span>
+              <span class="flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50/70 px-3 py-1 font-medium text-emerald-700"><UIcon name="i-lucide-link" class="size-3" />以下开始谈：{{ item.contextSwitch.objects.map(obj => `${mentionTypeLabel(obj.type)} · ${obj.label}`).join('、') }}</span>
               <span class="h-px flex-1 bg-slate-200" />
             </div>
             <div v-else class="flex items-start gap-3" :class="item.role === 'user' ? 'flex-row-reverse' : 'max-sm:flex-col max-sm:gap-2'">
@@ -1512,8 +1637,11 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   <div v-else class="markdown-body" v-html="useMarkdown(item.text)" />
                   <p v-if="item.role === 'assistant' && item.stopped" class="mt-2 flex items-center gap-1 text-[11px] text-slate-400"><UIcon name="i-lucide-circle-stop" class="size-3" />已停止生成</p>
                 </div>
-                <!-- 用户消息操作行：只有落库（拿到 messageId）后才能删除；样式与助手操作行一致（统一的 UButton size=xs） -->
-                <div v-if="item.role === 'user' && item.messageId" class="mt-2 flex justify-end">
+                <!-- 用户消息操作行：只有落库（拿到 messageId）后才能删除或转存；样式与助手操作行一致（统一的 UButton size=xs） -->
+                <div v-if="item.role === 'user' && item.messageId" class="mt-2 flex justify-end gap-1.5">
+                  <UDropdownMenu :items="transferMenuItems(item)">
+                    <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-file-input" :disabled="pending" aria-label="转存到记录">转存</UButton>
+                  </UDropdownMenu>
                   <UButton
                     size="xs"
                     :color="deleteMessageCandidate === item.messageId ? 'error' : 'neutral'"
@@ -1626,6 +1754,9 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                     <UButton size="xs" color="neutral" :variant="item.feedback==='helpful'?'soft':'ghost'" icon="i-lucide-thumbs-up" @click="submitFeedback(item, 'helpful')">有帮助</UButton>
                     <UButton size="xs" color="neutral" :variant="item.feedback==='not_helpful'?'soft':'ghost'" icon="i-lucide-thumbs-down" @click="submitFeedback(item, 'not_helpful')">没帮助</UButton>
                     <UButton v-if="item.answerCompleted && !pending && index === timeline.length - 1" size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" @click="regenerateAnswer(item, index)">重新生成</UButton>
+                    <UDropdownMenu :items="transferMenuItems(item)">
+                      <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-file-input" :disabled="pending" aria-label="转存到记录">转存</UButton>
+                    </UDropdownMenu>
                   </template>
                   <UButton
                     size="xs"
@@ -1730,16 +1861,17 @@ watch(sessions, autoRestoreLatestSession, { once: true })
               <div class="flex items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs text-slate-400">
                 <UIcon name="i-lucide-search" class="size-3.5" />
                 <span v-if="mentionQuery" class="truncate">检索“{{ mentionQuery }}”</span>
-                <span v-else>输入关键词检索 · 选择对象后自动关联</span>
+                <span v-else>输入关键词检索 · 点选可关联/取消（最多 {{ CONTEXT_KEYS_MAX }} 个）</span>
               </div>
               <div class="max-h-60 overflow-y-auto p-1.5">
                 <button v-if="!mentionOptions.length" type="button" class="w-full px-3 py-3 text-center text-xs text-slate-400" @click="closeMention">无可供关联的对象</button>
                 <button v-for="item in mentionOptions" :key="`${item.type}:${item.id}`" type="button" class="flex w-full items-start gap-2 rounded-xl px-3 py-2 text-left transition hover:bg-emerald-50" @mousedown.prevent="applyMention(item.type, item.id)">
                   <span class="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700"><UIcon :name="item.type === 'student' ? 'i-lucide-user-round' : item.type === 'class' ? 'i-lucide-users' : 'i-lucide-user-round-check'" class="size-3.5" /></span>
-                  <span class="min-w-0">
+                  <span class="min-w-0 flex-1">
                     <span class="block truncate text-sm text-slate-700">{{ item.label }}</span>
                     <span class="block truncate text-xs text-slate-400">{{ mentionTypeLabel(item.type) }} · {{ item.description }}</span>
                   </span>
+                  <UIcon v-if="selectedContextKeys.includes(`${item.type}:${item.id}`)" name="i-lucide-check" class="mt-1 size-4 shrink-0 text-emerald-600" />
                 </button>
               </div>
             </div>

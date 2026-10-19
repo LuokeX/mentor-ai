@@ -53,16 +53,16 @@ export interface AgentUserContext {
   /** 咨询对象（学生/班级/家长）上下文摘要，可为 null。 */
   businessContextText?: string | null
   /**
-   * 当前会话绑定的咨询对象标识（只含类型/ID/展示名，不含档案正文）。
-   * 供 record_snapshot 等按需查档工具使用；未绑定或教师选择不引入档案时为 null。
+   * 当前会话绑定的咨询对象集（只含类型/ID/展示名，不含档案正文，主对象在前）。
+   * 供 record_snapshot 等按需查档工具使用；未绑定或教师选择不引入档案时为空数组。
    */
-  businessContext?: { type: 'student' | 'class' | 'guardian', id: string, label: string } | null
+  businessContexts?: Array<{ type: 'student' | 'class' | 'guardian', id: string, label: string }>
   /**
-   * 本轮对象：教师本轮消息里唯一命中的学生/班级（服务端确定性识别，未改变会话绑定）。
-   * 会话已绑定对象时为空（避免把两个对象混在一轮里）；不带档案咨询时也为空。
-   * 工具按「会话绑定优先，其次本轮对象」收口，跨会话记忆与摘仍按会话绑定。
+   * 本轮对象集：教师本轮消息里命中的学生/班级（服务端确定性识别，未改变会话绑定，可多名）。
+   * 会话已绑定对象时为空（避免把两组对象混在一轮里）；不带档案咨询时也为空。
+   * 工具按「会话绑定优先，其次本轮对象」收口，跨会话记忆与摘要仍按会话绑定。
    */
-  turnContext?: { type: 'student' | 'class' | 'guardian', id: string, label: string } | null
+  turnContexts?: Array<{ type: 'student' | 'class' | 'guardian', id: string, label: string }>
   /** 跨会话实体记忆（按需拉取）。 */
   entityMemory?: AgentMessage[]
   /** 教师画像。 */

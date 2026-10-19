@@ -272,11 +272,12 @@ export interface AssistantPlanRow {
 export async function readPlansForAssistant(
   event: H3Event,
   user: AssistantReaderUser,
-  input: { limit?: number, studentId?: string, classId?: string, guardianId?: string } = {}
+  input: { limit?: number, studentId?: string, classId?: string, guardianId?: string, objects?: AssistantObjectRef[] } = {}
 ): Promise<{ plans: AssistantPlanRow[], unscopedPlanCount: number }> {
   const db = useDb(event)
   const limit = clampAssistantLimit(input.limit, ASSISTANT_READER_LIMITS.plans)
-  const scoped = Boolean(input.studentId || input.classId || input.guardianId)
+  const scopedObjects = input.objects ?? []
+  const scoped = Boolean(input.studentId || input.classId || input.guardianId || scopedObjects.length)
   const conditions = [
     eq(schema.plans.schoolId, user.schoolId),
     eq(schema.plans.ownerUserId, user.userId),
@@ -285,6 +286,15 @@ export async function readPlansForAssistant(
   if (input.studentId) conditions.push(eq(schema.plans.studentId, input.studentId))
   if (input.classId) conditions.push(eq(schema.plans.classId, input.classId))
   if (input.guardianId) conditions.push(eq(schema.plans.guardianId, input.guardianId))
+  // 多对象（@ 多名学生）收口：把每个对象折算成一个条件再取并集
+  const objectCondition = scopedObjects.length
+    ? or(...scopedObjects.map(item => item.type === 'student'
+      ? eq(schema.plans.studentId, item.id)
+      : item.type === 'guardian'
+        ? eq(schema.plans.guardianId, item.id)
+        : eq(schema.plans.classId, item.id)))
+    : undefined
+  if (objectCondition) conditions.push(objectCondition)
 
   const plans = await db.select({
     id: schema.plans.id,
@@ -427,22 +437,26 @@ export interface AssistantAssessmentHistory {
 export async function readAssessmentHistoryForAssistant(
   event: H3Event,
   user: AssistantReaderUser,
-  input: { module?: ModuleId, limit?: number, object?: AssistantObjectRef | null } = {}
+  input: { module?: ModuleId, limit?: number, object?: AssistantObjectRef | null, objects?: AssistantObjectRef[] } = {}
 ): Promise<AssistantAssessmentHistory> {
   const db = useDb(event)
   const submittedLimit = clampAssistantLimit(input.limit, ASSISTANT_READER_LIMITS.submittedAssessments)
-  const object = input.object || null
+  const objects = [
+    ...(input.object ? [input.object] : []),
+    ...(input.objects ?? [])
+  ]
   /**
    * 对象级量表只认同一咨询对象：开启对象过滤时，教师级模块（结果属于教师本人）照常返回，
    * 其余模块必须命中评估组的同一对象；对象未知的历史提交在此被排除，不猜归属。
+   * 多个对象（@ 多名学生）时取并集。
    */
-  const scopeCondition = object
+  const scopeCondition = objects.length
     ? or(
       inArray(schema.assessmentAttempts.module, TEACHER_LEVEL_MODULES),
-      and(
-        eq(schema.assessmentSessions.contextType, object.type),
-        eq(schema.assessmentSessions.contextId, object.id)
-      )
+      ...objects.map(item => and(
+        eq(schema.assessmentSessions.contextType, item.type),
+        eq(schema.assessmentSessions.contextId, item.id)
+      ))
     )
     : undefined
   const submittedConditions = [
@@ -500,8 +514,11 @@ export async function readAssessmentHistoryForAssistant(
         eq(schema.assessmentSessions.ownerUserId, user.userId),
         eq(schema.assessmentSessions.status, 'open'),
         ...(input.module ? [eq(schema.assessmentSessions.module, input.module)] : []),
-        ...(object
-          ? [eq(schema.assessmentSessions.contextType, object.type), eq(schema.assessmentSessions.contextId, object.id)]
+        ...(objects.length
+          ? [or(...objects.map(item => and(
+            eq(schema.assessmentSessions.contextType, item.type),
+            eq(schema.assessmentSessions.contextId, item.id)
+          )))!]
           : [])
       ))
       .orderBy(desc(schema.assessmentSessions.updatedAt))
@@ -580,7 +597,7 @@ export interface AssistantCommunicationRow {
 export async function readCommunicationsForAssistant(
   event: H3Event,
   user: AssistantReaderUser,
-  input: { studentId?: string, guardianId?: string, limit?: number } = {}
+  input: { studentId?: string, guardianId?: string, limit?: number, objects?: AssistantObjectRef[] } = {}
 ): Promise<{ communications: AssistantCommunicationRow[] }> {
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
@@ -592,6 +609,15 @@ export async function readCommunicationsForAssistant(
   ]
   if (input.studentId) conditions.push(eq(schema.communications.studentId, input.studentId))
   if (input.guardianId) conditions.push(eq(schema.communications.guardianId, input.guardianId))
+  // 多对象（@ 多名学生/家长）收口：按主对象列取并集（关联对象见 communication_* 关联表，读取层暂按主对象口径）
+  const objectCondition = input.objects?.length
+    ? or(...input.objects.map(item => item.type === 'guardian'
+      ? eq(schema.communications.guardianId, item.id)
+      : item.type === 'student'
+        ? eq(schema.communications.studentId, item.id)
+        : undefined).filter((item): item is NonNullable<typeof item> => Boolean(item)))
+    : undefined
+  if (objectCondition) conditions.push(objectCondition)
 
   const rows = await db.select({
     occurredAt: schema.communications.occurredAt,

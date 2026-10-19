@@ -1,8 +1,9 @@
 import { rankMemory } from './chat-memory'
 import type { H3Event } from 'h3'
-import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
 import type { AuthUser } from '../../app/composables/useAuth'
-import { isMessageAfterBindingSwitch, readContextSwitches } from './chat-context-switch'
+import { CHAT_CONTEXT_MAX } from '../../shared/contracts'
+import { contextTypeLabel, isMessageAfterBindingSwitch, readContextSwitches } from './chat-context-switch'
 import { decryptSensitive } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
 
@@ -217,6 +218,70 @@ export async function buildAssistantBusinessContext(event: H3Event, user: AuthUs
   return { type: 'guardian', id: guardian.id, label, snapshot, prompt: compact(snapshot) }
 }
 
+/** 咨询对象引用（只含类型 / ID / 展示名，不含档案正文）。 */
+export interface AssistantContextRef {
+  type: AssistantContextType
+  id: string
+  label: string
+}
+
+/**
+ * 批量校验咨询对象归属并返回引用（不构建档案快照）。
+ *
+ * 聊天入口只需要「按哪些对象收口」的指针：档案正文由 record_snapshot 等工具按需读取，
+ * 这样 system 前缀保持稳定、@ 多名学生时也不会为每个对象都跑一遍重查询。
+ * 任一对象不存在或不属于当前教师，抛 404（不暴露越权目标是否存在）。
+ */
+export async function resolveAssistantContextRefs(
+  event: H3Event,
+  user: AuthUser,
+  refs: ReadonlyArray<{ type: string, id: string }>
+): Promise<AssistantContextRef[]> {
+  if (!refs.length) return []
+  if (!user.schoolId) throw createError({ statusCode: 400, message: '教师未关联学校' })
+  const db = useDb(event)
+  const secret = useRuntimeConfig(event).encryptionKey
+  const resolved: AssistantContextRef[] = []
+  const seen = new Set<string>()
+  for (const ref of refs) {
+    if (ref.type !== 'student' && ref.type !== 'class' && ref.type !== 'guardian') {
+      throw createError({ statusCode: 422, message: '不支持的咨询对象类型' })
+    }
+    const key = `${ref.type}:${ref.id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    let label: string | null = null
+    if (ref.type === 'student') {
+      const [row] = await db.select({ nameEnc: schema.students.nameEnc }).from(schema.students).where(and(
+        eq(schema.students.id, ref.id),
+        eq(schema.students.ownerUserId, user.id),
+        eq(schema.students.schoolId, user.schoolId)
+      )).limit(1)
+      label = row ? decryptSensitive(row.nameEnc, secret) : null
+    } else if (ref.type === 'class') {
+      const [row] = await db.select({ name: schema.classes.name }).from(schema.classes).where(and(
+        eq(schema.classes.id, ref.id),
+        eq(schema.classes.ownerUserId, user.id),
+        eq(schema.classes.schoolId, user.schoolId)
+      )).limit(1)
+      label = row?.name || null
+    } else {
+      const [row] = await db.select({ nameEnc: schema.guardians.nameEnc, relation: schema.guardians.relation }).from(schema.guardians).where(and(
+        eq(schema.guardians.id, ref.id),
+        eq(schema.guardians.ownerUserId, user.id),
+        eq(schema.guardians.schoolId, user.schoolId)
+      )).limit(1)
+      label = row ? `${decryptSensitive(row.nameEnc, secret)}${row.relation ? ` · ${row.relation}` : ''}` : null
+    }
+    if (!label) {
+      throw createError({ statusCode: 404, message: `${contextTypeLabel(ref.type)}不存在或不属于当前负责范围` })
+    }
+    resolved.push({ type: ref.type, id: ref.id, label })
+    if (resolved.length >= CHAT_CONTEXT_MAX) break
+  }
+  return resolved
+}
+
 export async function assertAssistantContext(event: H3Event, user: AuthUser, contextType?: string, contextId?: string) {
   return buildAssistantBusinessContext(event, user, contextType, contextId)
 }
@@ -286,12 +351,19 @@ export async function fetchEntityMemory(
   const db = useDb(event)
   const secret = useRuntimeConfig(event).encryptionKey
 
-  // 1. 找到所有绑定到同一实体的会话
+  // 1. 找到所有绑定到同一实体的会话（主对象命中，或作为关联对象被 @ 进该会话）
   const sessions = await db.select({ id: schema.chatSessions.id, metadata: schema.chatSessions.metadata })
     .from(schema.chatSessions)
+    .leftJoin(schema.chatSessionObjects, and(
+      eq(schema.chatSessionObjects.sessionId, schema.chatSessions.id),
+      eq(schema.chatSessionObjects.objectType, contextType),
+      eq(schema.chatSessionObjects.objectId, contextId)
+    ))
     .where(and(
-      eq(schema.chatSessions.contextType, contextType),
-      eq(schema.chatSessions.contextId, contextId),
+      or(
+        and(eq(schema.chatSessions.contextType, contextType), eq(schema.chatSessions.contextId, contextId)),
+        isNotNull(schema.chatSessionObjects.id)
+      ),
       eq(schema.chatSessions.ownerUserId, user.id),
       eq(schema.chatSessions.schoolId, user.schoolId)
     ))

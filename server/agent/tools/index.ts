@@ -56,7 +56,7 @@ const statelessTools: AgentTool[] = [knowledgeSearchTool, moduleRouteTool]
  * 否则每轮请求前缀都会分叉，DeepSeek 前缀缓存全部落空。
  */
 export function buildAgentTools(userCtx: AgentUserContext | null | undefined, enabledTools?: string[] | null): AgentTool[] {
-  const hasScopedObject = Boolean(userCtx?.businessContext || userCtx?.turnContext)
+  const hasScopedObject = Boolean(userCtx?.businessContexts?.length || userCtx?.turnContexts?.length)
   let base = !userCtx?.userId || !userCtx.sessionId
     ? statelessTools
     : [...agentTools, ...(hasScopedObject ? [recordSnapshotTool] : [])]

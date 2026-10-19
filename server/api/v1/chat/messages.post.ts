@@ -4,19 +4,20 @@ import { useDb, schema } from '../../../utils/db'
 import { encryptSensitive } from '../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../domain/safety'
 import { confirmedSemanticSafetySignals } from '../../../integrations/deepseek'
-import { decideEntryObjectUse, resolveMentionedObject, type MentionResolution } from '../../../domain/assistant-object-mention'
-import { buildAssistantBusinessContext } from '../../../domain/assistant-context'
+import { decideEntryObjectUse, resolveMentionedObjects, type MentionResolution } from '../../../domain/assistant-object-mention'
+import { resolveAssistantContextRefs, type AssistantContextRef } from '../../../domain/assistant-context'
 import {
   buildContextSwitchNote,
   readContextSwitches
 } from '../../../domain/chat-context-switch'
+import { isSameContextSet, loadSessionContexts } from '../../../domain/chat-session-contexts'
 import { buildChatTitle } from '../../../domain/chat-titles'
 import { bindChatSessionContext } from '../../../domain/chat-session-binding'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
 import { trackProductEvent } from '../../../domain/product-events'
 import { classifyQuestionCategory } from '../../../domain/question-category'
 import { sendStream } from 'h3'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { ModuleId } from '../../../../shared/contracts'
 import {
   buildTeacherProfileText,
@@ -43,9 +44,19 @@ export default defineEventHandler(async (event) => {
   const teacherProfileText = (await buildTeacherProfileText(event, user.id)) ?? undefined
   const governance = await resolveAiGovernance(event, user.schoolId, user.id)
   let sessionId = body.sessionId
-  /** 本轮请求显式指定的咨询对象（已完成归属校验）；会话分支据此判断是否需要换绑。 */
-  const requestedBusinessContext = await buildAssistantBusinessContext(event, user, body.contextType, body.contextId)
-  let businessContext = requestedBusinessContext
+  /**
+   * 本轮请求显式指定的咨询对象集（主对象在前；单对象写法 contextType/contextId 等价于一项）。
+   * 已完成归属校验：任一对象越权都会在解析时抛 404。
+   */
+  const requestedContexts = await resolveAssistantContextRefs(
+    event,
+    user,
+    body.contexts?.length
+      ? body.contexts
+      : (body.contextType && body.contextId ? [{ type: body.contextType, id: body.contextId }] : [])
+  )
+  /** 本轮实际生效的咨询对象集（未指定时沿用会话绑定；主对象在最前）。 */
+  let businessContexts: AssistantContextRef[] = requestedContexts
   /** 会话中途换过咨询对象时的持续提示（换绑后每轮都带同一段文案，保持 system 前缀稳定）。 */
   let contextSwitchNote: string | null = null
   /** 会话上下文（元数据 + 加密摘要）：新会话时为 null。 */
@@ -62,40 +73,57 @@ export default defineEventHandler(async (event) => {
       .where(and(eq(schema.chatSessions.id, sessionId), eq(schema.chatSessions.ownerUserId, user.id))).limit(1)
     if (!owned) throw createError({ statusCode: 404, message: '对话不存在' })
     if (owned.status === 'archived') throw createError({ statusCode: 409, message: '对话已归档' })
-    const sessionContextType = owned.contextType === 'none' ? undefined : owned.contextType
-    const boundId = owned.contextId || undefined
-    // 会话内 @ 换对象：保留既有消息（不新建会话），只把会话绑定改到新对象并在元数据里留痕
-    const switching = Boolean(requestedBusinessContext
-      && (requestedBusinessContext.type !== sessionContextType || requestedBusinessContext.id !== boundId))
-    if (switching && requestedBusinessContext) {
+    // 会话内 @ 换对象集：保留既有消息（不新建会话），只把会话绑定改成新的一组并在元数据里留痕
+    const previous = await loadSessionContexts(event, sessionId, owned)
+    const switching = requestedContexts.length > 0 && !isSameContextSet(previous, requestedContexts)
+    if (switching) {
       await bindChatSessionContext(event, {
         sessionId,
         userId: user.id,
         schoolId: user.schoolId,
-        target: {
-          type: requestedBusinessContext.type,
-          id: requestedBusinessContext.id,
-          label: requestedBusinessContext.label
-        },
+        targets: requestedContexts,
         current: owned
       })
+      businessContexts = requestedContexts
+    } else if (requestedContexts.length) {
+      businessContexts = requestedContexts
     } else {
-      // 未指定对象（或指定同一对象）时沿用会话绑定，避免前端不传参就丢掉会话上下文
-      businessContext = requestedBusinessContext
-        || await buildAssistantBusinessContext(event, user, sessionContextType, boundId)
+      // 未指定对象时沿用会话绑定，避免前端不传参就丢掉会话上下文；
+      // 走一次归属解析以拿到有效展示名（对象被删除/越权时与原逻辑一致地抛 404）
+      businessContexts = await resolveAssistantContextRefs(
+        event,
+        user,
+        previous.map(item => ({ type: item.type, id: item.id }))
+      )
     }
     sessionContext = await loadChatSessionContext(event, { id: user.id, schoolId: user.schoolId }, sessionId)
     contextSwitchNote = buildContextSwitchNote(readContextSwitches(sessionContext?.metadata))
   } else {
-    const [session] = await db.insert(schema.chatSessions).values({
-      schoolId: user.schoolId,
-      ownerUserId: user.id,
-      title: buildChatTitle({ messages: [body.message] }),
-      contextType: businessContext?.type || 'none',
-      contextId: businessContext?.id,
-      // contextLabel 供会话列表与后续换绑引用旧对象名（历史会话可能缺失）
-      metadata: { moduleScores: {}, contextLabel: businessContext?.label || null }
-    }).returning()
+    // 新会话：主对象写列、其余写关联表（同一事务），与中途换绑共用同一套数据模型
+    const related = businessContexts.slice(1)
+    const session = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(schema.chatSessions).values({
+        schoolId: user.schoolId!,
+        ownerUserId: user.id,
+        title: buildChatTitle({ messages: [body.message] }),
+        contextType: businessContexts[0]?.type || 'none',
+        contextId: businessContexts[0]?.id,
+        // contextLabel 供会话列表与后续换绑引用旧对象名（历史会话可能缺失）
+        metadata: { moduleScores: {}, contextLabel: businessContexts[0]?.label || null }
+      }).returning()
+      if (!created) return null
+      if (related.length) {
+        await tx.insert(schema.chatSessionObjects).values(related.map((item, index) => ({
+          sessionId: created.id,
+          schoolId: user.schoolId!,
+          objectType: item.type,
+          objectId: item.id,
+          label: item.label,
+          position: index
+        })))
+      }
+      return created
+    })
     if (!session) throw createError({ statusCode: 500, message: '对话创建失败' })
     sessionId = session.id
     sessionContext = null
@@ -114,24 +142,39 @@ export default defineEventHandler(async (event) => {
   await trackProductEvent(event, {
     schoolId: user.schoolId, userId: user.id, eventName: 'assistant_question_submitted',
     targetType: 'chat_session', targetId: ownedSessionId,
-    metadata: { contextType: businessContext?.type || 'none', recordIncluded: Boolean(businessContext && !body.withoutRecord) }
+    metadata: {
+      contextType: businessContexts[0]?.type || 'none',
+      contextCount: businessContexts.length,
+      recordIncluded: Boolean(businessContexts.length && !body.withoutRecord)
+    }
   })
-  if (businessContext) {
+  if (businessContexts.length) {
+    const primary = businessContexts[0]!
     await trackProductEvent(event, {
       schoolId: user.schoolId, userId: user.id, eventName: 'assistant_context_selected',
-      targetType: businessContext.type, targetId: businessContext.id,
-      metadata: { contextType: businessContext.type, recordIncluded: !body.withoutRecord }
+      targetType: primary.type, targetId: primary.id,
+      metadata: { contextType: primary.type, contextCount: businessContexts.length, recordIncluded: !body.withoutRecord }
     })
   }
 
   // 本轮识别：会话未绑定对象时作为「本轮对象」；已绑定对象时只提示是否切换（两种情况都要先识别）
   const mention = body.withoutRecord || governance.effectiveMode === 'local'
     ? ({ kind: 'none' } as MentionResolution)
-    : await resolveMentionedObject(event, { id: user.id, schoolId: user.schoolId }, body.message)
-  const objectUse = decideEntryObjectUse({ binding: businessContext ?? null, mention })
-  const turnContext = objectUse.turnContext
+    : await resolveMentionedObjects(event, { id: user.id, schoolId: user.schoolId }, body.message)
+  const objectUse = decideEntryObjectUse({ binding: businessContexts, mention })
+  const turnContexts = objectUse.turnObjects
+  // 本轮对象记进教师提问的元数据（jsonb 合并，不覆盖其它键）：转存教师原话时同样能预填关联对象
+  if (turnContexts.length) {
+    const patch = {
+      turnObjects: turnContexts.map(item => ({ type: item.type, id: item.id, label: item.label })),
+      turnObject: { type: turnContexts[0]!.type, id: turnContexts[0]!.id, label: turnContexts[0]!.label }
+    }
+    await db.update(schema.chatMessages)
+      .set({ metadata: sql`${schema.chatMessages.metadata} || ${JSON.stringify(patch)}::jsonb` })
+      .where(and(eq(schema.chatMessages.id, question.id), eq(schema.chatMessages.ownerUserId, user.id)))
+  }
   if (mention.kind !== 'none') {
-    const firstHit = mention.kind === 'single' ? mention.object : mention.candidates[0]
+    const firstHit = mention.objects[0] ?? mention.candidates[0]
     await trackProductEvent(event, {
       schoolId: user.schoolId, userId: user.id, eventName: 'assistant_turn_object_resolved',
       targetType: 'chat_session', targetId: ownedSessionId,
@@ -139,9 +182,10 @@ export default defineEventHandler(async (event) => {
         result: mention.kind,
         objectType: firstHit?.type ?? null,
         // 只记命中数量、类型与用途，不记姓名或正文
-        candidates: mention.kind === 'ambiguous' ? mention.candidates.length : 1,
-        turnScoped: Boolean(objectUse.turnContext),
-        switchSuggested: Boolean(objectUse.suggestedSwitch)
+        resolvedCount: mention.objects.length,
+        candidates: mention.candidates.length,
+        turnScoped: turnContexts.length > 0,
+        switchSuggested: objectUse.suggestedSwitch.length > 0
       }
     })
   }
@@ -170,18 +214,36 @@ export default defineEventHandler(async (event) => {
           sessionId: ownedSessionId,
           // 本条提问的消息 id：前端据此定位并删除这条消息
           userMessageId: question.id,
-          context: businessContext ? { type: businessContext.type, id: businessContext.id, label: businessContext.label } : undefined,
-          // 本轮对象（未绑定会话时按消息识别）：前端据此显示「本次按 X 回答」与「固定为本会话对象」
-          turnObject: turnContext ? { type: turnContext.type, id: turnContext.id, label: turnContext.label } : undefined,
+          // context/turnObject 保留为主对象别名（兼容现有渲染）；contexts/turnObjects 为完整对象集
+          context: businessContexts[0]
+            ? { type: businessContexts[0].type, id: businessContexts[0].id, label: businessContexts[0].label }
+            : undefined,
+          contexts: businessContexts.length
+            ? businessContexts.map(item => ({ type: item.type, id: item.id, label: item.label }))
+            : undefined,
+          // 本轮对象（未绑定会话时按消息识别，可多名）：前端据此显示「本次按 X 回答」与「固定为本会话对象」
+          turnObject: turnContexts[0]
+            ? { type: turnContexts[0].type, id: turnContexts[0].id, label: turnContexts[0].label }
+            : undefined,
+          turnObjects: turnContexts.length
+            ? turnContexts.map(item => ({ type: item.type, id: item.id, label: item.label }))
+            : undefined,
           turnObjectCandidates: objectUse.candidates.length
             ? objectUse.candidates.map(item => ({ type: item.type, id: item.id, label: item.label }))
             : undefined,
-          // 会话已绑定对象、本轮又提到另一个唯一对象：提示是否切换，不自动切换
-          suggestedContext: objectUse.suggestedSwitch
-            ? { type: objectUse.suggestedSwitch.type, id: objectUse.suggestedSwitch.id, label: objectUse.suggestedSwitch.label }
+          // 会话已绑定对象、本轮又提到不同的一组对象：提示是否整组切换，不自动切换
+          suggestedContext: objectUse.suggestedSwitch[0]
+            ? {
+                type: objectUse.suggestedSwitch[0].type,
+                id: objectUse.suggestedSwitch[0].id,
+                label: objectUse.suggestedSwitch[0].label
+              }
+            : undefined,
+          suggestedContexts: objectUse.suggestedSwitch.length
+            ? objectUse.suggestedSwitch.map(item => ({ type: item.type, id: item.id, label: item.label }))
             : undefined,
           dataGovernance: governance,
-          recordIncluded: Boolean(businessContext && !body.withoutRecord)
+          recordIncluded: Boolean(businessContexts.length && !body.withoutRecord)
         })
         // 聊天链路的安全命中只做后台预警：建风险事件 + 转介 + 通知 + 审计，
         // 不中断本轮回答、教师端不显示任何预警痕迹（2026-09-17 业务确认）。
@@ -253,12 +315,8 @@ export default defineEventHandler(async (event) => {
           sessionId: ownedSessionId,
           message: body.message,
           withoutRecord: Boolean(body.withoutRecord),
-          businessContext: businessContext
-            ? { type: businessContext.type, id: businessContext.id, label: businessContext.label }
-            : null,
-          turnContext: turnContext
-            ? { type: turnContext.type, id: turnContext.id, label: turnContext.label }
-            : null,
+          businessContexts,
+          turnContexts,
           contextSwitchNote,
           governance,
           teacherProfileText,
@@ -291,7 +349,8 @@ export default defineEventHandler(async (event) => {
             status: 'failed',
             errorCode: classifyAgentFailure(error),
             dataMode: governance.effectiveMode,
-            contextType: businessContext?.type ?? null,
+            // 多对象时只记主对象类型（审计与看板仍按主对象口径）
+            contextType: businessContexts[0]?.type ?? null,
             noticeVersion: governance.noticeVersion
           })
         } catch { /* 审计写入失败不影响错误返回 */ }

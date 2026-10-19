@@ -4,24 +4,32 @@ import { buildBusinessContextText, classifyAgentFailure, getSessionModuleScores 
 describe('buildBusinessContextText（system 段业务上下文）', () => {
   it('绑定咨询对象时给出指针与按需查档要求', () => {
     const text = buildBusinessContextText({
-      recordBinding: { type: 'guardian', label: '张三' },
+      recordBindings: [{ type: 'guardian', label: '张三' }],
       withoutRecord: false,
       hasBinding: true
     })
     expect(text).toContain('当前咨询对象：家长「张三」')
     expect(text).toContain('record_snapshot')
+    // 多对象（@ 多名学生）：逐个列出，并要求逐条说明属于谁
+    const multi = buildBusinessContextText({
+      recordBindings: [{ type: 'student', label: '张小明' }, { type: 'student', label: '张小军' }],
+      withoutRecord: false,
+      hasBinding: true
+    })
+    expect(multi).toContain('当前咨询对象：学生「张小明」、学生「张小军」')
+    expect(multi).toContain('不要把不同对象的信息混在一起')
   })
 
   it('教师选择不带档案时只发脱敏说明', () => {
-    expect(buildBusinessContextText({ recordBinding: null, withoutRecord: true, hasBinding: true }))
+    expect(buildBusinessContextText({ recordBindings: [], withoutRecord: true, hasBinding: true }))
       .toContain('不引入档案数据')
-    expect(buildBusinessContextText({ recordBinding: null, withoutRecord: false, hasBinding: false })).toBeNull()
+    expect(buildBusinessContextText({ recordBindings: [], withoutRecord: false, hasBinding: false })).toBeNull()
   })
 
   it('会话换过对象时把换绑提示追加在业务上下文之后（不带档案时也要带）', () => {
     const note = '本会话中途切换过咨询对象：此前讨论的是学生「李四」，当前咨询对象是家长「张三」。'
     const bound = buildBusinessContextText({
-      recordBinding: { type: 'guardian', label: '张三' },
+      recordBindings: [{ type: 'guardian', label: '张三' }],
       withoutRecord: false,
       hasBinding: true,
       contextSwitchNote: note
@@ -29,7 +37,7 @@ describe('buildBusinessContextText（system 段业务上下文）', () => {
     expect(bound?.startsWith('当前咨询对象：家长「张三」')).toBe(true)
     expect(bound?.endsWith(note)).toBe(true)
     const withoutRecord = buildBusinessContextText({
-      recordBinding: null,
+      recordBindings: [],
       withoutRecord: true,
       hasBinding: true,
       contextSwitchNote: note

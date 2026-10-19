@@ -95,11 +95,30 @@ export const adminAccessRequestSchema = z.object({
   reasonText: z.string().trim().min(10).max(500)
 })
 
+/**
+ * 会话/本轮咨询对象类型（学生 / 班级 / 家长）。
+ * 会话绑定、消息识别与工具收口共用同一套取值，避免三处各写一份枚举。
+ */
+export const chatContextTypeSchema = z.enum(['student', 'class', 'guardian'])
+export type ChatContextType = z.infer<typeof chatContextTypeSchema>
+
+/**
+ * 一次会话绑定/一轮对话允许携带的咨询对象数上限（含主对象）。
+ * 首个对象为主对象：看板归属、通知跳转、导入等既有链路仍按主对象口径。
+ */
+export const CHAT_CONTEXT_MAX = 5
+
 export const chatMessageSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(4000),
-  contextType: z.enum(['student', 'class', 'guardian']).optional(),
+  /** 单对象写法（历史前端与深链）：等价于 contexts 只有一项，两者同时出现时以 contexts 为准 */
+  contextType: chatContextTypeSchema.optional(),
   contextId: z.string().uuid().optional(),
+  /** 咨询对象集（首个为主对象，最多 CHAT_CONTEXT_MAX 个；@ 多名学生走这里） */
+  contexts: z.array(z.object({
+    type: chatContextTypeSchema,
+    id: z.string().uuid()
+  })).min(1).max(CHAT_CONTEXT_MAX).optional(),
   withoutRecord: z.boolean().optional()
 }).superRefine((value, context) => {
   if (Boolean(value.contextType) !== Boolean(value.contextId)) {

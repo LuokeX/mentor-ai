@@ -5,10 +5,11 @@ import { requireUser } from '../../../../../utils/auth'
 import { schema, useDb } from '../../../../../utils/db'
 import { decryptSensitive } from '../../../../../utils/crypto'
 import { detectSafetySignals, createSafetyReferral } from '../../../../../domain/safety'
-import { decideEntryObjectUse, resolveMentionedObject, type MentionResolution } from '../../../../../domain/assistant-object-mention'
-import { buildAssistantBusinessContext } from '../../../../../domain/assistant-context'
+import { decideEntryObjectUse, resolveMentionedObjects, type MentionResolution } from '../../../../../domain/assistant-object-mention'
+import { resolveAssistantContextRefs, type AssistantContextRef } from '../../../../../domain/assistant-context'
 import { resolveAiGovernance } from '../../../../../domain/ai-governance'
 import { buildContextSwitchNote, readContextSwitches } from '../../../../../domain/chat-context-switch'
+import { loadSessionContexts } from '../../../../../domain/chat-session-contexts'
 import { trackProductEvent } from '../../../../../domain/product-events'
 import {
   buildTeacherProfileText,
@@ -105,19 +106,24 @@ export default defineEventHandler(async (event) => {
   if (!questionText) throw createError({ statusCode: 409, message: '提问内容不可用，无法重新生成' })
 
   const governance = await resolveAiGovernance(event, user.schoolId, user.id)
-  const businessContext = await buildAssistantBusinessContext(
+  // 会话绑定对象集：重新生成按当前绑定重跑（与普通提问同一口径）
+  const boundContexts = await loadSessionContexts(event, sessionId, {
+    contextType: session.contextType,
+    contextId: session.contextId,
+    metadata: sessionContext.metadata
+  })
+  const businessContexts: AssistantContextRef[] = await resolveAssistantContextRefs(
     event,
     user,
-    session.contextType === 'none' ? undefined : session.contextType,
-    session.contextId || undefined
+    boundContexts.map(item => ({ type: item.type, id: item.id }))
   )
   const teacherProfileText = await buildTeacherProfileText(event, user.id) ?? undefined
   // 本轮识别与普通提问同一套口径：未绑定会话时作为本轮对象，已绑定时只提示是否切换
   const mention = body.withoutRecord || governance.effectiveMode === 'local'
     ? ({ kind: 'none' } as MentionResolution)
-    : await resolveMentionedObject(event, { id: user.id, schoolId: user.schoolId }, questionText)
-  const objectUse = decideEntryObjectUse({ binding: businessContext ?? null, mention })
-  const turnContext = objectUse.turnContext
+    : await resolveMentionedObjects(event, { id: user.id, schoolId: user.schoolId }, questionText)
+  const objectUse = decideEntryObjectUse({ binding: businessContexts, mention })
+  const turnContexts = objectUse.turnObjects
   const lastModuleScores = getSessionModuleScores(sessionContext.metadata) as Record<ModuleId, number>
 
   // 软删旧回答：装载历史与后续界面都不再包含它
@@ -155,16 +161,33 @@ export default defineEventHandler(async (event) => {
       try {
         emit(controller, 'ack', {
           sessionId,
-          context: businessContext ? { type: businessContext.type, id: businessContext.id, label: businessContext.label } : undefined,
-          turnObject: turnContext ? { type: turnContext.type, id: turnContext.id, label: turnContext.label } : undefined,
+          context: businessContexts[0]
+            ? { type: businessContexts[0].type, id: businessContexts[0].id, label: businessContexts[0].label }
+            : undefined,
+          contexts: businessContexts.length
+            ? businessContexts.map(item => ({ type: item.type, id: item.id, label: item.label }))
+            : undefined,
+          turnObject: turnContexts[0]
+            ? { type: turnContexts[0].type, id: turnContexts[0].id, label: turnContexts[0].label }
+            : undefined,
+          turnObjects: turnContexts.length
+            ? turnContexts.map(item => ({ type: item.type, id: item.id, label: item.label }))
+            : undefined,
           turnObjectCandidates: objectUse.candidates.length
             ? objectUse.candidates.map(item => ({ type: item.type, id: item.id, label: item.label }))
             : undefined,
-          suggestedContext: objectUse.suggestedSwitch
-            ? { type: objectUse.suggestedSwitch.type, id: objectUse.suggestedSwitch.id, label: objectUse.suggestedSwitch.label }
+          suggestedContext: objectUse.suggestedSwitch[0]
+            ? {
+                type: objectUse.suggestedSwitch[0].type,
+                id: objectUse.suggestedSwitch[0].id,
+                label: objectUse.suggestedSwitch[0].label
+              }
+            : undefined,
+          suggestedContexts: objectUse.suggestedSwitch.length
+            ? objectUse.suggestedSwitch.map(item => ({ type: item.type, id: item.id, label: item.label }))
             : undefined,
           dataGovernance: governance,
-          recordIncluded: Boolean(businessContext && !body.withoutRecord),
+          recordIncluded: Boolean(businessContexts.length && !body.withoutRecord),
           regenerated: true
         })
 
@@ -211,12 +234,8 @@ export default defineEventHandler(async (event) => {
           sessionId,
           message: questionText,
           withoutRecord: Boolean(body.withoutRecord),
-          businessContext: businessContext
-            ? { type: businessContext.type, id: businessContext.id, label: businessContext.label }
-            : null,
-          turnContext: turnContext
-            ? { type: turnContext.type, id: turnContext.id, label: turnContext.label }
-            : null,
+          businessContexts,
+          turnContexts,
           // 会话换绑过对象时沿用同一段提示（与普通提问口径一致，保持 system 前缀稳定）
           contextSwitchNote: buildContextSwitchNote(readContextSwitches(sessionContext.metadata)),
           governance,

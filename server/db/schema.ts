@@ -404,6 +404,32 @@ export const chatSessions = pgTable('chat_sessions', {
   index('chat_sessions_context_idx').on(table.contextType, table.contextId)
 ])
 
+/**
+ * 会话关联对象（主对象之外的其余对象，2026-10-16 支持 @ 多名学生）。
+ *
+ * 主对象仍存在 chat_sessions.context_type/context_id（唯一写入点：
+ * server/domain/chat-session-binding.ts），本表只存主对象之外的关联对象，
+ * 两处不重复存储，避免双写漂移；一次绑定 = 同一事务内更新主对象列 + 重建本表。
+ * 一次最多绑定 5 个对象（含主对象），上限见 shared/contracts.ts 的 CHAT_CONTEXT_MAX。
+ */
+export const chatSessionObjects = pgTable('chat_session_objects', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  sessionId: uuid('session_id').notNull().references(() => chatSessions.id, { onDelete: 'cascade' }),
+  schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'cascade' }),
+  /** student / class / guardian（取值同 chat_sessions.context_type） */
+  objectType: varchar('object_type', { length: 30 }).notNull(),
+  objectId: uuid('object_id').notNull(),
+  /** 展示名，沿用 metadata.contextLabel 的既有明文标签做法，只在会话内展示 */
+  label: varchar('label', { length: 120 }),
+  /** 绑定顺序（0 起，主对象不占位），用于界面上的稳定排序 */
+  position: integer('position').default(0).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('chat_session_object_uidx').on(table.sessionId, table.objectType, table.objectId),
+  index('chat_session_objects_session_idx').on(table.sessionId, table.position),
+  index('chat_session_objects_object_idx').on(table.objectType, table.objectId)
+])
+
 export const chatMessages = pgTable('chat_messages', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),

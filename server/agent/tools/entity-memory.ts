@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { AuthUser } from '../../../app/composables/useAuth'
 import { fetchEntityMemory } from '../../domain/assistant-context'
-import { effectiveObject } from './record-context'
+import { effectiveObjects } from './record-context'
 import { redactOutboundText } from '../../domain/ai-governance'
 import type { AgentTool, AgentToolContext } from '../types'
 
@@ -35,13 +35,15 @@ export const entityMemoryTool: AgentTool = {
       console.warn('[agent:entity_memory] 参数无效:', parsed.error.issues[0]?.message)
       return { memories: [], message: '咨询对象参数无效，请传入合法的对象 ID 或改用当前会话绑定的对象。' }
     }
-    const binding = effectiveObject(ctx.user)
-    const contextType = parsed.data.contextType ?? binding?.type
-    const contextId = parsed.data.contextId ?? binding?.id
-    if (!contextType || !contextId) {
+    const binding = effectiveObjects(ctx.user)
+    // 显式参数（模型自己指定）优先；未指定时按会话绑定 / 本轮识别的对象集读取，逐个对象取记忆后合并去重
+    const explicit = parsed.data.contextType && parsed.data.contextId
+      ? [{ type: parsed.data.contextType === 'parent' ? 'guardian' : parsed.data.contextType, id: parsed.data.contextId }]
+      : []
+    const targets = explicit.length ? explicit : binding.map(item => ({ type: item.type, id: item.id }))
+    if (!targets.length) {
       return { memories: [], message: '当前会话未绑定咨询对象，本轮消息里也没有可确认的对象，无法读取跨会话记忆。' }
     }
-    const dbContextType = contextType === 'parent' ? 'guardian' : contextType
     const user: AuthUser = {
       id: ctx.user.userId,
       schoolId: ctx.user.schoolId,
@@ -51,14 +53,31 @@ export const entityMemoryTool: AgentTool = {
       roleLabel: ''
     }
     try {
-      const raw = await fetchEntityMemory(ctx.event, user, dbContextType, contextId, ctx.user.sessionId, 12, parsed.data.query ?? ctx.user.currentQuestion ?? '')
+      const query = parsed.data.query ?? ctx.user.currentQuestion ?? ''
+      const perObject = await Promise.all(targets.map(async target => {
+        try {
+          const rows = await fetchEntityMemory(ctx.event, user, target.type, target.id, ctx.user.sessionId, 12, query)
+          return rows.map(row => ({ ...row, object: { type: target.type, id: target.id } }))
+        } catch (error) {
+          console.error('[agent:entity_memory] 读取实体记忆失败，按空处理:', error instanceof Error ? error.message : error)
+          return []
+        }
+      }))
+      // 多对象合并：同一消息只保留一条（可能同时挂多个对象时以前者为准），按时间倒序取前 12 条
+      const seen = new Set<string>()
+      const merged = perObject
+        .flat()
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .filter(item => (seen.has(item.id) ? false : (seen.add(item.id), true)))
+        .slice(0, 12)
       // 外发脱敏：full_context 原样，其余模式过 redactPii（与入口历史脱敏保持同一套规则）
       const outbound = (text: string) => redactOutboundText(text, ctx.user.dataMode ?? 'redacted')
       return {
-        memories: raw.map(item => ({
+        memories: merged.map(item => ({
           role: item.role,
           sourceId: item.id,
           sessionId: item.sessionId,
+          object: item.object,
           content: outbound(item.content),
           createdAt: item.createdAt
         }))
