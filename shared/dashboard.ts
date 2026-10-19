@@ -352,7 +352,7 @@ export interface AiQuestionKpis {
   aiQuestions: number
   /** 量表推荐次数（assistant_assessment_recommended 埋点） */
   recommended: number
-  /** 推荐后完成作答数（同教师同量表的作答道次） */
+  /** 推荐后完成作答的推荐次数（同一推荐提交任一所推量表即算一次，最多计入一次） */
   answered: number
   /** 量表推荐次数 / 提问条数 */
   recommendationRate: number | null

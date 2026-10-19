@@ -570,7 +570,7 @@ async function loadOverviewSlice(
     countQuestionsByDay(db, query),
     countPlansByDay(db, query),
     planActionTotals(db, query),
-    // 推荐量表作答率与 AI 问答分析页同源（推荐埋点 + 同教师同量表的作答道次）
+    // 推荐量表作答率与 AI 问答分析页同源（推荐埋点 + 推荐后提交任一所推量表即算一次）
     loadRecommendationSummary(db, query, {}),
     countOpenSafetyEvents(db, query),
     countOpenStudentEvents(db, query)
@@ -1115,27 +1115,35 @@ function buildRecommendationRows(categories: readonly QuestionCategoryValue[] = 
 /**
  * 推荐量表埋点与作答转化。
  * 推荐次数 = assistant_assessment_recommended 事件数（按模块折算到分类）；
- * 作答数 = 同教师、同区间内提交的、量表编码出现在其推荐记录里的作答道数（按道次去重）。
+ * 作答数 = 推荐之后同教师提交了本次推荐清单里任一量表的推荐事件数。
+ * 一次推荐最多计一次作答（同一推荐的多次提交 / 多张候选量表不重复计数），
+ * 提交时间早于推荐时间的作答不计入，因此作答率不会超过 100%。
  */
-async function loadRecommendationSummary(db: DbClient, query: ScopedQuery, filters: AiQuestionFilters): Promise<RecommendationSummary> {
-  const { schoolId, classIds, range } = query
-  const gradeCondition = filters.grade ? sql` and pc.grade = ${filters.grade}` : sql``
-  const [events, attempts] = await Promise.all([
-    rowsOf<{ user_id: string, module: string | null, instruments: string | null }>(db.execute(sql`
-      select pe.user_id, pe.metadata->>'module' as module, pe.metadata->>'instruments' as instruments
-      from product_events pe
-      join ${primaryClassSource(schoolId)} pc on pc.owner_user_id = pe.user_id
-      where pe.school_id = ${schoolId} and pe.event_name = 'assistant_assessment_recommended'
-        and ${timeWindow(sql`pe.created_at`, range)} and pc.id ${classIdIn(classIds)}${gradeCondition}
-    `)),
-    rowsOf<{ id: string, owner_user_id: string, assessment_code: string }>(db.execute(sql`
-      select aa.id, aa.owner_user_id, aa.assessment_code
-      from assessment_attempts aa
-      join ${primaryClassSource(schoolId)} pc on pc.owner_user_id = aa.owner_user_id
-      where aa.school_id = ${schoolId} and aa.status = 'submitted'
-        and ${timeWindow(sql`coalesce(aa.submitted_at, aa.created_at)`, range)} and pc.id ${classIdIn(classIds)}${gradeCondition}
-    `))
-  ])
+export interface RecommendationEventInput {
+  userId: string
+  category: string
+  recommendedAt: Date
+  /** 本次推荐展示的量表编码（首选 + 候选，答其中任意一张都算回应本次推荐）。 */
+  codes: readonly string[]
+}
+
+export interface RecommendationAttemptInput {
+  userId: string
+  assessmentCode: string
+  answeredAt: Date
+}
+
+/** 纯函数：推荐事件 → 作答转化（导出供单测）。 */
+export function summarizeRecommendationConversion(
+  events: ReadonlyArray<RecommendationEventInput>,
+  attempts: ReadonlyArray<RecommendationAttemptInput>
+): RecommendationSummary {
+  const attemptsByUser = new Map<string, RecommendationAttemptInput[]>()
+  for (const attempt of attempts) {
+    const bucket = attemptsByUser.get(attempt.userId)
+    if (bucket) bucket.push(attempt)
+    else attemptsByUser.set(attempt.userId, [attempt])
+  }
 
   const byCategory = new Map<string, { recommended: number, answered: number }>()
   const bump = (category: string, key: 'recommended' | 'answered') => {
@@ -1144,36 +1152,61 @@ async function loadRecommendationSummary(db: DbClient, query: ScopedQuery, filte
     byCategory.set(category, entry)
   }
 
-  const recommendedCodesByUser = new Map<string, Set<string>>()
-  const categoriesByUserCode = new Map<string, string>()
-  const moral = query.line === 'moral'
-  for (const event of events) {
-    const category = moduleQuestionCategory(event.module)
-    // 德育口径：分类不在白名单的推荐记录不计入（其触发的作答也随之不计）
-    if (moral && !moralLineIncludes('questionCategory', category)) continue
-    bump(category, 'recommended')
-    const codes = (event.instruments ?? '').split(',').map(code => code.trim()).filter(Boolean)
-    const bucket = recommendedCodesByUser.get(event.user_id) ?? new Set<string>()
-    for (const code of codes) {
-      bucket.add(code)
-      categoriesByUserCode.set(`${event.user_id}:${code}`, category)
-    }
-    recommendedCodesByUser.set(event.user_id, bucket)
-  }
-
   let totalAnswered = 0
-  const countedAttempts = new Set<string>()
-  for (const attempt of attempts) {
-    if (countedAttempts.has(attempt.id)) continue
-    const codes = recommendedCodesByUser.get(attempt.owner_user_id)
-    if (!codes?.has(attempt.assessment_code)) continue
-    countedAttempts.add(attempt.id)
-    const category = categoriesByUserCode.get(`${attempt.owner_user_id}:${attempt.assessment_code}`) ?? QUESTION_CATEGORY_OTHER
-    bump(category, 'answered')
+  for (const event of events) {
+    bump(event.category, 'recommended')
+    const recommendedAt = event.recommendedAt.getTime()
+    const answered = (attemptsByUser.get(event.userId) ?? []).some(attempt =>
+      event.codes.includes(attempt.assessmentCode) && attempt.answeredAt.getTime() >= recommendedAt
+    )
+    if (!answered) continue
+    bump(event.category, 'answered')
     totalAnswered += 1
   }
 
   return { totalRecommended: events.length, totalAnswered, byCategory }
+}
+
+async function loadRecommendationSummary(db: DbClient, query: ScopedQuery, filters: AiQuestionFilters): Promise<RecommendationSummary> {
+  const { schoolId, classIds, range } = query
+  const gradeCondition = filters.grade ? sql` and pc.grade = ${filters.grade}` : sql``
+  const [events, attempts] = await Promise.all([
+    rowsOf<{ user_id: string, module: string | null, instruments: string | null, at: Date }>(db.execute(sql`
+      select pe.user_id, pe.metadata->>'module' as module, pe.metadata->>'instruments' as instruments,
+             pe.created_at as at
+      from product_events pe
+      join ${primaryClassSource(schoolId)} pc on pc.owner_user_id = pe.user_id
+      where pe.school_id = ${schoolId} and pe.event_name = 'assistant_assessment_recommended'
+        and ${timeWindow(sql`pe.created_at`, range)} and pc.id ${classIdIn(classIds)}${gradeCondition}
+    `)),
+    rowsOf<{ owner_user_id: string, assessment_code: string, at: Date }>(db.execute(sql`
+      select aa.owner_user_id, aa.assessment_code, coalesce(aa.submitted_at, aa.created_at) as at
+      from assessment_attempts aa
+      join ${primaryClassSource(schoolId)} pc on pc.owner_user_id = aa.owner_user_id
+      where aa.school_id = ${schoolId} and aa.status = 'submitted'
+        and ${timeWindow(sql`coalesce(aa.submitted_at, aa.created_at)`, range)} and pc.id ${classIdIn(classIds)}${gradeCondition}
+    `))
+  ])
+
+  const moral = query.line === 'moral'
+  const convertedEvents = events
+    .map(event => ({
+      userId: event.user_id,
+      category: moduleQuestionCategory(event.module),
+      recommendedAt: new Date(event.at),
+      codes: (event.instruments ?? '').split(',').map(code => code.trim()).filter(Boolean)
+    }))
+    // 德育口径：分类不在白名单的推荐记录不计入（其触发的作答也随之不计）
+    .filter(event => !moral || moralLineIncludes('questionCategory', event.category))
+
+  return summarizeRecommendationConversion(
+    convertedEvents,
+    attempts.map(attempt => ({
+      userId: attempt.owner_user_id,
+      assessmentCode: attempt.assessment_code,
+      answeredAt: new Date(attempt.at)
+    }))
+  )
 }
 
 // ===== 明细表「表头维度」（两张明细表共用同一套分组实现）=====

@@ -36,6 +36,7 @@ import {
   shanghaiDayStart,
   sortComparisonRows,
   studentEventRiskLabel,
+  summarizeRecommendationConversion,
   visibleQuestionCategories,
   DASHBOARD_TABLE_DEFAULTS,
   type AlertRiskLevelFilter,
@@ -671,5 +672,57 @@ describe('总览页聚合卡（W2 / W3 / W4-1 / W4-2 / W5）', () => {
     expect(moralCategories.length).toBeGreaterThan(0)
     expect(moralCategories.length).toBeLessThan(QUESTION_CATEGORIES.length)
     expect(moralCategories.every(category => moralLineIncludes('questionCategory', category))).toBe(true)
+  })
+})
+
+describe('推荐量表作答转化（推荐后作答率）', () => {
+  const at = (value: string) => new Date(value)
+
+  it('推荐之前的提交不计入（生产出现 200% 的成因）', () => {
+    const summary = summarizeRecommendationConversion(
+      [{ userId: 'u1', category: '学生个体问题', recommendedAt: at('2026-10-19T10:51:54+08:00'), codes: ['SC_S1'] }],
+      [
+        { userId: 'u1', assessmentCode: 'SC_S1', answeredAt: at('2026-10-10T16:08:03+08:00') },
+        { userId: 'u1', assessmentCode: 'SC_S1', answeredAt: at('2026-10-12T11:39:53+08:00') }
+      ]
+    )
+    expect(summary.totalRecommended).toBe(1)
+    expect(summary.totalAnswered).toBe(0)
+    expect(summary.byCategory.get('学生个体问题')).toEqual({ recommended: 1, answered: 0 })
+  })
+
+  it('一次推荐只计一次作答：重复提交与多张候选量表都不会让作答率超过 100%', () => {
+    const summary = summarizeRecommendationConversion(
+      [{
+        userId: 'u1',
+        category: '学生个体问题',
+        recommendedAt: at('2026-10-19T10:51:54+08:00'),
+        codes: ['SC_S1', 'SC_S2']
+      }],
+      [
+        { userId: 'u1', assessmentCode: 'SC_S1', answeredAt: at('2026-10-19T11:00:00+08:00') },
+        { userId: 'u1', assessmentCode: 'SC_S2', answeredAt: at('2026-10-19T11:05:00+08:00') },
+        { userId: 'u1', assessmentCode: 'SC_S1', answeredAt: at('2026-10-19T11:10:00+08:00') }
+      ]
+    )
+    expect(summary.totalAnswered).toBe(1)
+    expect(summary.byCategory.get('学生个体问题')).toEqual({ recommended: 1, answered: 1 })
+  })
+
+  it('两次推荐之间的作答只回应前一次推荐；其他教师与其他量表不算', () => {
+    const summary = summarizeRecommendationConversion(
+      [
+        { userId: 'u1', category: '学生学习问题', recommendedAt: at('2026-10-01T09:00:00+08:00'), codes: ['LP_S1'] },
+        { userId: 'u1', category: '学生学习问题', recommendedAt: at('2026-10-03T09:00:00+08:00'), codes: ['LP_S1'] }
+      ],
+      [
+        { userId: 'u1', assessmentCode: 'LP_S1', answeredAt: at('2026-10-02T09:00:00+08:00') },
+        { userId: 'u2', assessmentCode: 'LP_S1', answeredAt: at('2026-10-04T09:00:00+08:00') },
+        { userId: 'u1', assessmentCode: 'SG_S1', answeredAt: at('2026-10-04T09:00:00+08:00') }
+      ]
+    )
+    expect(summary.totalRecommended).toBe(2)
+    expect(summary.totalAnswered).toBe(1)
+    expect(summary.byCategory.get('学生学习问题')).toEqual({ recommended: 2, answered: 1 })
   })
 })
