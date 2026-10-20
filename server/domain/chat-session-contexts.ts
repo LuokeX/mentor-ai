@@ -89,7 +89,24 @@ async function readRelatedContexts(event: H3Event, sessionIds: string[]): Promis
 }
 
 /**
- * 读取单个会话的完整对象集（主对象在前）。
+ * 合并主对象与关联对象：主对象在前、按 (type, id) 去重、按上限截断。纯函数。
+ * 单个会话详情与批量列表必须共用这份合并逻辑，否则会出现「列表显示多名、点进去只剩一名」。
+ */
+export function mergeSessionContexts(
+  primary: ChatContextRef | null,
+  related: ReadonlyArray<ChatContextRef>
+): ChatContextRef[] {
+  const refs: ChatContextRef[] = []
+  if (primary) refs.push(primary)
+  for (const ref of related) {
+    if (refs.some(item => item.type === ref.type && item.id === ref.id)) continue
+    refs.push(ref)
+  }
+  return refs.slice(0, SESSION_CONTEXT_LIMIT)
+}
+
+/**
+ * 读取单个会话的完整对象集（主对象 + 关联对象，主对象在前）。
  * `primary` 未传时自行查询会话行；调用方已查过会话行时应传入，避免重复查询。
  */
 export async function loadSessionContexts(
@@ -107,9 +124,12 @@ export async function loadSessionContexts(
     }).from(schema.chatSessions).where(eq(schema.chatSessions.id, sessionId)).limit(1)
     row = found ?? null
   }
-  if (!row || row.contextType === 'none') return []
-  const ref = toContextRef(row.contextType, row.contextId, readContextLabel(row.metadata))
-  return ref ? [ref] : []
+  if (!row) return []
+  const primaryRef = row.contextType && row.contextType !== 'none'
+    ? toContextRef(row.contextType, row.contextId, readContextLabel(row.metadata))
+    : null
+  const related = await readRelatedContexts(event, [sessionId])
+  return mergeSessionContexts(primaryRef, related.get(sessionId) || [])
 }
 
 /** 批量读取多个会话的完整对象集（会话列表 / 详情用），主对象在前。 */
@@ -120,16 +140,10 @@ export async function loadSessionContextsBatch(
   const related = await readRelatedContexts(event, sessions.map(item => item.id))
   const bySession = new Map<string, ChatContextRef[]>()
   for (const session of sessions) {
-    const refs: ChatContextRef[] = []
-    if (session.contextType && session.contextType !== 'none') {
-      const primary = toContextRef(session.contextType, session.contextId, readContextLabel(session.metadata))
-      if (primary) refs.push(primary)
-    }
-    for (const ref of related.get(session.id) || []) {
-      if (refs.some(item => item.type === ref.type && item.id === ref.id)) continue
-      refs.push(ref)
-    }
-    bySession.set(session.id, refs)
+    const primaryRef = session.contextType && session.contextType !== 'none'
+      ? toContextRef(session.contextType, session.contextId, readContextLabel(session.metadata))
+      : null
+    bySession.set(session.id, mergeSessionContexts(primaryRef, related.get(session.id) || []))
   }
   return bySession
 }

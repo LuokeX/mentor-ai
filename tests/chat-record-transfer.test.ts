@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isSameContextSet, normalizeSessionContexts } from '../server/domain/chat-session-contexts'
+import { isSameContextSet, mergeSessionContexts, normalizeSessionContexts } from '../server/domain/chat-session-contexts'
 import { deriveRecordTitle, pickPrefillObjects, truncateRecordText } from '../app/composables/useChatRecordPrefill'
 
 describe('会话对象集的归一化（@ 多名学生）', () => {
@@ -25,6 +25,28 @@ describe('会话对象集的归一化（@ 多名学生）', () => {
     )).toBe(true)
     expect(isSameContextSet([{ type: 'student', id: 's1' }], [{ type: 'student', id: 's2' }])).toBe(false)
     expect(isSameContextSet([{ type: 'student', id: 's1' }], [])).toBe(false)
+  })
+
+  it('会话详情合并主对象与关联表：@ 多名学生后重新进入对话仍保留全部对象', () => {
+    const merged = mergeSessionContexts(
+      { type: 'student', id: 's1', label: '张小明' },
+      [
+        { type: 'student', id: 's2', label: '张小军' },
+        { type: 'guardian', id: 'g1', label: '王五 · 母子' }
+      ]
+    )
+    expect(merged.map(item => `${item.type}:${item.id}`)).toEqual(['student:s1', 'student:s2', 'guardian:g1'])
+  })
+
+  it('合并时主对象排在首位，且与关联表重复的对象只保留一份', () => {
+    const merged = mergeSessionContexts(
+      { type: 'student', id: 's2', label: '张小军' },
+      [
+        { type: 'student', id: 's1', label: '张小明' },
+        { type: 'student', id: 's2', label: '张小军' }
+      ]
+    )
+    expect(merged.map(item => `${item.type}:${item.id}`)).toEqual(['student:s2', 'student:s1'])
   })
 })
 
