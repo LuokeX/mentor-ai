@@ -64,7 +64,7 @@ async function login() {
         <span class="grid size-12 place-items-center rounded-2xl bg-emerald-300 text-xl font-bold text-emerald-950">六</span>
         <div>
           <div class="flex items-center gap-2">
-            <strong class="text-lg">教师赋能智能平台</strong>
+            <strong class="text-lg">班主任助理智能平台</strong>
             <span class="rounded-full border border-emerald-200/30 bg-white/10 px-2 py-0.5 text-xs font-medium tracking-wide text-emerald-100">{{ APP_VERSION }}</span>
           </div>
           <p class="text-sm text-emerald-100/70">让每一次求助，都得到可行动的回应</p>
