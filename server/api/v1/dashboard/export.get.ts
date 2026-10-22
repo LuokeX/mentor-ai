@@ -8,7 +8,7 @@
  * 每次导出写审计 dashboard.export（类型、区间、行数与筛选）。
  */
 import { z } from 'zod'
-import { DASHBOARD_COMPARE_KINDS, DASHBOARD_EXPORT_TYPES, DASHBOARD_EXPORT_LABELS, type DashboardExportType } from '../../../../shared/dashboard'
+import { DASHBOARD_COMPARE_KINDS, DASHBOARD_DEFAULT_DAYS, DASHBOARD_EXPORT_TYPES, DASHBOARD_EXPORT_LABELS, DASHBOARD_PERIOD_LIMITS, type DashboardExportType } from '../../../../shared/dashboard'
 import {
   buildCsv,
   exportFileName,
@@ -42,9 +42,18 @@ const EXPORT_CONFIG: Record<DashboardExportType, {
   page: 'dashboard' | 'dashboard_ai_questions' | 'dashboard_plans'
   limits: { defaultDays: number, maxDays: number }
 }> = {
-  'ai-questions': { page: 'dashboard_ai_questions', limits: { defaultDays: 7, maxDays: 30 } },
-  plans: { page: 'dashboard_plans', limits: { defaultDays: 7, maxDays: 90 } },
-  overview: { page: 'dashboard', limits: { defaultDays: 0, maxDays: 31 } }
+  'ai-questions': {
+    page: 'dashboard_ai_questions',
+    limits: { defaultDays: DASHBOARD_DEFAULT_DAYS.aiQuestions, maxDays: DASHBOARD_PERIOD_LIMITS.aiQuestions }
+  },
+  plans: {
+    page: 'dashboard_plans',
+    limits: { defaultDays: DASHBOARD_DEFAULT_DAYS.plans, maxDays: DASHBOARD_PERIOD_LIMITS.plans }
+  },
+  overview: {
+    page: 'dashboard',
+    limits: { defaultDays: DASHBOARD_DEFAULT_DAYS.overview, maxDays: DASHBOARD_PERIOD_LIMITS.overview }
+  }
 }
 
 const OVERVIEW_HEADERS = ['指标', '本期', '上期']

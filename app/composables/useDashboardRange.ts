@@ -23,8 +23,8 @@ export interface DashboardPeriodPreset {
 
 /**
  * 四个看板页共用的快捷周期顺序（统一顺序与文案，避免各页各写一套）。
- * 页面按自己的上限过滤：自然月最多 31 天、自然周最多 7 天，
- * 因此 AI 问答页（上限 30 天）不会出现「本月」，总览页（上限容纳自然月）保留「本月」但不提供「近 31 天」。
+ * 页面按自己的上限过滤：自然月最多 31 天、自然周最多 7 天。
+ * 总览与 AI 问答页的上限都放宽到 31 以容纳 31 天的自然月「本月」，但都不提供「近 31 天」。
  */
 export const DASHBOARD_PERIOD_PRESETS: readonly DashboardPeriodPreset[] = [
   { label: '今天', days: 1 },
@@ -67,7 +67,7 @@ export function dashboardPresetRange(
  *
  * 默认区间按页面口径给定（总览「今天」、二级页「近 7 天」），
  * 上限校验与服务端一致（超限时前端先提示，服务端仍会独立校验）。
- * 预设规则：只有在该页上限内放得下的粒度才在页面上提供（例如 AI 问答页上限 30 天，不给「本月」）。
+ * 预设规则：只有在该页上限内放得下的粒度才在页面上提供（自然月按 31 天判断能否放下）。
  */
 export function useDashboardRange(options: { defaultDays: number, maxDays: number }) {
   const today = shanghaiDateKey(new Date())

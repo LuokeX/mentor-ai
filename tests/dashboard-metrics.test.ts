@@ -127,7 +127,7 @@ describe('统计区间与自然日换算（东八区）', () => {
     expect(() => resolveDashboardRange(
       { start: '2026-08-01', end: '2026-09-28' },
       { defaultDays: 7, maxDays: DASHBOARD_PERIOD_LIMITS.aiQuestions, now: NOW }
-    )).toThrow(/最长 30 天/)
+    )).toThrow(/最长 31 天/)
     expect(() => resolveDashboardRange(
       { start: '2026-09-29', end: '2026-09-28' },
       { defaultDays: 7, maxDays: 30, now: NOW }
@@ -136,6 +136,19 @@ describe('统计区间与自然日换算（东八区）', () => {
       { start: '2026-02-31', end: '2026-09-28' },
       { defaultDays: 7, maxDays: 30, now: NOW }
     )).toThrow(/格式不正确/)
+  })
+
+  it('AI 问答页上限 31 天可容纳含 31 天的自然月「本月」', () => {
+    const month = resolveDashboardRange(
+      { start: '2026-10-01', end: '2026-10-31' },
+      { defaultDays: 7, maxDays: DASHBOARD_PERIOD_LIMITS.aiQuestions, now: NOW }
+    )
+    expect(month.days).toBe(31)
+    expect(month.period).toEqual({ start: '2026-10-01', end: '2026-10-31' })
+    expect(() => resolveDashboardRange(
+      { start: '2026-10-01', end: '2026-11-01' },
+      { defaultDays: 7, maxDays: DASHBOARD_PERIOD_LIMITS.aiQuestions, now: NOW }
+    )).toThrow(/最长 31 天/)
   })
 
   it('环比对照区间是紧邻当前区间之前的等长区间', () => {
@@ -402,8 +415,8 @@ describe('看板契约常量', () => {
     expect([...QUESTION_CATEGORY_VALUES]).toEqual([...QUESTION_CATEGORIES])
   })
 
-  it('周期上限：AI 问答 30 天、方案 90 天、预警 1 年、总览 31 天', () => {
-    expect(DASHBOARD_PERIOD_LIMITS.aiQuestions).toBe(30)
+  it('周期上限：AI 问答 31 天、方案 90 天、预警 1 年、总览 31 天', () => {
+    expect(DASHBOARD_PERIOD_LIMITS.aiQuestions).toBe(31)
     expect(DASHBOARD_PERIOD_LIMITS.plans).toBe(90)
     expect(DASHBOARD_PERIOD_LIMITS.alerts).toBe(365)
     expect(DASHBOARD_PERIOD_LIMITS.overview).toBe(31)

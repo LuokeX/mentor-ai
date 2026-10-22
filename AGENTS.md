@@ -283,8 +283,8 @@ export default defineEventHandler(async (event) => {
 - 年级 / 班级对比（PRD W8）：`GET /api/v1/dashboard/comparison` 默认按年级聚合、传 `grade` 下钻到班级，返回 AI 提问数 / 方案数 / 方案及时率 / 高危未闭环四个指标，排序在服务端完成（比率指标只进排名表，分组柱状图只画三个计数指标）；口径与总览一致，年级主任只出现本年级的行。
 - 德育主任（`moral_education_director`）按德育口径裁剪：白名单常量 `DASHBOARD_MORAL_LINE`（提问分类/方案模块/学生事件类型三组），安全事项不裁剪、趋势与年级/班级对比不裁剪、沟通记录不裁剪（德育线没有沟通维度），前端显示「德育口径」徽标。
 - 留痕与告警：查看类行为**同时写审计 `dashboard.view`**（每次访问一条）与低敏产品事件 `dashboard_view`；导出、个体明细走审计与管理员访问事件；越权访问尝试（页权限缺失、无 `view_sensitive`、目标越界、跨租户）写审计 `dashboard.access_denied`，跨租户或同一账号 10 分钟内重复 ≥3 次时按去重键通知本校学校管理员与平台管理员，教师端不显示任何告警痕迹。
-- 区间上限由服务端校验（总览 31 天、AI 问答 30 天、方案 90 天、预警 365 天），超限返回 400，不做静默截断；默认区间与东八区自然日工具在 `shared/dashboard.ts`，前后端共用同一份。
-- 时间粒度：四个看板页都提供「本周 / 本月」自然区间预设（周一起、月 1 日起，预警页另加「近半年」），只有在该页上限内放得下的粒度才提供（AI 问答 30 天，因此不给「本月」）。环比对照随预设切换：查询参数 `compare=rolling|week|month`（默认 `rolling` = 紧邻等长区间），`week/month` 取「上一自然周 / 上一自然月」（`previousWeekRange` / `previousMonthRange`），对照区间长度可以与本期间不同，页面显式展示对照区间。
+- 区间上限由服务端校验（总览 31 天、AI 问答 31 天、方案 90 天、预警 365 天），超限返回 400，不做静默截断；总览与 AI 问答的 31 天只为容纳自然月「本月」，固定窗口最长 30 天；默认区间与东八区自然日工具在 `shared/dashboard.ts`，前后端共用同一份。
+- 时间粒度：四个看板页都提供「本周 / 本月」自然区间预设（周一起、月 1 日起，预警页另加「近半年」），只有在该页上限内放得下的粒度才提供（自然月按 31 天判断）。环比对照随预设切换：查询参数 `compare=rolling|week|month`（默认 `rolling` = 紧邻等长区间），`week/month` 取「上一自然周 / 上一自然月」（`previousWeekRange` / `previousMonthRange`），对照区间长度可以与本期间不同，页面显式展示对照区间。
 - 全局层级下钻（学校 › 年级 › 班级）：`grade` / `classIds` 存在 URL 查询里，四个看板页共用 `app/composables/useDashboardFilters.ts`（页面里的年级下拉、班级多选与页头面包屑读写同一份状态，切页与刷新不丢筛选）；总览的「年级 / 班级对比」下钻也写这份状态；服务端 `overview` / `comparison` / `ai-questions` / `plans` / `alerts` 都接受这两个参数，班级越界由服务端与本校班级取交集，年级主任的可见年级仍由 scope 收窄。
 - 明细导出只允许 AI 问答与方案两张表（预警不导出），文件名带操作人与时间戳，内容末尾追加数据水印行（导出人/时间/数据范围/区间），每次写审计 `dashboard.export`；总览页另有 KPI（本期 + 上期）CSV 导出。明细导出的表头跟随页面的「表头维度」勾选（`dims=grade,className,category,date`，全不勾用 `dims=none` 只导周期总计一行）。
 - 明细表「表头维度」勾选控制的是**聚合维度**（服务端 group by），不只是列显隐：未勾选的维度既不参与聚合也不出现在表头，全部不勾时只出一行周期总计（日期列展示统计区间）；固定指标列不参与勾选。新增明细表时按 `server/domain/dashboard-metrics.ts` 的 `TABLE_DIMENSION_COLUMNS` + `parseTableDimParam` 实现，比率类排序列必须同时出现在分组子查询里（否则页面能点、服务端 `order by` 报列不存在）。
