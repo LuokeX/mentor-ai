@@ -43,6 +43,8 @@ export default defineEventHandler(async (event) => {
     else if (row.gender === '女') genderRatio.female = Number(row.count)
     else genderRatio.unknown = Number(row.count)
   }
+  // 学生人数按在册学生实时统计，覆盖 classes.student_count 存量列（录入学生不会回写该列）
+  const studentCount = genderRatio.male + genderRatio.female + genderRatio.unknown
 
   // 班级近期事件（德育或班级重点事件）
   const events = await db.select().from(schema.classEvents).where(and(
@@ -69,6 +71,7 @@ export default defineEventHandler(async (event) => {
   return {
     class: {
       ...klass,
+      studentCount,
       classSnapshot: undefined,
       classTeacherName,
       genderRatio,

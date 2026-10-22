@@ -4,7 +4,7 @@
  * 返回分页列表、每条记录的能力标记、页面级能力。
  * 教师只能看到自己负责的班级。
  */
-import { and, asc, desc, eq, ilike, inArray, or } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { createSortWhitelist, validateSort, DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { ManagedListResult, Capability } from '../../../../../shared/management'
@@ -41,10 +41,21 @@ export default defineEventHandler(async (event) => {
     conditions.push(or(ilike(schema.classes.name, `%${query.q}%`))!)
   }
 
+  /**
+   * 班级学生数按在册学生实时统计，不再读取 classes.student_count 存量列：
+   * 教师录入/批量导入学生时不会回写该列，静态值会一直是 0。
+   */
+  const studentCountExpr = sql<number>`(
+    select count(*)::int from students s
+    where s.class_id = classes.id
+      and s.school_id = ${user.schoolId}
+      and s.status = 'active'
+  )`
+
   const validSort = validateSort(query.sort, SORT_WHITELIST, 'updatedAt')
   const sortCol = validSort === 'name' ? schema.classes.name
     : validSort === 'grade' ? schema.classes.grade
-    : validSort === 'studentCount' ? schema.classes.studentCount
+    : validSort === 'studentCount' ? studentCountExpr
     : validSort === 'status' ? schema.classes.status
     : validSort === 'createdAt' ? schema.classes.createdAt
     : schema.classes.updatedAt
@@ -53,7 +64,7 @@ export default defineEventHandler(async (event) => {
   const result = await paginateResult({
     dataQuery: db.select({
       id: schema.classes.id, name: schema.classes.name, grade: schema.classes.grade,
-      studentCount: schema.classes.studentCount, status: schema.classes.status,
+      studentCount: studentCountExpr, status: schema.classes.status,
       externalCode: schema.classes.externalCode, departmentId: schema.classes.departmentId,
       ownerUserId: schema.classes.ownerUserId, schoolId: schema.classes.schoolId,
       /** 四阶当前阶段（评估快照回写）：秩序奠基期/关系激活期/制度自转期/文化生成期 */

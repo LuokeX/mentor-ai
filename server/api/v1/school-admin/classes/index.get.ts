@@ -6,7 +6,7 @@ import { resolveCapabilities, resolvePageCapabilities } from '../../../../domain
 import { paginateResult } from '../../../../utils/pagination'
 import { schema, useDb } from '../../../../utils/db'
 
-const SORT_WHITELIST = createSortWhitelist('name', 'grade', 'studentCount', 'energyStage', 'status', 'updatedAt', 'createdAt')
+const SORT_WHITELIST = createSortWhitelist('name', 'grade', 'studentCount', 'actualStudentCount', 'energyStage', 'status', 'updatedAt', 'createdAt')
 
 export default defineEventHandler(async (event) => {
   const { schoolId, actor: user } = await requireSchoolManagement(event, ['classes'])
@@ -23,9 +23,11 @@ export default defineEventHandler(async (event) => {
   if (status !== 'all') conditions.push(eq(schema.classes.status, status))
   if (q) conditions.push(or(ilike(schema.classes.name, `%${q}%`), ilike(schema.classes.externalCode, `%${q}%`))!)
 
+  // 学生数排序按实时统计值（与 actualStudentCount 展示口径一致），不再用静态 student_count 列
+  const actualStudentCountExpr = sql<number>`count(${schema.students.id})`
   const sortCol = sort === 'name' ? schema.classes.name
     : sort === 'grade' ? schema.classes.grade
-    : sort === 'studentCount' ? schema.classes.studentCount
+    : sort === 'studentCount' || sort === 'actualStudentCount' ? actualStudentCountExpr
     : sort === 'status' ? schema.classes.status
     : sort === 'createdAt' ? schema.classes.createdAt
     : schema.classes.updatedAt

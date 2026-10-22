@@ -1,6 +1,6 @@
 import { rankMemory } from './chat-memory'
 import type { H3Event } from 'h3'
-import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import type { AuthUser } from '../../app/composables/useAuth'
 import { CHAT_CONTEXT_MAX } from '../../shared/contracts'
 import { contextTypeLabel, isMessageAfterBindingSwitch, readContextSwitches } from './chat-context-switch'
@@ -64,7 +64,18 @@ export async function buildAssistantBusinessContext(event: H3Event, user: AuthUs
     )).limit(1)
     if (!student) throw createError({ statusCode: 404, message: '学生不存在或不属于当前负责范围' })
     const [klass, relations, communications, plans] = await Promise.all([
-      student.classId ? db.select().from(schema.classes).where(and(eq(schema.classes.id, student.classId), eq(schema.classes.schoolId, user.schoolId))).limit(1) : Promise.resolve([]),
+      student.classId ? db.select({
+        id: schema.classes.id,
+        name: schema.classes.name,
+        grade: schema.classes.grade,
+        // 在册学生实时统计：存量列不会随学生录入/导入回写
+        studentCount: sql<number>`(
+          select count(*)::int from students s
+          where s.class_id = classes.id
+            and s.school_id = ${user.schoolId}
+            and s.status = 'active'
+        )`
+      }).from(schema.classes).where(and(eq(schema.classes.id, student.classId), eq(schema.classes.schoolId, user.schoolId))).limit(1) : Promise.resolve([]),
       db.select().from(schema.studentGuardians).where(eq(schema.studentGuardians.studentId, student.id)),
       db.select().from(schema.communications).where(and(eq(schema.communications.studentId, student.id), eq(schema.communications.schoolId, user.schoolId), eq(schema.communications.ownerUserId, user.id))).orderBy(desc(schema.communications.occurredAt)).limit(10),
       db.select().from(schema.plans).where(and(eq(schema.plans.studentId, student.id), eq(schema.plans.schoolId, user.schoolId), eq(schema.plans.ownerUserId, user.id))).orderBy(desc(schema.plans.updatedAt)).limit(10)
@@ -126,7 +137,18 @@ export async function buildAssistantBusinessContext(event: H3Event, user: AuthUs
   }
 
   if (contextType === 'class') {
-    const [klass] = await db.select().from(schema.classes).where(and(
+    const [klass] = await db.select({
+      id: schema.classes.id,
+      name: schema.classes.name,
+      grade: schema.classes.grade,
+      // 在册学生实时统计：存量列不会随学生录入/导入回写
+      studentCount: sql<number>`(
+        select count(*)::int from students s
+        where s.class_id = classes.id
+          and s.school_id = ${user.schoolId}
+          and s.status = 'active'
+      )`
+    }).from(schema.classes).where(and(
       eq(schema.classes.id, contextId),
       eq(schema.classes.ownerUserId, user.id),
       eq(schema.classes.schoolId, user.schoolId)

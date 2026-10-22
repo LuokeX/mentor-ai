@@ -8,6 +8,8 @@ interface ClassRow {
   name: string
   grade: number
   studentCount: number
+  /** 在册学生实时统计值（列表展示与排序用） */
+  actualStudentCount: number
   ownerUserId: string
   ownerName: string
   departmentId: string | null
@@ -31,7 +33,7 @@ const columns = [
   { key: 'ownerName', label: '负责教师' },
   { key: 'departmentName', label: '部门', mobileHidden: true },
   { key: 'energyStage', label: '四阶阶段', sortable: true },
-  { key: 'studentCount', label: '学生数', sortable: true },
+  { key: 'actualStudentCount', label: '学生数', sortable: true },
   { key: 'status', label: '状态', sortable: true },
   { key: 'actions', label: '操作' },
 ]

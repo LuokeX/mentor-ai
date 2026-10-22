@@ -726,7 +726,13 @@ export async function readClassOverviewForAssistant(
     id: schema.classes.id,
     name: schema.classes.name,
     grade: schema.classes.grade,
-    studentCount: schema.classes.studentCount
+    // 在册学生实时统计：classes.student_count 是存量列，录入/导入学生不会回写
+    studentCount: sql<number>`(
+      select count(*)::int from students s
+      where s.class_id = classes.id
+        and s.school_id = ${user.schoolId}
+        and s.status = 'active'
+    )`
   }).from(schema.classes)
     .where(and(...classConditions))
     .orderBy(desc(schema.classes.updatedAt))
