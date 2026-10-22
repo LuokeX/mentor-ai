@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { moduleResourceDocumentImportSchema } from '../../../../../../shared/contracts'
-import type { ModuleId } from '../../../../../../shared/contracts'
+import type { KnowledgeModuleId, ModuleId } from '../../../../../../shared/contracts'
 import { chunkModuleResourceDocument, createDocumentWithChunks, normalizeModuleResourceContent } from '../../../../../domain/module-resource-documents'
 import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
   // 确定文档归属：有 versionId → 业务三库文档；无 versionId → 独立知识库文档
   let libraryId: string | null = null
   let versionId: string | null = null
-  let versionModule: ModuleId = (body.module ?? 'self_growth') as ModuleId
+  let versionModule: KnowledgeModuleId = (body.module ?? 'self_growth') as KnowledgeModuleId
   let versionLibraryType = 'knowledge'
   let schoolId: string | null = null
   // 独立知识库文档：导入时已分块并向量化，直接置 ready 才可被知识检索召回

@@ -1,5 +1,5 @@
 import { and, eq, isNull, like, or, sql } from 'drizzle-orm'
-import { moduleIdSchema } from '../../../../../../shared/contracts'
+import { knowledgeModuleIdSchema } from '../../../../../../shared/contracts'
 import { requireUser } from '../../../../../utils/auth'
 import { schema, useDb } from '../../../../../utils/db'
 import XLSX from 'xlsx'
@@ -7,7 +7,7 @@ import XLSX from 'xlsx'
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['platform_admin'])
   const query = getQuery(event)
-  const filterModule = typeof query.module === 'string' ? moduleIdSchema.optional().parse(query.module) : undefined
+  const filterModule = typeof query.module === 'string' ? knowledgeModuleIdSchema.optional().parse(query.module) : undefined
   const search = typeof query.search === 'string' && query.search.trim() ? query.search.trim() : undefined
 
   const db = useDb(event)
@@ -49,7 +49,7 @@ export default defineEventHandler(async (event) => {
   const moduleLabelMap: Record<string, string> = {
     self_growth: 'self_growth', class_system: 'class_system',
     home_school: 'home_school', student_case: 'student_case',
-    learning_problem: 'learning_problem'
+    learning_problem: 'learning_problem', moral_education: 'moral_education'
   }
 
   const rows = docs.map(doc => {

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { knowledgeModuleIdSchema } from '../../../shared/contracts'
 import { embedModuleResourceQuery } from '../../integrations/embeddings'
 import { searchKnowledgeChunksHybrid } from '../../domain/module-resource-knowledge-search'
 import { readPublishedResourceCatalog } from '../../domain/assistant-readers'
@@ -10,8 +11,8 @@ import type { AgentTool, AgentToolContext } from '../types'
 
 const knowledgeSearchSchema = z.object({
   query: z.string().trim().min(1).max(200).describe('检索问题，如「个别学生课堂走神怎么处理」'),
-  module: z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']).optional()
-    .describe('限定检索的模块（不传则全模块检索）')
+  module: knowledgeModuleIdSchema.optional()
+    .describe('限定检索的知识库分类。德育制度/学生守则/行为规范/教育惩戒/校规校纪/文明礼仪/违纪处理传 moral_education；不确定则不传，做全模块检索')
 })
 
 function truncateText(text: string, max = 300): string {
@@ -29,7 +30,7 @@ function truncateText(text: string, max = 300): string {
  */
 export const knowledgeSearchTool: AgentTool = {
   name: 'knowledge_search',
-  description: '在已发布业务知识库中检索与当前问题相关的操作建议片段（每次最多 5 段），返回片段来源与相似度；未命中时返回该模块已发布资源目录（量表/归因/工具的名称与摘要），可据此说明平台有哪些资源，但不得编造资源正文。回答涉及班主任具体做法、平台量表/工具/SOP/制度之前应先调用一次，命中什么就按什么说。',
+  description: '在已发布业务知识库中检索与当前问题相关的操作建议片段（每次最多 5 段），返回片段来源与相似度；未命中时返回该模块已发布资源目录（量表/归因/工具的名称与摘要），可据此说明平台有哪些资源，但不得编造资源正文。回答涉及班主任具体做法、平台量表/工具/SOP/制度之前应先调用一次，命中什么就按什么说。涉及学生守则、日常行为规范、教育惩戒、校规校纪、文明礼仪、违纪处理等德育制度时，传 module=moral_education；德育分类只收制度原文，涉及具体学生/班级的处理办法仍按对应业务分类检索。不确定分类时不要传 module，做全模块检索。',
   schema: knowledgeSearchSchema,
   async execute(args: unknown, ctx: AgentToolContext): Promise<unknown> {
     const parsed = knowledgeSearchSchema.safeParse(args)
@@ -67,12 +68,15 @@ export const knowledgeSearchTool: AgentTool = {
         schoolId: ctx.user.schoolId, userId: ctx.user.userId,
         eventName: 'assistant_knowledge_gap', metadata: { module: module ?? 'all', reason: 'no_match' }
       })
-      // 零命中：退到「已发布资源目录」，让回答能落到真实存在的资源上
-      const catalog = await readPublishedResourceCatalog(ctx.event, {
-        schoolId: ctx.user.schoolId,
-        module,
-        sections
-      }).catch(() => [])
+      // 零命中：退到「已发布资源目录」，让回答能落到真实存在的资源上。
+      // 德育是知识库专用分类，没有三库资源目录，不返回其他模块的目录以免误导。
+      const catalog = module === 'moral_education'
+        ? []
+        : await readPublishedResourceCatalog(ctx.event, {
+            schoolId: ctx.user.schoolId,
+            module,
+            sections
+          }).catch(() => [])
       return {
         status: 'empty',
         items: [],

@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type * as schema from '../db/schema'
-import type { ModuleId } from '../../shared/contracts'
+import type { KnowledgeModuleId } from '../../shared/contracts'
 import type { SchoolSection } from '../../shared/school-section'
 
 export type DrizzleDB = NodePgDatabase<typeof schema>
@@ -77,7 +77,7 @@ export async function searchKnowledgeChunks(
   embedding: number[],
   filters?: {
     schoolId?: string
-    module?: ModuleId
+    module?: KnowledgeModuleId
     minSimilarity?: number
     limit?: number
     /** 查看者学段：按文档「适用学部」过滤，未标注的始终可见 */
@@ -208,7 +208,7 @@ async function searchKeywordChunks(
   db: DrizzleDB,
   keywords: string[],
   queryText: string,
-  filters: { schoolId?: string, module?: ModuleId, limit: number, similarity?: number[] | null, sections?: readonly SchoolSection[] | null }
+  filters: { schoolId?: string, module?: KnowledgeModuleId, limit: number, similarity?: number[] | null, sections?: readonly SchoolSection[] | null }
 ): Promise<KnowledgeSearchResult[]> {
   if (!keywords.length) return []
   const module = filters.module
@@ -295,7 +295,7 @@ export async function searchKnowledgeChunksHybrid(
   embedding: number[] | null | undefined,
   filters?: {
     schoolId?: string
-    module?: ModuleId
+    module?: KnowledgeModuleId
     minSimilarity?: number
     limit?: number
     /** 查看者学段：按文档「适用学部」过滤，未标注的始终可见 */

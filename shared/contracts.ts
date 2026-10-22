@@ -12,6 +12,31 @@ export const roleSchema = z.enum([
 ])
 export const moduleIdSchema = z.enum(['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem'])
 
+/**
+ * 知识库专用的模块分类：五个业务模块 + 德育（moral_education）。
+ *
+ * 德育只是知识库/检索分类，不是第六业务模块：它没有模块入口、量表、方案与看板口径，
+ * 不得写入业务记录（plans / assessments / reports 等仍只接受 moduleIdSchema）。
+ * 制度、学生守则、行为规范、教育惩戒等德育内容按该分类入库，供知识检索按
+ * module=moral_education 精确召回，也允许不传 module 做全模块检索。
+ */
+export const KNOWLEDGE_MODULE_MORAL_EDUCATION = 'moral_education' as const
+export const knowledgeModuleIdSchema = moduleIdSchema.or(z.literal(KNOWLEDGE_MODULE_MORAL_EDUCATION))
+export type KnowledgeModuleId = z.infer<typeof knowledgeModuleIdSchema>
+export const KNOWLEDGE_MODULE_IDS: readonly KnowledgeModuleId[] = [
+  ...moduleIdSchema.options,
+  KNOWLEDGE_MODULE_MORAL_EDUCATION
+]
+/** 知识库分类中文名（与平台后台知识库下拉一致；业务模块沿用各自页面标题） */
+export const KNOWLEDGE_MODULE_LABELS: Record<KnowledgeModuleId, string> = {
+  self_growth: '自我成长',
+  class_system: '班级系统',
+  home_school: '家校沟通',
+  student_case: '学生个案',
+  learning_problem: '学习问题',
+  moral_education: '德育'
+}
+
 /** 登录手机号格式（账号体系统一校验规则） */
 export const PHONE_PATTERN = /^1[3-9]\d{9}$/
 
@@ -139,7 +164,7 @@ export const moduleResourceDocumentImportSchemaBase = z.object({
   mimeType: z.string().trim().max(120).optional(),
   content: z.string().min(10).max(1_000_000),
   confirmNoPersonalData: z.literal(true),
-  module: moduleIdSchema.optional(),
+  module: knowledgeModuleIdSchema.optional(),
   tags: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
   /** 适用学部：知识库文档按学段可见（all/primary/junior/senior/repeat），缺省按 all 处理 */
   applicableSchoolSection: z.enum(['all', 'primary', 'junior', 'senior', 'repeat']).optional(),

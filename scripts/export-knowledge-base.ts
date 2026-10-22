@@ -31,16 +31,17 @@ import XLSX from 'xlsx'
 import { loadLocalEnv } from './load-env'
 import { useDb } from '../server/utils/db'
 import { SCHOOL_SECTIONS } from '../shared/school-section'
-import type { ModuleId } from '../shared/contracts'
+import type { KnowledgeModuleId } from '../shared/contracts'
 
-const MODULE_ORDER: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
+const MODULE_ORDER: KnowledgeModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem', 'moral_education']
 
 const MODULE_LABELS: Record<string, string> = {
   self_growth: '自我成长赋能',
   class_system: '班级系统建设',
   home_school: '家校协同',
   student_case: '学生个案',
-  learning_problem: '学习问题'
+  learning_problem: '学习问题',
+  moral_education: '德育'
 }
 
 const SECTION_LABELS: Record<string, string> = {
@@ -106,10 +107,10 @@ interface ChunkRow {
 }
 
 const moduleArg = readArg('module')
-if (moduleArg && !MODULE_ORDER.includes(moduleArg as ModuleId)) {
+if (moduleArg && !MODULE_ORDER.includes(moduleArg as KnowledgeModuleId)) {
   throw new Error(`--module 取值必须是 ${MODULE_ORDER.join(' / ')} 之一，收到：${moduleArg}`)
 }
-const filterModule = (moduleArg as ModuleId | null) ?? null
+const filterModule = (moduleArg as KnowledgeModuleId | null) ?? null
 const outPath = resolve(readArg('out') || `exports/知识库全量内容_${beijingDateStamp()}.xlsx`)
 
 loadLocalEnv()
@@ -198,7 +199,7 @@ const documents: ExportDocument[] = documentResult.rows
   .filter(item => !filterModule || item.module === filterModule)
 
 function moduleRank(module: string) {
-  const index = MODULE_ORDER.indexOf(module as ModuleId)
+  const index = MODULE_ORDER.indexOf(module as KnowledgeModuleId)
   return index === -1 ? MODULE_ORDER.length : index
 }
 

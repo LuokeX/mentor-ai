@@ -4,6 +4,7 @@ import {
   parseInstrumentRole,
   type AssessmentDimensionDef,
   type KeywordRouteEntry,
+  type KnowledgeModuleId,
   type LibraryType,
   type ModuleId,
   type OutputTemplateEntry,
@@ -691,7 +692,7 @@ function parseOutputTemplateSheets(sheets: SheetData[], module: ModuleId): Outpu
 
 export interface KnowledgeEntry {
   title: string
-  module: ModuleId
+  module: KnowledgeModuleId
   sourceType: string
   tags: string[]
   content: string
@@ -709,9 +710,20 @@ export interface KnowledgeEntry {
 }
 
 const VALID_SOURCE_TYPES = ['markdown', 'text', 'json'] as const
-const MODULE_IDS: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
+const KNOWLEDGE_MODULE_IDS: KnowledgeModuleId[] = [
+  'self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem', 'moral_education'
+]
+/** 业务填写模板可能写中文分类名；ID 仍是首选写法。 */
+const KNOWLEDGE_MODULE_ALIASES: Record<string, KnowledgeModuleId> = {
+  自我成长: 'self_growth',
+  班级系统: 'class_system',
+  家校沟通: 'home_school',
+  学生个案: 'student_case',
+  学习问题: 'learning_problem',
+  德育: 'moral_education'
+}
 
-export function parseKnowledgeSheets(sheets: SheetData[], defaultModule: ModuleId): KnowledgeEntry[] {
+export function parseKnowledgeSheets(sheets: SheetData[], defaultModule: KnowledgeModuleId): KnowledgeEntry[] {
   // 查找「知识文档」Sheet（优先按名匹配，fallback 按含知识/文档关键字的 Sheet 或第一个数据 Sheet）
   const targetSheet = findKnowledgeSheet(sheets)
   if (!targetSheet) return []
@@ -725,7 +737,9 @@ export function parseKnowledgeSheets(sheets: SheetData[], defaultModule: ModuleI
     const moduleRaw = read(row, ['所属模块', 'module'])
     let entryModule = defaultModule
     if (moduleRaw) {
-      const matched = MODULE_IDS.find(m => m === moduleRaw || moduleRaw.includes(m))
+      const normalizedModule = moduleRaw.trim()
+      const matched = KNOWLEDGE_MODULE_IDS.find(m => normalizedModule === m || normalizedModule.includes(m))
+        ?? KNOWLEDGE_MODULE_ALIASES[normalizedModule]
       if (matched) entryModule = matched
     }
 
@@ -766,7 +780,7 @@ export function parseKnowledgeSheets(sheets: SheetData[], defaultModule: ModuleI
  * `hasDocumentIdColumn` 表示表里存在「文档ID」列：全量替换导入据此区分
  * 「新增行（ID 留空）」与「文件根本不含 ID 列（拒绝执行）」。
  */
-export function parseKnowledgeWorkbook(buffer: Buffer, defaultModule: ModuleId): {
+export function parseKnowledgeWorkbook(buffer: Buffer, defaultModule: KnowledgeModuleId): {
   entries: KnowledgeEntry[]
   sheets: Array<{ name: string, rows: Array<Record<string, string | undefined>> }>
   hasDocumentIdColumn: boolean

@@ -41,7 +41,7 @@ import { createDocumentWithChunks } from '../server/domain/module-resource-docum
 import { requestProviderEmbeddings, type EmbeddingProviderConfig } from '../server/integrations/embeddings'
 import { useDb, schema } from '../server/utils/db'
 import { SCHOOL_SECTIONS } from '../shared/school-section'
-import type { ModuleId } from '../shared/contracts'
+import type { KnowledgeModuleId } from '../shared/contracts'
 
 loadLocalEnv()
 
@@ -56,8 +56,8 @@ const ALLOW_DUPLICATES = process.argv.includes('--allow-duplicates')
 const ALLOW_PRODUCTION = process.argv.includes('--allow-production')
 const filePath = process.argv.slice(2).find(arg => !arg.startsWith('--'))
 const sectionArg = readArg('section')
-const MODULE_IDS: ModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem']
-const defaultModule = (readArg('module') ?? 'self_growth') as ModuleId
+const MODULE_IDS: KnowledgeModuleId[] = ['self_growth', 'class_system', 'home_school', 'student_case', 'learning_problem', 'moral_education']
+const defaultModule = (readArg('module') ?? 'self_growth') as KnowledgeModuleId
 
 if (!filePath) {
   console.error('用法：pnpm tsx scripts/import-knowledge-xlsx.ts <file.xlsx> [--section=junior] [--write]')

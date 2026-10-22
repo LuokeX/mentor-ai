@@ -13,7 +13,8 @@ const moduleOptions = [
   { label: '班级系统', value: 'class_system' },
   { label: '家校沟通', value: 'home_school' },
   { label: '学生个案', value: 'student_case' },
-  { label: '学习问题', value: 'learning_problem' }
+  { label: '学习问题', value: 'learning_problem' },
+  { label: '德育', value: 'moral_education' }
 ]
 
 // 适用学部：取值与三库模板「② 枚举字典」一致，标签集中在 shared/school-section.ts
@@ -496,7 +497,8 @@ function onFileChange(event: Event) {
                 { label: '班级系统', value: 'class_system' },
                 { label: '家校沟通', value: 'home_school' },
                 { label: '学生个案', value: 'student_case' },
-                { label: '学习问题', value: 'learning_problem' }
+                { label: '学习问题', value: 'learning_problem' },
+                { label: '德育', value: 'moral_education' }
               ]" class="w-full" />
             </UFormField>
             <UFormField label="文档类型">
@@ -568,7 +570,8 @@ function onFileChange(event: Event) {
                 { label: '班级系统', value: 'class_system' },
                 { label: '家校沟通', value: 'home_school' },
                 { label: '学生个案', value: 'student_case' },
-                { label: '学习问题', value: 'learning_problem' }
+                { label: '学习问题', value: 'learning_problem' },
+                { label: '德育', value: 'moral_education' }
               ]" class="w-full" />
             </UFormField>
             <div class="flex gap-3">

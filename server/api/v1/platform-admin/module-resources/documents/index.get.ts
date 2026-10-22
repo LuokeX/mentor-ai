@@ -1,5 +1,5 @@
 import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm'
-import { moduleIdSchema } from '../../../../../../shared/contracts'
+import { knowledgeModuleIdSchema } from '../../../../../../shared/contracts'
 import { requireUser } from '../../../../../utils/auth'
 import { schema, useDb } from '../../../../../utils/db'
 
@@ -8,7 +8,7 @@ const VALID_LIBRARY_TYPES = ['assessment', 'attribution', 'tool', 'output_templa
 export default defineEventHandler(async (event) => {
   const admin = await requireUser(event, ['platform_admin'])
   const query = getQuery(event)
-  const module = typeof query.module === 'string' ? moduleIdSchema.optional().parse(query.module) : undefined
+  const module = typeof query.module === 'string' ? knowledgeModuleIdSchema.optional().parse(query.module) : undefined
   const libraryType = typeof query.libraryType === 'string' && VALID_LIBRARY_TYPES.includes(query.libraryType as any)
     ? query.libraryType
     : undefined

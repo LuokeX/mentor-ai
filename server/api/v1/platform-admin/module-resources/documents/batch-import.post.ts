@@ -5,7 +5,7 @@ import { requireUser } from '../../../../../utils/auth'
 import { writeAudit } from '../../../../../utils/audit'
 import { schema, useDb } from '../../../../../utils/db'
 import { z } from 'zod'
-import type { ModuleId } from '../../../../../../shared/contracts'
+import type { KnowledgeModuleId } from '../../../../../../shared/contracts'
 
 const batchImportSchema = z.object({
   contentBase64: z.string().min(4).max(16_000_000),
@@ -24,7 +24,7 @@ export default defineEventHandler(async (event) => {
   let documents: KnowledgeEntry[] = []
   let parsedSheets: Array<{ name: string, rows: Array<Record<string, string | undefined>> }> = []
   try {
-    const parsed = parseKnowledgeWorkbook(Buffer.from(body.contentBase64, 'base64'), body.defaultModule as ModuleId)
+    const parsed = parseKnowledgeWorkbook(Buffer.from(body.contentBase64, 'base64'), body.defaultModule as KnowledgeModuleId)
     documents = parsed.entries
     parsedSheets = parsed.sheets
   } catch (error: any) {
@@ -51,7 +51,7 @@ export default defineEventHandler(async (event) => {
   // 逐文档生成 chunk 和 embedding
   interface PreparedDoc {
     title: string
-    module: ModuleId
+    module: KnowledgeModuleId
     sourceType: string
     tags: string[]
     content: string

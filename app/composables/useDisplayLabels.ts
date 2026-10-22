@@ -8,7 +8,8 @@ const labels = {
     class_system: '班级系统',
     home_school: '家校沟通',
     student_case: '学生个案',
-    learning_problem: '学习问题'
+    learning_problem: '学习问题',
+    moral_education: '德育'
   },
   libraryType: {
     assessment: '量表库',
