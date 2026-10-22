@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 数据驾驶舱 · 数据总览（默认「今天」，最长 31 天）。
+ * 数据驾驶舱 · 数据总览（默认「今天」，固定窗口最长 30 天；「本月」按自然月最多 31 天）。
  *
  * 只读聚合视图：KPI 卡 + 每日趋势；明细与筛选在三个二级页面。
  * 看板范围（本校全部班级，或账号显式配置的学部）由服务端 /api/v1/dashboard/context 给出，页面不自行推断。
@@ -16,6 +16,7 @@ import {
   type OverviewKpis,
   type OverviewResponse
 } from '#shared/dashboard'
+import { dashboardPeriodPresets, type DashboardPeriodPreset } from '~/composables/useDashboardRange'
 
 const { start, end, period, rangeError, compare, applyPreset } = useDashboardRange({
   defaultDays: 0,
@@ -38,13 +39,7 @@ const { data, pending, error } = await useFetch<OverviewResponse>('/api/v1/dashb
   watch: [params]
 })
 
-const presets: DashboardPeriodPreset[] = [
-  { label: '今天', days: 1 },
-  { label: '本周', calendar: 'week' },
-  { label: '本月', calendar: 'month' },
-  { label: '近 7 天', days: 7 },
-  { label: '近 31 天', days: 31 }
-]
+const presets: DashboardPeriodPreset[] = dashboardPeriodPresets(DASHBOARD_PERIOD_LIMITS.overview)
 
 const kpis = computed(() => data.value?.kpis ?? null)
 const previousKpis = computed(() => data.value?.previousKpis ?? null)

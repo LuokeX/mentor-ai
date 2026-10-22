@@ -22,6 +22,47 @@ export interface DashboardPeriodPreset {
 }
 
 /**
+ * 四个看板页共用的快捷周期顺序（统一顺序与文案，避免各页各写一套）。
+ * 页面按自己的上限过滤：自然月最多 31 天、自然周最多 7 天，
+ * 因此 AI 问答页（上限 30 天）不会出现「本月」，总览页（上限容纳自然月）保留「本月」但不提供「近 31 天」。
+ */
+export const DASHBOARD_PERIOD_PRESETS: readonly DashboardPeriodPreset[] = [
+  { label: '今天', days: 1 },
+  { label: '本周', calendar: 'week' },
+  { label: '本月', calendar: 'month' },
+  { label: '近 7 天', days: 7 },
+  { label: '近 30 天', days: 30 },
+  { label: '近 90 天', days: 90 },
+  { label: '近半年', days: 180 },
+  { label: '近 1 年', days: 365 }
+]
+
+/** 按页面上限过滤后的快捷周期（顺序与文案统一）。 */
+export function dashboardPeriodPresets(maxDays: number): DashboardPeriodPreset[] {
+  return DASHBOARD_PERIOD_PRESETS.filter((preset) => {
+    if (typeof preset.days === 'number') return preset.days <= maxDays
+    if (preset.calendar === 'month') return maxDays >= 31
+    if (preset.calendar === 'week') return maxDays >= 7
+    return false
+  })
+}
+
+/** 计算某个快捷周期对应的起止日期（用于组件内判断当前高亮项）。 */
+export function dashboardPresetRange(
+  preset: DashboardPeriodPreset,
+  today: string
+): { start: string, end: string } {
+  if (typeof preset.days === 'number') {
+    return {
+      start: preset.days <= 1 ? today : addDays(today, -(preset.days - 1)),
+      end: today
+    }
+  }
+  if (preset.calendar === 'week') return { start: startOfWeekKey(today), end: today }
+  return { start: startOfMonthKey(today), end: today }
+}
+
+/**
  * 数据驾驶舱的统计区间状态（四个看板页面共用）。
  *
  * 默认区间按页面口径给定（总览「今天」、二级页「近 7 天」），

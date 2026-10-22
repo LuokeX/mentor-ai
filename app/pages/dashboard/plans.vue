@@ -22,6 +22,7 @@ import {
   type PlanKpis,
   type PlansResponse
 } from '#shared/dashboard'
+import { dashboardPeriodPresets, type DashboardPeriodPreset } from '~/composables/useDashboardRange'
 
 const { start, end, period, rangeError, compare, applyPreset } = useDashboardRange({
   defaultDays: 7,
@@ -87,13 +88,7 @@ watch(dims, () => { page.value = 1 })
 const kpis = computed(() => data.value?.kpis ?? null)
 const previousKpis = computed(() => data.value?.previousKpis ?? null)
 const previousPeriod = computed(() => data.value?.previousPeriod ?? null)
-const presets: DashboardPeriodPreset[] = [
-  { label: '近 7 天', days: 7 },
-  { label: '本周', calendar: 'week' },
-  { label: '本月', calendar: 'month' },
-  { label: '近 30 天', days: 30 },
-  { label: '近 90 天', days: 90 }
-]
+const presets: DashboardPeriodPreset[] = dashboardPeriodPresets(DASHBOARD_PERIOD_LIMITS.plans)
 
 // ===== KPI 卡（原型「量表与方案分析」四张 + 回填率 + PRD 6.1 的接受率 / 提醒触达率，共七张）=====
 interface KpiCard {

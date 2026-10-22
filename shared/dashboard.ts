@@ -12,7 +12,10 @@ import type { ManagedListResult } from './management'
 
 /** 各看板页面允许的最长统计天数（服务端按此校验，超出返回 400）。 */
 export const DASHBOARD_PERIOD_LIMITS = {
-  /** 数据总览：默认今天，最长 31 天 */
+  /**
+   * 数据总览：默认今天，固定窗口最长 30 天。
+   * 这里保留 31 是为了容纳 31 天的自然月「本月」预设；界面上不再提供「近 31 天」。
+   */
   overview: 31,
   /** AI 问答分析：默认近 7 天，最长 30 天 */
   aiQuestions: 30,

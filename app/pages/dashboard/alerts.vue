@@ -21,6 +21,7 @@ import {
   type DashboardIndividualDetailResponse,
   type DashboardIndividualTargetType
 } from '#shared/dashboard'
+import { dashboardPeriodPresets, type DashboardPeriodPreset } from '~/composables/useDashboardRange'
 
 const { start, end, period, rangeDays, rangeError, applyPreset } = useDashboardRange({
   defaultDays: 7,
@@ -75,15 +76,7 @@ watch(classIds, () => { page.value = 1 })
 const kpis = computed(() => data.value?.kpis ?? null)
 const trend = computed(() => data.value?.byDay ?? [])
 const communication = computed(() => data.value?.communication ?? null)
-const presets: DashboardPeriodPreset[] = [
-  { label: '近 7 天', days: 7 },
-  { label: '本周', calendar: 'week' },
-  { label: '本月', calendar: 'month' },
-  { label: '近 30 天', days: 30 },
-  { label: '近 90 天', days: 90 },
-  { label: '近半年', days: 180 },
-  { label: '近 1 年', days: 365 }
-]
+const presets: DashboardPeriodPreset[] = dashboardPeriodPresets(DASHBOARD_PERIOD_LIMITS.alerts)
 
 const SOURCE_OPTIONS: Array<{ value: AlertSource, label: string }> = [
   { value: 'safety_chat', label: '对话助手安全事项' },
@@ -324,17 +317,6 @@ async function loadIndividualDetail(target: IndividualTargetRef, grantId: string
           </select>
         </label>
         <DashboardMultiSelect v-model="classIds" label="班级（多选）" :options="classOptions" />
-        <label class="flex flex-col gap-1">
-          <span class="text-xs text-slate-500">风险等级</span>
-          <select
-            v-model="riskLevel"
-            class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 focus:border-emerald-400 focus:outline-none"
-          >
-            <option v-for="value in ALERT_RISK_LEVEL_FILTERS" :key="value" :value="value">
-              {{ ALERT_RISK_LEVEL_FILTER_LABELS[value] }}
-            </option>
-          </select>
-        </label>
         <fieldset class="flex flex-col gap-1">
           <span class="text-xs text-slate-500">来源</span>
           <div class="flex flex-wrap gap-x-3 gap-y-1.5 pb-1">
@@ -407,15 +389,28 @@ async function loadIndividualDetail(target: IndividualTargetRef, grantId: string
       <section class="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <h2 class="text-sm font-medium text-slate-700">预警明细</h2>
-          <details class="relative">
-            <summary class="cursor-pointer list-none rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">列设置</summary>
-            <div class="absolute right-0 z-20 mt-1 w-40 space-y-1.5 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
-              <label v-for="column in COLUMNS" :key="column.key" class="flex items-center gap-2 text-sm text-slate-600">
-                <input v-model="visibleKeys" type="checkbox" :value="column.key" class="size-3.5 rounded border-slate-300">
-                {{ column.label }}
-              </label>
-            </div>
-          </details>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-2">
+              <span class="text-xs text-slate-500">风险等级</span>
+              <select
+                v-model="riskLevel"
+                class="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-emerald-400 focus:outline-none"
+              >
+                <option v-for="value in ALERT_RISK_LEVEL_FILTERS" :key="value" :value="value">
+                  {{ ALERT_RISK_LEVEL_FILTER_LABELS[value] }}
+                </option>
+              </select>
+            </label>
+            <details class="relative">
+              <summary class="cursor-pointer list-none rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">列设置</summary>
+              <div class="absolute right-0 z-20 mt-1 w-40 space-y-1.5 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
+                <label v-for="column in COLUMNS" :key="column.key" class="flex items-center gap-2 text-sm text-slate-600">
+                  <input v-model="visibleKeys" type="checkbox" :value="column.key" class="size-3.5 rounded border-slate-300">
+                  {{ column.label }}
+                </label>
+              </div>
+            </details>
+          </div>
         </div>
 
         <div class="overflow-x-auto">

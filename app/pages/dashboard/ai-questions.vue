@@ -19,6 +19,7 @@ import {
   type DashboardKpiUpTone,
   type DashboardTableDimension
 } from '#shared/dashboard'
+import { dashboardPeriodPresets, type DashboardPeriodPreset } from '~/composables/useDashboardRange'
 
 const { start, end, period, rangeError, compare, applyPreset } = useDashboardRange({
   defaultDays: 7,
@@ -79,12 +80,7 @@ watch(dims, () => { page.value = 1 })
 const kpis = computed(() => data.value?.kpis ?? null)
 const previousKpis = computed(() => data.value?.previousKpis ?? null)
 const previousPeriod = computed(() => data.value?.previousPeriod ?? null)
-const presets: DashboardPeriodPreset[] = [
-  { label: '今天', days: 1 },
-  { label: '本周', calendar: 'week' },
-  { label: '近 7 天', days: 7 },
-  { label: '近 30 天', days: 30 }
-]
+const presets: DashboardPeriodPreset[] = dashboardPeriodPresets(DASHBOARD_PERIOD_LIMITS.aiQuestions)
 
 // ===== KPI 卡（原型「AI 问答分析」四张 + PRD 6.1 的活跃教师数 / 人均提问 / 平均会话轮次）=====
 // 推荐率与作答率不单独占卡，作为对应计数卡的 hint 展示，避免同一比率出现两遍。

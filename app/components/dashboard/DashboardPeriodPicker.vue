@@ -4,7 +4,8 @@
  * 预设既可以是滚动窗口（近 N 天），也可以是自然周 / 自然月；
  * 不在组件内做权限判断，只做区间校验提示；服务端仍独立校验。
  */
-import type { DashboardPeriodPreset } from '~/composables/useDashboardRange'
+import { shanghaiDateKey } from '#shared/dashboard'
+import { dashboardPresetRange, type DashboardPeriodPreset } from '~/composables/useDashboardRange'
 
 const props = defineProps<{
   start: string
@@ -18,6 +19,14 @@ const emit = defineEmits<{
   (event: 'update:end', value: string): void
   (event: 'preset', preset: DashboardPeriodPreset): void
 }>()
+
+/** 当前日期（东八区）：用于判断哪个快捷周期与当前起止日期完全一致。 */
+const today = shanghaiDateKey(new Date())
+
+function isActivePreset(preset: DashboardPeriodPreset): boolean {
+  const range = dashboardPresetRange(preset, today)
+  return range.start === props.start && range.end === props.end
+}
 </script>
 
 <template>
@@ -26,7 +35,7 @@ const emit = defineEmits<{
       <span class="text-xs text-slate-500">开始日期</span>
       <input
         type="date"
-        class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 focus:border-emerald-400 focus:outline-none"
+        class="rounded-lg border border-emerald-300 bg-emerald-50/60 px-3 py-1.5 text-sm font-medium text-emerald-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
         :value="start"
         @change="emit('update:start', ($event.target as HTMLInputElement).value)"
       >
@@ -35,7 +44,7 @@ const emit = defineEmits<{
       <span class="text-xs text-slate-500">结束日期</span>
       <input
         type="date"
-        class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 focus:border-emerald-400 focus:outline-none"
+        class="rounded-lg border border-emerald-300 bg-emerald-50/60 px-3 py-1.5 text-sm font-medium text-emerald-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
         :value="end"
         @change="emit('update:end', ($event.target as HTMLInputElement).value)"
       >
@@ -45,7 +54,11 @@ const emit = defineEmits<{
         v-for="preset in props.presets"
         :key="preset.label"
         type="button"
-        class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
+        class="rounded-lg border px-3 py-1.5 text-xs transition"
+        :class="isActivePreset(preset)
+          ? 'border-emerald-500 bg-emerald-600 font-medium text-white shadow-sm'
+          : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700'"
+        :aria-pressed="isActivePreset(preset)"
         @click="emit('preset', preset)"
       >
         {{ preset.label }}
