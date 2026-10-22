@@ -28,3 +28,5 @@ infra/certs-test/
 临时文件/
 exports/
 scripts/data/
+# 高中部班主任一次性导入脚本：硬编码真实教师姓名与手机号，仅本地使用
+scripts/import-senior-head-teachers.ts
