@@ -19,7 +19,7 @@
 import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { roleSchema } from '../../../../../../shared/contracts'
-import { applyUserRoles, hasBusinessRole, listUserRoles } from '../../../../../domain/user-roles'
+import { applyUserRoles, hasBusinessRole, listUserRoles, normalizeScopeGrades } from '../../../../../domain/user-roles'
 import { transferUserBusinessData, userHasOpenReferrals, userOwnsBusinessData } from '../../../../../domain/user-transfer'
 import { assertActiveTeacher } from '../../../../../domain/school-management'
 import { requireUser } from '../../../../../utils/auth'
@@ -35,9 +35,12 @@ const bodySchema = z.object({
   roles: z.array(roleSchema).min(1).max(7),
   /** 主角色（写回 users.role），必须包含在 roles 中 */
   primaryRole: roleSchema,
-  /** 角色级范围：持有年级主任角色时必填 grade */
+  /** 角色级范围：持有年级主任角色时必填 grades（兼容旧版 grade） */
   scopes: z.object({
-    grade_director: z.object({ grade: z.number().int().min(1).max(12) })
+    grade_director: z.object({
+      grades: z.array(z.number().int().min(1).max(12)).min(1).max(12).optional(),
+      grade: z.number().int().min(1).max(12).optional()
+    })
   }).partial().optional(),
   /** 业务接收教师：账号名下有业务数据且新角色集合不再含业务角色时必填 */
   transferToUserId: z.string().uuid().optional(),
@@ -70,7 +73,11 @@ export default defineEventHandler(async (event) => {
   if (!uniqueRoles.includes(body.primaryRole)) {
     throw createError({ statusCode: 422, message: '主角色必须包含在角色集合中' })
   }
-  if (uniqueRoles.includes(GRADE_SCOPED_ROLE as typeof uniqueRoles[number]) && !body.scopes?.grade_director?.grade) {
+  const requestedGradeScope = body.scopes?.grade_director
+  const scopeGrades = normalizeScopeGrades(
+    requestedGradeScope?.grades?.length ? requestedGradeScope.grades : requestedGradeScope?.grade
+  )
+  if (uniqueRoles.includes(GRADE_SCOPED_ROLE as typeof uniqueRoles[number]) && !scopeGrades.length) {
     throw createError({ statusCode: 422, message: '持有年级主任角色时必须填写所辖年级' })
   }
 
@@ -94,8 +101,8 @@ export default defineEventHandler(async (event) => {
     if (hasOpen) throw createError({ statusCode: 422, message: '该心理专员存在未完成的转介工单，请指定新的心理专员' })
   }
 
-  const scopes = body.scopes?.grade_director
-    ? { grade_director: { grade: body.scopes.grade_director.grade } }
+  const scopes = scopeGrades.length
+    ? { grade_director: { grades: scopeGrades } }
     : undefined
   const rolesChanged = uniqueRoles.length !== currentRoleCodes.length
     || uniqueRoles.some(role => !currentRoleCodes.includes(role))
@@ -128,7 +135,8 @@ export default defineEventHandler(async (event) => {
         roles: uniqueRoles,
         primaryRole: body.primaryRole,
         previousRoles: currentRoleCodes,
-        scopeGrade: scopes?.grade_director?.grade ?? null,
+        scopeGrades: scopes?.grade_director?.grades ?? null,
+        scopeGrade: scopes?.grade_director?.grades?.[0] ?? null,
         transferToUserId: body.transferToUserId ?? null,
         newPsychologistId: body.newPsychologistId ?? null,
         rolesChanged,

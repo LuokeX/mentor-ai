@@ -12,7 +12,7 @@ import {
   schoolAdminUserUpdateSchema,
   targetTypeSchema
 } from '../shared/contracts'
-import { SCHOOL_MANAGED_ROLES, hasBusinessRole, isSchoolManagedRole } from '../server/domain/user-roles'
+import { SCHOOL_MANAGED_ROLES, hasBusinessRole, isSchoolManagedRole, normalizeRoleScope, normalizeScopeGrades } from '../server/domain/user-roles'
 
 describe('management contracts', () => {
   it('limits managed record status to archive-style lifecycle values', () => {
@@ -36,6 +36,12 @@ describe('management contracts', () => {
     expect(schoolAdminUserCreateSchema.safeParse({ ...base, role: 'grade_director', scopeGrade: 7 }).success).toBe(true)
     expect(schoolAdminUserCreateSchema.safeParse({ ...base, role: 'grade_director', scopeGrade: 13 }).success).toBe(false)
     expect(schoolAdminUserCreateSchema.safeParse({ ...base, role: 'grade_director', scopeGrade: 0 }).success).toBe(false)
+    // 多选年级：数组形式通过，重复项去重并按升序写入
+    const multi = schoolAdminUserCreateSchema.safeParse({ ...base, role: 'grade_director', scopeGrades: [8, 7, 8] })
+    expect(multi.success).toBe(true)
+    expect(multi.success ? multi.data.scopeGrades : null).toEqual([7, 8])
+    expect(schoolAdminUserCreateSchema.safeParse({ ...base, role: 'grade_director', scopeGrades: [] }).success).toBe(false)
+    expect(schoolAdminUserCreateSchema.safeParse({ ...base, role: 'grade_director', scopeGrades: [13] }).success).toBe(false)
     // 非年级主任不要求所辖年级
     expect(schoolAdminUserCreateSchema.safeParse({ ...base, role: 'moral_education_director' }).success).toBe(true)
   })
@@ -45,6 +51,9 @@ describe('management contracts', () => {
     expect(schoolAdminUserUpdateSchema.safeParse({ role: 'grade_director', scopeGrade: 7 }).success).toBe(true)
     expect(schoolAdminUserUpdateSchema.safeParse({ scopeGrade: 7 }).success).toBe(true)
     expect(schoolAdminUserUpdateSchema.safeParse({ scopeGrade: 13 }).success).toBe(false)
+    expect(schoolAdminUserUpdateSchema.safeParse({ role: 'grade_director', scopeGrades: [7, 8] }).success).toBe(true)
+    expect(schoolAdminUserUpdateSchema.safeParse({ scopeGrades: [7, 8] }).success).toBe(true)
+    expect(schoolAdminUserUpdateSchema.safeParse({ scopeGrades: [0, 7] }).success).toBe(false)
     // 学校管理员/平台管理员/学部校长不归学校级账号管理
     expect(schoolAdminUserUpdateSchema.safeParse({ role: 'school_admin' }).success).toBe(false)
     expect(schoolAdminUserUpdateSchema.safeParse({ role: 'platform_admin' }).success).toBe(false)
@@ -59,6 +68,15 @@ describe('management contracts', () => {
     expect(schoolAdminUserUpdateSchema.safeParse({ ...withTransfer, transferToUserId: 'not-a-uuid' }).success).toBe(false)
     // 事由过短也拒绝（服务端会补默认事由，传了就要合规）
     expect(schoolAdminUserUpdateSchema.safeParse({ ...withTransfer, transferReason: '短' }).success).toBe(false)
+  })
+
+  it('normalizes multi-grade scopes and keeps legacy single-grade rows readable', () => {
+    expect(normalizeScopeGrades([8, 7, 8, 0, 13])).toEqual([7, 8])
+    expect(normalizeScopeGrades(7)).toEqual([7])
+    expect(normalizeScopeGrades(undefined)).toEqual([])
+    expect(normalizeRoleScope({ grades: [8, 7] })).toEqual({ grades: [7, 8], grade: 7 })
+    expect(normalizeRoleScope({ grade: 9 })).toEqual({ grade: 9 })
+    expect(normalizeRoleScope({ section: 'primary', grades: [3, 4] })).toEqual({ section: 'primary', grades: [3, 4], grade: 3 })
   })
 
   it('treats only teacher and psychologist as business roles', () => {

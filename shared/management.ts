@@ -48,11 +48,13 @@ export interface RolePermissions {
 // ===== 角色级范围（user_roles.scope jsonb）=====
 // 一个账号可持有多个角色，每个角色可自带范围，决定该角色能看到多大组织范围的数据：
 //   section —— 学部（primary/junior/senior/repeat，取值见 shared/school-section.ts）
-//   grade   —— 年级（1-12）
-// 当前阶段仅承载学部校长的所辖学部；德育主任/年级主任的范围字段在对应角色落地时补充。
+//   grades  —— 年级（1-12，可多选；年级主任可同时管多个年级）
+//   grade   —— 旧版单年级字段，仅用于兼容存量 JSONB，新写入统一用 grades
 export interface RoleScope {
   section?: string
+  /** @deprecated 旧版单年级字段；读取时请优先使用 grades */
   grade?: number
+  grades?: number[]
 }
 
 // ===== 能力（Capability）类型 =====

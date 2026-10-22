@@ -146,16 +146,20 @@ async function main() {
   const password = pwdArg ?? (phoneSuffixPwd ? phone.slice(-8) : generateRandomPassword())
   // 角色级 scope：指定 --section 时写入集合内每个角色（本期只有学部校长这类角色消费它，
   // 其余角色带 scope 无副作用）；未指定时保持空 scope
-  const scopeGrade = scopeGradeArg ? Number(scopeGradeArg) : undefined
-  if (scopeGradeArg && (!Number.isInteger(scopeGrade) || scopeGrade! < 1 || scopeGrade! > 12)) {
-    throw new Error('--scope-grade 仅支持 1-12 的年级')
+  const scopeGrades = scopeGradeArg
+    ? scopeGradeArg.split(',').map(item => Number(item.trim()))
+      .filter(item => Number.isInteger(item) && item >= 1 && item <= 12)
+    : []
+  if (scopeGradeArg && !scopeGrades.length) {
+    throw new Error('--scope-grade 仅支持 1-12 的年级，多个年级用逗号分隔')
   }
+  const uniqueScopeGrades = [...new Set(scopeGrades)].sort((a, b) => a - b)
   const roleScopes: Partial<Record<AppRole, RoleScope>> = {}
-  if (sectionArg || scopeGrade) {
+  if (sectionArg || uniqueScopeGrades.length) {
     for (const code of roleCodes) {
       roleScopes[code] = {
         ...(sectionArg ? { section: sectionArg } : {}),
-        ...(scopeGrade ? { grade: scopeGrade } : {})
+        ...(uniqueScopeGrades.length ? { grades: uniqueScopeGrades } : {})
       }
     }
   }
@@ -169,9 +173,9 @@ async function main() {
   console.log(`目标库：${describeTarget(databaseUrl)}`)
   console.log(`开通计划：${name}（${phone}）→ 学校 code=${schoolCode}；teachingGrades=${JSON.stringify(teachingGrades)}；isClassTeacher=${isClassTeacher}`)
   console.log(`角色集合：${roleCodes.join(', ')}；主角色=${primaryRole}（--role/--roles 的第一个，也是登录后的缺省落地角色）`)
-  console.log(sectionArg || scopeGrade
+  console.log(sectionArg || uniqueScopeGrades.length
     ? `角色 scope：${roleCodes.map(code => `${code} → ${JSON.stringify(roleScopes[code])}`).join('；')}`
-    : '角色 scope：无（未指定 --section）')
+    : '角色 scope：无（未指定 --section / --scope-grade）')
   console.log(`密码策略：${pwdArg ? '指定密码' : phoneSuffixPwd ? '手机号后 8 位' : '随机 16 位'}`)
 
   const pool = new Pool({ connectionString: databaseUrl })
@@ -209,9 +213,9 @@ async function main() {
 
     if (!apply) {
       console.log(`\ndry-run（未写库）：将在「${school.name}」创建 1 个账号，角色集合 [${roleCodes.join(', ')}]（主角色 ${primaryRole}），status=active 且创建后可直接登录。`)
-      console.log(sectionArg || scopeGrade
+      console.log(sectionArg || uniqueScopeGrades.length
         ? `将写入 user_roles.scope：${JSON.stringify(roleScopes)}（--section / --scope-grade 作用于集合内每个角色）`
-        : '将写入 user_roles.scope：{}（未指定 --section）')
+        : '将写入 user_roles.scope：{}（未指定 --section / --scope-grade）')
       console.log('确认无误后追加 --apply 执行。')
       return
     }

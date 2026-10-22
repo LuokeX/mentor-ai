@@ -95,13 +95,16 @@ export default defineEventHandler(async (event) => {
     if (!createdUser) throw createError({ statusCode: 409, message: '账号创建失败，请重试' })
 
     // 角色关联：账号的角色集合与主角色（多角色模型下 users.role 只是主角色）
-    // 年级主任的所辖年级写入角色级 scope（看板按它收窄范围）
+    // 年级主任的所辖年级写入角色级 scope（可多选，看板按它收窄范围）
+    const scopeGrades = body.scopeGrades?.length
+      ? body.scopeGrades
+      : body.scopeGrade !== undefined ? [body.scopeGrade] : undefined
     await applyUserRoles(tx, {
       userId: createdUser.id,
       roleCodes: [body.role],
       primaryRole: body.role,
-      scopes: body.role === 'grade_director' && body.scopeGrade
-        ? { grade_director: { grade: body.scopeGrade } }
+      scopes: body.role === 'grade_director' && scopeGrades?.length
+        ? { grade_director: { grades: scopeGrades } }
         : undefined,
     })
 
@@ -114,7 +117,8 @@ export default defineEventHandler(async (event) => {
       metadata: {
         role: createdUser.role,
         roles: [body.role],
-        scopeGrade: body.role === 'grade_director' ? body.scopeGrade ?? null : null,
+        scopeGrades: body.role === 'grade_director' ? scopeGrades ?? null : null,
+        scopeGrade: body.role === 'grade_director' ? scopeGrades?.[0] ?? null : null,
         passwordProvided: Boolean(body.password),
         activatedExistingInvitation: Boolean(existing),
         delegatedGrantId,

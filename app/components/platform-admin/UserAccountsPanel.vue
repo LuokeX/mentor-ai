@@ -12,7 +12,7 @@ interface UserRow {
   /** 账号持有的全部角色（含兼任）；列表接口返回，缺省时按主角色处理 */
   roles?: string[]
   /** 角色级范围：年级主任的所辖年级从这里回显 */
-  roleScopes?: Record<string, { grade?: number }>
+  roleScopes?: Record<string, { grade?: number, grades?: number[] }>
   status: 'active' | 'invited' | 'disabled'
   activatedAt: string | null
   lastLoginAt: string | null
@@ -127,8 +127,8 @@ const form = reactive({
   employeeNo: '', gender: '__none__', teachingGrades: [] as string[],
   subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '',
   selfStatusLevel: '__auto__',
-  /** 所辖年级（年级主任必填） */
-  scopeGrade: undefined as number | undefined,
+  /** 所辖年级（年级主任必填，可多选） */
+  scopeGrades: [] as number[],
 })
 const createdResult = ref<{ id: string, name: string, role: string, generatedPassword?: string } | null>(null)
 const copied = ref(false)
@@ -151,7 +151,7 @@ function openCreate() {
     password: '',
     employeeNo: '', gender: '__none__', teachingGrades: [],
     subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '', selfStatusLevel: '__auto__',
-    scopeGrade: undefined,
+    scopeGrades: [],
   })
   formError.value = ''
   drawerOpen.value = true
@@ -176,7 +176,9 @@ function openEdit(rowOrId: UserRow | string) {
     classTeacherYears: row.classTeacherYears != null ? String(row.classTeacherYears) : '',
     hiredAt: row.hiredAt ? row.hiredAt.slice(0, 10) : '', title: row.title || '__none__',
     certNote: '', selfStatusLevel: row.overrides?.selfStatusLevel || '__auto__',
-    scopeGrade: row.roleScopes?.grade_director?.grade,
+    scopeGrades: row.roleScopes?.grade_director?.grades?.length
+      ? [...row.roleScopes.grade_director.grades]
+      : row.roleScopes?.grade_director?.grade ? [row.roleScopes.grade_director.grade] : [],
   })
   formError.value = ''
   drawerOpen.value = true
@@ -196,8 +198,8 @@ function buildBody(): Record<string, unknown> | null {
     formError.value = '请填写有效的姓名和手机号'
     return null
   }
-  if (form.role === 'grade_director' && !form.scopeGrade) {
-    formError.value = '请选择年级主任的所辖年级'
+  if (form.role === 'grade_director' && !form.scopeGrades.length) {
+    formError.value = '请选择年级主任的所辖年级（可多选）'
     return null
   }
   const body: Record<string, unknown> = {
@@ -213,8 +215,8 @@ function buildBody(): Record<string, unknown> | null {
     hiredAt: form.hiredAt || undefined,
     title: form.title === '__none__' ? null : form.title,
   }
-  // 所辖年级（角色级 scope）：仅年级主任写入，看板按它收窄范围
-  if (form.role === 'grade_director') body.scopeGrade = form.scopeGrade
+  // 所辖年级（角色级 scope）：仅年级主任写入，可多选，看板按它收窄范围
+  if (form.role === 'grade_director') body.scopeGrades = form.scopeGrades
   // 电话/心理资质备注是加密字段：编辑时留空表示不修改
   if (form.phone) body.phone = form.phone
   if (form.certNote) body.certNote = form.certNote
@@ -284,8 +286,10 @@ async function createUser() {
  */
 async function activateInvited(row: UserRow) {
   if (row.status !== 'invited') return
-  const scopeGrade = row.roleScopes?.grade_director?.grade
-  if (row.role === 'grade_director' && !scopeGrade) {
+  const scopeGrades = row.roleScopes?.grade_director?.grades?.length
+    ? row.roleScopes.grade_director.grades
+    : row.roleScopes?.grade_director?.grade ? [row.roleScopes.grade_director.grade] : []
+  if (row.role === 'grade_director' && !scopeGrades.length) {
     openEdit(row)
     formError.value = '请先选择该年级主任的所辖年级，保存后再激活账号'
     return
@@ -300,7 +304,7 @@ async function activateInvited(row: UserRow) {
         name: row.name,
         phone: row.phone,
         role: row.role,
-        ...(scopeGrade ? { scopeGrade } : {}),
+        ...(scopeGrades.length ? { scopeGrades } : {}),
       },
     })
     createdResult.value = { id: result.id, name: row.name, role: row.role, generatedPassword: result.generatedPassword }
@@ -353,7 +357,7 @@ const roleSaving = ref(false)
 const roleForm = reactive({
   roles: [] as string[],
   primaryRole: '',
-  scopeGrade: undefined as number | undefined,
+  scopeGrades: [] as number[],
   transferToUserId: '',
   newPsychologistId: '__none__',
   reason: '',
@@ -378,7 +382,9 @@ function openRoleMaintenance(row: UserRow) {
   roleTarget.value = row
   roleForm.roles = [...rolesOfRow(row)]
   roleForm.primaryRole = row.role
-  roleForm.scopeGrade = row.roleScopes?.grade_director?.grade
+  roleForm.scopeGrades = row.roleScopes?.grade_director?.grades?.length
+    ? [...row.roleScopes.grade_director.grades]
+    : row.roleScopes?.grade_director?.grade ? [row.roleScopes.grade_director.grade] : []
   roleForm.transferToUserId = ''
   roleForm.newPsychologistId = '__none__'
   roleForm.reason = ''
@@ -396,7 +402,7 @@ async function saveRoles() {
   if (!row) return
   if (!roleForm.roles.length) { roleError.value = '请至少保留一个角色'; return }
   if (!roleForm.roles.includes(roleForm.primaryRole)) { roleError.value = '主角色必须包含在角色集合中'; return }
-  if (roleForm.roles.includes('grade_director') && !roleForm.scopeGrade) { roleError.value = '持有年级主任角色时必须填写所辖年级'; return }
+  if (roleForm.roles.includes('grade_director') && !roleForm.scopeGrades.length) { roleError.value = '持有年级主任角色时必须填写所辖年级（可多选）'; return }
   if (roleNeedsTransfer.value && !roleForm.transferToUserId) { roleError.value = '该账号名下有业务数据，请选择业务接收教师'; return }
   if (roleForm.reason.trim().length < 10) { roleError.value = '请填写至少 10 个字符的操作事由'; return }
   roleSaving.value = true
@@ -407,7 +413,7 @@ async function saveRoles() {
       body: {
         roles: roleForm.roles,
         primaryRole: roleForm.primaryRole,
-        scopes: roleForm.roles.includes('grade_director') ? { grade_director: { grade: roleForm.scopeGrade } } : undefined,
+        scopes: roleForm.roles.includes('grade_director') ? { grade_director: { grades: roleForm.scopeGrades } } : undefined,
         transferToUserId: roleNeedsTransfer.value && roleForm.transferToUserId ? roleForm.transferToUserId : undefined,
         newPsychologistId: roleDropsPsychologist.value && roleForm.newPsychologistId !== '__none__' ? roleForm.newPsychologistId : undefined,
         reason: roleForm.reason.trim(),
@@ -527,8 +533,8 @@ async function copyGeneratedPassword() {
             <UInput v-model="form.password" type="password" minlength="8" maxlength="200" autocomplete="new-password" class="w-full" />
           </UFormField>
           <UFormField label="角色" required><USelect v-model="form.role" :items="roleOptions" :disabled="roleLocked" class="w-full" /></UFormField>
-          <UFormField v-if="form.role === 'grade_director'" label="所辖年级" required hint="数据驾驶舱按该年级收窄范围">
-            <USelect v-model="form.scopeGrade" :items="scopeGradeItems" placeholder="请选择年级" class="w-full" />
+          <UFormField v-if="form.role === 'grade_director'" label="所辖年级" required hint="数据驾驶舱按所辖年级收窄范围，可多选">
+            <USelectMenu v-model="form.scopeGrades" :items="scopeGradeItems" multiple value-key="value" placeholder="请选择年级（可多选）" class="w-full" />
           </UFormField>
           <UFormField label="性别"><USelect v-model="form.gender" :items="genderOptions" class="w-full" /></UFormField>
           <UFormField v-if="!formIsDashboardRole" label="任教年级"><USelectMenu v-model="form.teachingGrades" multiple :items="gradeItems" class="w-full" /></UFormField>
@@ -606,8 +612,8 @@ async function copyGeneratedPassword() {
             <UFormField label="主角色" required hint="登录后的缺省落地身份">
               <USelect v-model="roleForm.primaryRole" :items="rolePrimaryOptions" class="w-full" />
             </UFormField>
-            <UFormField v-if="roleForm.roles.includes('grade_director')" label="所辖年级" required hint="数据驾驶舱按该年级收窄范围">
-              <USelect v-model="roleForm.scopeGrade" :items="scopeGradeItems" placeholder="请选择年级" class="w-full" />
+            <UFormField v-if="roleForm.roles.includes('grade_director')" label="所辖年级" required hint="数据驾驶舱按所辖年级收窄范围，可多选">
+              <USelectMenu v-model="roleForm.scopeGrades" :items="scopeGradeItems" multiple value-key="value" placeholder="请选择年级（可多选）" class="w-full" />
             </UFormField>
           </div>
           <UFormField v-if="roleNeedsTransfer" label="业务接收教师" required hint="该账号名下有班级/学生/方案等业务数据，换角色需要一并移交">

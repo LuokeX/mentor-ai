@@ -10,7 +10,7 @@ interface UserRow {
   /** 账号持有的全部角色（含兼任）；列表接口返回，缺省时按主角色处理 */
   roles?: string[]
   /** 角色级范围：年级主任的所辖年级从这里回显 */
-  roleScopes?: Record<string, { grade?: number }>
+  roleScopes?: Record<string, { grade?: number, grades?: number[] }>
   status: 'active' | 'invited' | 'disabled'
   activatedAt: string | null
   lastLoginAt: string | null
@@ -119,8 +119,8 @@ const form = reactive({
   employeeNo: '', gender: '__none__', teachingGrades: [] as string[],
   subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '',
   selfStatusLevel: '__auto__',
-  /** 所辖年级（年级主任必填） */
-  scopeGrade: undefined as number | undefined,
+  /** 所辖年级（年级主任必填，可多选） */
+  scopeGrades: [] as number[],
   /** 业务接收教师：账号名下有业务数据且换到看板角色时填写，服务端会一并完成移交 */
   transferToUserId: '',
 })
@@ -153,7 +153,7 @@ function openCreate() {
     password: '',
     employeeNo: '', gender: '__none__', teachingGrades: [],
     subject: '', isClassTeacher: false, classTeacherYears: '', hiredAt: '', title: '__none__', certNote: '', selfStatusLevel: '__auto__',
-    scopeGrade: undefined,
+    scopeGrades: [],
     transferToUserId: '',
   })
   formError.value = ''
@@ -179,7 +179,9 @@ function openEdit(rowOrId: UserRow | string) {
     classTeacherYears: row.classTeacherYears != null ? String(row.classTeacherYears) : '',
     hiredAt: row.hiredAt ? row.hiredAt.slice(0, 10) : '', title: row.title || '__none__',
     certNote: '', selfStatusLevel: row.overrides?.selfStatusLevel || '__auto__',
-    scopeGrade: row.roleScopes?.grade_director?.grade,
+    scopeGrades: row.roleScopes?.grade_director?.grades?.length
+      ? [...row.roleScopes.grade_director.grades]
+      : row.roleScopes?.grade_director?.grade ? [row.roleScopes.grade_director.grade] : [],
     transferToUserId: '',
   })
   formError.value = ''
@@ -195,8 +197,8 @@ async function saveUser() {
     formError.value = '请填写有效的姓名和手机号'
     return
   }
-  if (form.role === 'grade_director' && !form.scopeGrade) {
-    formError.value = '请选择年级主任的所辖年级'
+  if (form.role === 'grade_director' && !form.scopeGrades.length) {
+    formError.value = '请选择年级主任的所辖年级（可多选）'
     return
   }
   saving.value = true
@@ -218,8 +220,8 @@ async function saveUser() {
   }
   // 换角色时的业务接收教师：只在确实需要（换到非业务角色且当前是业务角色）时发送
   if (needsTransferPicker.value && form.transferToUserId) body.transferToUserId = form.transferToUserId
-  // 所辖年级（角色级 scope）：仅年级主任写入，看板按它收窄范围
-  if (form.role === 'grade_director') body.scopeGrade = form.scopeGrade
+  // 所辖年级（角色级 scope）：仅年级主任写入，可多选，看板按它收窄范围
+  if (form.role === 'grade_director') body.scopeGrades = form.scopeGrades
   // 电话/心理资质备注是加密字段：编辑时留空表示不修改
   if (form.phone) body.phone = form.phone
   if (form.certNote) body.certNote = form.certNote
@@ -377,7 +379,7 @@ async function copyGeneratedPassword() {
             <USelect v-model="form.transferToUserId" :items="teacherOptions" class="w-full" />
           </UFormField>
           <UFormField v-if="form.role === 'grade_director'" label="所辖年级" required hint="数据驾驶舱按该年级收窄范围">
-            <USelect v-model="form.scopeGrade" :items="scopeGradeItems" placeholder="请选择年级" class="w-full" />
+            <USelectMenu v-model="form.scopeGrades" :items="scopeGradeItems" multiple value-key="value" placeholder="请选择年级（可多选）" class="w-full" />
           </UFormField>
           <UFormField v-if="editing" :label="editing ? '更新手机号（留空表示不修改）' : '手机号'"><UInput v-model="form.phone" class="w-full" /></UFormField>
           <UFormField label="性别"><USelect v-model="form.gender" :items="genderOptions" class="w-full" /></UFormField>

@@ -78,7 +78,7 @@
 - **范围**：默认就是「本校全部班级」——`requireDashboardScope` 取 `user.schoolId` 后列出本校 active 班级（`server/domain/dashboard-scope.ts`），校长不需要额外配置学部。兼容口径：账号在 `user_roles.scope.section` 显式声明了具体学部时仍按该学部收窄（用于一所学校内部再分学部的场景），未声明或声明为 `all` 即全校。所有看板查询都先解析出班级集合，再带上 `schoolId + classIds`，越界班级在服务端取交集时被丢弃。
 - **角色**：看板角色有三个——`division_principal`（学部校长）、`moral_education_director`（德育主任）、`grade_director`（年级主任）。
 - **页面权限（角色维）**：驾驶舱拆成四个页面级目标类型——`dashboard`（数据总览，同时是入口）、`dashboard_ai_questions`、`dashboard_plans`、`dashboard_alerts`。平台后台「角色权限配置」按角色逐页勾选「查看」（三个看板角色默认全勾，见 `drizzle/0063_dashboard_page_permissions.sql`）；取消后该页接口返回 403、`context.pages` 不再下发、导航与总览入口卡片同步收敛，直接访问被取消的页面会跳到第一个可用页。未配置目标类型时回退硬编码规则（只有这三个角色具备）。路由不写死角色，鉴权在 `requireDashboardScope(event, user, page)`。
-- **范围（数据范围维）**：校长、德育主任看本校全部班级；年级主任按 `user_roles.scope.grade` 只看所辖年级，未配置年级时接口返回 400 而不是放行全校。
+- **范围（数据范围维）**：校长、德育主任看本校全部班级；年级主任按 `user_roles.scope.grades` 只看所辖年级（可多选，兼容旧 `scope.grade`），未配置年级时接口返回 400 而不是放行全校。
 - **数据口径与敏感维度**：见下方「驾驶舱权限模型（对齐 PRD 第 4 章）」。
 - **账号开通与维护**：德育主任与年级主任由**学校级账号管理**维护——学校后台「账号管理」与平台后台「学校管理 → 该行『账号』」两个入口都能建号、改角色与所辖年级（年级主任必填「所辖年级」，改完即刻生效）。列表里不属于该可维护集合的账号（学校管理员、平台管理员、学部校长）只展示、不提供编辑/停用按钮；学部校长仍由平台侧用 `scripts/create-account.ts --roles division_principal --section <学部>` 开通。教师/心理专员的角色仍只能在未激活时调整，看板角色没有业务数据，已激活也可改。
 - **入口**：`/dashboard` 四个页面（数据总览 / AI 问答分析 / 量表与方案 / 预警看板），接口在 `server/api/v1/dashboard/`，口径实现集中在 `server/domain/dashboard-metrics.ts`。「数据范围」标签未配置学部时显示学校名（如「六力学校-小学部」）。

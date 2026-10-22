@@ -491,19 +491,29 @@ export const schoolManagedRoleSchema = z.enum([
   'grade_director'
 ])
 
-/** 所辖年级（角色级 scope.grade，1-12）：年级主任专属，看板按它收窄范围 */
+/** 所辖年级（角色级 scope.grades，1-12）：年级主任专属，看板按它收窄范围 */
 const roleScopeGradeSchema = z.coerce.number().int().min(1).max(12)
+/** 多选年级：去重并按升序写入，最多 12 个。 */
+const roleScopeGradesSchema = z.array(roleScopeGradeSchema).min(1).max(12)
+  .transform(grades => [...new Set(grades)].sort((a, b) => a - b))
+
+/** 兼容旧版单年级字段：新请求优先用 scopeGrades，旧请求仍可只传 scopeGrade。 */
+function resolveScopeGrades(value: { scopeGrade?: number, scopeGrades?: number[] }): number[] | undefined {
+  if (value.scopeGrades?.length) return value.scopeGrades
+  if (value.scopeGrade !== undefined) return [value.scopeGrade]
+  return undefined
+}
 
 /**
  * 年级主任必须写明所辖年级：看板范围解析在缺年级时返回 400，
  * 建号阶段就拦住，避免建出登录即报错的账号。
  */
 function requireScopeGradeForGradeDirector(
-  value: { role?: z.infer<typeof schoolManagedRoleSchema>, scopeGrade?: number },
+  value: { role?: z.infer<typeof schoolManagedRoleSchema>, scopeGrade?: number, scopeGrades?: number[] },
   ctx: z.RefinementCtx
 ) {
-  if (value.role === 'grade_director' && value.scopeGrade === undefined) {
-    ctx.addIssue({ code: 'custom', path: ['scopeGrade'], message: '年级主任必须填写所辖年级' })
+  if (value.role === 'grade_director' && !resolveScopeGrades(value)?.length) {
+    ctx.addIssue({ code: 'custom', path: ['scopeGrades'], message: '年级主任必须填写所辖年级' })
   }
 }
 
@@ -524,7 +534,9 @@ const schoolAdminUserBaseSchema = z.object({
   title: z.string().trim().max(40).nullable().optional(),
   certNote: z.string().trim().max(1000).nullable().optional(),
   notes: z.string().trim().max(4000).nullable().optional(),
-  /** 所辖年级（角色级 scope.grade）：仅年级主任需要，建号必填 */
+  /** 所辖年级（角色级 scope.grades）：仅年级主任需要，建号必填，可多选 */
+  scopeGrades: roleScopeGradesSchema.optional(),
+  /** 旧版单年级字段（兼容） */
   scopeGrade: roleScopeGradeSchema.optional()
 })
 
@@ -553,7 +565,9 @@ export const schoolAdminUserUpdateSchema = z.object({
   overrides: z.record(z.string(), z.string()).optional(),
   /** 重置密码（选填）：管理员为已激活账号设置新密码 */
   password: z.string().min(8).max(200).optional(),
-  /** 所辖年级（角色级 scope.grade）：仅对持有年级主任角色的账号生效 */
+  /** 所辖年级（角色级 scope.grades）：仅对持有年级主任角色的账号生效，可多选 */
+  scopeGrades: roleScopeGradesSchema.optional(),
+  /** 旧版单年级字段（兼容） */
   scopeGrade: roleScopeGradeSchema.optional(),
   /**
    * 业务接收教师：账号名下有业务数据（班级/学生/方案等）且换到非业务角色（如德育主任/年级主任）时必填，

@@ -32,7 +32,7 @@ import {
 import { type DbClient, schema, useDb } from '../utils/db'
 import { DASHBOARD_ROLES, resolveCapabilities, resolvePageCapabilities } from './capabilities'
 import { recordDashboardAccessDenied } from './dashboard-tracking'
-import { listUserRoles } from './user-roles'
+import { listUserRoles, normalizeScopeGrades } from './user-roles'
 
 /**
  * 数据驾驶舱角色（校长 / 德育主任 / 年级主任）：看板入口权限在「角色权限配置」的
@@ -70,36 +70,35 @@ export interface DashboardScope {
 }
 
 /**
- * 读取账号在 user_roles 上声明的看板范围（section 学部 / grade 年级）：
+ * 读取账号在 user_roles 上声明的看板范围（section 学部 / grades 年级）：
  * - 学部校长、德育主任：通常不配 scope，看本校全部班级；
- * - 年级主任：配 `scope.grade`，只看所辖年级（跨班）。
- * 未声明的键返回 null，表示不收窄。
+ * - 年级主任：配 `scope.grades`（兼容旧 `scope.grade`），只看所辖年级（跨班、可多选）。
+ * 未声明的键返回空数组，表示不收窄。
  */
 export async function readDashboardScopeConfig(
   db: DbClient,
   userId: string,
   role?: AppRole
-): Promise<{ section: SchoolSection | null, grade: number | null }> {
+): Promise<{ section: SchoolSection | null, grades: number[] }> {
   const entries = await listUserRoles(db, userId)
   const entry = role
     ? entries.find(item => item.roleCode === role)
     : entries.find(item => item.roleCode === DASHBOARD_ROLE)
   const section = normalizeSchoolSection(entry?.scope.section)
-  const grade = Number(entry?.scope.grade)
   return {
     // all 表示「全学部」，等价于不收窄
     section: section === 'all' ? null : section,
-    grade: Number.isInteger(grade) && grade >= 1 && grade <= 12 ? grade : null
+    grades: normalizeScopeGrades(entry?.scope.grades ?? entry?.scope.grade)
   }
 }
 
-/** 解析看板范围：section / grade 都为空表示本校全部班级；配置后收窄到该学部或该年级。 */
+/** 解析看板范围：section / grades 都为空表示本校全部班级；配置后收窄到该学部或这些年级。 */
 export async function resolveDashboardScope(
   db: DbClient,
-  input: { schoolId: string, section: SchoolSection | null, grade?: number | null, line?: DashboardLine }
+  input: { schoolId: string, section: SchoolSection | null, grades?: number[], line?: DashboardLine }
 ): Promise<DashboardScope> {
   const { schoolId, section } = input
-  const grade = input.grade ?? null
+  const grades = normalizeScopeGrades(input.grades)
   const line: DashboardLine = input.line ?? 'all'
   const sectionGrades = section ? gradesOfSchoolSection(section) : []
   const unlabeled = or(isNull(schema.classes.section), eq(schema.classes.section, ''), eq(schema.classes.section, 'all'))
@@ -108,7 +107,7 @@ export async function resolveDashboardScope(
     : sectionGrades.length
       ? or(eq(schema.classes.section, section), and(unlabeled, inArray(schema.classes.grade, sectionGrades)))
       : eq(schema.classes.section, section)
-  const gradeCondition = grade ? eq(schema.classes.grade, grade) : undefined
+  const gradeCondition = grades.length ? inArray(schema.classes.grade, grades) : undefined
 
   const [schoolRows, classRows] = await Promise.all([
     db.select({ name: schema.schools.name }).from(schema.schools).where(eq(schema.schools.id, schoolId)).limit(1),
@@ -134,8 +133,8 @@ export async function resolveDashboardScope(
   const gradeCounts = new Map<number, number>()
   for (const item of classes) gradeCounts.set(item.grade, (gradeCounts.get(item.grade) ?? 0) + 1)
 
-  const sectionLabel = grade
-    ? gradeLabel(grade)
+  const sectionLabel = grades.length
+    ? grades.map(item => gradeLabel(item)).join('、')
     : section ? SCHOOL_SECTION_LABELS[section] : (schoolRows[0]?.name ?? '本校')
 
   return {
@@ -179,7 +178,7 @@ export async function requireDashboardEntry(event: H3Event, user: AuthUser): Pro
  * `dashboard_alerts`）在 roles.permissions 的页面级「查看」（平台后台「角色权限配置」可逐页勾选，
  * 变更即时生效）。未配置该目标类型时回退硬编码规则（三个看板角色具备）。
  * 范围：按激活角色在 user_roles 上的 scope 收窄——`scope.section` 收窄到学部、
- * `scope.grade` 收窄到年级（年级主任）；都不配就是本校全部班级。
+ * `scope.grades`（兼容旧 `scope.grade`）收窄到所辖年级（年级主任，可多选）；都不配就是本校全部班级。
  * 口径：德育主任（moral_education_director）为德育线，其余为全量。
  * 账号未关联学校时返回 400。
  */
@@ -196,15 +195,15 @@ export async function requireDashboardScope(
     throw createError({ statusCode: 403, message: `无权查看「${label}」，请联系平台管理员开通数据驾驶舱权限` })
   }
   const db = useDb(event)
-  const { section, grade } = await readDashboardScopeConfig(db, user.id, user.role)
+  const { section, grades } = await readDashboardScopeConfig(db, user.id, user.role)
   // 年级主任的看板范围就是所辖年级：未配置时不放行全校数据，避免越权查看
-  if (user.role === 'grade_director' && !grade) {
+  if (user.role === 'grade_director' && !grades.length) {
     throw createError({ statusCode: 400, message: '账号未配置所辖年级，请联系学校管理员在角色范围中指定年级后重试' })
   }
   return resolveDashboardScope(db, {
     schoolId: user.schoolId,
     section,
-    grade,
+    grades,
     line: resolveDashboardLine(user)
   })
 }

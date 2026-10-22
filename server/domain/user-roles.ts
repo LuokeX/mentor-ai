@@ -60,13 +60,34 @@ function fail(statusCode: number, message: string): never {
   throw new Error(message)
 }
 
+/**
+ * 年级范围净化：只保留 1-12 的整数，去重并按升序排列。
+ * 兼容旧版单年级字段（number）与新版数组（number[]）。
+ */
+export function normalizeScopeGrades(value: unknown): number[] {
+  const raw = Array.isArray(value) ? value : [value]
+  const grades = raw.filter((item): item is number =>
+    typeof item === 'number' && Number.isInteger(item) && item >= 1 && item <= 12
+  )
+  return [...new Set(grades)].sort((a, b) => a - b)
+}
+
 /** 角色范围净化：只保留已知键，忽略 JSONB 里的脏数据。 */
 export function normalizeRoleScope(scope: unknown): RoleScope {
   if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return {}
   const record = scope as Record<string, unknown>
   const out: RoleScope = {}
   if (typeof record.section === 'string' && record.section) out.section = record.section
-  if (typeof record.grade === 'number' && Number.isFinite(record.grade)) out.grade = record.grade
+  const grades = normalizeScopeGrades(record.grades)
+  if (grades.length) {
+    out.grades = grades
+    // 兼容仍读取旧字段的调用方
+    out.grade = grades[0]
+  } else {
+    // 旧版只写了单年级：保持原形状，读取方用 grades ?? grade 兼容
+    const legacyGrades = normalizeScopeGrades(record.grade)
+    if (legacyGrades.length) out.grade = legacyGrades[0]
+  }
   return out
 }
 

@@ -7,7 +7,7 @@
 这是一个校内封闭试用版教师赋能平台，当前是可运行的 RC 基线，不等同于正式生产合规验收。
 
 - 技术形态：Nuxt 4 + Vue 3 + Nitro 单仓全栈应用。
-- 角色：`teacher`、`psychologist`、`school_admin`（学校管理员，含账号开通/权限维护与平台使用量看板）、`division_principal`（学部校长）、`moral_education_director`（德育主任）、`grade_director`（年级主任）、`platform_admin`；中间三者是只读数据驾驶舱角色（一校一学部：校长与德育主任看本校，年级主任按 `user_roles.scope.grade` 只看所辖年级）。一个账号可持有多个角色，但同一时刻只有一个「激活角色」生效（见 `docs/ROLE_MATRIX.md`）。
+- 角色：`teacher`、`psychologist`、`school_admin`（学校管理员，含账号开通/权限维护与平台使用量看板）、`division_principal`（学部校长）、`moral_education_director`（德育主任）、`grade_director`（年级主任）、`platform_admin`；中间三者是只读数据驾驶舱角色（一校一学部：校长与德育主任看本校，年级主任按 `user_roles.scope.grades` 只看所辖年级，可多选；兼容旧 `scope.grade`）。一个账号可持有多个角色，但同一时刻只有一个「激活角色」生效（见 `docs/ROLE_MATRIX.md`）。
 - 五个可执行模块：`self_growth`、`class_system`、`home_school`、`student_case`、`learning_problem`。
 - 核心能力：首页 AI 助手（回答先行）、确定性量表与归因规则、三库资源运营（XLSX 模板导入 + 版本发布）、信息中心、方案跟踪、安全熔断、心理转介、学校后台、平台后台、统一管理框架。
 - 业务边界和当前未实现范围见 `README.md`；它是实现说明，不是完整 PRD。
@@ -268,14 +268,14 @@ export default defineEventHandler(async (event) => {
 - **组织模型**：学部与学校同级，每个学部是一所独立学校（`六力学校-小学部` / `-初中部` / `-高中部` 分别是 `schools` 记录），跨学部即跨租户。存量拆分脚本 `scripts/split-schools-by-section.ts`。
 - 看板角色 `division_principal`（学部校长）、`moral_education_director`（德育主任）、`grade_director`（年级主任）都是只读角色：只看驾驶舱（`/dashboard` 四个页面），不进入统一管理框架，不读写业务正文。看板权限在平台后台「角色权限配置」的四个页面级目标类型下（`dashboard` 数据总览/入口、`dashboard_ai_questions`、`dashboard_plans`、`dashboard_alerts`，三个角色默认勾选，逐页取消后该页接口返回 403 且导航与 `context.pages` 同步收敛）；权限模型细节与留痕口径见 `docs/ROLE_MATRIX.md` 的「驾驶舱权限模型」小节。
 - **学校管理员（`school_admin`）不是看板角色**：由平台侧开通，负责校内账号开通/维护与业务管理，并承载平台使用量看板（`/usage`，S1/S2/S4；2026-10-08 起原「学校系统管理员」角色 `system_admin` 已并入本角色，迁移 `drizzle/0065_merge_school_system_admin.sql`）。业务档案仍是事由授权的受控只读。开通方式见 `docs/ROLE_MATRIX.md` 的「学校管理员」小节。
-- 账号维护：德育主任与年级主任在学校级账号管理界面开通（学校后台「账号管理」、平台后台「学校管理 → 账号」），角色下拉里选角色，年级主任必填「所辖年级」（写入 `user_roles.scope.grade`，看板据此收窄）；可维护的角色集合是 `server/domain/user-roles.ts` 的 `SCHOOL_MANAGED_ROLES`（教师、心理专员、德育主任、年级主任），集合外的账号（学校管理员/平台管理员/学部校长）在列表里不给编辑与停用按钮，学部校长仍由平台侧 `scripts/create-account.ts --roles division_principal --section <学部>` 开通。看板角色没有业务数据，停用走「停用账号」而无需业务移交（接口仍是 `transfer-and-disable`，不传 `toUserId`）。
+- 账号维护：德育主任与年级主任在学校级账号管理界面开通（学校后台「账号管理」、平台后台「学校管理 → 账号」），角色下拉里选角色，年级主任必填「所辖年级」（写入 `user_roles.scope.grades`，可多选；看板据此收窄）；可维护的角色集合是 `server/domain/user-roles.ts` 的 `SCHOOL_MANAGED_ROLES`（教师、心理专员、德育主任、年级主任），集合外的账号（学校管理员/平台管理员/学部校长）在列表里不给编辑与停用按钮，学部校长仍由平台侧 `scripts/create-account.ts --roles division_principal --section <学部>` 开通。看板角色没有业务数据，停用走「停用账号」而无需业务移交（接口仍是 `transfer-and-disable`，不传 `toUserId`）。
 - **业务数据归属与角色变更**：班级/学生/家长/沟通/方案/量表作答/学生事件/AI 会话等记录都靠 `owner_user_id` 挂在教师名下，"能不能改"由「激活角色 + 负责人是不是我」共同决定。因此账号不再持有教师/心理专员角色、却仍有业务数据时会形成"没人能维护"的孤儿数据——换角色或停用前必须先把责任链移交给接收教师：
   - 学校后台「账号管理」换角色时，若账号名下有业务数据且新角色不是业务角色，必须选择「业务接收教师」，服务端在同一次操作（同一事务）里完成移交 + 换角色 + 写 `record_assignments` 移交留痕 + 审计 `school_admin.user.update`；
   - 停用走「移交并停用」（审计 `school_admin.user.transfer_and_disable`）；
   - 两条链路共用 `server/domain/user-transfer.ts`（`userOwnsBusinessData` 判断是否有数据、`transferUserBusinessData` 执行移交），避免口径漂移；
   - 兼任（多角色）账号的角色集合只能在平台后台维护（见下）。
 - **平台后台「角色维护」**（`PATCH /api/v1/platform-admin/users/{id}/roles`，UI 在「学校管理 → 学校 → 账号」每行的「角色维护」按钮）：给任意本校账号覆盖式写入角色集合与主角色（例如给学部校长账号加 `teacher` 兼任，之后他在顶栏切换身份即可使用 AI 助手），支持年级主任所辖年级、换角色时一并移交业务数据、未结转介指定新心理专员。只有 `platform_admin` 可调用；不能维护平台管理员账号，也不能通过该入口授予 `platform_admin`（防提权/自锁）；写审计 `platform_admin.user.roles.update`（含 previousRoles 与事由）。
-- 看板范围默认就是「本校全部班级」；账号在 `user_roles.scope.section` 声明了具体学部时按该学部收窄，`user_roles.scope.grade` 声明了年级时按该年级收窄（年级主任未配置年级时返回 400，不放行全校），解析收口在 `server/domain/dashboard-scope.ts`（班级归属优先 `classes.section`，为空或 `all` 时按 `classes.grade` 折算）。路由不得自行拼班级范围。
+- 看板范围默认就是「本校全部班级」；账号在 `user_roles.scope.section` 声明了具体学部时按该学部收窄，`user_roles.scope.grades` 声明了年级时按这些年级收窄（可多选，兼容旧 `scope.grade`；年级主任未配置年级时返回 400，不放行全校），解析收口在 `server/domain/dashboard-scope.ts`（班级归属优先 `classes.section`，为空或 `all` 时按 `classes.grade` 折算）。路由不得自行拼班级范围。
 - 所有看板查询必须 `schoolId + classIds` 双约束；前端传的班级筛选要与本校班级取交集，不允许越界取数。看板默认只到班级维度：不返回提问原文、学生姓名、教师业务正文；预警明细的学生列按周期内首次出现顺序编号为「学生 A/B/C」。**唯一的例外是个体明细下钻**：平台后台按校方授权给角色开通 `dashboard` 记录级的 `view_sensitive`（默认关闭）后，操作时自填事由（≥10 字）换 15 分钟目标级授权。个体明细支持三类目标（`student` / `teacher_profile` / `guardian`，见 PRD W7）：学生给身份 + 学生事件 + 方案风险 + 沟通结构化字段 + 量表等级与主归因 + 提问摘要（≤80 字、已脱敏）；教师只给身份 + 负责范围 + 近 30 天计数；家长给身份 + 关系 + 关联学生 + 沟通结构化字段。三类都**不返回沟通正文与摘要、量表原始作答、助手回答正文**，响应 `no-store` 并带水印，每次读取写管理员访问事件与审计 `dashboard.individual_view`；越界与不存在同样返回 404，并写审计 `dashboard.access_denied`。
 - 学生事件与家校沟通支持关联多名学生/家长（2026-10-16）：主对象写主列（看板聚合、通知跳转与导入按主对象读取，一条记录不会在多个班级重复计数），其余写 `student_event_students` / `communication_students` / `communication_guardians`；个体明细下钻对「主对象或关联对象命中」的记录都返回。
 - 预警看板（PRD W4/W5）合并六类来源：安全事项（对话助手 / 量表提交）、学生事件（E1–E6）、高风险家校沟通（`communications.risk_level` 为 `crisis`/`high`，未归档=待解决、已归档=已关闭，只给渠道/风险等级/时间/脱敏学生标号，不读正文）、执行项逾期（`plan_actions.due_at` 到期且未完成、已纳入执行）、复盘逾期（`plans.next_review_at` 到期且方案未闭环）。逾期不计入「高危未闭环」，单独统计 `kpis.overdueOpen`（高风险家校沟通计入高危）；逾期行不返回方案标题与执行项正文，只给方案模块名。

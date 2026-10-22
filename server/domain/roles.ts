@@ -129,7 +129,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<AppRole, RolePermissions> = {
     records: buildRecords({ ...DASHBOARD_PAGES }, []),
     pages: buildPages({ ...DASHBOARD_PAGES }, []),
   },
-  // 年级主任：只读数据驾驶舱，范围按角色 scope.grade 收窄到所辖年级
+  // 年级主任：只读数据驾驶舱，范围按角色 scope.grades 收窄到所辖年级（可多选）
   grade_director: {
     records: buildRecords({ ...DASHBOARD_PAGES }, []),
     pages: buildPages({ ...DASHBOARD_PAGES }, []),

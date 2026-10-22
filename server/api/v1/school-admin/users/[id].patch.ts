@@ -8,7 +8,7 @@ import { requireSchoolManagement, assertActiveTeacher } from '../../../../domain
 import { encryptSensitive } from '../../../../utils/crypto'
 import { matchesExpectedUpdatedAt, updatedAtMatches } from '../../../../utils/concurrency'
 import type { AppRole } from '../../../../../app/composables/useAuth'
-import { userHasAnyRole, applyUserRoles, listUserRoles, hasBusinessRole, SCHOOL_MANAGED_ROLES } from '../../../../domain/user-roles'
+import { userHasAnyRole, applyUserRoles, listUserRoles, hasBusinessRole, normalizeScopeGrades, SCHOOL_MANAGED_ROLES } from '../../../../domain/user-roles'
 import { transferUserBusinessData, userOwnsBusinessData } from '../../../../domain/user-transfer'
 
 export default defineEventHandler(async (event) => {
@@ -32,12 +32,15 @@ export default defineEventHandler(async (event) => {
   const targetRoles = await listUserRoles(db, id)
   const currentRoleCodes = targetRoles.map(entry => entry.roleCode)
   const roleChanging = Boolean(body.role && body.role !== target.role)
+  const requestedScopeGrades = body.scopeGrades?.length
+    ? body.scopeGrades
+    : body.scopeGrade !== undefined ? [body.scopeGrade] : undefined
   let needsTransfer = false
   if (roleChanging) {
     if (currentRoleCodes.length > 1) {
       throw createError({ statusCode: 409, message: '该账号持有多个角色，请到平台后台「学校管理 → 账号 → 角色维护」调整' })
     }
-    if (body.role === 'grade_director' && body.scopeGrade === undefined) {
+    if (body.role === 'grade_director' && !requestedScopeGrades?.length) {
       throw createError({ statusCode: 422, message: '请填写年级主任所辖年级' })
     }
     // 教师/心理专员账号有业务数据归属：换到非业务角色（德育主任/年级主任等）时必须先移交，
@@ -56,8 +59,9 @@ export default defineEventHandler(async (event) => {
   }
   /** 最终角色集合：换角色时整体替换（本接口语义是「换一个角色」），否则保持现状 */
   const finalRoleCodes = roleChanging ? [body.role!] : currentRoleCodes
-  const writesScopeGrade = body.scopeGrade !== undefined && finalRoleCodes.includes('grade_director')
-  const currentGradeScope = targetRoles.find(entry => entry.roleCode === 'grade_director')?.scope.grade ?? null
+  const writesScopeGrades = requestedScopeGrades !== undefined && finalRoleCodes.includes('grade_director')
+  const currentGradeEntry = targetRoles.find(entry => entry.roleCode === 'grade_director')
+  const currentGradeScopes = normalizeScopeGrades(currentGradeEntry?.scope.grades ?? currentGradeEntry?.scope.grade)
 
   // 并发冲突检查
   if (expectedUpdatedAt && !matchesExpectedUpdatedAt(target.updatedAt, expectedUpdatedAt)) {
@@ -79,7 +83,11 @@ export default defineEventHandler(async (event) => {
   if (needsTransfer) changedFields.push('transfer')
   if (body.status) changedFields.push('status')
   if (body.password) changedFields.push('password')
-  if (writesScopeGrade && body.scopeGrade !== currentGradeScope) changedFields.push('scopeGrade')
+  if (writesScopeGrades) {
+    const sameGrades = requestedScopeGrades!.length === currentGradeScopes.length
+      && requestedScopeGrades!.every((grade, index) => grade === currentGradeScopes[index])
+    if (!sameGrades) changedFields.push('scopeGrades')
+  }
 
   await db.transaction(async (tx) => {
     // 先移交业务责任链（换角色时）：同事务内保证「数据有人接」与「角色已换」一起生效
@@ -134,12 +142,12 @@ export default defineEventHandler(async (event) => {
     // 角色调整同步 user_roles：本接口只服务未激活邀请账号与只读看板角色账号，
     // 语义是「换一个角色」，因此整体替换角色集合并保持主角色一致（否则 userHasRole 会查不到新角色）。
     // 所辖年级（角色级 scope）在最终仍持有年级主任角色时写入，供看板范围解析使用。
-    if (roleChanging || writesScopeGrade) {
+    if (roleChanging || writesScopeGrades) {
       await applyUserRoles(tx, {
         userId: id,
         roleCodes: finalRoleCodes,
         primaryRole: (roleChanging ? body.role! : target.role) as AppRole,
-        scopes: writesScopeGrade ? { grade_director: { grade: body.scopeGrade! } } : undefined,
+        scopes: writesScopeGrades ? { grade_director: { grades: requestedScopeGrades! } } : undefined,
       })
     }
     await writeAudit(event, {
@@ -150,7 +158,8 @@ export default defineEventHandler(async (event) => {
         changedFields,
         status: body.status,
         roles: roleChanging ? finalRoleCodes : undefined,
-        scopeGrade: writesScopeGrade ? body.scopeGrade : undefined,
+        scopeGrades: writesScopeGrades ? requestedScopeGrades : undefined,
+        scopeGrade: writesScopeGrades ? requestedScopeGrades?.[0] : undefined,
         transferToUserId: needsTransfer ? body.transferToUserId : undefined,
         delegatedGrantId
       }
