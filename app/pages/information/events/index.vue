@@ -248,7 +248,7 @@ async function archiveEvent(eventId: string) {
         <p v-if="form.sourceChatSessionId" class="flex items-center gap-1.5 text-xs text-slate-500">
           <UIcon name="i-lucide-message-square-quote" class="size-3.5" />
           来源：AI 对话
-          <NuxtLink :to="`/?sessionId=${form.sourceChatSessionId}`" class="text-emerald-700 hover:underline">回看原对话</NuxtLink>
+          <NuxtLink :to="`/?sessionId=${form.sourceChatSessionId}`" target="_blank" rel="noopener noreferrer" class="text-emerald-700 hover:underline">回看原对话</NuxtLink>
         </p>
         <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
         <div class="flex justify-end gap-2"><UButton color="neutral" variant="outline" @click="closeDrawer">取消</UButton><UButton type="submit" :loading="saving">保存</UButton></div>
