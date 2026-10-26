@@ -512,6 +512,13 @@
       "when": 1792738004711,
       "tag": "0072_nice_squadron_supreme",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1792738536396,
+      "tag": "0073_familiar_zodiak",
+      "breakpoints": true
     }
   ]
 }

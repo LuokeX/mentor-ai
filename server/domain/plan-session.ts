@@ -23,6 +23,8 @@ import { encryptSensitive } from '../utils/crypto'
 import { createPlanActions, defaultReviewAt, mergePlanActionSnapshots, toToolActions } from './plan-actions'
 import { extractSourceResourceVersionIds, recordPlanOperationEvent } from './plan-operations'
 import { buildAttributionKeywords, buildPlanTitle, type PlanSourceType } from './plan-titles'
+import { CEND_POINT_COSTS, activeMembership, grantPointsTx } from './cend-points'
+import { isCendSchool } from './cend-school'
 import { listAssessmentInstruments } from './module-resources'
 import type { AssessmentReport } from '../../shared/reports'
 
@@ -173,6 +175,8 @@ export interface GenerateSessionPlanResult {
   planId: string
   planUpdatedAt: Date | null
   planReport: Record<string, unknown> | null
+  /** true = 本次新建方案（C 端扣 200 积分）；false = 合并到已有待接受方案 */
+  created: boolean
 }
 
 function buildPlanReport(args: {
@@ -360,7 +364,7 @@ export async function generateOrMergeSessionPlan(
     // 关联组内全部量表到方案：合并后组内可能又追加了量表（复评/补评），
     // 全量重写关系由两个唯一约束幂等去重，不会产生重复行。
     await linkPlanAssessmentAttempts(client, mergeTargetId, assessmentSessionId, sourceAttemptId)
-    return { planId: mergeTargetId, planUpdatedAt: updatedPlan?.updatedAt || null, planReport }
+    return { planId: mergeTargetId, planUpdatedAt: updatedPlan?.updatedAt || null, planReport, created: false }
   }
 
   const planReport = buildPlanReport({
@@ -417,6 +421,30 @@ export async function generateOrMergeSessionPlan(
     // 关联评估组内全部量表到方案；无组（单张评估）时兜底挂来源 attempt（sequence=0，
     // 与 0034 回填形态一致），保证详情页「测评量表（N 份）」区块始终有数据。
     await linkPlanAssessmentAttempts(client, plan.id, assessmentSessionId, sourceAttemptId)
+
+    // C 端：新建方案时扣 200 积分（会员免扣）。与方案写入同一事务，积分不足则整体回滚。
+    if (await isCendSchool(client, schoolId)) {
+      const membership = await activeMembership(client, ownerUserId)
+      if (!membership) {
+        const charged = await grantPointsTx(client, {
+          userId: ownerUserId,
+          amount: -CEND_POINT_COSTS.assessmentPlan,
+          type: 'assessment_plan',
+          status: 'settled',
+          idempotencyKey: `assessment-plan:${plan.id}`,
+          referenceType: 'plan',
+          referenceId: plan.id
+        })
+        if (!charged.ok) {
+          throw createError({
+            statusCode: 402,
+            statusMessage: 'POINTS_INSUFFICIENT',
+            message: `积分不足，生成方案需要 ${CEND_POINT_COSTS.assessmentPlan} 积分`,
+            data: { required: CEND_POINT_COSTS.assessmentPlan, balance: charged.balance }
+          })
+        }
+      }
+    }
   }
-  return { planId: planId || '', planUpdatedAt: plan?.updatedAt || null, planReport }
+  return { planId: planId || '', planUpdatedAt: plan?.updatedAt || null, planReport, created: Boolean(plan) }
 }

@@ -1287,3 +1287,122 @@ export const userRoles = pgTable('user_roles', {
   index('user_roles_user_idx').on(table.userId),
   index('user_roles_school_role_idx').on(table.schoolId, table.roleCode)
 ])
+
+// ===== 商业化 C 端（与学校租户共用 users；数据只在 C 端租户上下文生效）=====
+
+/** C 端个人资料：字段与《注册积分简版 V1》的完善资料弹窗一致。 */
+export const cendProfiles = pgTable('cend_profiles', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  nickname: varchar('nickname', { length: 120 }).notNull(),
+  subjects: jsonb('subjects').$type<string[]>().default([]).notNull(),
+  grades: jsonb('grades').$type<number[]>().default([]).notNull(),
+  textbookVersion: varchar('textbook_version', { length: 160 }),
+  region: varchar('region', { length: 20 }),
+  teachingYears: varchar('teaching_years', { length: 20 }),
+  roles: jsonb('roles').$type<string[]>().default([]).notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  ...timestamps
+})
+
+/** 积分账户：余额单独存放，扣减用原子 SQL；流水见 cendPointTransactions。 */
+export const cendPointAccounts = pgTable('cend_point_accounts', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  balance: integer('balance').default(0).notNull(),
+  version: integer('version').default(0).notNull(),
+  ...timestamps
+})
+
+/**
+ * 积分流水。
+ * amount 为带符号金额（收入正、支出负）；pending = 冻结中，settled = 已结算，
+ * refunded = 已退回。幂等键保证同一动作不会重复发放/扣减。
+ */
+export const cendPointTransactions = pgTable('cend_point_transactions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  amount: integer('amount').notNull(),
+  balanceAfter: integer('balance_after').notNull(),
+  type: varchar('type', { length: 40 }).notNull(),
+  status: varchar('status', { length: 20 }).default('settled').notNull(),
+  idempotencyKey: varchar('idempotency_key', { length: 160 }).notNull(),
+  referenceType: varchar('reference_type', { length: 40 }),
+  referenceId: varchar('reference_id', { length: 80 }),
+  note: text('note'),
+  metadata: jsonb('metadata').$type<Record<string, string | number | boolean | null>>().default({}).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('cend_point_tx_user_idem_uidx').on(table.userId, table.idempotencyKey),
+  index('cend_point_tx_user_created_idx').on(table.userId, table.createdAt)
+])
+
+/** 一次性任务完成记录：同一任务只发一次奖励。 */
+export const cendTaskCompletions = pgTable('cend_task_completions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  taskKey: varchar('task_key', { length: 50 }).notNull(),
+  reward: integer('reward').notNull(),
+  metadata: jsonb('metadata').$type<Record<string, string | number | boolean | null>>().default({}).notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('cend_task_user_key_uidx').on(table.userId, table.taskKey)
+])
+
+/** 每日签到：按东八区自然日唯一。 */
+export const cendCheckins = pgTable('cend_checkins', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  checkinDate: date('checkin_date').notNull(),
+  streak: integer('streak').notNull(),
+  reward: integer('reward').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('cend_checkin_user_date_uidx').on(table.userId, table.checkinDate)
+])
+
+/** 连续使用 7 天：当天有成功 AI 问答才记一行。 */
+export const cendActivityDays = pgTable('cend_activity_days', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  activityDate: date('activity_date').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  uniqueIndex('cend_activity_user_date_uidx').on(table.userId, table.activityDate)
+])
+
+/** 会员：运营线下开通，按有效期判断；到期不删除记录。 */
+export const cendMemberships = pgTable('cend_memberships', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tier: varchar('tier', { length: 20 }).notNull(),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
+  startAt: timestamp('start_at', { withTimezone: true }).notNull(),
+  endAt: timestamp('end_at', { withTimezone: true }).notNull(),
+  grantedBy: uuid('granted_by').references(() => users.id, { onDelete: 'set null' }),
+  note: text('note'),
+  ...timestamps
+}, table => [
+  index('cend_membership_user_status_end_idx').on(table.userId, table.status, table.endAt)
+])
+
+/** 协议接受记录：服务协议/隐私政策按版本留痕。 */
+export const cendAgreements = pgTable('cend_agreements', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  agreementType: varchar('agreement_type', { length: 30 }).notNull(),
+  version: varchar('version', { length: 40 }).notNull(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }).defaultNow().notNull(),
+  ipAddress: varchar('ip_address', { length: 64 })
+}, table => [
+  uniqueIndex('cend_agreement_user_type_version_uidx').on(table.userId, table.agreementType, table.version)
+])
+
+/** 站内产品反馈：用于“提交产品反馈”任务。 */
+export const cendFeedback = pgTable('cend_feedback', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  content: text('content').notNull(),
+  rating: integer('rating'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+}, table => [
+  index('cend_feedback_user_created_idx').on(table.userId, table.createdAt)
+])

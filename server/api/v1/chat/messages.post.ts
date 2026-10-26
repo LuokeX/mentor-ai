@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { chatMessageSchema } from '../../../../shared/contracts'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
@@ -14,6 +15,16 @@ import { isSameContextSet, loadSessionContexts } from '../../../domain/chat-sess
 import { buildChatTitle } from '../../../domain/chat-titles'
 import { bindChatSessionContext } from '../../../domain/chat-session-binding'
 import { resolveAiGovernance } from '../../../domain/ai-governance'
+import {
+  CEND_POINT_COSTS,
+  activeMembership,
+  grantTaskReward,
+  recordActivity,
+  refundPoints,
+  reservePoints,
+  settlePointsTx
+} from '../../../domain/cend-points'
+import { isCendSchool } from '../../../domain/cend-school'
 import { trackProductEvent } from '../../../domain/product-events'
 import { classifyQuestionCategory } from '../../../domain/question-category'
 import { sendStream } from 'h3'
@@ -134,10 +145,44 @@ export default defineEventHandler(async (event) => {
   const historyBudgetTokens = Number(config.agentHistoryTokenBudget) || 24000
   const compactionKeepRatio = Number(config.agentCompactionKeepRatio) || 0.5
 
-  const [question] = await db.insert(schema.chatMessages).values({
-    schoolId: user.schoolId, ownerUserId: user.id, sessionId: ownedSessionId,
-    role: 'user', contentEnc: encryptSensitive(body.message, config.encryptionKey)
-  }).returning({ id: schema.chatMessages.id, createdAt: schema.chatMessages.createdAt })
+  // C 端：非会员先冻结本次问答积分；会员免扣。学校租户用户不参与积分。
+  const questionId = randomUUID()
+  const isCendContext = await isCendSchool(db, user.schoolId)
+  let chargeId: string | null = null
+  if (isCendContext) {
+    const membership = await activeMembership(db, user.id)
+    if (!membership) {
+      const reserved = await reservePoints(db, {
+        userId: user.id,
+        amount: CEND_POINT_COSTS.aiQuestion,
+        type: 'ai_question',
+        idempotencyKey: `chat:${questionId}`,
+        referenceType: 'chat_message',
+        referenceId: questionId
+      })
+      if (!reserved.ok) {
+        throw createError({
+          statusCode: 402,
+          statusMessage: 'POINTS_INSUFFICIENT',
+          message: `积分不足，本次问答需要 ${CEND_POINT_COSTS.aiQuestion} 积分`,
+          data: { required: CEND_POINT_COSTS.aiQuestion, balance: reserved.balance }
+        })
+      }
+      chargeId = reserved.transaction.id
+    }
+  }
+
+  let question: { id: string, createdAt: Date } | undefined
+  try {
+    ;[question] = await db.insert(schema.chatMessages).values({
+      id: questionId,
+      schoolId: user.schoolId, ownerUserId: user.id, sessionId: ownedSessionId,
+      role: 'user', contentEnc: encryptSensitive(body.message, config.encryptionKey)
+    }).returning({ id: schema.chatMessages.id, createdAt: schema.chatMessages.createdAt })
+  } catch (error) {
+    if (chargeId) await refundPoints(db, chargeId, '提问保存失败，积分退回').catch(() => undefined)
+    throw error
+  }
   if (!question) throw createError({ statusCode: 500, message: '提问保存失败' })
   await trackProductEvent(event, {
     schoolId: user.schoolId, userId: user.id, eventName: 'assistant_question_submitted',
@@ -204,6 +249,7 @@ export default defineEventHandler(async (event) => {
   /** 客户端断开标记：断开后不再落库、不再发事件（由 stream.cancel 与响应 close 两处设置）。 */
   const abortController = new AbortController()
   let aborted = false
+  let answerEmitted = false
   const markAborted = () => { aborted = true; abortController.abort() }
   event.node.res.on('close', markAborted)
 
@@ -323,10 +369,24 @@ export default defineEventHandler(async (event) => {
           history: history.messages,
           contextSummary: history.contextSummary,
           lastModuleScores,
-          emit: (name, data) => emit(controller, name, data),
+          emit: (name, data) => {
+            if (name === 'answer' || name === 'answer_delta') answerEmitted = true
+            emit(controller, name, data)
+          },
           signal: abortController.signal,
           isAborted: () => aborted
         })
+        if (isCendContext) {
+          if (chargeId && answerEmitted && !aborted) {
+            await settlePointsTx(db, chargeId).catch(() => undefined)
+          } else if (chargeId) {
+            await refundPoints(db, chargeId, aborted ? '用户中断，积分退回' : '回答为空，积分退回').catch(() => undefined)
+          }
+          if (!aborted) {
+            await grantTaskReward(db, user.id, 'first_question').catch(() => undefined)
+            await recordActivity(db, user.id).catch(() => undefined)
+          }
+        }
         emit(controller, 'done', { sessionId: ownedSessionId })
       } catch (error) {
         console.error('[chat] Agent 回答失败:', error instanceof Error ? error.message : error)
@@ -354,6 +414,9 @@ export default defineEventHandler(async (event) => {
             noticeVersion: governance.noticeVersion
           })
         } catch { /* 审计写入失败不影响错误返回 */ }
+        if (chargeId) {
+          await refundPoints(db, chargeId, aborted ? '用户中断，积分退回' : '回答失败，积分退回').catch(() => undefined)
+        }
         if (!aborted) emit(controller, 'error', { message: AGENT_UNAVAILABLE_MESSAGE })
       } finally {
         try { controller.close() } catch { /* already closed */ }

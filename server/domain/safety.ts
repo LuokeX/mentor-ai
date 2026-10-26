@@ -120,6 +120,23 @@ async function runCreateSafetyReferral(
         deduplicationKey: `crisis-admin:${safety.id}:${admin.id}`
       })
     }
+    // C 端租户没有学校管理员/心理专员：安全事件必须通知平台运营，不能静默 escalated。
+    const [safetySchool] = await db.select({ kind: schema.schools.kind }).from(schema.schools)
+      .where(eq(schema.schools.id, input.schoolId)).limit(1)
+    if (safetySchool?.kind === 'cend') {
+      const platformAdmins = await db.select({ id: schema.users.id })
+        .from(schema.users)
+        .where(userHasRole(db, 'platform_admin'))
+      for (const admin of platformAdmins) {
+        await db.insert(schema.notifications).values({
+          schoolId: input.schoolId, userId: admin.id, type: 'crisis_alert',
+          title: 'C 端安全事件待跟进',
+          body: `C 端发生安全事件 ${safety.id.slice(0, 8)}（转介 ${referral.id.slice(0, 8)}），请尽快安排运营/心理支持跟进。`,
+          targetType: 'safety_event', targetId: safety.id,
+          deduplicationKey: `crisis-platform:${safety.id}:${admin.id}`
+        })
+      }
+    }
     const escalationRecipients = settings?.safetyContactRecipients?.length
       ? settings.safetyContactRecipients
       : settings?.smsRecipients || []
