@@ -106,7 +106,10 @@ interface FollowUpChip {
 }
 
 const { user } = useAuth()
+const { refresh: refreshCendBalance } = useCendBalance()
 const { updateScores } = useModuleScores()
+/** 注册后的完善资料弹窗：盖在 AI 助手首页上，关闭后清除 welcome 查询参数。 */
+const showProfileModal = ref(false)
 const { data: sessions, refresh: refreshSessions } = await useFetch<any[]>('/api/v1/chat/sessions')
 /**
  * 今日建议卡开关：暂时隐藏（2026-09-14 按产品反馈下线展示）。
@@ -947,6 +950,10 @@ async function readAssistantStream(response: Response, reuseIndex = -1, userMess
           // 让出控制权给浏览器渲染管线，使流式输出可见
           await new Promise(r => requestAnimationFrame(r))
         }
+        if (event === 'done') {
+          // 本轮积分结算在服务端 done 之前完成：刷新顶栏余额（非 C 端工作区自动跳过）。
+          void refreshCendBalance()
+        }
         if (event === 'answer') {
           if (assistantIndex >= 0) {
             const item = timeline.value[assistantIndex]!
@@ -1097,6 +1104,16 @@ async function ask() {
       body: JSON.stringify({ sessionId: sessionId.value, message: text, ...contextPayload.value }),
       signal: controller.signal
     })
+    if (response.status === 402) {
+      const payload = await response.json().catch(() => null) as { message?: string } | null
+      timeline.value.splice(userMessageIndex, 1)
+      toast.add({
+        title: '积分不足',
+        description: payload?.message || '积分不足，请先签到、做任务或开通会员',
+        color: 'warning'
+      })
+      return
+    }
     if (!response.ok || !response.body) throw new Error('助手暂时不可用')
     assistantIndex = await readAssistantStream(response, -1, userMessageIndex)
     await refreshSessions()
@@ -1137,6 +1154,17 @@ async function regenerateAnswer(item: TimelineItem, index: number) {
       headers: { 'content-type': 'application/json' },
       signal: controller.signal
     })
+    if (response.status === 402) {
+      const payload = await response.json().catch(() => null) as { message?: string } | null
+      item.text = payload?.message || '积分不足，未能重新生成'
+      item.answerCompleted = true
+      toast.add({
+        title: '积分不足',
+        description: payload?.message || '积分不足，请先签到、做任务或开通会员',
+        color: 'warning'
+      })
+      return
+    }
     if (!response.ok || !response.body) throw new Error('助手暂时不可用')
     await readAssistantStream(response, index)
     await refreshSessions()
@@ -1404,6 +1432,8 @@ async function autoRestoreLatestSession() {
 
 onMounted(async () => {
   const query = useRoute().query
+  // 注册成功落地到 /?welcome=1：在首页上方弹出完善资料弹窗（可直接关闭/跳过）。
+  if (query.welcome === '1') showProfileModal.value = true
   // 删除确认的复位：点击别处即取消（按钮自身的第二次点击由 data-delete-confirm-armed 放行）
   document.addEventListener('pointerdown', onMessageDeletePointerDown, true)
   // 会话深链：?sessionId=<uuid> 打开指定会话；归属由 /api/v1/chat/sessions/[id] 服务端校验，跨教师返回 404
@@ -1442,6 +1472,16 @@ onMounted(async () => {
   phoneMedia = window.matchMedia('(max-width: 639px)')
   syncPhoneLayout()
   phoneMedia.addEventListener('change', syncPhoneLayout)
+})
+
+// 关闭完善资料弹窗后清掉 welcome，刷新页面不再重复弹出。
+watch(showProfileModal, (open) => {
+  if (open) return
+  const current = useRoute()
+  if (!current.query.welcome) return
+  const nextQuery = { ...current.query }
+  delete nextQuery.welcome
+  void navigateTo({ path: current.path, query: nextQuery }, { replace: true })
 })
 
 // 教师姓名晚于首屏到达时重新播放一次，避免标题停留在默认称呼
@@ -1961,6 +2001,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
       </div>
     </section>
 
+    <CendProfileModal v-model:open="showProfileModal" />
   </div>
 
 </template>

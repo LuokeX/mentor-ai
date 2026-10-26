@@ -3,13 +3,20 @@ import { APP_VERSION } from '#shared/app-version'
 import { roleHomePath, type AppRole } from '~/composables/useAuth'
 import { groupTestAccounts, type TestAccount } from '~/utils/test-accounts'
 definePageMeta({ layout: false })
+const route = useRoute()
+/** 同一登录页承载学校账号与个人（C 端）账号，顶部切换。 */
+const accountMode = ref<'school' | 'personal'>(route.query.account === 'personal' ? 'personal' : 'school')
+function setAccountMode(mode: 'school' | 'personal') {
+  accountMode.value = mode
+  errorMessage.value = ''
+}
 const config = useRuntimeConfig()
 const showSsoLogin = config.public.showSsoLogin
 // 仅测试/UAT 环境为 true（docker-compose.test.yml 注入）；正式环境恒为 false，
 // 登录页不渲染任何测试账号，清单与维护口径见 app/utils/test-accounts.ts
 const showTestAccounts = config.public.showTestAccounts
 const testAccountGroups = showTestAccounts ? groupTestAccounts() : []
-const testAccountsOpen = ref(true)
+const testAccountsOpen = ref(false)
 const pickedAccountPhone = ref('')
 const form = reactive({ phone: '', password: '' })
 const pending = ref(false)
@@ -61,21 +68,28 @@ async function login() {
       <div class="absolute -right-24 -top-24 size-96 rounded-full border border-white/10 bg-white/5" />
       <div class="absolute -bottom-40 -left-32 size-[34rem] rounded-full border border-white/10 bg-emerald-400/10" />
       <div class="relative flex items-center gap-3">
-        <span class="grid size-12 place-items-center rounded-2xl bg-emerald-300 text-xl font-bold text-emerald-950">六</span>
+        <span class="grid size-12 place-items-center rounded-2xl bg-emerald-300 text-xl font-bold text-emerald-950">{{ accountMode === 'personal' ? '班' : '六' }}</span>
         <div>
           <div class="flex items-center gap-2">
-            <strong class="text-lg">班主任助理智能平台</strong>
+            <strong class="text-lg">{{ accountMode === 'personal' ? '班主任智能体' : '班主任助理智能平台' }}</strong>
             <span class="rounded-full border border-emerald-200/30 bg-white/10 px-2 py-0.5 text-xs font-medium tracking-wide text-emerald-100">{{ APP_VERSION }}</span>
           </div>
-          <p class="text-sm text-emerald-100/70">让每一次求助，都得到可行动的回应</p>
+          <p class="text-sm text-emerald-100/70">{{ accountMode === 'personal' ? '做班主任，少一点事务，多一点教育' : '让每一次求助，都得到可行动的回应' }}</p>
         </div>
       </div>
       <div class="relative max-w-xl">
-        <p class="mb-6 text-sm font-semibold uppercase tracking-[.3em] text-emerald-200">Teacher Empowerment</p>
-        <h1 class="text-5xl font-semibold leading-tight">理解教师的语言，<br>守住每一次安全边界。</h1>
-        <p class="mt-6 max-w-lg text-lg leading-8 text-emerald-50/70">统一智能体入口连接自我成长、班级建设、家校沟通、学生个体支持与学习问题。确定性规则负责判断，AI 负责让专业方案更容易使用。</p>
+        <p class="mb-6 text-sm font-semibold uppercase tracking-[.3em] text-emerald-200">{{ accountMode === 'personal' ? 'For Teachers' : 'Teacher Empowerment' }}</p>
+        <h1 v-if="accountMode === 'personal'" class="text-5xl font-semibold leading-tight">班级管理、家校沟通，<br>一次提问就有可落地的方案。</h1>
+        <h1 v-else class="text-5xl font-semibold leading-tight">理解教师的语言，<br>守住每一次安全边界。</h1>
+        <p v-if="accountMode === 'personal'" class="mt-6 max-w-lg text-lg leading-8 text-emerald-50/70">新注册即送 1000 积分；每日签到、完成任务可继续获取积分；开通会员后问答与量表评估不再消耗积分。</p>
+        <p v-else class="mt-6 max-w-lg text-lg leading-8 text-emerald-50/70">统一智能体入口连接自我成长、班级建设、家校沟通、学生个体支持与学习问题。确定性规则负责判断，AI 负责让专业方案更容易使用。</p>
       </div>
-      <div class="relative grid grid-cols-3 gap-3 text-sm">
+      <div v-if="accountMode === 'personal'" class="relative grid grid-cols-3 gap-3 text-sm">
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">1000</strong><span class="text-emerald-100/60">新手积分</span></div>
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">+200</strong><span class="text-emerald-100/60">每日签到</span></div>
+        <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">0</strong><span class="text-emerald-100/60">会员问答消耗</span></div>
+      </div>
+      <div v-else class="relative grid grid-cols-3 gap-3 text-sm">
         <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">5</strong><span class="text-emerald-100/60">个模块</span></div>
         <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">24h</strong><span class="text-emerald-100/60">安全守护</span></div>
         <div class="rounded-2xl border border-white/10 bg-white/5 p-4"><strong class="block text-2xl">100%</strong><span class="text-emerald-100/60">敏感访问审计</span></div>
@@ -83,6 +97,25 @@ async function login() {
     </section>
     <section class="flex items-center justify-center p-6 sm:p-12">
       <div class="w-full max-w-md">
+        <div class="mb-6 grid grid-cols-2 rounded-xl bg-slate-100 p-1">
+          <button
+            type="button"
+            class="rounded-lg px-4 py-2.5 text-sm font-medium transition"
+            :class="accountMode === 'school' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500'"
+            @click="setAccountMode('school')"
+          >
+            学校账户
+          </button>
+          <button
+            type="button"
+            class="rounded-lg px-4 py-2.5 text-sm font-medium transition"
+            :class="accountMode === 'personal' ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-500'"
+            @click="setAccountMode('personal')"
+          >
+            个人账户
+          </button>
+        </div>
+        <template v-if="accountMode === 'school'">
         <div class="mb-8 lg:hidden"><div class="flex items-center gap-2"><span class="grid size-12 place-items-center rounded-2xl bg-emerald-800 text-white">六</span><span class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-wide text-emerald-700">{{ APP_VERSION }}</span></div></div>
         <p class="text-sm font-semibold text-emerald-700">欢迎回来</p>
         <h2 class="mt-2 text-3xl font-semibold">登录您的工作空间</h2>
@@ -132,6 +165,13 @@ async function login() {
         </form>
         <p class="mt-5 text-center text-sm text-slate-500">收到学校邀请？<NuxtLink class="font-medium text-emerald-700 hover:underline" to="/activate">激活账号</NuxtLink></p>
         <p class="mt-6 text-xs leading-5 text-slate-400">登录即表示您已阅读校方隐私告知：学校管理员仅可在填写事由、获得短时只读授权并完整审计的前提下履行校内管理职责；平台管理员须另经学校审批。</p>
+        </template>
+        <template v-else>
+          <div class="mb-8 lg:hidden"><div class="flex items-center gap-2"><span class="grid size-12 place-items-center rounded-2xl bg-emerald-800 text-white">班</span><span class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-wide text-emerald-700">{{ APP_VERSION }}</span></div></div>
+          <p class="text-sm font-semibold text-emerald-700">教师个人版</p>
+          <h2 class="mt-2 text-3xl font-semibold">登录班主任智能体</h2>
+          <CendLoginForm class="mt-8" />
+        </template>
       </div>
     </section>
   </div>

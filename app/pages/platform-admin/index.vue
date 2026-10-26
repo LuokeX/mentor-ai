@@ -69,6 +69,7 @@ const health = computed(() => [
         <UButton to="/platform-admin/audit" icon="i-lucide-list-checks" variant="soft" color="neutral">审计日志</UButton>
         <UButton to="/platform-admin/resources" icon="i-lucide-library" variant="soft" color="neutral">三库运营台</UButton>
         <UButton to="/platform-admin/ai-center" icon="i-lucide-bot" variant="soft" color="neutral">AI 管理中心</UButton>
+        <UButton to="/platform-admin/cend" icon="i-lucide-coins" variant="soft" color="neutral">C 端运营</UButton>
       </div>
     </div>
 

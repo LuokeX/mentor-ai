@@ -1,7 +1,7 @@
 import { pathIsShared, roleHomePath, rolesDomainOfPath, rolesOf } from '~/composables/useAuth'
 
 export default defineNuxtRouteMiddleware(async (to) => {
-  if (to.path === '/login' || to.path === '/activate') return
+  if (to.path === '/login' || to.path === '/activate' || to.path === '/cend/login' || to.path.startsWith('/cend/agreements')) return
   const { user, refresh, switchRole } = useAuth()
   if (!user.value) await refresh()
   if (!user.value) return navigateTo('/login')

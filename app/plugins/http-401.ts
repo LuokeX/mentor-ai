@@ -6,7 +6,8 @@
  * 「登录已过期，请重新登录」（页面 catch 里 error.data.message 会显示它），
  * 并引导回登录页。向导草稿存在 localStorage，登录后回向导页自动恢复，不丢内容。
  *
- * 排除 /api/v1/auth/ 前缀：登录/激活接口自身的 401（如密码错误）不在此列。
+ * 排除 /api/v1/auth/ 与 /api/v1/cend/auth/ 前缀：登录/注册/激活接口自身的 401
+ * （如密码错误、学校账号需用原密码开通 C 端）不在此列，否则会被误写成「登录已过期」。
  */
 export default defineNuxtPlugin((nuxtApp) => {
   const base = globalThis.$fetch as any
@@ -21,6 +22,7 @@ export default defineNuxtPlugin((nuxtApp) => {
     }) {
       if (response.status !== 401) return
       if (String(response.url).includes('/api/v1/auth/')) return
+      if (String(response.url).includes('/api/v1/cend/auth/')) return
       const data = response._data
       if (data && typeof data.message === 'string') {
         data.message = '登录已过期，请重新登录'

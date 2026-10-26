@@ -3,7 +3,8 @@ import { moduleMeta } from '#shared/assessments'
 import { APP_VERSION } from '#shared/app-version'
 import { ROLE_LABELS, roleHomePath, rolesOf, type AppRole } from '~/composables/useAuth'
 const route = useRoute()
-const { user, refresh, logout, hasRole, switchRole, roleHome } = useAuth()
+const { user, refresh, logout, hasRole, switchRole, switchTenant, tenants, roleHome } = useAuth()
+const { balance: cendBalance, refresh: refreshCendBalance } = useCendBalance()
 const toast = useToast()
 await refresh()
 
@@ -49,6 +50,36 @@ async function changeRole(role: AppRole) {
     const message = (error as { data?: { message?: unknown } })?.data?.message
     toast.add({
       title: '切换身份失败',
+      description: typeof message === 'string' && message.trim() ? message.trim() : '请稍后重试',
+      color: 'error'
+    })
+  }
+}
+
+/** 多工作区（学校 + C 端）：顶栏切换租户；切换后按新激活角色落地。 */
+const multipleTenants = computed(() => tenants.value.length > 1)
+const cendTenant = computed(() => tenants.value.find(item => item.kind === 'cend'))
+const isCendWorkspace = computed(() => Boolean(cendTenant.value && user.value?.schoolId === cendTenant.value.schoolId))
+// 进入 C 端工作区（含从学校工作区切换过来）时读取一次余额；非 C 端不请求。
+watch(isCendWorkspace, () => { void refreshCendBalance() }, { immediate: true })
+const tenantSwitchItems = computed(() => tenants.value.map(item => ({
+  label: item.schoolName,
+  icon: item.kind === 'cend' ? 'i-lucide-bot' : 'i-lucide-school',
+  description: item.schoolId === user.value?.schoolId ? '当前工作区' : '切换至此工作区',
+  disabled: item.schoolId === user.value?.schoolId,
+  onSelect: () => { void changeTenant(item.schoolId) }
+})))
+
+async function changeTenant(schoolId: string) {
+  if (schoolId === user.value?.schoolId) return
+  try {
+    await switchTenant(schoolId)
+    toast.add({ title: '已切换工作区', color: 'success' })
+    await navigateTo(roleHomePath(user.value?.role))
+  } catch (error) {
+    const message = (error as { data?: { message?: unknown } })?.data?.message
+    toast.add({
+      title: '切换工作区失败',
       description: typeof message === 'string' && message.trim() ? message.trim() : '请稍后重试',
       color: 'error'
     })
@@ -141,6 +172,30 @@ function closeDropdown(event: Event) {
               :title="`切换身份（当前：${ROLE_LABELS[user.role]}）`"
             />
           </UDropdownMenu>
+          <UDropdownMenu v-if="multipleTenants" :items="tenantSwitchItems">
+            <UButton
+              icon="i-lucide-building-2"
+              color="neutral"
+              variant="soft"
+              size="sm"
+              trailing-icon="i-lucide-chevron-down"
+              aria-label="切换工作区"
+              :title="isCendWorkspace ? '切换工作区（当前：C 端）' : '切换工作区（当前：学校）'"
+            />
+          </UDropdownMenu>
+          <UButton
+            v-if="isCendWorkspace"
+            to="/cend/points"
+            icon="i-lucide-coins"
+            color="neutral"
+            variant="soft"
+            size="sm"
+            :aria-label="cendBalance === null ? '我的积分' : `我的积分，剩余 ${cendBalance}`"
+            :title="cendBalance === null ? '我的积分' : `我的积分（剩余 ${cendBalance}）`"
+          >
+            <span v-if="cendBalance !== null">{{ cendBalance }}</span>
+          </UButton>
+          <UButton v-if="isCendWorkspace" to="/cend/profile" icon="i-lucide-user-round" color="neutral" variant="soft" size="sm" aria-label="个人资料" title="个人资料" />
           <div class="hidden text-right sm:block">
             <p class="text-sm font-medium">{{ user.name }}</p>
             <p class="text-xs text-slate-500">{{ user.roleLabel }}</p>
