@@ -24,6 +24,6 @@ export default defineEventHandler(async (event) => {
   await useDb(event).update(schema.users).set({ lastLoginAt: new Date() }).where(eq(schema.users.id, user.id))
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'auth.login' })
   // role 为登录后的激活角色（默认主角色）；roles 为该账号持有的全部角色，供前端落地与角色切换使用
-  const roles = (await listUserRoles(useDb(event), user.id)).map(entry => entry.roleCode)
+  const roles = (await listUserRoles(useDb(event), user.id, user.schoolId)).map(entry => entry.roleCode)
   return { ok: true, role: user.role, roles: roles.length ? roles : [user.role] }
 })

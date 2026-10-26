@@ -237,7 +237,7 @@ async function main() {
       }).returning({ id: schema.users.id })
       if (!user) throw new Error('账号创建失败')
       // 角色集合与 scope：users.role 已写入主角色，user_roles 由收口模块补齐并校验不变量
-      await applyUserRoles(tx, { userId: user.id, roleCodes, primaryRole, scopes: roleScopes })
+      await applyUserRoles(tx, { userId: user.id, roleCodes, primaryRole, schoolId: school.id, scopes: roleScopes })
       await tx.insert(schema.auditLogs).values({
         schoolId: school.id,
         actorId: admin.id,

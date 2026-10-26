@@ -103,6 +103,7 @@ export default defineEventHandler(async (event) => {
       userId: createdUser.id,
       roleCodes: [body.role],
       primaryRole: body.role,
+      schoolId,
       scopes: body.role === 'grade_director' && scopeGrades?.length
         ? { grade_director: { grades: scopeGrades } }
         : undefined,

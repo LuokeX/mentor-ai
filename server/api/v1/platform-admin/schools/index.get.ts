@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike } from 'drizzle-orm'
+import { and, desc, eq, ilike, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { DEFAULT_PAGE_SIZE } from '../../../../../shared/management'
 import type { Capability, ManagedListResult } from '../../../../../shared/management'
@@ -19,7 +19,8 @@ export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['platform_admin'])
   const query = querySchema.parse(getQuery(event))
   const db = useDb(event)
-  const conditions = []
+  // 平台后台学校列表不展示 C 端共用租户；C 端用户/会员在「C 端运营」页维护。
+  const conditions = [ne(schema.schools.kind, 'cend')]
   if (query.q) conditions.push(ilike(schema.schools.name, `%${query.q}%`))
   if (query.status !== 'all') conditions.push(eq(schema.schools.status, query.status))
   const where = conditions.length ? and(...conditions) : undefined

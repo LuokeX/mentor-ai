@@ -45,6 +45,7 @@ export default defineEventHandler(async (event) => {
       userId: created.id,
       roleCodes: ['school_admin'],
       primaryRole: 'school_admin',
+      schoolId: body.schoolId,
     })
 
     await writeAudit(event, {

@@ -183,6 +183,7 @@ export async function commitSchoolImport(event: H3Event, input: {
           userId: userId!,
           roleCodes: [row.role as 'teacher' | 'psychologist'],
           primaryRole: row.role as 'teacher' | 'psychologist',
+          schoolId: input.schoolId,
         })
         const { invitation, token } = await issueInvitation(event, {
           schoolId: input.schoolId,

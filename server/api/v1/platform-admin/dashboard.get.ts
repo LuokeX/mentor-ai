@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq, ne } from 'drizzle-orm'
 import { requireUser } from '../../../utils/auth'
 import { useDb, schema } from '../../../utils/db'
 import { userHasAnyRole } from '../../../domain/user-roles'
@@ -28,11 +28,13 @@ export default defineEventHandler(async (event): Promise<PlatformAdminDashboardP
   const admin = await requireUser(event, ['platform_admin'])
   const db = useDb(event)
   const [schoolRows, requests, grants, userCount, audits] = await Promise.all([
-    db.select().from(schema.schools).orderBy(desc(schema.schools.createdAt)),
+    db.select().from(schema.schools).where(ne(schema.schools.kind, 'cend')).orderBy(desc(schema.schools.createdAt)),
     db.select().from(schema.adminAccessRequests).where(eq(schema.adminAccessRequests.requesterId, admin.id)).orderBy(desc(schema.adminAccessRequests.createdAt)),
     db.select().from(schema.adminAccessGrants).where(eq(schema.adminAccessGrants.userId, admin.id)).orderBy(desc(schema.adminAccessGrants.createdAt)),
-    // 账号规模口径：教师/心理专员身份以 user_roles 判定，兼任账号也要计入
-    db.select({ value: schema.users.id }).from(schema.users).where(userHasAnyRole(db, ['teacher', 'psychologist'])),
+    // 账号规模口径：只统计学校租户账号；C 端共用租户账号不计入学校账号规模
+    db.select({ value: schema.users.id }).from(schema.users)
+      .innerJoin(schema.schools, eq(schema.schools.id, schema.users.schoolId))
+      .where(and(ne(schema.schools.kind, 'cend'), userHasAnyRole(db, ['teacher', 'psychologist']))),
     db.select({
       id: schema.auditLogs.id,
       schoolId: schema.auditLogs.schoolId,

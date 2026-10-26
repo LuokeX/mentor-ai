@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
 
   const conditions = [eq(schema.users.schoolId, schoolId)]
   // role 是管理端筛选：语义为「账号持有该角色」（以 user_roles 判定，含兼任角色）
-  if (role !== 'all') conditions.push(userHasRole(db, role))
+  if (role !== 'all') conditions.push(userHasRole(db, role, schoolId))
   if (status !== 'all') conditions.push(eq(schema.users.status, status))
   if (q) conditions.push(or(ilike(schema.users.name, `%${q}%`), ilike(schema.users.phone, `%${q}%`))!)
 
@@ -77,7 +77,7 @@ export default defineEventHandler(async (event) => {
   })
 
   // 账号持有的全部角色（含兼任角色），用于管理端展示；role 仍是主角色
-  const rolesByUser = await listRolesByUserIds(db, result.rows.map(row => row.id))
+  const rolesByUser = await listRolesByUserIds(db, result.rows.map(row => row.id), schoolId)
 
   const rows = await Promise.all(result.rows.map(async (row) => {
     const entries = rolesByUser.get(row.id) ?? []

@@ -22,14 +22,14 @@ export default defineEventHandler(async (event) => {
   const secret = useRuntimeConfig(event).encryptionKey
   const [target] = await db.select().from(schema.users).where(and(
     // 该接口管理的对象是教师、心理专员与两个只读看板角色（以 user_roles 判定，含兼任）
-    eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), userHasAnyRole(db, SCHOOL_MANAGED_ROLES)
+    eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), userHasAnyRole(db, SCHOOL_MANAGED_ROLES, schoolId)
   )).limit(1)
   if (!target) throw createError({ statusCode: 404, message: '用户不存在' })
   if (body.status === 'disabled') {
     throw createError({ statusCode: 409, message: '停用账号必须通过“移交并停用”操作完成' })
   }
 
-  const targetRoles = await listUserRoles(db, id)
+  const targetRoles = await listUserRoles(db, id, schoolId)
   const currentRoleCodes = targetRoles.map(entry => entry.roleCode)
   const roleChanging = Boolean(body.role && body.role !== target.role)
   const requestedScopeGrades = body.scopeGrades?.length
@@ -134,7 +134,7 @@ export default defineEventHandler(async (event) => {
     const finalConditions = [
       eq(schema.users.id, target.id),
       eq(schema.users.schoolId, schoolId),
-      userHasAnyRole(tx, SCHOOL_MANAGED_ROLES),
+      userHasAnyRole(tx, SCHOOL_MANAGED_ROLES, schoolId),
     ]
     if (expectedUpdatedAt) finalConditions.push(updatedAtMatches(schema.users.updatedAt, expectedUpdatedAt))
     const [updated] = await tx.update(schema.users).set(setValues).where(and(...finalConditions)).returning({ id: schema.users.id })
@@ -147,6 +147,7 @@ export default defineEventHandler(async (event) => {
         userId: id,
         roleCodes: finalRoleCodes,
         primaryRole: (roleChanging ? body.role! : target.role) as AppRole,
+        schoolId,
         scopes: writesScopeGrades ? { grade_director: { grades: requestedScopeGrades! } } : undefined,
       })
     }

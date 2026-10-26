@@ -1,6 +1,7 @@
 import {
   boolean,
   customType,
+  date,
   index,
   integer,
   jsonb,
@@ -29,9 +30,14 @@ export const schools = pgTable('schools', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: varchar('name', { length: 160 }).notNull(),
   code: varchar('code', { length: 40 }).notNull(),
+  /** 租户类型：school = 学校租户；cend = 商业化 C 端共用租户 */
+  kind: varchar('kind', { length: 20 }).default('school').notNull(),
   status: varchar('status', { length: 20 }).default('active').notNull(),
   ...timestamps
-}, table => [uniqueIndex('schools_code_uidx').on(table.code)])
+}, table => [
+  uniqueIndex('schools_code_uidx').on(table.code),
+  index('schools_kind_idx').on(table.kind)
+])
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -93,8 +99,17 @@ export const sessions = pgTable('sessions', {
    * 为空时回落到 users.role（主角色）；权限解析与会话身份都以它为准。
    */
   activeRole: varchar('active_role', { length: 30 }),
+  /**
+   * 当前会话激活的租户（多租户工作区切换用）。
+   * 为空时回落到 users.school_id；AuthUser.schoolId 取该值。
+   */
+  activeSchoolId: uuid('active_school_id').references(() => schools.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
-}, table => [uniqueIndex('sessions_token_hash_uidx').on(table.tokenHash), index('sessions_user_idx').on(table.userId)])
+}, table => [
+  uniqueIndex('sessions_token_hash_uidx').on(table.tokenHash),
+  index('sessions_user_idx').on(table.userId),
+  index('sessions_active_school_idx').on(table.activeSchoolId)
+])
 
 export const invitations = pgTable('invitations', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -1258,11 +1273,17 @@ export const roles = pgTable('roles', {
 export const userRoles = pgTable('user_roles', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /**
+   * 角色所属租户。为空表示平台级角色（如 platform_admin）或历史数据；
+   * 普通学校/C 端角色必须写入对应 school_id。
+   */
+  schoolId: uuid('school_id').references(() => schools.id, { onDelete: 'cascade' }),
   roleCode: varchar('role_code', { length: 30 }).notNull(),
   scope: jsonb('scope').$type<import('../../shared/management').RoleScope>().default({}).notNull(),
   ...timestamps
 }, table => [
-  uniqueIndex('user_roles_user_role_uidx').on(table.userId, table.roleCode),
+  uniqueIndex('user_roles_user_school_role_uidx').on(table.userId, table.schoolId, table.roleCode),
   index('user_roles_role_idx').on(table.roleCode),
-  index('user_roles_user_idx').on(table.userId)
+  index('user_roles_user_idx').on(table.userId),
+  index('user_roles_school_role_idx').on(table.schoolId, table.roleCode)
 ])

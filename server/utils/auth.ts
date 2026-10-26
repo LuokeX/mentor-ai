@@ -44,16 +44,25 @@ const sessionCookieOptions = (expiresAt: Date) => ({
   expires: expiresAt
 })
 
-export async function createSession(event: H3Event, userId: string) {
+export async function createSession(event: H3Event, userId: string, options: { activeSchoolId?: string | null } = {}) {
   const token = randomBytes(32).toString('base64url')
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS)
-  // 会话记录登录时的主角色作为激活角色（多角色账号由 switch-role 接口切换）
-  const [account] = await useDb(event).select({ role: schema.users.role })
+  // 会话记录登录时的激活租户与主角色（多租户/多角色由 switch-tenant、switch-role 切换）
+  const db = useDb(event)
+  const [account] = await db.select({ role: schema.users.role, schoolId: schema.users.schoolId })
     .from(schema.users).where(eq(schema.users.id, userId)).limit(1)
-  await useDb(event).insert(schema.sessions).values({
+  const activeSchoolId = options.activeSchoolId === undefined ? (account?.schoolId ?? null) : options.activeSchoolId
+  const tenantRoles = account
+    ? (await listUserRoles(db, userId, activeSchoolId)).map(entry => entry.roleCode)
+    : []
+  const activeRole = account
+    ? (tenantRoles.includes(account.role as AppRole) ? account.role as AppRole : tenantRoles[0] ?? account.role as AppRole)
+    : null
+  await db.insert(schema.sessions).values({
     userId,
     tokenHash: hashToken(token),
-    activeRole: account?.role ?? null,
+    activeRole,
+    activeSchoolId,
     userAgent: getHeader(event, 'user-agent') || null,
     ipAddress: getRequestIP(event, { xForwardedFor: true }) || null,
     expiresAt
@@ -101,9 +110,11 @@ export async function currentAuth(event: H3Event): Promise<CurrentAuth | null> {
     ))
     .limit(1)
   if (!row) return null
-  if (row.user.schoolId) {
+  // 激活租户：会话显式记录优先，否则回落到账号主租户；租户被停用则拒绝会话。
+  let activeSchoolId = row.session.activeSchoolId ?? row.user.schoolId
+  if (activeSchoolId) {
     const [school] = await useDb(event).select({ status: schema.schools.status }).from(schema.schools)
-      .where(eq(schema.schools.id, row.user.schoolId)).limit(1)
+      .where(eq(schema.schools.id, activeSchoolId)).limit(1)
     if (!school || school.status !== 'active') return null
   }
   // 滑动续期：剩余时间低于阈值时把会话延长到完整 TTL（数据库与 cookie 同步更新）
@@ -115,10 +126,20 @@ export async function currentAuth(event: H3Event): Promise<CurrentAuth | null> {
       .where(eq(schema.sessions.id, row.session.id))
     setCookie(event, COOKIE_NAME, token, sessionCookieOptions(new Date(now.getTime() + SESSION_TTL_MS)))
   }
-  const roleEntries = await listUserRoles(useDb(event), row.user.id)
-  const primaryRole = row.user.role as AppRole
+  const db = useDb(event)
+  let roleEntries = await listUserRoles(db, row.user.id, activeSchoolId)
+  // 会话里的激活租户已失效（角色被移除/租户变更）：回落到账号主租户，避免会话卡死。
+  if (!roleEntries.length && activeSchoolId !== row.user.schoolId) {
+    activeSchoolId = row.user.schoolId
+    roleEntries = await listUserRoles(db, row.user.id, activeSchoolId)
+  }
   // 迁移已保证每个账号至少一行角色；这里对历史/异常数据保留主角色兜底，避免登录被卡住
-  const roles = roleEntries.length ? roleEntries.map(entry => entry.roleCode) : [primaryRole]
+  const roles: AppRole[] = roleEntries.length
+    ? roleEntries.map(entry => entry.roleCode)
+    : [row.user.role as AppRole]
+  const primaryRole = activeSchoolId === row.user.schoolId
+    ? row.user.role as AppRole
+    : (roles[0] ?? row.user.role as AppRole)
   if (!roles.includes(primaryRole)) roles.push(primaryRole)
   const sessionActiveRole = (row.session.activeRole as AppRole | null) ?? null
   const activeRole = sessionActiveRole && roles.includes(sessionActiveRole)
@@ -129,7 +150,7 @@ export async function currentAuth(event: H3Event): Promise<CurrentAuth | null> {
     sessionActiveRole,
     user: {
       id: row.user.id,
-      schoolId: row.user.schoolId,
+      schoolId: activeSchoolId,
       phone: row.user.phone ?? '',
       name: row.user.name,
       role: activeRole,

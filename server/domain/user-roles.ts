@@ -13,7 +13,7 @@
  * 3. 传 event 是为了兼容 writeAudit 与错误提示；传 db 是为了支持事务内调用
  *    （创建账号与角色写入必须在同一事务里）。
  */
-import { and, eq, exists, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, exists, inArray, isNull, or, sql } from 'drizzle-orm'
 import type { AppRole } from '../../app/composables/useAuth'
 import type { RoleScope } from '../../shared/management'
 import { type DbClient, schema } from '../utils/db'
@@ -21,7 +21,18 @@ import { type DbClient, schema } from '../utils/db'
 /** 账号的一条角色记录。 */
 export interface UserRoleEntry {
   roleCode: AppRole
+  /** 角色所属租户；为空表示平台级角色（platform_admin）或历史数据。 */
+  schoolId: string | null
   scope: RoleScope
+}
+
+/** 账号可切换的工作区（租户）。 */
+export interface UserTenant {
+  schoolId: string
+  schoolName: string
+  schoolCode: string
+  kind: string
+  roles: AppRole[]
 }
 
 /**
@@ -91,30 +102,88 @@ export function normalizeRoleScope(scope: unknown): RoleScope {
   return out
 }
 
-/** 读取单个账号的角色集合（按角色编码稳定排序）。账号不存在或没有角色行时返回空数组。 */
-export async function listUserRoles(db: DbClient, userId: string): Promise<UserRoleEntry[]> {
-  const rows = await db.select({ roleCode: schema.userRoles.roleCode, scope: schema.userRoles.scope })
-    .from(schema.userRoles)
-    .where(eq(schema.userRoles.userId, userId))
-    .orderBy(schema.userRoles.roleCode)
-  return rows.map(row => ({ roleCode: row.roleCode as AppRole, scope: normalizeRoleScope(row.scope) }))
+function scopeCondition(column: typeof schema.userRoles.schoolId, schoolId: string | null) {
+  return schoolId === null ? isNull(column) : eq(column, schoolId)
 }
 
-/** 批量读取多个账号的角色（列表页用，避免 N+1）。返回 userId → 角色集合。 */
-export async function listRolesByUserIds(db: DbClient, userIds: readonly string[]): Promise<Map<string, UserRoleEntry[]>> {
+/**
+ * 读取单个账号的角色集合（按角色编码稳定排序）。
+ * - 传 schoolId：只读该租户下的角色；
+ * - 传 null：只读平台级（无租户）角色；
+ * - 不传：读账号全部角色（管理端/兼容旧调用）。
+ */
+export async function listUserRoles(db: DbClient, userId: string, schoolId?: string | null): Promise<UserRoleEntry[]> {
+  const conditions = [eq(schema.userRoles.userId, userId)]
+  if (schoolId !== undefined) conditions.push(scopeCondition(schema.userRoles.schoolId, schoolId))
+  const rows = await db.select({
+    roleCode: schema.userRoles.roleCode,
+    schoolId: schema.userRoles.schoolId,
+    scope: schema.userRoles.scope
+  })
+    .from(schema.userRoles)
+    .where(and(...conditions))
+    .orderBy(schema.userRoles.roleCode)
+  return rows.map(row => ({
+    roleCode: row.roleCode as AppRole,
+    schoolId: row.schoolId,
+    scope: normalizeRoleScope(row.scope)
+  }))
+}
+
+/** 批量读取多个账号的角色（列表页用，避免 N+1）。返回 userId → 角色集合；可按租户过滤。 */
+export async function listRolesByUserIds(db: DbClient, userIds: readonly string[], schoolId?: string | null): Promise<Map<string, UserRoleEntry[]>> {
   const unique = [...new Set(userIds)]
   const result = new Map<string, UserRoleEntry[]>()
   if (!unique.length) return result
-  const rows = await db.select({ userId: schema.userRoles.userId, roleCode: schema.userRoles.roleCode, scope: schema.userRoles.scope })
+  const conditions = [inArray(schema.userRoles.userId, unique)]
+  if (schoolId !== undefined) conditions.push(scopeCondition(schema.userRoles.schoolId, schoolId))
+  const rows = await db.select({
+    userId: schema.userRoles.userId,
+    roleCode: schema.userRoles.roleCode,
+    schoolId: schema.userRoles.schoolId,
+    scope: schema.userRoles.scope
+  })
     .from(schema.userRoles)
-    .where(inArray(schema.userRoles.userId, unique))
+    .where(and(...conditions))
     .orderBy(schema.userRoles.userId, schema.userRoles.roleCode)
   for (const row of rows) {
     const list = result.get(row.userId) ?? []
-    list.push({ roleCode: row.roleCode as AppRole, scope: normalizeRoleScope(row.scope) })
+    list.push({
+      roleCode: row.roleCode as AppRole,
+      schoolId: row.schoolId,
+      scope: normalizeRoleScope(row.scope)
+    })
     result.set(row.userId, list)
   }
   return result
+}
+
+/** 账号可切换的工作区列表：按租户聚合角色，只返回 active 租户。 */
+export async function listUserTenants(db: DbClient, userId: string): Promise<UserTenant[]> {
+  const rows = await db.select({
+    schoolId: schema.schools.id,
+    schoolName: schema.schools.name,
+    schoolCode: schema.schools.code,
+    kind: schema.schools.kind,
+    roleCode: schema.userRoles.roleCode
+  })
+    .from(schema.userRoles)
+    .innerJoin(schema.schools, eq(schema.schools.id, schema.userRoles.schoolId))
+    .where(and(eq(schema.userRoles.userId, userId), eq(schema.schools.status, 'active')))
+    .orderBy(schema.schools.name, schema.userRoles.roleCode)
+  const grouped = new Map<string, UserTenant>()
+  for (const row of rows) {
+    const tenant = grouped.get(row.schoolId) ?? {
+      schoolId: row.schoolId,
+      schoolName: row.schoolName,
+      schoolCode: row.schoolCode,
+      kind: row.kind,
+      roles: []
+    }
+    tenant.roles.push(row.roleCode as AppRole)
+    grouped.set(row.schoolId, tenant)
+  }
+  return [...grouped.values()]
 }
 
 /** 校验角色编码都在 roles 目录表里，避免写入目录表不存在的角色。 */
@@ -136,21 +205,26 @@ export interface ApplyUserRolesInput {
   primaryRole?: AppRole
   /** 角色级范围，按键为角色编码；未传的角色保留已有范围。 */
   scopes?: Partial<Record<AppRole, RoleScope>>
+  /**
+   * 角色所属租户。新代码必须传；省略时保持旧行为（覆盖账号全部角色），仅用于兼容。
+   * 传值时只增删该租户的角色行，不会影响其他租户（如 C 端角色）。
+   */
+  schoolId?: string | null
 }
 
 /**
- * 覆盖式写入账号的角色集合：
+ * 覆盖式写入账号在某个租户下的角色集合：
  * - 新增集合内缺失的角色行、更新传了 scope 的角色行；
- * - 删除集合外的角色行；
- * - 同步 users.role 为主角色。
+ * - 删除该租户下集合外的角色行（不影响其他租户）；
+ * - 仅当写入的是账号主租户时同步 users.role 为主角色。
  * 主角色规则：显式传入时必须在集合内；未传时沿用账号当前主角色（必须仍在集合内）。
  */
-export async function applyUserRoles(db: DbClient, input: ApplyUserRolesInput): Promise<{ roles: AppRole[], primaryRole: AppRole }> {
+export async function applyUserRoles(db: DbClient, input: ApplyUserRolesInput): Promise<{ roles: AppRole[], primaryRole: AppRole, schoolId: string | null }> {
   const roleCodes = [...new Set(input.roleCodes)]
   if (!roleCodes.length) fail(400, '账号至少需要一个角色')
   await assertKnownRoles(db, roleCodes)
 
-  const [user] = await db.select({ id: schema.users.id, role: schema.users.role })
+  const [user] = await db.select({ id: schema.users.id, role: schema.users.role, schoolId: schema.users.schoolId })
     .from(schema.users).where(eq(schema.users.id, input.userId)).limit(1)
   if (!user) fail(404, '账号不存在')
 
@@ -159,8 +233,10 @@ export async function applyUserRoles(db: DbClient, input: ApplyUserRolesInput): 
     fail(400, '主角色必须包含在账号的角色集合中')
   }
 
+  const scopedConditions = [eq(schema.userRoles.userId, input.userId)]
+  if (input.schoolId !== undefined) scopedConditions.push(scopeCondition(schema.userRoles.schoolId, input.schoolId))
   const existing = await db.select({ roleCode: schema.userRoles.roleCode })
-    .from(schema.userRoles).where(eq(schema.userRoles.userId, input.userId))
+    .from(schema.userRoles).where(and(...scopedConditions))
   const existingCodes = new Set(existing.map(row => row.roleCode))
 
   const now = new Date()
@@ -168,57 +244,88 @@ export async function applyUserRoles(db: DbClient, input: ApplyUserRolesInput): 
     const scope = input.scopes?.[roleCode]
     if (existingCodes.has(roleCode)) {
       if (scope) {
+        const updateConditions = [
+          eq(schema.userRoles.userId, input.userId),
+          eq(schema.userRoles.roleCode, roleCode)
+        ]
+        if (input.schoolId !== undefined) updateConditions.push(scopeCondition(schema.userRoles.schoolId, input.schoolId))
         await db.update(schema.userRoles).set({ scope, updatedAt: now })
-          .where(and(eq(schema.userRoles.userId, input.userId), eq(schema.userRoles.roleCode, roleCode)))
+          .where(and(...updateConditions))
       }
       continue
     }
-    await db.insert(schema.userRoles).values({ userId: input.userId, roleCode, scope: scope ?? {} })
+    await db.insert(schema.userRoles).values({
+      userId: input.userId,
+      schoolId: input.schoolId ?? null,
+      roleCode,
+      scope: scope ?? {}
+    })
   }
 
   const removed = [...existingCodes].filter(code => !roleCodes.includes(code as AppRole))
   if (removed.length) {
-    await db.delete(schema.userRoles)
-      .where(and(eq(schema.userRoles.userId, input.userId), inArray(schema.userRoles.roleCode, removed)))
+    const deleteConditions = [
+      eq(schema.userRoles.userId, input.userId),
+      inArray(schema.userRoles.roleCode, removed)
+    ]
+    if (input.schoolId !== undefined) deleteConditions.push(scopeCondition(schema.userRoles.schoolId, input.schoolId))
+    await db.delete(schema.userRoles).where(and(...deleteConditions))
   }
 
-  if (user.role !== primaryRole) {
+  // 只有主租户（或旧调用未指定租户）才允许改 users.role；
+  // 给学校账号追加 C 端角色时不能把主角色改成 teacher。
+  const isPrimaryTenant = input.schoolId === undefined || input.schoolId === user.schoolId
+  if (isPrimaryTenant && user.role !== primaryRole) {
     await db.update(schema.users).set({ role: primaryRole, updatedAt: now }).where(eq(schema.users.id, input.userId))
   }
 
-  return { roles: roleCodes, primaryRole }
+  return { roles: roleCodes, primaryRole, schoolId: input.schoolId ?? null }
 }
 
 /** 追加一个角色（幂等）：已存在则只更新范围。 */
 export async function addUserRole(
   db: DbClient,
-  input: { userId: string, roleCode: AppRole, scope?: RoleScope }
+  input: { userId: string, roleCode: AppRole, scope?: RoleScope, schoolId?: string | null }
 ): Promise<void> {
   await assertKnownRoles(db, [input.roleCode])
-  await db.insert(schema.userRoles)
-    .values({ userId: input.userId, roleCode: input.roleCode, scope: input.scope ?? {} })
-    .onConflictDoUpdate({
-      target: [schema.userRoles.userId, schema.userRoles.roleCode],
-      set: { scope: input.scope ?? {}, updatedAt: new Date() }
-    })
+  const existing = await db.select({ id: schema.userRoles.id }).from(schema.userRoles).where(and(
+    eq(schema.userRoles.userId, input.userId),
+    eq(schema.userRoles.roleCode, input.roleCode),
+    scopeCondition(schema.userRoles.schoolId, input.schoolId ?? null)
+  )).limit(1)
+  if (existing.length) {
+    await db.update(schema.userRoles)
+      .set({ scope: input.scope ?? {}, updatedAt: new Date() })
+      .where(eq(schema.userRoles.id, existing[0]!.id))
+    return
+  }
+  await db.insert(schema.userRoles).values({
+    userId: input.userId,
+    schoolId: input.schoolId ?? null,
+    roleCode: input.roleCode,
+    scope: input.scope ?? {}
+  })
 }
 
 /**
- * 移除一个角色。若移除的是账号主角色，必须同时指定新的主角色
- * （新主角色须为账号剩余角色之一），否则会破坏主角色一致性。
+ * 移除一个角色。仅当移除的是账号主租户的主角色时，才要求同时指定新的主角色；
+ * 移除 C 端等非主租户角色不影响 users.role。
  */
 export async function removeUserRole(
   db: DbClient,
-  input: { userId: string, roleCode: AppRole, nextPrimaryRole?: AppRole }
+  input: { userId: string, roleCode: AppRole, nextPrimaryRole?: AppRole, schoolId?: string | null }
 ): Promise<void> {
-  const [user] = await db.select({ id: schema.users.id, role: schema.users.role })
+  const [user] = await db.select({ id: schema.users.id, role: schema.users.role, schoolId: schema.users.schoolId })
     .from(schema.users).where(eq(schema.users.id, input.userId)).limit(1)
   if (!user) fail(404, '账号不存在')
 
-  const remaining = (await listUserRoles(db, input.userId)).filter(entry => entry.roleCode !== input.roleCode)
-  if (!remaining.length) fail(400, '账号至少需要一个角色')
+  const scopedSchoolId = input.schoolId ?? user.schoolId
+  const remaining = (await listUserRoles(db, input.userId, scopedSchoolId))
+    .filter(entry => entry.roleCode !== input.roleCode)
+  if (!remaining.length) fail(400, '账号在该租户至少需要一个角色')
 
-  if (user.role === input.roleCode) {
+  const isPrimaryTenant = scopedSchoolId === user.schoolId
+  if (isPrimaryTenant && user.role === input.roleCode) {
     const next = input.nextPrimaryRole
     if (!next) fail(400, '移除主角色时必须指定新的主角色')
     if (!remaining.some(entry => entry.roleCode === next)) {
@@ -227,12 +334,16 @@ export async function removeUserRole(
     await db.update(schema.users).set({ role: next, updatedAt: new Date() }).where(eq(schema.users.id, input.userId))
   }
 
-  await db.delete(schema.userRoles)
-    .where(and(eq(schema.userRoles.userId, input.userId), eq(schema.userRoles.roleCode, input.roleCode)))
+  const conditions = [
+    eq(schema.userRoles.userId, input.userId),
+    eq(schema.userRoles.roleCode, input.roleCode)
+  ]
+  if (input.schoolId !== undefined) conditions.push(scopeCondition(schema.userRoles.schoolId, input.schoolId))
+  await db.delete(schema.userRoles).where(and(...conditions))
 }
 
 /**
- * 找出主角色悬空的账号（user_roles 中没有 users.role 这一行）。
+ * 找出主角色悬空的账号（主租户下没有 users.role 这一行）。
  * 迁移后自检与测试使用；正常写入路径不会产生这种数据。
  */
 export async function findPrimaryRoleMismatches(db: DbClient, limit = 50): Promise<Array<{ userId: string, primaryRole: string }>> {
@@ -240,7 +351,11 @@ export async function findPrimaryRoleMismatches(db: DbClient, limit = 50): Promi
     .from(schema.users)
     .leftJoin(schema.userRoles, and(
       eq(schema.userRoles.userId, schema.users.id),
-      eq(schema.userRoles.roleCode, schema.users.role)
+      eq(schema.userRoles.roleCode, schema.users.role),
+      or(
+        and(isNull(schema.userRoles.schoolId), isNull(schema.users.schoolId)),
+        eq(schema.userRoles.schoolId, schema.users.schoolId)
+      )
     ))
     .where(isNull(schema.userRoles.id))
     .limit(limit)
@@ -255,21 +370,25 @@ export async function findPrimaryRoleMismatches(db: DbClient, limit = 50): Promi
  * 账号主角色可能是 school_admin，用主角色过滤会漏掉这类账号。
  * 语义是「账号主角色是什么」（如平台后台的角色分布统计）时才保留 users.role。
  */
-export function userHasRole(db: DbClient, roleCode: AppRole) {
+export function userHasRole(db: DbClient, roleCode: AppRole, schoolId?: string | null) {
+  const conditions = [
+    eq(schema.userRoles.userId, schema.users.id),
+    eq(schema.userRoles.roleCode, roleCode)
+  ]
+  if (schoolId !== undefined) conditions.push(scopeCondition(schema.userRoles.schoolId, schoolId))
   return exists(
-    db.select({ one: sql`1` }).from(schema.userRoles).where(and(
-      eq(schema.userRoles.userId, schema.users.id),
-      eq(schema.userRoles.roleCode, roleCode)
-    ))
+    db.select({ one: sql`1` }).from(schema.userRoles).where(and(...conditions))
   )
 }
 
-/** SQL 谓词：目标账号是否持有其中任意一个角色（等价于原来的 inArray(users.role, [...])）。 */
-export function userHasAnyRole(db: DbClient, roleCodes: readonly AppRole[]) {
+/** SQL 谓词：目标账号是否持有其中任意一个角色（可按租户过滤）。 */
+export function userHasAnyRole(db: DbClient, roleCodes: readonly AppRole[], schoolId?: string | null) {
+  const conditions = [
+    eq(schema.userRoles.userId, schema.users.id),
+    inArray(schema.userRoles.roleCode, [...roleCodes])
+  ]
+  if (schoolId !== undefined) conditions.push(scopeCondition(schema.userRoles.schoolId, schoolId))
   return exists(
-    db.select({ one: sql`1` }).from(schema.userRoles).where(and(
-      eq(schema.userRoles.userId, schema.users.id),
-      inArray(schema.userRoles.roleCode, [...roleCodes])
-    ))
+    db.select({ one: sql`1` }).from(schema.userRoles).where(and(...conditions))
   )
 }

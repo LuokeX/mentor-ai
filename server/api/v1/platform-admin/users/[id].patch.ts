@@ -50,7 +50,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // 角色集合维护前置校验（roles 未传时不动角色行；只改主角色时按现有集合校验）
-  const currentRoleCodes = (await listUserRoles(db, id)).map(entry => entry.roleCode)
+  const currentRoleCodes = (await listUserRoles(db, id, target.schoolId)).map(entry => entry.roleCode)
   if (body.roles && !body.primaryRole && !body.roles.some(role => role === target.role)) {
     throw createError({ statusCode: 400, message: '新的角色集合不包含账号当前主角色，请同时指定新的主角色' })
   }
@@ -115,6 +115,7 @@ export default defineEventHandler(async (event) => {
         userId: target.id,
         roleCodes: body.roles ?? currentRoleCodes,
         primaryRole: body.primaryRole,
+        schoolId: target.schoolId,
       })
       resultingRoles = applied.roles
       resultingPrimaryRole = applied.primaryRole

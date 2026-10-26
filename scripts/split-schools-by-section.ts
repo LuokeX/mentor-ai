@@ -491,7 +491,7 @@ async function main() {
           await tx.update(schema.users)
             .set({ schoolId, name: move.name, updatedAt: new Date() })
             .where(eq(schema.users.id, existing.id))
-          await applyUserRoles(tx, { userId: existing.id, roleCodes: [move.role], primaryRole: move.role as 'division_principal' | 'school_admin' })
+          await applyUserRoles(tx, { userId: existing.id, roleCodes: [move.role], primaryRole: move.role as 'division_principal' | 'school_admin', schoolId })
         } else {
           const password = move.phone.slice(-8)
           const [created] = await tx.insert(schema.users).values({
@@ -505,7 +505,7 @@ async function main() {
             activatedAt: new Date()
           }).returning()
           if (!created) throw new Error(`账号创建失败：${move.phone}`)
-          await applyUserRoles(tx, { userId: created.id, roleCodes: [move.role], primaryRole: move.role as 'division_principal' | 'school_admin' })
+          await applyUserRoles(tx, { userId: created.id, roleCodes: [move.role], primaryRole: move.role as 'division_principal' | 'school_admin', schoolId })
           console.log(`  新建账号：${move.name} ${move.phone} 初始密码 ${password}`)
         }
       }

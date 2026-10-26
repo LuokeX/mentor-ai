@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
       if (!schoolAdmin) throw createError({ statusCode: 500, message: '学校管理员创建失败' })
       // 角色集合与主角色一致写入 user_roles（建校首个管理员同样要能出现在
       // 学校管理员列表、危机通知收件人与方案协同通知里）
-      await applyUserRoles(tx, { userId: schoolAdmin.id, roleCodes: ['school_admin'], primaryRole: 'school_admin' })
+      await applyUserRoles(tx, { userId: schoolAdmin.id, roleCodes: ['school_admin'], primaryRole: 'school_admin', schoolId: school.id })
       await tx.insert(schema.schoolSettings).values({ schoolId: school.id })
       await writeAudit(event, {
         actorId: admin.id,

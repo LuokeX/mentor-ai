@@ -7,6 +7,15 @@ export type AppRole =
   | 'grade_director'
   | 'platform_admin'
 
+export interface AuthTenant {
+  schoolId: string
+  schoolName: string
+  schoolCode: string
+  /** school | cend */
+  kind: string
+  roles: AppRole[]
+}
+
 export interface AuthUser {
   id: string
   schoolId: string | null
@@ -29,6 +38,8 @@ export interface AuthUser {
    * 空数组表示未填写，此时不做学段过滤（不因为缺资料而藏内容）。
    */
   teachingGrades?: number[]
+  /** 可切换的工作区（学校/C 端）；由 /auth/me 下发。 */
+  tenants?: AuthTenant[]
 }
 
 /** 账号持有的角色集合：缺省 roles 的历史数据按激活角色处理。 */
@@ -66,7 +77,7 @@ export const ROLE_LABELS: Record<AppRole, string> = {
  * 必须先切换激活角色，否则接口会按激活角色返回 403。
  */
 export const ROLE_PATH_PREFIXES: Record<AppRole, string[]> = {
-  teacher: ['/', '/module', '/assessments', '/information', '/growth', '/plans'],
+  teacher: ['/', '/module', '/assessments', '/information', '/growth', '/plans', '/cend'],
   psychologist: ['/specialist'],
   // 学校管理员兼管账号开通与平台使用量看板（原「系统管理员」角色已并入本角色）
   school_admin: ['/school-admin', '/usage'],
@@ -161,6 +172,23 @@ export const useAuth = () => {
     await refresh()
   }
 
+  /**
+   * 切换当前会话的激活工作区（学校/C 端），成功后刷新用户信息。
+   * 目标租户必须是账号实际加入的租户；未加入由服务端返回 403。
+   */
+  const switchTenant = async (schoolId: string) => {
+    const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined
+    await requestFetch<{ ok: boolean, schoolId: string, role: AppRole }>('/api/v1/auth/switch-tenant', {
+      method: 'POST',
+      body: { schoolId },
+      headers
+    })
+    await refresh()
+  }
+
+  /** 可切换的工作区列表。 */
+  const tenants = computed<AuthTenant[]>(() => user.value?.tenants ?? [])
+
   /** 激活角色对应的首页（落地页）。 */
   const roleHome = computed(() => roleHomePath(user.value?.role))
 
@@ -172,5 +200,5 @@ export const useAuth = () => {
     await navigateTo('/login')
   }
 
-  return { user, loading, refresh, logout, hasRole, hasAnyRole, switchRole, roleHome }
+  return { user, loading, refresh, logout, hasRole, hasAnyRole, switchRole, switchTenant, tenants, roleHome }
 }

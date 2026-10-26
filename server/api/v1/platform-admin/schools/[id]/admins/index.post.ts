@@ -46,6 +46,7 @@ export default defineEventHandler(async (event) => {
       userId: target.id,
       roleCodes: ['school_admin'],
       primaryRole: 'school_admin',
+      schoolId,
     })
     return target
   })

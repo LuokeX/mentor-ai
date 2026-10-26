@@ -22,13 +22,13 @@ export default defineEventHandler(async (event) => {
 
   // 1. 验证目标用户存在且可停用（以 user_roles 判定，含兼任教师/心理专员的账号以及两个只读看板角色）
   const [target] = await db.select().from(schema.users).where(and(
-    eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), userHasAnyRole(db, SCHOOL_MANAGED_ROLES)
+    eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), userHasAnyRole(db, SCHOOL_MANAGED_ROLES, schoolId)
   )).limit(1)
   if (!target) throw createError({ statusCode: 404, message: '目标用户不存在' })
   if (target.status === 'disabled') throw createError({ statusCode: 409, message: '该账号已被停用' })
 
   // 2. 教师/心理专员账号有业务数据归属，停用必须指定接收教师；只读看板角色不需要移交
-  const targetRoles = (await listUserRoles(db, id)).map(entry => entry.roleCode)
+  const targetRoles = (await listUserRoles(db, id, schoolId)).map(entry => entry.roleCode)
   const requiresTransfer = hasBusinessRole(targetRoles)
   if (requiresTransfer && !body.toUserId) {
     throw createError({ statusCode: 422, message: '教师或心理专员账号停用必须指定业务接收教师' })
@@ -44,14 +44,14 @@ export default defineEventHandler(async (event) => {
       eq(schema.users.id, body.newPsychologistId),
       eq(schema.users.schoolId, schoolId),
       // 以 user_roles 判定心理专员身份：兼任账号也能承接转介
-      userHasRole(db, 'psychologist'),
+      userHasRole(db, 'psychologist', schoolId),
       eq(schema.users.status, 'active'),
     )).limit(1)
     if (!psychologist) throw createError({ statusCode: 422, message: '新的心理专员不存在或不可用' })
   }
 
   // 3. 检查心理转介：目标账号持有心理专员角色（含兼任）且存在未完成转介
-  const targetIsPsychologist = (await listUserRoles(db, id)).some(entry => entry.roleCode === 'psychologist')
+  const targetIsPsychologist = (await listUserRoles(db, id, schoolId)).some(entry => entry.roleCode === 'psychologist')
   if (targetIsPsychologist) {
     const hasOpenReferral = await userHasOpenReferrals(db, schoolId, id)
     if (hasOpenReferral && !body.newPsychologistId) {
@@ -87,7 +87,7 @@ export default defineEventHandler(async (event) => {
     }).where(and(
       eq(schema.users.id, id),
       eq(schema.users.schoolId, schoolId),
-      userHasAnyRole(tx, SCHOOL_MANAGED_ROLES),
+      userHasAnyRole(tx, SCHOOL_MANAGED_ROLES, schoolId),
     )).returning({ id: schema.users.id })
     if (!disabled) throw createError({ statusCode: 409, message: '账号状态已变化，请刷新后重试' })
 

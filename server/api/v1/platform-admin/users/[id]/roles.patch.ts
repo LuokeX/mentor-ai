@@ -58,13 +58,15 @@ export default defineEventHandler(async (event) => {
 
   const [target] = await db.select().from(schema.users).where(eq(schema.users.id, id)).limit(1)
   if (!target) throw createError({ statusCode: 404, message: '账号不存在' })
-  const currentRoleCodes = (await listUserRoles(db, id)).map(entry => entry.roleCode)
+  const allRoleCodes = (await listUserRoles(db, id)).map(entry => entry.roleCode)
   // 防提权与自锁：不能维护平台管理员账号，也不能通过本入口授予平台管理员角色（先于学校归属校验，保证提示准确）
-  if (currentRoleCodes.includes(PROTECTED_ROLE) || body.roles.includes(PROTECTED_ROLE as typeof body.roles[number])) {
+  if (allRoleCodes.includes(PROTECTED_ROLE) || body.roles.includes(PROTECTED_ROLE as typeof body.roles[number])) {
     throw createError({ statusCode: 403, message: '不能通过该入口维护或授予平台管理员角色' })
   }
   if (!target.schoolId) throw createError({ statusCode: 409, message: '账号缺少学校归属，无法维护角色' })
   const schoolId = target.schoolId
+  // 本入口只维护账号主租户的角色；C 端等其它租户的角色由对应入口维护，不能被整体覆盖删除。
+  const currentRoleCodes = (await listUserRoles(db, id, schoolId)).map(entry => entry.roleCode)
 
   const uniqueRoles = [...new Set(body.roles)]
   if (uniqueRoles.length !== body.roles.length) {
@@ -123,6 +125,7 @@ export default defineEventHandler(async (event) => {
       userId: id,
       roleCodes: uniqueRoles,
       primaryRole: body.primaryRole,
+      schoolId,
       scopes
     })
     await writeAudit(event, {

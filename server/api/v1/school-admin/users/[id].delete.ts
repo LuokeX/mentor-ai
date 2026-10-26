@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
 
   const [target] = await db.select().from(schema.users).where(and(
-    eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), userHasAnyRole(db, SCHOOL_MANAGED_ROLES)
+    eq(schema.users.id, id), eq(schema.users.schoolId, schoolId), userHasAnyRole(db, SCHOOL_MANAGED_ROLES, schoolId)
   )).limit(1)
   if (!target) throw createError({ statusCode: 404, message: '用户不存在' })
 
