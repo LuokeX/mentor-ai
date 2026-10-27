@@ -56,7 +56,8 @@ export default defineEventHandler(async (event) => {
       .leftJoin(schema.productEvents, and(eq(schema.productEvents.userId, schema.users.id), eq(schema.productEvents.schoolId, schoolId)))
       .where(and(...conditions))
       .groupBy(schema.users.id)
-      .orderBy(orderFn(sortCol))
+      // 唯一键兜底，避免 updated_at 等非唯一列排序时分页结果不稳定
+      .orderBy(orderFn(sortCol), asc(schema.users.id))
       .limit(pageSize)
       .offset(offsetFrom(page, pageSize)),
     countQuery: db.select({ value: countSql }).from(schema.users).where(and(...conditions)),

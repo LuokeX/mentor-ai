@@ -64,7 +64,9 @@ export default defineEventHandler(async (event) => {
       .leftJoin(schema.students, and(eq(schema.students.classId, schema.classes.id), eq(schema.students.schoolId, schoolId), eq(schema.students.status, 'active')))
       .where(and(...conditions))
       .groupBy(schema.classes.id, schema.users.name, schema.departments.name)
-      .orderBy(orderFn(sortCol))
+      // 分页必须带唯一键兜底：批量创建的班级 updated_at 完全相同，
+      // 仅按业务列排序时 LIMIT/OFFSET 的顺序不稳定，会出现跨页重复/漏行。
+      .orderBy(orderFn(sortCol), asc(schema.classes.id))
       .limit(pageSize)
       .offset(offsetFrom(page, pageSize)),
     countQuery: db.select({ value: countSql }).from(schema.classes).where(and(...conditions)),

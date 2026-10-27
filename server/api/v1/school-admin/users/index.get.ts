@@ -69,7 +69,10 @@ export default defineEventHandler(async (event) => {
       overrides: schema.users.overrides,
       createdAt: schema.users.createdAt,
       updatedAt: schema.users.updatedAt,
-    }).from(schema.users).where(and(...conditions)).orderBy(orderFn(sortCol))
+    }).from(schema.users).where(and(...conditions))
+      // 分页必须带唯一键兜底：批量开通的账号 updated_at 完全相同，
+      // 仅按业务列排序时 LIMIT/OFFSET 的顺序不稳定，会出现跨页重复/漏行。
+      .orderBy(orderFn(sortCol), asc(schema.users.id))
       .limit(pageSize).offset(offsetFrom(page, pageSize)),
     countQuery: db.select({ value: countSql }).from(schema.users).where(and(...conditions)),
     page,
