@@ -7,3 +7,7 @@ test-results
 coverage
 .env
 backups
+# 含真实人员信息的一次性导入数据与脚本，不得进入构建上下文/镜像
+临时文件
+scripts/data
+scripts/import-*.ts
