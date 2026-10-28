@@ -13,6 +13,7 @@ import { planLookupTool } from './plan-lookup'
 import { resourceDetailTool } from './resource-detail'
 import { resourceLookupTool } from './resource-lookup'
 import { teacherBriefTool } from './teacher-brief'
+import { workspaceTools } from './workspace'
 
 /**
  * 教师业务数据只读工具（需要 schoolId/ownerUserId 收口）。
@@ -46,7 +47,9 @@ const statelessTools: AgentTool[] = [knowledgeSearchTool, moduleRouteTool]
  *   entity_memory（依赖 userId/sessionId 读取实体记忆）、学生检索/档案，
  *   以及方案、评估历史、沟通记录、班级概览、教师待办、三库资源目录与三库明细；
  * - 仅当本轮回答有可收口的对象（会话绑定或本轮消息里唯一命中的对象）且教师未选择
- *   不引入档案时，才暴露 record_snapshot（避免模型对未绑定会话做无效查询）。
+ *   不引入档案时，才暴露 record_snapshot（避免模型对未绑定会话做无效查询）；
+ * - 仅当本轮是 lesson_prep 且会话绑定了有效资料工作区时，追加 4 个工作区工具
+ *   （list/read/write/delete，只读写 runner 临时工作区，不碰业务库）。
  *
  * enabledTools：AI_AGENT_ENABLED_TOOLS 环境变量给出的启用工具名数组。
  *  - null / 未提供 → 返回全部（按上下文裁剪后的）默认工具；
@@ -57,9 +60,11 @@ const statelessTools: AgentTool[] = [knowledgeSearchTool, moduleRouteTool]
  */
 export function buildAgentTools(userCtx: AgentUserContext | null | undefined, enabledTools?: string[] | null): AgentTool[] {
   const hasScopedObject = Boolean(userCtx?.businessContexts?.length || userCtx?.turnContexts?.length)
+  // 工作区工具只在备课会话绑定了有效 workspace 时暴露；选择不带档案时一并关闭。
+  const sandboxTools = userCtx?.sandboxWorkspaceId && !userCtx.withoutRecord ? workspaceTools : []
   let base = !userCtx?.userId || !userCtx.sessionId
     ? statelessTools
-    : [...agentTools, ...(hasScopedObject ? [recordSnapshotTool] : [])]
+    : [...agentTools, ...(hasScopedObject ? [recordSnapshotTool] : []), ...sandboxTools]
   if (userCtx?.withoutRecord) base = base.filter(tool => ['knowledge_search', 'module_route', 'resource_lookup', 'resource_detail'].includes(tool.name))
   if (enabledTools == null) return base
   const allow = new Set(enabledTools)

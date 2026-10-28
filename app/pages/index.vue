@@ -4,6 +4,7 @@ import { moduleMeta } from '#shared/assessments'
 import type { ModuleId, RouteDecision } from '#shared/contracts'
 import { useModuleScores } from '~/composables/useModuleScores'
 import { useSpeechPlayback } from '~/composables/useSpeechPlayback'
+import { useLessonWorkspace } from '~/composables/useLessonWorkspace'
 import { LESSON_PREP_TEMPLATES, type AssistantMode } from '~/utils/lesson-prep'
 import {
   blobToBase64,
@@ -136,9 +137,42 @@ const pendingPlanTotal = computed(() => pendingPlanResult.value?.total || 0)
  * 语音能力（录音识别 / 回答朗读）：服务端按配置返回 speech.asr 与 speech.tts，
  * 未配置时两者都是 false，前端据此不渲染麦克风与朗读按钮（不留不可用的死按钮）。
  */
-const { data: speechCapability } = await useFetch<{ speech?: { asr?: boolean, tts?: boolean } }>('/api/v1/chat/status')
+const { data: speechCapability } = await useFetch<{
+  speech?: { asr?: boolean, tts?: boolean },
+  lessonPrep?: { uploads?: boolean, supportedTypes?: string[], maxFileBytes?: number }
+}>('/api/v1/chat/status')
 const asrEnabled = computed(() => Boolean(speechCapability.value?.speech?.asr))
 const ttsEnabled = computed(() => Boolean(speechCapability.value?.speech?.tts))
+const lessonUploadEnabled = computed(() => Boolean(speechCapability.value?.lessonPrep?.uploads))
+const {
+  workspaceId: lessonWorkspaceId,
+  files: lessonFiles,
+  uploading: lessonUploading,
+  uploadFiles: uploadLessonFiles,
+  removeFile: removeLessonFile,
+  loadWorkspace: loadLessonWorkspace,
+  setWorkspace: setLessonWorkspace,
+  refreshFiles: refreshLessonFiles,
+  reset: resetLessonWorkspace
+} = useLessonWorkspace(lessonUploadEnabled)
+const lessonFileInput = ref<HTMLInputElement | null>(null)
+
+function openLessonFilePicker() {
+  lessonFileInput.value?.click()
+}
+
+async function onLessonFilesPicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = input.files
+  if (files?.length) await uploadLessonFiles(files, sessionId.value)
+  input.value = ''
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`
+  return `${bytes}B`
+}
 const { data: governance, refresh: refreshGovernance } = await useFetch<any>('/api/v1/chat/data-governance')
 const { data: contextOptions } = await useFetch<any>('/api/v1/chat/context-options')
 const input = ref('')
@@ -788,6 +822,7 @@ function newConversation() {
   sessionId.value = undefined
   // 新对话默认回到「对话」Tab；备课模式由教师显式切换
   assistantMode.value = 'chat'
+  resetLessonWorkspace()
   // 换会话前停掉朗读、收起待确认删除、丢弃录音状态
   stopSpeech()
   resetDeleteMessageCandidate()
@@ -900,6 +935,7 @@ async function loadSession(id: string) {
     // 恢复当前 Tab：以最近一条教师提问的模式为准；老会话没有模式字段时回到对话
     const lastUserMessage = [...result.messages].reverse().find((item: any) => item.role === 'user')
     assistantMode.value = lastUserMessage?.metadata?.mode === 'lesson_prep' ? 'lesson_prep' : 'chat'
+    void loadLessonWorkspace(result.session.sandboxWorkspaceId)
 
     // 重建 selectedOptions：每个追问轮次后的第一条用户消息即为所选选项
     selectedOptions.value = {}
@@ -956,6 +992,7 @@ async function readAssistantStream(response: Response, reuseIndex = -1, userMess
         const data = JSON.parse(raw)
         if (event === 'ack') {
           sessionId.value = data.sessionId
+          if (typeof data.sandboxWorkspaceId === 'string') setLessonWorkspace(data.sandboxWorkspaceId)
           // 本轮教师提问已落库：把 userMessageId 写回刚才 push 的气泡，用户消息才能删除。
           // 按「下标 + 角色 + 尚未赋值」三重条件写回，避免其他分支追加气泡后写错对象。
           if (typeof data.userMessageId === 'string' && userMessageIndex >= 0) {
@@ -1039,6 +1076,8 @@ async function readAssistantStream(response: Response, reuseIndex = -1, userMess
             timeline.value.push({ messageId: data.messageId, role: 'assistant', text: data.text, mode: data.mode, chatMode, sources: [], answerCompleted: true })
             assistantIndex = timeline.value.length - 1
           }
+          // 备课回答已由服务端写入工作区：刷新文件胶囊，让教师看到新产物
+          if (chatMode === 'lesson_prep' && lessonWorkspaceId.value) void refreshLessonFiles()
           // 回答已定稿：撤下「正在核对回答依据…」状态条（本轮若无任何 delta，此前一直是挂起状态）
           reviewPending.value = false
           clearReviewHint()
@@ -1175,7 +1214,15 @@ async function ask() {
   try {
     const response = await fetch('/api/v1/chat/messages', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: sessionId.value, message: text, mode: requestMode, ...contextPayload.value }),
+      body: JSON.stringify({
+        sessionId: sessionId.value,
+        message: text,
+        mode: requestMode,
+        ...(requestMode === 'lesson_prep' && lessonWorkspaceId.value
+          ? { sandboxWorkspaceId: lessonWorkspaceId.value }
+          : {}),
+        ...contextPayload.value
+      }),
       signal: controller.signal
     })
     if (response.status === 402) {
@@ -1737,7 +1784,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
 
-        <div ref="messageViewport" class="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-slate-50/70 to-white px-3 pt-4 sm:px-6 sm:pt-6" :class="{'opacity-60':loadingSession, 'pb-40 sm:pb-36': assistantMode !== 'lesson_prep', 'pb-52 sm:pb-48': assistantMode === 'lesson_prep'}">
+        <div ref="messageViewport" class="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-slate-50/70 to-white px-3 pt-4 sm:px-6 sm:pt-6" :class="{'opacity-60':loadingSession, 'pb-40 sm:pb-36': assistantMode !== 'lesson_prep', 'pb-52 sm:pb-48': assistantMode === 'lesson_prep' && !lessonFiles.length, 'pb-64 sm:pb-60': assistantMode === 'lesson_prep' && lessonFiles.length > 0}">
           <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-5 sm:space-y-7">
             <template v-for="(item, index) in timeline" :key="index">
             <!-- 会话内换绑咨询对象：分隔条标明从这条起谈的是另一个对象（历史消息保留） -->
@@ -2019,6 +2066,18 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                 </button>
               </div>
             </div>
+            <input ref="lessonFileInput" type="file" class="hidden" accept=".txt,.md,.markdown,.docx" multiple @change="onLessonFilesPicked">
+            <!-- 已上传的备课资料：只显示名称/大小，内容在服务端工作区 -->
+            <div v-if="assistantMode === 'lesson_prep' && lessonFiles.length" class="mb-2 flex flex-wrap gap-2" aria-label="已上传的备课资料">
+              <span v-for="file in lessonFiles" :key="file.name" class="flex max-w-full items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
+                <UIcon name="i-lucide-file-text" class="size-3.5 shrink-0 text-emerald-600" />
+                <span class="max-w-[12rem] truncate">{{ file.name }}</span>
+                <span class="shrink-0 text-slate-400">{{ formatFileSize(file.size) }}</span>
+                <button type="button" class="shrink-0 rounded-full text-slate-400 transition hover:text-red-500" :aria-label="`移除${file.name}`" :title="`移除${file.name}`" @click="removeLessonFile(file.name)">
+                  <UIcon name="i-lucide-x" class="size-3.5" />
+                </button>
+              </span>
+            </div>
             <!-- 备课提示词模板：点击只填入输入框，不自动发送；教师可继续补充学情 -->
             <div v-if="assistantMode === 'lesson_prep'" class="mb-2 flex gap-2 overflow-x-auto pb-0.5" aria-label="备课提示词模板">
               <button
@@ -2074,11 +2133,40 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                   @contextmenu.prevent
                 >{{ recording ? '松开 发送' : '按住说话' }}</UButton>
                 <UButton v-if="pending" type="button" icon="i-lucide-square" size="lg" square class="size-12" color="neutral" variant="soft" aria-label="停止生成" @click="stopGeneration" />
+                <UButton
+                  v-if="assistantMode === 'lesson_prep' && lessonUploadEnabled"
+                  type="button"
+                  icon="i-lucide-paperclip"
+                  size="lg"
+                  square
+                  class="size-12"
+                  color="neutral"
+                  variant="soft"
+                  :loading="lessonUploading"
+                  :disabled="pending || lessonUploading"
+                  aria-label="上传备课资料"
+                  title="上传备课资料"
+                  @click="openLessonFilePicker"
+                />
                 <UButton type="button" icon="i-lucide-keyboard" size="lg" square class="size-12" color="neutral" variant="ghost" aria-label="切换到键盘输入" title="切换到键盘输入" @click="mobileVoiceInput = false" />
               </div>
               <!-- 输入框：电脑端恒显示；手机端只在键盘输入模式下显示 -->
               <div class="items-center gap-2" :class="asrEnabled && mobileVoiceInput ? 'hidden sm:flex' : 'flex'">
                 <UTextarea v-model="input" :rows="2" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" :aria-label="assistantMode === 'lesson_prep' ? '描述备课需求' : '向 AI 赋能助手提问'" :placeholder="assistantMode === 'lesson_prep' ? '写清学段、学科、课题、课时，或点上面的模板填入' : ''" @input="handleMentionInput" @keydown.enter.exact.prevent="ask" @keydown.esc="closeMention" />
+                <UButton
+                  v-if="assistantMode === 'lesson_prep' && lessonUploadEnabled"
+                  type="button"
+                  icon="i-lucide-paperclip"
+                  size="lg"
+                  square
+                  color="neutral"
+                  variant="soft"
+                  :loading="lessonUploading"
+                  :disabled="pending || lessonUploading"
+                  aria-label="上传备课资料"
+                  title="上传备课资料"
+                  @click="openLessonFilePicker"
+                />
                 <!-- 手机端此按钮切回「按住说话」：只在键盘输入模式下出现；桌面端不渲染 -->
                 <UButton
                   v-if="asrEnabled && !mobileVoiceInput"
@@ -2111,7 +2199,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                 <UButton v-if="pending" type="button" icon="i-lucide-square" size="lg" square color="neutral" variant="soft" aria-label="停止生成" @click="stopGeneration" />
                 <UButton v-else type="submit" icon="i-lucide-arrow-up" size="lg" square :disabled="!input.trim() || recording || transcribing" aria-label="发送消息" />
               </div>
-              <div class="mt-1 hidden items-center justify-between gap-2 px-1 text-[11px] sm:flex"><span class="text-slate-500">{{ assistantMode === 'lesson_prep' ? '备课方案需教师复核后使用 · 输入 @ 可关联班级' : 'AI 辅助建议，需人工专业判断 · 输入 @ 关联对象' }}</span><span class="shrink-0 text-slate-500">Enter 发送 · Shift + Enter 换行 {{ input.length }}/4000</span></div>
+              <div class="mt-1 hidden items-center justify-between gap-2 px-1 text-[11px] sm:flex"><span class="text-slate-500">{{ assistantMode === 'lesson_prep' ? '备课方案需教师复核后使用 · 可上传 txt/md/docx · 输入 @ 可关联班级' : 'AI 辅助建议，需人工专业判断 · 输入 @ 关联对象' }}</span><span class="shrink-0 text-slate-500">Enter 发送 · Shift + Enter 换行 {{ input.length }}/4000</span></div>
             </div>
           </div>
         </form>

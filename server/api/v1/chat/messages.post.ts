@@ -25,6 +25,7 @@ import {
   settlePointsTx
 } from '../../../domain/cend-points'
 import { isCendSchool } from '../../../domain/cend-school'
+import { resolveLessonPrepWorkspaceForChat } from '../../../domain/lesson-prep-workspace'
 import { trackProductEvent } from '../../../domain/product-events'
 import { classifyQuestionCategory } from '../../../domain/question-category'
 import { sendStream } from 'h3'
@@ -142,6 +143,16 @@ export default defineEventHandler(async (event) => {
   }
 
   const ownedSessionId = sessionId
+  // 备课资料工作区：显式 ID 优先，未传则沿用会话当前绑定的工作区。
+  // 只在本轮是 lesson_prep 时解析；普通对话不会把工作区传给模型。
+  const lessonWorkspace = mode === 'lesson_prep'
+    ? await resolveLessonPrepWorkspaceForChat(
+      event,
+      { id: user.id, schoolId: user.schoolId },
+      body.sandboxWorkspaceId ?? null,
+      ownedSessionId
+    )
+    : null
   const lastModuleScores = getSessionModuleScores(sessionContext?.metadata) as Record<ModuleId, number>
   const historyBudgetTokens = Number(config.agentHistoryTokenBudget) || 24000
   const compactionKeepRatio = Number(config.agentCompactionKeepRatio) || 0.5
@@ -180,7 +191,10 @@ export default defineEventHandler(async (event) => {
       schoolId: user.schoolId, ownerUserId: user.id, sessionId: ownedSessionId,
       role: 'user', contentEnc: encryptSensitive(body.message, config.encryptionKey),
       // 模式随提问落库：重新生成时按同一种模式重跑，历史消息也能看出这轮是备课还是问答
-      metadata: { mode }
+      metadata: {
+        mode,
+        ...(lessonWorkspace ? { sandboxWorkspaceId: lessonWorkspace.id } : {})
+      }
     }).returning({ id: schema.chatMessages.id, createdAt: schema.chatMessages.createdAt })
   } catch (error) {
     if (chargeId) await refundPoints(db, chargeId, '提问保存失败，积分退回').catch(() => undefined)
@@ -192,6 +206,7 @@ export default defineEventHandler(async (event) => {
     targetType: 'chat_session', targetId: ownedSessionId,
     metadata: {
       mode,
+      sandboxWorkspace: Boolean(lessonWorkspace),
       contextType: businessContexts[0]?.type || 'none',
       contextCount: businessContexts.length,
       recordIncluded: Boolean(businessContexts.length && !body.withoutRecord)
@@ -264,6 +279,8 @@ export default defineEventHandler(async (event) => {
           sessionId: ownedSessionId,
           // 本轮模式：前端据此在助手气泡上标注「备课」或恢复标签状态
           mode,
+          // 本轮绑定的资料工作区（本表 id）；前端据此恢复上传文件列表
+          sandboxWorkspaceId: lessonWorkspace?.id,
           // 本条提问的消息 id：前端据此定位并删除这条消息
           userMessageId: question.id,
           // context/turnObject 保留为主对象别名（兼容现有渲染）；contexts/turnObjects 为完整对象集
@@ -367,6 +384,7 @@ export default defineEventHandler(async (event) => {
           sessionId: ownedSessionId,
           message: body.message,
           mode,
+          sandboxWorkspaceId: lessonWorkspace?.providerWorkspaceId,
           withoutRecord: Boolean(body.withoutRecord),
           businessContexts,
           turnContexts,

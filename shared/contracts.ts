@@ -154,6 +154,8 @@ export const chatMessageSchema = z.object({
   message: z.string().trim().min(1).max(4000),
   /** 本轮工作模式；缺省为 chat，保持历史前端兼容 */
   mode: chatModeSchema.optional(),
+  /** 本轮绑定的备课资料工作区（chat_sandbox_workspaces.id）；仅 lesson_prep 使用 */
+  sandboxWorkspaceId: z.string().uuid().optional(),
   /** 单对象写法（历史前端与深链）：等价于 contexts 只有一项，两者同时出现时以 contexts 为准 */
   contextType: chatContextTypeSchema.optional(),
   contextId: z.string().uuid().optional(),

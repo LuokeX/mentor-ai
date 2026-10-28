@@ -72,6 +72,11 @@ export interface AgentUserContext {
   /** 上一轮模块评分（模块分诊依据）。 */
   lastModuleScores?: Record<ModuleId, number>
   /**
+   * 本轮绑定的文档工作区（sandbox-runner 内部 ID）。
+   * 仅备课模式且会话有有效工作区时存在；工作区工具据此读写临时资料，不能访问业务库。
+   */
+  sandboxWorkspaceId?: string
+  /**
    * 学校生效的数据模式。工具与入口按它决定外发内容是否脱敏：
    * full_context 原样外发，redacted 过 redactPii（local 模式不会进入 Agent）。
    */

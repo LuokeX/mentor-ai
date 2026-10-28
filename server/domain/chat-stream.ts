@@ -28,6 +28,7 @@ import { compactSessionHistory, planCompaction } from './chat-compaction'
 import { contextTypeLabel } from './chat-context-switch'
 import { sanitizeHistoryForSummary } from './chat-clarification'
 import { redactOutboundText, type AiDataMode } from './ai-governance'
+import { sandboxClient } from './sandbox-client'
 import { generateChatTitle } from '../integrations/deepseek'
 import { buildChatTitle } from './chat-titles'
 import { trackProductEvent } from './product-events'
@@ -268,6 +269,8 @@ export interface RunAssistantTurnInput {
   message: string
   /** 本轮工作模式：chat（默认）或 lesson_prep（备课）；只影响 system 提示词与输出结构 */
   mode?: ChatMode
+  /** 本轮绑定的文档工作区（runner ID）；仅 lesson_prep 且存在有效工作区时传入 */
+  sandboxWorkspaceId?: string
   /** 是否不引入档案 */
   withoutRecord: boolean
   /**
@@ -381,6 +384,7 @@ export function buildBusinessContextText(input: {
     turnContexts: recordBindings.length ? [] : (input.turnContexts ?? []),
     teacherProfileText: input.teacherProfileText,
     lastModuleScores: input.lastModuleScores,
+    sandboxWorkspaceId: input.sandboxWorkspaceId,
     dataMode,
     withoutRecord: input.withoutRecord,
     currentQuestion: outbound(input.message),
@@ -525,6 +529,37 @@ export function buildBusinessContextText(input: {
   }).returning({ id: schema.chatMessages.id })
   if (!assistantMessage) throw new Error('Agent 回答保存失败')
 
+  // 备课回答自动写入工作区：Word 导出优先读这份产物，教师/Agent 后续可继续修改。
+  // 写入失败不影响回答落库与返回；导出会回退到消息正文。
+  let sandboxArtifact: { name: string, size: number } | null = null
+  if (input.mode === 'lesson_prep' && input.sandboxWorkspaceId && answer.trim()) {
+    try {
+      const client = sandboxClient(event)
+      if (client) {
+        const name = `备课方案-${assistantMessage.id.slice(0, 8)}.md`
+        // 自动存产物最多等 5s：runner 卡住时不能拖住 answer 事件，导出会回退消息正文。
+        const file = await client.putFile(input.sandboxWorkspaceId, name, Buffer.from(answer, 'utf8'), 5_000)
+        sandboxArtifact = { name: file.name, size: file.size }
+        await db.update(schema.chatMessages).set({
+          metadata: sql`${schema.chatMessages.metadata} || ${JSON.stringify({ sandboxArtifact })}::jsonb`
+        }).where(and(
+          eq(schema.chatMessages.id, assistantMessage.id),
+          eq(schema.chatMessages.ownerUserId, user.id)
+        ))
+        await trackProductEvent(event, {
+          schoolId: user.schoolId,
+          userId: user.id,
+          eventName: 'lesson_prep_artifact_saved',
+          targetType: 'chat_message',
+          targetId: assistantMessage.id,
+          metadata: { chars: answer.length }
+        })
+      }
+    } catch (error) {
+      console.warn('[chat-stream] 备课方案写入工作区失败:', error instanceof Error ? error.message : error)
+    }
+  }
+
   // 观测：回答校验命中、工具调用（只记工具名/状态/耗时，不记参数与正文）
   if (inspection.violations.length) {
     await trackProductEvent(event, {
@@ -555,7 +590,7 @@ export function buildBusinessContextText(input: {
   }
 
   await trackProductEvent(event, { schoolId: user.schoolId, userId: user.id, eventName: 'assistant_turn_completed', metadata: { mode: input.mode ?? 'chat', latencyMs: Date.now() - startedAt, firstTextMs: firstTextMs ?? Date.now() - startedAt, reviewed: delivery.requiresReview, repaired } })
-  emit('answer', { messageId: assistantMessage.id, text: answer, mode: 'agent' })
+  emit('answer', { messageId: assistantMessage.id, text: answer, mode: 'agent', sandboxArtifact })
 
   // 对话推进后提炼简短智能标题（DeepSeek 不可用时降级截断法）
   try {

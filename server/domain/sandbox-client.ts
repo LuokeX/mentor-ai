@@ -71,7 +71,7 @@ export class SandboxClient {
     return payload.workspaceId
   }
 
-  async putFile(workspaceId: string, name: string, data: Buffer): Promise<SandboxFile> {
+  async putFile(workspaceId: string, name: string, data: Buffer, timeoutMs = 30_000): Promise<SandboxFile> {
     const response = await this.request(
       `/v1/workspaces/${encodeURIComponent(workspaceId)}/files/${encodeURIComponent(name)}`,
       {
@@ -79,7 +79,7 @@ export class SandboxClient {
         headers: { 'content-type': 'application/octet-stream' },
         body: new Uint8Array(data)
       },
-      30_000
+      timeoutMs
     )
     const payload = await response.json() as { name?: unknown; size?: unknown }
     return {

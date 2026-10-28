@@ -57,6 +57,15 @@ describe('shared API contracts', () => {
     expect(chatMessageSchema.safeParse({ message: '看看这个学生', mode: 'classic' }).success).toBe(false)
   })
 
+  it('accepts an optional sandbox workspace id and rejects a non-uuid', () => {
+    expect(chatMessageSchema.safeParse({
+      message: '设计一节班会课',
+      mode: 'lesson_prep',
+      sandboxWorkspaceId: 'd9c4988e-e585-4a69-8e83-a87b79b88827'
+    }).success).toBe(true)
+    expect(chatMessageSchema.safeParse({ message: '设计一节班会课', sandboxWorkspaceId: 'not-a-uuid' }).success).toBe(false)
+  })
+
   it('redacts phone, email and named teacher references before model calls', () => {
     const value = redactPii('张老师电话是13812345678，邮箱 zhang@example.com')
     expect(value).not.toContain('张老师')

@@ -480,6 +480,31 @@ export const chatMessages = pgTable('chat_messages', {
   index('chat_messages_school_category_idx').on(table.schoolId, table.questionCategory, table.createdAt)
 ])
 
+/**
+ * 备课资料工作区（Phase 2）：把 sandbox-runner 的临时工作区绑定到教师/会话。
+ *
+ * 只存工作区元数据，不存文件内容；文件在 runner 的 tmpfs 中，TTL 到期或教师删除时清理。
+ * providerWorkspaceId 是 runner 内部 ID，不返回给浏览器；浏览器只用本表 id。
+ */
+export const chatSandboxWorkspaces = pgTable('chat_sandbox_workspaces', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  schoolId: uuid('school_id').notNull().references(() => schools.id, { onDelete: 'cascade' }),
+  ownerUserId: uuid('owner_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  sessionId: uuid('session_id').references(() => chatSessions.id, { onDelete: 'set null' }),
+  providerWorkspaceId: uuid('provider_workspace_id').notNull(),
+  /** active / expired / deleted */
+  status: varchar('status', { length: 20 }).default('active').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  ...timestamps
+}, table => [
+  uniqueIndex('chat_sandbox_workspaces_provider_uidx').on(table.providerWorkspaceId),
+  uniqueIndex('chat_sandbox_workspaces_active_session_uidx')
+    .on(table.sessionId)
+    .where(sql`${table.status} = 'active' AND ${table.sessionId} IS NOT NULL`),
+  index('chat_sandbox_workspaces_owner_idx').on(table.ownerUserId, table.status),
+  index('chat_sandbox_workspaces_expiry_idx').on(table.expiresAt)
+])
+
 export const routingDecisions = pgTable('routing_decisions', {
   id: uuid('id').defaultRandom().primaryKey(),
   schoolId: uuid('school_id').notNull().references(() => schools.id),

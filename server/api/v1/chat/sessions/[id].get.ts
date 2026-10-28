@@ -3,6 +3,7 @@ import { requireUser } from '../../../../utils/auth'
 import { decryptSensitive } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 import { loadSessionContexts } from '../../../../domain/chat-session-contexts'
+import { lessonPrepWorkspaceIdForSession } from '../../../../domain/lesson-prep-workspace'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -21,6 +22,8 @@ export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
   // 会话对象集（主对象 + 关联对象）：前端据此恢复输入框上方的多枚对象胶囊
   const contexts = await loadSessionContexts(event, id, session)
+  // 备课资料工作区：只返回本表 id；过期/失效时返回 null，前端显示为空
+  const sandboxWorkspaceId = await lessonPrepWorkspaceIdForSession(event, { id: user.id, schoolId: user.schoolId! }, id)
   const messages = await db.select({
     id: schema.chatMessages.id,
     role: schema.chatMessages.role,
@@ -36,7 +39,7 @@ export default defineEventHandler(async (event) => {
     ))
     .orderBy(asc(schema.chatMessages.createdAt))
   return {
-    session: { ...session, contexts },
+    session: { ...session, contexts, sandboxWorkspaceId },
     messages: messages.map(item => ({
       id: item.id,
       role: item.role,

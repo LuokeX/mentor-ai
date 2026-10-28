@@ -8,6 +8,7 @@ import { detectSafetySignals, createSafetyReferral } from '../../../../../domain
 import { decideEntryObjectUse, resolveMentionedObjects, type MentionResolution } from '../../../../../domain/assistant-object-mention'
 import { resolveAssistantContextRefs, type AssistantContextRef } from '../../../../../domain/assistant-context'
 import { resolveAiGovernance } from '../../../../../domain/ai-governance'
+import { findActiveLessonPrepWorkspaceForSession } from '../../../../../domain/lesson-prep-workspace'
 import { buildContextSwitchNote, readContextSwitches } from '../../../../../domain/chat-context-switch'
 import { loadSessionContexts } from '../../../../../domain/chat-session-contexts'
 import { trackProductEvent } from '../../../../../domain/product-events'
@@ -108,6 +109,9 @@ export default defineEventHandler(async (event) => {
   // 模式随原提问落库：重新生成按同一种模式重跑，避免备课方案被聊天提示词覆盖
   const storedMode = (question.metadata as { mode?: unknown } | null)?.mode
   const mode: ChatMode = storedMode === 'lesson_prep' ? 'lesson_prep' : 'chat'
+  const lessonWorkspace = mode === 'lesson_prep'
+    ? await findActiveLessonPrepWorkspaceForSession(event, { id: user.id, schoolId: user.schoolId }, sessionId)
+    : null
 
   const governance = await resolveAiGovernance(event, user.schoolId, user.id)
   // 会话绑定对象集：重新生成按当前绑定重跑（与普通提问同一口径）
@@ -166,6 +170,7 @@ export default defineEventHandler(async (event) => {
         emit(controller, 'ack', {
           sessionId,
           mode,
+          sandboxWorkspaceId: lessonWorkspace?.id,
           context: businessContexts[0]
             ? { type: businessContexts[0].type, id: businessContexts[0].id, label: businessContexts[0].label }
             : undefined,
@@ -239,6 +244,7 @@ export default defineEventHandler(async (event) => {
           sessionId,
           message: questionText,
           mode,
+          sandboxWorkspaceId: lessonWorkspace?.providerWorkspaceId,
           withoutRecord: Boolean(body.withoutRecord),
           businessContexts,
           turnContexts,

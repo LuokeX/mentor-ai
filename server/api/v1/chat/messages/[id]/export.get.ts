@@ -7,6 +7,8 @@ import { writeAudit } from '../../../../../utils/audit'
 import { formatBeijingDateStamp } from '../../../../../utils/format-time'
 import { buildLessonPlanDocx } from '../../../../../domain/lesson-plan-docx'
 import { trackProductEvent } from '../../../../../domain/product-events'
+import { sandboxClient } from '../../../../../domain/sandbox-client'
+import { findActiveLessonPrepWorkspaceForSession } from '../../../../../domain/lesson-prep-workspace'
 
 const querySchema = z.object({
   /** 目前只支持 Word；后续可扩展 markdown / pdf */
@@ -63,10 +65,35 @@ export default defineEventHandler(async (event) => {
     .limit(1)
 
   const config = useRuntimeConfig(event)
-  const markdown = decryptSensitive(message.contentEnc, config.encryptionKey)
+  const metadata = message.metadata as { mode?: unknown, sandboxArtifact?: { name?: unknown } } | null
+  let markdown = decryptSensitive(message.contentEnc, config.encryptionKey)
+  let source: 'workspace' | 'message' = 'message'
+
+  // 备课回答优先导出工作区里的产物：教师/Agent 后续在工作区改过的版本会覆盖原回答。
+  // 工作区过期、产物被删除或沙箱关闭时回退到消息正文。
+  const artifactName = typeof metadata?.sandboxArtifact?.name === 'string' ? metadata.sandboxArtifact.name : null
+  if (artifactName) {
+    try {
+      const workspace = await findActiveLessonPrepWorkspaceForSession(
+        event,
+        { id: user.id, schoolId: user.schoolId },
+        message.sessionId
+      )
+      const client = sandboxClient(event)
+      if (workspace && client) {
+        const artifact = (await client.getFile(workspace.providerWorkspaceId, artifactName)).toString('utf8').trim()
+        if (artifact) {
+          markdown = artifact
+          source = 'workspace'
+        }
+      }
+    } catch {
+      // 回退到消息正文；不因工作区异常阻断导出
+    }
+  }
   if (!markdown.trim()) throw createError({ statusCode: 409, message: '回答内容为空，无法导出' })
 
-  const mode = (message.metadata as { mode?: unknown } | null)?.mode === 'lesson_prep' ? 'lesson_prep' : 'chat'
+  const mode = metadata?.mode === 'lesson_prep' ? 'lesson_prep' : 'chat'
   const prefix = mode === 'lesson_prep' ? '备课方案' : 'AI助手回答'
   const title = sanitizeFilenamePart(session?.title || '') || prefix
   const docx = buildLessonPlanDocx({ title, markdown, exportedAt: new Date() })
@@ -77,7 +104,7 @@ export default defineEventHandler(async (event) => {
     action: 'chat.message.export',
     targetType: 'chat_message',
     targetId: messageId,
-    metadata: { format: 'docx', mode }
+    metadata: { format: 'docx', mode, source }
   })
   await trackProductEvent(event, {
     schoolId: user.schoolId,
@@ -85,7 +112,7 @@ export default defineEventHandler(async (event) => {
     eventName: 'assistant_answer_exported',
     targetType: 'chat_message',
     targetId: messageId,
-    metadata: { format: 'docx', mode }
+    metadata: { format: 'docx', mode, source }
   })
 
   const titlePart = title && title !== prefix ? `-${title}` : ''

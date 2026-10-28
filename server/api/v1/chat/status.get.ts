@@ -1,4 +1,9 @@
 import { requireUser } from '../../../utils/auth'
+import {
+  LESSON_PREP_MAX_FILE_BYTES,
+  LESSON_PREP_SUPPORTED_EXTENSIONS,
+  lessonPrepUploadEnabled
+} from '../../../domain/lesson-prep-workspace'
 
 export default defineEventHandler(async (event) => {
   await requireUser(event, ['teacher'])
@@ -15,6 +20,11 @@ export default defineEventHandler(async (event) => {
     speech: {
       asr: speechReady,
       tts: speechReady
+    },
+    lessonPrep: {
+      uploads: lessonPrepUploadEnabled(event),
+      supportedTypes: [...LESSON_PREP_SUPPORTED_EXTENSIONS],
+      maxFileBytes: LESSON_PREP_MAX_FILE_BYTES
     }
   }
 })

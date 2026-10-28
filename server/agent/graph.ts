@@ -221,7 +221,11 @@ const TOOL_TITLES: Record<string, string> = {
   class_overview: '班级学生概览',
   teacher_brief: '读取教师待办',
   resource_lookup: '查询三库资源',
-  resource_detail: '查询三库明细'
+  resource_detail: '查询三库明细',
+  workspace_list_files: '查看备课资料',
+  workspace_read_file: '读取备课资料',
+  workspace_write_file: '保存备课草稿',
+  workspace_delete_file: '删除备课资料'
 }
 
 /** 从 ToolMessage content 里提取知识库来源片段（knowledge_search 结果 → SourceItem[]）。 */
