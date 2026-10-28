@@ -141,10 +141,10 @@ DASHSCOPE_API_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 - **模式传递**：`POST /api/v1/chat/messages` 的 `mode` 取 `chat`（默认）或 `lesson_prep`；模式随教师提问写入消息 `metadata`，重新生成按原模式重跑，历史消息据此回看。
 - **提示词**：`assistant_lesson_prep`（`server/domain/ai-prompt-baselines.ts` + `ai-config.ts` 注册表），输出结构由 `server/agent/prompts.ts` 的 `buildLessonPrepFormatInstruction` 注入：日常教案、赛课、班会、项目化四种结构；缺失信息先按合理假设补全，末尾最多列 3 条待确认项。
 - **前端模板**：`app/utils/lesson-prep.ts` 的 `LESSON_PREP_TEMPLATES` 提供学情/班情信息表、赛课设计、班会课设计三个模板；点击只填入输入框，不自动发送。
-- **Word 导出**：助手消息的「导出 Word」按钮调用 `GET /api/v1/chat/messages/{id}/export?format=docx`。服务端按 OOXML 最小结构生成 `.docx`（`server/domain/lesson-plan-docx.ts`，只用 Node 内置 zlib，不新增依赖、不落盘），支持标题、段落、粗斜体、行内代码、列表、引用、代码块、分隔线与 Markdown 表格；只允许导出本人未删除的助手消息，写审计 `chat.message.export` 与产品事件 `assistant_answer_exported`，响应 `no-store`。
-- **工作区沙箱（Phase 1）**：独立 `sandbox-runner` 容器提供每任务工作区与 txt/md/docx 文本抽取，默认关闭；设计、威胁模型与启用步骤见 [AI_AGENT_SANDBOX.md](AI_AGENT_SANDBOX.md)。Agent 工作区工具与上传 UI 在 Phase 2 接入。
+- **Word 导出**：助手消息的「导出 Word」按钮调用 `GET /api/v1/chat/messages/{id}/export?format=docx`。服务端按 OOXML 最小结构生成 `.docx`（`server/domain/lesson-plan-docx.ts`，只用 Node 内置 zlib，不新增依赖、不落盘），支持标题、段落、粗斜体、行内代码、列表、引用、代码块、分隔线与 Markdown 表格；只允许导出本人未删除的助手消息，写审计 `chat.message.export` 与产品事件 `assistant_answer_exported`，响应 `no-store`。备课回答会自动写入工作区为 `备课方案-<messageId前8位>.md`；导出优先从工作区取这份产物（教师/Agent 后续修改会生效），产物被删除、工作区过期或沙箱关闭时回退到消息正文；审计/事件记录 `source=workspace|message`。
+- **工作区沙箱（Phase 2）**：独立 `sandbox-runner` 容器提供每任务工作区与 txt/md/docx 文本抽取，默认关闭；设计、威胁模型与启用步骤见 [AI_AGENT_SANDBOX.md](AI_AGENT_SANDBOX.md)。备课资料上传（txt/md/docx，单文件 ≤20MB）通过 `/api/v1/chat/lesson-prep/workspaces` 创建/复用工作区，文件经 app 转发到 runner；工作区在首次发消息时绑定会话，元数据表 `chat_sandbox_workspaces`（迁移 0074），TTL 30 分钟。Agent 在 lesson_prep + 有工作区时追加 4 个工具（`workspace_list_files` / `workspace_read_file` / `workspace_write_file` / `workspace_delete_file`），只读写 runner 临时工作区，不写业务库；创建/上传/删除写审计与产品事件。前端「添加资料」按钮、文件胶囊与状态在 `app/pages/index.vue`、`app/composables/useLessonWorkspace.ts`。
 - **不变的部分**：会话、安全规则（本地关键词 + 语义复核、后台预警）、数据模式脱敏、知识检索工具与 C 端积分口径都不变；备课消息与普通问答同样扣 100 积分（会员免扣）。
-- **本期未做**：文件上传/解析、PPT/Excel/图片导出、案例/视频推荐、学习中心与付费链路；这些仍按 `临时文件/备课产品设计(1)/班主任助力智能体-备课功能PRD.docx` 分块推进。
+- **本期未做**：PPT/Excel/图片导出、xlsx/pptx 解析、案例/视频推荐、学习中心与付费链路；这些仍按 `临时文件/备课产品设计(1)/班主任助力智能体-备课功能PRD.docx` 分块推进。
 
 ## 4. 三库运营台
 

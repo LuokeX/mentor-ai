@@ -1,6 +1,6 @@
 # AI 工作 Agent 与文档工作区沙箱
 
-> 状态：Phase 0/1（2026-10-28）。`SANDBOX_ENABLED=false` 默认关闭；当前只落了独立 runner 与 app 客户端骨架，Agent 工具和上传 UI 在 Phase 2 接入。
+> 状态：Phase 0–3a 基础（2026-10-28）。`SANDBOX_ENABLED=false` 默认关闭；已接入资料上传、工作区与会话绑定、4 个工作区工具、备课回答自动写入工作区与 Word 从工作区导出；PPT/权限确认/C 端计费待后续。
 
 ## 1. 为什么做
 
@@ -49,7 +49,8 @@ app（Nuxt/Nitro）
 
 - **模型不在沙箱里**：模型只做决策；工具调用由 app 转发到 runner 或现有只读工具。
 - **runner 不在 app 进程里**：独立镜像、独立网络、独立资源限额；app 通过内部地址访问。
-- **Phase 2 的工具**：`sandbox_write_file`、`sandbox_read_file`、`sandbox_list_files`、`sandbox_extract`、`sandbox_generate_docx`。全部限制在工作区内，写业务库的工具不新增。
+- **Phase 2 的工具**：`workspace_list_files`、`workspace_read_file`、`workspace_write_file`、`workspace_delete_file`。只在备课模式且会话绑定有效工作区时暴露；全部限制在工作区内，写业务库的工具不新增；教师选择“不带档案”时不暴露。
+- **Phase 3a 产物**：备课回答落库后自动写入工作区 `备课方案-<messageId前8位>.md`；Word 导出优先读这份产物（教师/Agent 后续修改生效），产物被删除/工作区过期/沙箱关闭时回退到消息正文。
 
 ## 5. runner API（Phase 1）
 
@@ -68,13 +69,30 @@ app（Nuxt/Nitro）
 
 错误统一为 `{ error: { code, message } }`，中文 message；不返回堆栈。
 
+### app 对外接口（浏览器调用）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/chat/status` | `lessonPrep.uploads` 表示上传是否可用；同时给出支持类型与 20MB 上限 |
+| POST | `/api/v1/chat/lesson-prep/workspaces` | 创建或复用当前教师的工作区（可带 `sessionId`） |
+| POST | `/api/v1/chat/lesson-prep/workspaces/{id}/files` | 原始 body + `x-file-name`（URL 编码）上传一个文件 |
+| GET | `/api/v1/chat/lesson-prep/workspaces/{id}/files` | 文件列表（名称/大小/更新时间） |
+| DELETE | `/api/v1/chat/lesson-prep/workspaces/{id}/files?name=` | 删除一个文件 |
+| DELETE | `/api/v1/chat/lesson-prep/workspaces/{id}` | 删除工作区并清理 runner 临时文件 |
+
+- 浏览器只拿 `chat_sandbox_workspaces.id`，runner ID 不外露。
+- 首次发 `lesson_prep` 消息时带上 `sandboxWorkspaceId`，或由服务端按会话当前绑定解析；绑定后同一会话后续轮次自动沿用。
+- nginx 对 `/api/v1/chat/lesson-prep/workspaces/` 单独放宽 `client_max_body_size 25m`。
+
 ## 6. 权限与数据治理
 
-- **工作区**：app 把 `workspaceId` 绑定到当前教师 + 会话/任务；不同教师/学校不共享。
-- **文件**：上传后只存在 runner 的 tmpfs；TTL 到期或任务结束删除；不写 app 数据库。
+- **工作区**：app 用 `chat_sandbox_workspaces` 把本表 id 绑定到当前教师 + 会话；不同教师/学校不共享；同一会话最多一个 active 工作区（部分唯一索引）。
+- **文件**：上传后只存在 runner 的 tmpfs；元数据不存文件内容；TTL 30 分钟，到期/删除时清理 runner 临时文件；app 表只保留工作区元数据。
 - **模型上下文**：runner 返回的文本由 app 按 `local/redacted/full_context` 处理后再发给 DeepSeek；`local` 模式不调用外部模型。
-- **业务库**：Agent 仍只有现有只读工具；写入走 REST + 归属/并发/审计。
-- **导出**：Word/PPT 等产物由教师点击导出；导出事件写审计。
+- **业务库**：Agent 仍只有现有只读业务工具；4 个工作区工具只读写 runner 临时文件，不写业务库；业务写入走 REST + 归属/并发/审计。
+- **工具暴露**：仅 `lesson_prep` + 会话绑定有效工作区时暴露；`withoutRecord` 时不暴露；`AI_AGENT_ENABLED_TOOLS` 白名单仍生效。
+- **审计**：工作区创建/上传/删除写 `chat.lesson_prep.*` 审计与 `lesson_prep_*` 产品事件，只记扩展名/大小，不记文件名、正文或文件内容。
+- **导出**：备课回答自动写入工作区；Word 导出优先读工作区产物（审计/事件 `source=workspace`），产物缺失时回退消息正文（`source=message`）；PPT 待后续。
 - **积分**：Phase 3 接入 C 端计费（按任务/轮次或积分），当前不改变现有问答 100 积分口径。
 
 ## 7. 部署与运维
@@ -99,8 +117,9 @@ app（Nuxt/Nitro）
 |---|---|---|
 | 0 | 本文档 + 威胁模型 + compose/环境变量 | 本次 |
 | 1 | runner（工作区/文件/抽取）、SandboxClient、单测 | 本次 |
-| 2 | 备课上传 UI、Agent 工作区工具、Word/PPT 产物、权限与审计 | 待排期 |
-| 3 | 预览/版本/清理、C 端计费与配额、测试环境验收 | 待排期 |
+| 2 | 备课上传 UI、会话工作区绑定、4 个工作区工具、上传/删除审计 | 已完成基础（2026-10-28） |
+| 3a | 备课回答自动写入工作区、Word 导出优先读工作区产物、回退消息正文 | 已完成基础（2026-10-28） |
+| 3b | PPT 从工作区生成、权限确认、C 端计费与配额、测试环境验收 | 待排期 |
 | 4 | 抽象为通用教师工作区，再评估子 Agent/记忆 | 待排期 |
 
 ## 9. 待确认

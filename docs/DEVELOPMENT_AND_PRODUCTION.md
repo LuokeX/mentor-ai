@@ -229,7 +229,8 @@ IMAGE_TAG=vX.Y.Z docker compose --profile sandbox up -d
 - 网络：`sandbox-internal` 为 `internal: true`，runner 无外网；只有 app 同时挂默认网络与内部网络。不要给 runner 加 `ports`，不要挂载应用代码或密钥。
 - 验证：`docker compose --profile sandbox ps` 中 runner healthy；`docker compose exec app wget -qO- http://sandbox-runner:3200/health` 返回 200；从宿主机或其他网络访问 3200 应失败。
 - 回滚：`.env` 设 `SANDBOX_ENABLED=false`，再 `docker compose --profile sandbox stop sandbox-runner`；app 不依赖 runner 即可启动。
-- 范围：Phase 1 runner 只支持 txt/md/docx 文本抽取，不执行 shell、不接模型；Agent 工具与上传 UI 在 Phase 2 接入。启用沙箱时，发布构建需额外重建 `sandbox-runner` 镜像；未启用时不需要。
+- 范围：Phase 2 已接入备课资料上传（txt/md/docx，≤20MB）、会话工作区绑定与 4 个工作区工具；runner 不执行 shell、不接模型、无外网。迁移 `0074` 新增 `chat_sandbox_workspaces`（只存元数据，不存文件内容）。启用沙箱时，发布构建需额外重建 `sandbox-runner` 镜像并执行 migration；未启用时 app 不调用 runner，但 compose 仍会创建 `sandbox-internal` 网络。
+- 上传接口：`/api/v1/chat/lesson-prep/workspaces/` 在 nginx 单独放宽到 25MB；启用沙箱后请同步测试/正式 nginx 配置。
 
 ## 7. 正式环境版本更新
 

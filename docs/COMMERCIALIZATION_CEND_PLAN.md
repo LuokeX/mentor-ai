@@ -387,7 +387,9 @@ C 端验收修复（2026-10-26，测试环境镜像 `20261026-4`）：
 - 新增 `assistant_lesson_prep` 提示词与 `buildLessonPrepFormatInstruction`，支持日常教案、赛课、班会、项目化四种输出结构。
 - 新增 `app/utils/lesson-prep.ts` 三个提示词模板（学情/班情、赛课、班会）；模式随提问落库，重新生成按原模式重跑。
 - 新增「导出 Word」：助手消息按 OOXML 生成 `.docx`（标题、段落、列表、表格等），只导出本人回答，写审计与产品事件。
-- 本期未做：文件上传/解析、PPT/Excel/图片导出、案例/视频推荐、学习中心与付费链路；后续按 PRD 分块推进。
+- Phase 2：备课资料上传（txt/md/docx，≤20MB）、会话工作区绑定、4 个工作区工具（list/read/write/delete），默认 `SANDBOX_ENABLED=false`；上传/删除写审计与产品事件。
+- Phase 3a：备课回答自动写入工作区 `备课方案-<id>.md`；Word 导出优先读工作区产物（教师/Agent 修改生效），产物缺失时回退消息正文。
+- 本期未做：PPT/Excel/图片导出、xlsx/pptx 解析、案例/视频推荐、学习中心与付费链路；后续按 PRD 分块推进。
 - 详细说明见 `docs/AI_ASSISTANT_AND_KNOWLEDGE.md` 第 3.3 节。
 
 ## 14. 交付物
