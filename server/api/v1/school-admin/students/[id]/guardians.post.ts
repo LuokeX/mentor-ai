@@ -16,10 +16,12 @@ export default defineEventHandler(async (event) => {
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
   const secret = useRuntimeConfig(event).encryptionKey
   let guardianId = body.guardianId
+  let guardianRelation: string | null = null
   if (guardianId) {
-    const [guardian] = await db.select({ id: schema.guardians.id }).from(schema.guardians)
+    const [guardian] = await db.select({ id: schema.guardians.id, relation: schema.guardians.relation }).from(schema.guardians)
       .where(and(eq(schema.guardians.id, guardianId), eq(schema.guardians.schoolId, schoolId))).limit(1)
     if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
+    guardianRelation = guardian.relation
   } else if (body.guardian) {
     const ownerUserId = body.guardian.ownerUserId || student.ownerUserId
     await assertActiveTeacher(event, schoolId, ownerUserId)
@@ -35,13 +37,15 @@ export default defineEventHandler(async (event) => {
     }).returning({ id: schema.guardians.id })
     if (!created) throw createError({ statusCode: 500, message: '家长创建失败' })
     guardianId = created.id
+    guardianRelation = body.guardian.relation || null
   }
   if (!guardianId) throw createError({ statusCode: 422, message: '家长信息不完整' })
+  const relation = body.guardian?.relation || guardianRelation || null
   await db.insert(schema.studentGuardians)
-    .values({ studentId, guardianId, schoolId })
+    .values({ studentId, guardianId, schoolId, relation })
     .onConflictDoUpdate({
       target: [schema.studentGuardians.studentId, schema.studentGuardians.guardianId],
-      set: { status: 'active', schoolId },
+      set: { status: 'active', schoolId, relation },
     })
   await writeAudit(event, {
     schoolId, actorId: actor.id, action: 'school_admin.student_guardian.link',

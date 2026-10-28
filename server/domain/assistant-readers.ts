@@ -18,6 +18,7 @@ import type { ModuleId } from '../../shared/contracts'
 import type { AssessmentDefinition } from '../../shared/assessments'
 import { MODULE_ASSESSMENT_CONTEXT_TYPES } from '../../shared/assessments'
 import { filterBySchoolSection, type SchoolSection } from '../../shared/school-section'
+import { guardianDisplayLabel, type GuardianDisplayLink } from '../../shared/guardian-display'
 import { decryptSensitive } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
 import { redactOutboundText, type AiDataMode } from './ai-governance'
@@ -83,7 +84,7 @@ export async function resolveAssistantObjectLabels(
   const guardianIds = values.filter(item => item.type === 'guardian').map(item => item.id)
   const classIds = values.filter(item => item.type === 'class').map(item => item.id)
 
-  const [students, guardians, classes] = await Promise.all([
+  const [students, guardians, classes, guardianLinks] = await Promise.all([
     studentIds.length
       ? db.select({ id: schema.students.id, nameEnc: schema.students.nameEnc }).from(schema.students)
         .where(and(eq(schema.students.schoolId, user.schoolId), inArray(schema.students.id, studentIds)))
@@ -95,8 +96,34 @@ export async function resolveAssistantObjectLabels(
     classIds.length
       ? db.select({ id: schema.classes.id, name: schema.classes.name }).from(schema.classes)
         .where(and(eq(schema.classes.schoolId, user.schoolId), inArray(schema.classes.id, classIds)))
-      : Promise.resolve([] as Array<{ id: string, name: string }>)
+      : Promise.resolve([] as Array<{ id: string, name: string }>),
+    guardianIds.length
+      ? db.select({
+        guardianId: schema.studentGuardians.guardianId,
+        relation: schema.studentGuardians.relation,
+        studentNameEnc: schema.students.nameEnc,
+      }).from(schema.studentGuardians)
+        .innerJoin(schema.students, and(
+          eq(schema.students.id, schema.studentGuardians.studentId),
+          eq(schema.students.ownerUserId, user.userId),
+          eq(schema.students.schoolId, user.schoolId),
+        ))
+        .where(and(
+          eq(schema.studentGuardians.schoolId, user.schoolId),
+          eq(schema.studentGuardians.status, 'active'),
+          inArray(schema.studentGuardians.guardianId, guardianIds),
+        ))
+      : Promise.resolve([] as Array<{ guardianId: string, relation: string | null, studentNameEnc: string }>),
   ])
+  const guardianLinksById = new Map<string, GuardianDisplayLink[]>()
+  for (const link of guardianLinks) {
+    const list = guardianLinksById.get(link.guardianId) ?? []
+    list.push({
+      studentName: truncateAssistantText(outboundAssistantText(decryptSensitive(link.studentNameEnc, secret), user.dataMode), 40),
+      relation: link.relation,
+    })
+    guardianLinksById.set(link.guardianId, list)
+  }
 
   for (const row of students) {
     labels.set(`student:${row.id}`, {
@@ -110,7 +137,7 @@ export async function resolveAssistantObjectLabels(
     labels.set(`guardian:${row.id}`, {
       type: 'guardian',
       id: row.id,
-      label: row.relation ? `${name} · ${row.relation}` : name
+      label: guardianDisplayLabel(guardianLinksById.get(row.id) ?? [], name, row.relation),
     })
   }
   for (const row of classes) {
@@ -584,6 +611,8 @@ export interface AssistantCommunicationRow {
   object: AssistantObjectLabel | null
   studentLabel: string | null
   guardianRelation: string | null
+  /** 「某生爸爸（真实姓名）」；无关联学生时回退「姓名 · 关系」 */
+  guardianLabel: string | null
   parentType: string | null
   attitudeType: string | null
   riskLevel: string | null
@@ -635,7 +664,7 @@ export async function readCommunicationsForAssistant(
 
   const studentIds = [...new Set(rows.map(row => row.studentId).filter(Boolean))] as string[]
   const guardianIds = [...new Set(rows.map(row => row.guardianId).filter(Boolean))] as string[]
-  const [students, guardians] = await Promise.all([
+  const [students, guardians, guardianLinks] = await Promise.all([
     studentIds.length
       ? db.select({ id: schema.students.id, nameEnc: schema.students.nameEnc }).from(schema.students)
         .where(and(eq(schema.students.schoolId, user.schoolId), inArray(schema.students.id, studentIds)))
@@ -643,13 +672,26 @@ export async function readCommunicationsForAssistant(
     guardianIds.length
       ? db.select({ id: schema.guardians.id, nameEnc: schema.guardians.nameEnc, relation: schema.guardians.relation }).from(schema.guardians)
         .where(and(eq(schema.guardians.schoolId, user.schoolId), inArray(schema.guardians.id, guardianIds)))
-      : Promise.resolve([] as Array<{ id: string, nameEnc: string, relation: string | null }>)
+      : Promise.resolve([] as Array<{ id: string, nameEnc: string, relation: string | null }>),
+    guardianIds.length
+      ? db.select({
+        studentId: schema.studentGuardians.studentId,
+        guardianId: schema.studentGuardians.guardianId,
+        relation: schema.studentGuardians.relation,
+      }).from(schema.studentGuardians)
+        .where(and(
+          eq(schema.studentGuardians.schoolId, user.schoolId),
+          eq(schema.studentGuardians.status, 'active'),
+          inArray(schema.studentGuardians.guardianId, guardianIds),
+        ))
+      : Promise.resolve([] as Array<{ studentId: string, guardianId: string, relation: string | null }>),
   ])
   const studentNameById = new Map(students.map(row => [
     row.id,
     truncateAssistantText(outboundAssistantText(decryptSensitive(row.nameEnc, secret), user.dataMode), 40)
   ]))
   const guardianRelationById = new Map(guardians.map(row => [row.id, row.relation]))
+  const guardianLinkRelation = new Map(guardianLinks.map(row => [`${row.studentId}:${row.guardianId}`, row.relation]))
   const guardianNameById = new Map<string, string>(guardians.map(row => [
     row.id,
     truncateAssistantText(outboundAssistantText(decryptSensitive(row.nameEnc, secret), user.dataMode), 40)
@@ -658,23 +700,30 @@ export async function readCommunicationsForAssistant(
   return {
     communications: rows.map(row => {
       const studentLabel = row.studentId ? studentNameById.get(row.studentId) || null : null
-      const guardianRelation = row.guardianId ? guardianRelationById.get(row.guardianId) || null : null
+      const linkRelation = row.studentId && row.guardianId
+        ? guardianLinkRelation.get(`${row.studentId}:${row.guardianId}`) || null
+        : null
+      const guardianRelation = row.guardianId ? linkRelation || guardianRelationById.get(row.guardianId) || null : null
       const guardianName = row.guardianId ? guardianNameById.get(row.guardianId) || null : null
-      // 对象标签：学生优先，其次家长（姓名 · 关系）；取不到名称时留 null，不用 id 顶替
+      const guardianLabel = guardianName
+        ? guardianDisplayLabel(
+            studentLabel ? [{ studentName: studentLabel, relation: guardianRelation }] : [],
+            guardianName,
+            guardianRelation
+          )
+        : null
+      // 对象标签：学生优先，其次家长（某生爸爸（姓名））；取不到名称时留 null，不用 id 顶替
       const object: AssistantObjectLabel | null = row.studentId && studentLabel
         ? { type: 'student', id: row.studentId, label: studentLabel }
-        : row.guardianId && (guardianName || guardianRelation)
-          ? {
-              type: 'guardian',
-              id: row.guardianId,
-              label: [guardianName, guardianRelation].filter(Boolean).join(' · ')
-            }
+        : row.guardianId && guardianLabel
+          ? { type: 'guardian', id: row.guardianId, label: guardianLabel }
           : null
       return {
         occurredAt: toIsoOrNull(row.occurredAt) || '',
         object,
         studentLabel,
         guardianRelation,
+        guardianLabel,
         parentType: row.parentType,
         attitudeType: row.attitudeType,
         riskLevel: row.riskLevel,

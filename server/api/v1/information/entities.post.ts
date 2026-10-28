@@ -18,7 +18,15 @@ const entitySchema = z.discriminatedUnion('type', [
     notes: z.string().trim().max(1000).optional(),
     enrolledAt: z.string().datetime().nullable().optional(),
   }),
-  z.object({ type: z.literal('guardian'), name: z.string().trim().min(1).max(80), phone: z.string().max(40).optional(), relation: z.string().max(40).optional(), studentIds: z.array(z.string().uuid()).max(6).optional() }),
+  z.object({
+    type: z.literal('guardian'),
+    name: z.string().trim().min(1).max(80),
+    phone: z.string().max(40).optional(),
+    relation: z.string().max(40).optional(),
+    idCard: z.string().trim().max(30).optional(),
+    workUnit: z.string().trim().max(200).optional(),
+    studentIds: z.array(z.string().uuid()).max(6).optional(),
+  }),
   z.object({
     type: z.literal('communication'), summary: z.string().trim().min(5).max(3000),
     /** 关联学生（首个为主学生，最多 RECORD_RELATED_TARGET_MAX 个） */
@@ -72,6 +80,7 @@ export default defineEventHandler(async (event) => {
   }
 
   let record: { id: string } | undefined
+  let reusedGuardian = false
   if (body.type === 'student') {
     [record] = await db.insert(schema.students).values({
       schoolId: user.schoolId,
@@ -84,13 +93,45 @@ export default defineEventHandler(async (event) => {
       enrolledAt: body.enrolledAt ? new Date(body.enrolledAt) : null,
     }).returning({ id: schema.students.id })
   } else if (body.type === 'guardian') {
-    [record] = await db.insert(schema.guardians).values({
-      schoolId: user.schoolId, ownerUserId: user.id,
-      nameEnc: encryptSensitive(body.name, config.encryptionKey), nameSearch: searchableHash(body.name, config.encryptionKey),
-      phoneEnc: body.phone ? encryptSensitive(body.phone, config.encryptionKey) : null, relation: body.relation
-    }).returning({ id: schema.guardians.id })
+    const idCard = body.idCard ? body.idCard.replace(/\s/g, '').toUpperCase() : ''
+    if (idCard && !/^\d{17}[\dX]$/.test(idCard)) throw createError({ statusCode: 422, message: '身份证号格式不正确' })
+    let existing: { id: string, status: string } | undefined
+    if (idCard) {
+      [existing] = await db.select({ id: schema.guardians.id, status: schema.guardians.status }).from(schema.guardians).where(and(
+        eq(schema.guardians.schoolId, user.schoolId),
+        eq(schema.guardians.idCardSearch, searchableHash(idCard, config.encryptionKey)),
+      )).limit(1)
+      if (existing && existing.status !== 'active') {
+        throw createError({ statusCode: 422, message: '该身份证号对应的家长档案已归档，请先在学校后台恢复' })
+      }
+    }
+    if (existing) {
+      record = existing
+      reusedGuardian = true
+    } else {
+      [record] = await db.insert(schema.guardians).values({
+        schoolId: user.schoolId,
+        ownerUserId: user.id,
+        nameEnc: encryptSensitive(body.name, config.encryptionKey),
+        nameSearch: searchableHash(body.name, config.encryptionKey),
+        phoneEnc: body.phone ? encryptSensitive(body.phone, config.encryptionKey) : null,
+        relation: body.relation,
+        idCardEnc: idCard ? encryptSensitive(idCard, config.encryptionKey) : null,
+        idCardSearch: idCard ? searchableHash(idCard, config.encryptionKey) : null,
+        workUnit: body.workUnit || null,
+      }).returning({ id: schema.guardians.id })
+    }
     if (record && body.studentIds?.length) {
-      await db.insert(schema.studentGuardians).values(body.studentIds.map(studentId => ({ studentId, guardianId: record!.id, schoolId: user.schoolId! }))).onConflictDoNothing()
+      await db.insert(schema.studentGuardians).values(body.studentIds.map(studentId => ({
+        studentId,
+        guardianId: record!.id,
+        schoolId: user.schoolId!,
+        relation: body.relation || null,
+        status: 'active',
+      }))).onConflictDoUpdate({
+        target: [schema.studentGuardians.studentId, schema.studentGuardians.guardianId],
+        set: { relation: body.relation || null, status: 'active' },
+      })
     }
   } else {
     const source = await assertChatMessageSource(event, user, body.sourceChatSessionId, body.sourceChatMessageId)
@@ -138,6 +179,17 @@ export default defineEventHandler(async (event) => {
     return { ok: true, id: created.id }
   }
   if (!record) throw createError({ statusCode: 500, message: '资料保存失败' })
-  await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: `information.${body.type}.create`, targetType: body.type, targetId: record.id })
-  return { ok: true, id: record.id }
+  if (reusedGuardian) {
+    await writeAudit(event, {
+      schoolId: user.schoolId,
+      actorId: user.id,
+      action: 'information.student.guardian.link',
+      targetType: 'guardian',
+      targetId: record.id,
+      metadata: { studentIds: body.type === 'guardian' ? body.studentIds : undefined },
+    })
+  } else {
+    await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: `information.${body.type}.create`, targetType: body.type, targetId: record.id })
+  }
+  return { ok: true, id: record.id, reused: reusedGuardian }
 })

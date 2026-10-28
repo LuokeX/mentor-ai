@@ -4,22 +4,26 @@ import { requireUser } from '../../../../../utils/auth'
 import { schema, useDb } from '../../../../../utils/db'
 import { writeAudit } from '../../../../../utils/audit'
 
-const bodySchema = z.object({ studentId: z.string().uuid() })
+const bodySchema = z.object({
+  studentId: z.string().uuid(),
+  relation: z.string().trim().max(40).optional(),
+})
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
   const id = z.string().uuid().parse(getRouterParam(event, 'id'))
   const body = bodySchema.parse(await readBody(event))
   const db = useDb(event)
-  const [guardian] = await db.select({ id: schema.guardians.id }).from(schema.guardians).where(and(eq(schema.guardians.id, id), eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId!))).limit(1)
+  const [guardian] = await db.select({ id: schema.guardians.id, relation: schema.guardians.relation }).from(schema.guardians).where(and(eq(schema.guardians.id, id), eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId!))).limit(1)
   if (!guardian) throw createError({ statusCode: 404, message: '家长不存在' })
   const [student] = await db.select({ id: schema.students.id }).from(schema.students).where(and(eq(schema.students.id, body.studentId), eq(schema.students.ownerUserId, user.id), eq(schema.students.schoolId, user.schoolId!))).limit(1)
   if (!student) throw createError({ statusCode: 422, message: '学生不存在或不属于当前教师' })
+  const relation = body.relation || guardian.relation || null
   await db.insert(schema.studentGuardians)
-    .values({ studentId: body.studentId, guardianId: id, schoolId: user.schoolId! })
+    .values({ studentId: body.studentId, guardianId: id, schoolId: user.schoolId!, relation })
     .onConflictDoUpdate({
       target: [schema.studentGuardians.studentId, schema.studentGuardians.guardianId],
-      set: { status: 'active', schoolId: user.schoolId! },
+      set: { status: 'active', schoolId: user.schoolId!, relation },
     })
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.guardian.student.link', targetType: 'guardian', targetId: id, metadata: { studentId: body.studentId } })
   return { ok: true }

@@ -11,6 +11,7 @@ import { countSql, offsetFrom } from '../../../../domain/school-management'
 import { resolveCapabilities, resolvePageCapabilities } from '../../../../domain/capabilities'
 import { paginateResult } from '../../../../utils/pagination'
 import { decryptSensitive } from '../../../../utils/crypto'
+import { guardianDisplayLabel } from '../../../../../shared/guardian-display'
 import { canonicalCommunicationRiskLevel } from '../../../../../shared/dashboard'
 
 const SORT_WHITELIST = createSortWhitelist('riskLevel', 'parentType', 'occurredAt', 'status', 'updatedAt', 'createdAt')
@@ -122,29 +123,59 @@ export default defineEventHandler(async (event) => {
         .where(and(eq(schema.students.schoolId, user.schoolId), inArray(schema.students.id, primaryStudentIds)))
       : Promise.resolve([] as Array<{ id: string, nameEnc: string }>),
     primaryGuardianIds.length
-      ? db.select({ id: schema.guardians.id, nameEnc: schema.guardians.nameEnc }).from(schema.guardians)
+      ? db.select({ id: schema.guardians.id, nameEnc: schema.guardians.nameEnc, relation: schema.guardians.relation }).from(schema.guardians)
         .where(and(eq(schema.guardians.schoolId, user.schoolId), inArray(schema.guardians.id, primaryGuardianIds)))
-      : Promise.resolve([] as Array<{ id: string, nameEnc: string }>)
+      : Promise.resolve([] as Array<{ id: string, nameEnc: string, relation: string | null }>)
   ])
+  const primaryPairs = result.rows.filter(row => row.studentId && row.guardianId)
+  const primaryLinkRows = primaryPairs.length
+    ? await db.select({
+      studentId: schema.studentGuardians.studentId,
+      guardianId: schema.studentGuardians.guardianId,
+      relation: schema.studentGuardians.relation,
+    }).from(schema.studentGuardians).where(and(
+      eq(schema.studentGuardians.schoolId, user.schoolId),
+      eq(schema.studentGuardians.status, 'active'),
+      inArray(schema.studentGuardians.studentId, [...new Set(primaryPairs.map(row => row.studentId!))]),
+      inArray(schema.studentGuardians.guardianId, [...new Set(primaryPairs.map(row => row.guardianId!))]),
+    ))
+    : []
+  const primaryLinkRelation = new Map(primaryLinkRows.map(row => [`${row.studentId}:${row.guardianId}`, row.relation]))
   const studentNameById = new Map(primaryStudents.map(row => [row.id, decryptSensitive(row.nameEnc, secret)]))
   const guardianNameById = new Map(primaryGuardians.map(row => [row.id, decryptSensitive(row.nameEnc, secret)]))
+  const guardianRelationById = new Map(primaryGuardians.map(row => [row.id, row.relation]))
   const rows = await Promise.all(result.rows.map(async (row) => {
     const { summaryEnc, ...safeRow } = row
     const summary = decryptSensitive(summaryEnc, secret)
     const primaryStudentName = row.studentId ? studentNameById.get(row.studentId) || null : null
     const primaryGuardianName = row.guardianId ? guardianNameById.get(row.guardianId) || null : null
+    const primaryGuardianRelation = row.studentId && row.guardianId
+      ? primaryLinkRelation.get(`${row.studentId}:${row.guardianId}`) || guardianRelationById.get(row.guardianId) || null
+      : row.guardianId ? guardianRelationById.get(row.guardianId) || null : null
+    const primaryGuardianLabel = primaryGuardianName
+      ? guardianDisplayLabel(
+          primaryStudentName ? [{ studentName: primaryStudentName, relation: primaryGuardianRelation }] : [],
+          primaryGuardianName,
+          primaryGuardianRelation
+        )
+      : null
     return {
       ...safeRow,
       riskLevel: canonicalCommunicationRiskLevel(safeRow.riskLevel) ?? safeRow.riskLevel,
       summaryPreview: summary.length > 80 ? `${summary.slice(0, 80)}…` : summary,
       studentName: primaryStudentName,
       guardianName: primaryGuardianName,
+      guardianRelation: primaryGuardianRelation,
+      guardianLabel: primaryGuardianLabel,
       // 主对象在前：界面直接展示这两列（超过 2 人时前端折叠为「张三 等 N 人」）
       studentNames: primaryStudentName
         ? [primaryStudentName, ...(relatedStudentsByRecord.get(row.id) || [])]
         : (relatedStudentsByRecord.get(row.id) || []),
       guardianNames: primaryGuardianName
         ? [primaryGuardianName, ...(relatedGuardiansByRecord.get(row.id) || [])]
+        : (relatedGuardiansByRecord.get(row.id) || []),
+      guardianLabels: primaryGuardianLabel
+        ? [primaryGuardianLabel, ...(relatedGuardiansByRecord.get(row.id) || [])]
         : (relatedGuardiansByRecord.get(row.id) || []),
       _capabilities: await resolveCapabilities({ user, recordSchoolId: row.schoolId, recordOwnerUserId: row.ownerUserId, recordStatus: row.status, targetType: 'communication', targetId: row.id }, event),
     }
