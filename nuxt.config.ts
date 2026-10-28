@@ -38,6 +38,11 @@ export default defineNuxtConfig({
     // Agent 工具治理：单轮工具轮次上限、启用的工具名清单（逗号分隔；空 = 按上下文裁剪后全部启用）
     agentMaxToolRounds: Number(process.env.AI_AGENT_MAX_TOOL_ROUNDS || 8),
     agentEnabledTools: process.env.AI_AGENT_ENABLED_TOOLS || '',
+    // 文档工作区沙箱（Phase 1 默认关闭）：独立容器、内部网络、Bearer token；
+    // 启用前必须设置强随机 SANDBOX_RUNNER_TOKEN，否则沙箱工具保持不可用。
+    sandboxEnabled: process.env.SANDBOX_ENABLED === 'true',
+    sandboxRunnerUrl: process.env.SANDBOX_RUNNER_URL || 'http://sandbox-runner:3200',
+    sandboxRunnerToken: process.env.SANDBOX_RUNNER_TOKEN || '',
     // strict tool calling 试点（DeepSeek Beta）：逗号分隔的 purpose 列表；
     // 空 = 全部走 json_object（与既有行为一致），启用后 strict 不可用会自动回退
     aiStrictJsonPurposes: process.env.AI_STRICT_JSON_PURPOSES || '',

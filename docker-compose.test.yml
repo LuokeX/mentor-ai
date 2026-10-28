@@ -84,6 +84,14 @@ x-app-environment: &app-environment
   # 登录页「选择测试账户」入口：仅测试环境注入，正式编排（docker-compose.yml）不注入该变量。
   # 点选后只填充手机号与密码，认证仍走正常 /api/v1/auth/login；账号清单见 app/utils/test-accounts.ts
   NUXT_PUBLIC_SHOW_TEST_ACCOUNTS: 'true'
+  # 文档工作区沙箱（Phase 1 默认关闭）：启用时设置 SANDBOX_ENABLED=true 与强随机 token，
+  # 并用 `--profile sandbox` 启动 sandbox-runner。
+  SANDBOX_ENABLED: ${SANDBOX_ENABLED:-false}
+  NUXT_SANDBOX_ENABLED: ${SANDBOX_ENABLED:-false}
+  SANDBOX_RUNNER_URL: ${SANDBOX_RUNNER_URL:-http://sandbox-runner:3200}
+  NUXT_SANDBOX_RUNNER_URL: ${SANDBOX_RUNNER_URL:-http://sandbox-runner:3200}
+  SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:-}
+  NUXT_SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:-}
 
 services:
   postgres:
@@ -125,12 +133,52 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # 文档工作区沙箱：与正式编排同一镜像语义，测试环境单独命名与网络隔离。
+  # 默认 profile 不启动；启用：SANDBOX_ENABLED=true SANDBOX_RUNNER_TOKEN=<强随机> \
+  #   docker compose -f docker-compose.test.yml --profile sandbox build sandbox-runner && \
+  #   docker compose -f docker-compose.test.yml --profile sandbox up -d
+  sandbox-runner:
+    profiles: ["sandbox"]
+    image: mentor-ai-test-sandbox:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    restart: unless-stopped
+    environment:
+      SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:-}
+      SANDBOX_PORT: "3200"
+      SANDBOX_MAX_FILE_BYTES: ${SANDBOX_MAX_FILE_BYTES:-20971520}
+      SANDBOX_MAX_WORKSPACE_BYTES: ${SANDBOX_MAX_WORKSPACE_BYTES:-104857600}
+      SANDBOX_MAX_FILES: ${SANDBOX_MAX_FILES:-50}
+      SANDBOX_WORKSPACE_TTL_MS: ${SANDBOX_WORKSPACE_TTL_MS:-1800000}
+    read_only: true
+    tmpfs:
+      - /workspaces:size=512m,mode=1777
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.0
+    networks:
+      - sandbox-internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3200/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   app:
     image: mentor-ai-test-app:${IMAGE_TAG:-latest}
     build: .
     restart: unless-stopped
     environment:
       <<: *app-environment
+    networks:
+      - default
+      - sandbox-internal
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -171,3 +219,8 @@ services:
 
 volumes:
   postgres-data:
+
+networks:
+  # internal: true = 没有默认网关，sandbox-runner 无法访问外网；只有 app 同时挂在默认网络。
+  sandbox-internal:
+    internal: true
