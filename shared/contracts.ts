@@ -139,9 +139,21 @@ export const CHAT_CONTEXT_MAX = 5
  */
 export const RECORD_RELATED_TARGET_MAX = 10
 
+/**
+ * 首页 AI 助手的工作模式：
+ * - chat：班主任工作问答（默认，行为与历史版本一致）
+ * - lesson_prep：备课模式，输出完整教学设计而不是聊天式短回答
+ *
+ * 模式只切换本轮 system 提示词与输出结构，不改变会话、安全规则与积分口径。
+ */
+export const chatModeSchema = z.enum(['chat', 'lesson_prep'])
+export type ChatMode = z.infer<typeof chatModeSchema>
+
 export const chatMessageSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(4000),
+  /** 本轮工作模式；缺省为 chat，保持历史前端兼容 */
+  mode: chatModeSchema.optional(),
   /** 单对象写法（历史前端与深链）：等价于 contexts 只有一项，两者同时出现时以 contexts 为准 */
   contextType: chatContextTypeSchema.optional(),
   contextId: z.string().uuid().optional(),

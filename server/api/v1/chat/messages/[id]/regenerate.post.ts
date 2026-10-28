@@ -19,7 +19,7 @@ import {
   loadSessionHistoryForAgent,
   runAssistantTurn
 } from '../../../../../domain/chat-stream'
-import type { ModuleId } from '../../../../../../shared/contracts'
+import type { ChatMode, ModuleId } from '../../../../../../shared/contracts'
 
 /** 重新生成时模型不可用的教师侧提示。 */
 const AGENT_UNAVAILABLE_MESSAGE = 'AI 助手暂时不可用，请稍后重试。'
@@ -82,7 +82,8 @@ export default defineEventHandler(async (event) => {
   const [question] = await db.select({
     id: schema.chatMessages.id,
     createdAt: schema.chatMessages.createdAt,
-    contentEnc: schema.chatMessages.contentEnc
+    contentEnc: schema.chatMessages.contentEnc,
+    metadata: schema.chatMessages.metadata
   }).from(schema.chatMessages)
     .where(and(
       eq(schema.chatMessages.sessionId, sessionId),
@@ -104,6 +105,9 @@ export default defineEventHandler(async (event) => {
     }
   })()
   if (!questionText) throw createError({ statusCode: 409, message: '提问内容不可用，无法重新生成' })
+  // 模式随原提问落库：重新生成按同一种模式重跑，避免备课方案被聊天提示词覆盖
+  const storedMode = (question.metadata as { mode?: unknown } | null)?.mode
+  const mode: ChatMode = storedMode === 'lesson_prep' ? 'lesson_prep' : 'chat'
 
   const governance = await resolveAiGovernance(event, user.schoolId, user.id)
   // 会话绑定对象集：重新生成按当前绑定重跑（与普通提问同一口径）
@@ -137,7 +141,7 @@ export default defineEventHandler(async (event) => {
   await trackProductEvent(event, {
     schoolId: user.schoolId, userId: user.id, eventName: 'assistant_answer_regenerated',
     targetType: 'chat_session', targetId: sessionId,
-    metadata: { previousMessageId: target.id }
+    metadata: { previousMessageId: target.id, mode }
   })
 
   setResponseHeaders(event, {
@@ -161,6 +165,7 @@ export default defineEventHandler(async (event) => {
       try {
         emit(controller, 'ack', {
           sessionId,
+          mode,
           context: businessContexts[0]
             ? { type: businessContexts[0].type, id: businessContexts[0].id, label: businessContexts[0].label }
             : undefined,
@@ -233,6 +238,7 @@ export default defineEventHandler(async (event) => {
           user: { id: user.id, schoolId: user.schoolId!, teachingGrades: user.teachingGrades },
           sessionId,
           message: questionText,
+          mode,
           withoutRecord: Boolean(body.withoutRecord),
           businessContexts,
           turnContexts,

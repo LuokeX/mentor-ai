@@ -17,7 +17,7 @@ import { needsEvidenceReview, teacherEvidence, type AnswerEvidence } from '../ag
 import { reviewAssistantAnswer } from './assistant-answer-review'
 import type { H3Event } from 'h3'
 import { and, desc, eq, gt, gte, isNull, lt, sql } from 'drizzle-orm'
-import type { ModuleId } from '../../shared/contracts'
+import type { ChatMode, ModuleId } from '../../shared/contracts'
 import type { AgentMessage, AgentToolTraceStep } from '../agent/types'
 import { buildAgentSystemPrompt } from '../agent/prompts'
 import { runAgentGraph } from '../agent/graph'
@@ -266,6 +266,8 @@ export interface RunAssistantTurnInput {
   sessionId: string
   /** 本轮教师提问原文（未脱敏） */
   message: string
+  /** 本轮工作模式：chat（默认）或 lesson_prep（备课）；只影响 system 提示词与输出结构 */
+  mode?: ChatMode
   /** 是否不引入档案 */
   withoutRecord: boolean
   /**
@@ -338,6 +340,10 @@ export function buildBusinessContextText(input: {
   const config = useRuntimeConfig(event)
   const dataMode = governance.effectiveMode
   const outbound = (text: string) => redactOutboundText(text, dataMode)
+  // 备课是长文输出：默认 30s / 4096 token 会在完整教案生成到一半时截断。
+  // 只对本模式放宽到 120s / 8192 token；普通问答仍用原配置。
+  const lessonPrep = input.mode === 'lesson_prep'
+  const lessonPrepTimeoutMs = Math.max(Number(config.deepseekTimeoutMs) || 0, 120_000)
 
   // system 静态化：只放会话内稳定的指针，档案细节由 record_snapshot 工具按需查询
   const recordBindings = input.withoutRecord
@@ -357,7 +363,8 @@ export function buildBusinessContextText(input: {
   const baseSystemPrompt = await buildAgentSystemPrompt(event, {
     knowledgeContext,
     businessContextText: contextText,
-    teacherProfileText: input.teacherProfileText ? outbound(input.teacherProfileText) : input.teacherProfileText
+    teacherProfileText: input.teacherProfileText ? outbound(input.teacherProfileText) : input.teacherProfileText,
+    mode: input.mode ?? 'chat'
   })
   const systemPrompt = input.contextSummary
     ? `${baseSystemPrompt}\n\n【更早对话摘要】\n${outbound(input.contextSummary)}`
@@ -403,6 +410,9 @@ export function buildBusinessContextText(input: {
     messages: agentMessages,
     userCtx,
     systemPrompt,
+    ...(lessonPrep
+      ? { totalTimeoutMs: lessonPrepTimeoutMs, modelTimeoutMs: lessonPrepTimeoutMs, maxOutputTokens: 8192 }
+      : {}),
     onEvent: (eventName: string, data: unknown) => {
       if (input.isAborted()) return
       if (eventName === 'answer_delta') delivery.push(String((data as { text?: string }).text ?? ''))
@@ -497,6 +507,7 @@ export function buildBusinessContextText(input: {
     toolTraceEnc: serializedTrace ? encryptSensitive(serializedTrace, config.encryptionKey) : null,
     metadata: {
       type: 'agent_answer',
+      mode: input.mode ?? 'chat',
       actionCards,
       toolCalls,
       sources,
@@ -543,7 +554,7 @@ export function buildBusinessContextText(input: {
     }
   }
 
-  await trackProductEvent(event, { schoolId: user.schoolId, userId: user.id, eventName: 'assistant_turn_completed', metadata: { latencyMs: Date.now() - startedAt, firstTextMs: firstTextMs ?? Date.now() - startedAt, reviewed: delivery.requiresReview, repaired } })
+  await trackProductEvent(event, { schoolId: user.schoolId, userId: user.id, eventName: 'assistant_turn_completed', metadata: { mode: input.mode ?? 'chat', latencyMs: Date.now() - startedAt, firstTextMs: firstTextMs ?? Date.now() - startedAt, reviewed: delivery.requiresReview, repaired } })
   emit('answer', { messageId: assistantMessage.id, text: answer, mode: 'agent' })
 
   // 对话推进后提炼简短智能标题（DeepSeek 不可用时降级截断法）

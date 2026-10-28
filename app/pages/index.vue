@@ -4,6 +4,7 @@ import { moduleMeta } from '#shared/assessments'
 import type { ModuleId, RouteDecision } from '#shared/contracts'
 import { useModuleScores } from '~/composables/useModuleScores'
 import { useSpeechPlayback } from '~/composables/useSpeechPlayback'
+import { LESSON_PREP_TEMPLATES, type AssistantMode } from '~/utils/lesson-prep'
 import {
   blobToBase64,
   blobToWav16k,
@@ -59,6 +60,8 @@ interface TimelineItem {
   text: string
   sources?: SourceItem[]
   mode?: 'deepseek' | 'local_fallback' | 'agent'
+  /** 本轮工作模式：chat（对话）或 lesson_prep（备课），用于气泡标签与历史回看 */
+  chatMode?: AssistantMode
   planUpdateSuggestions?: Array<any>
   feedback?: 'helpful' | 'not_helpful'
   feedbackOpen?: boolean
@@ -140,6 +143,28 @@ const { data: governance, refresh: refreshGovernance } = await useFetch<any>('/a
 const { data: contextOptions } = await useFetch<any>('/api/v1/chat/context-options')
 const input = ref('')
 const pending = ref(false)
+/** 当前工作模式：对话 / 备课；切换只影响后续消息，不改变已有消息 */
+const assistantMode = ref<AssistantMode>('chat')
+/** 切到备课模式时把光标还给输入框，教师可以直接写需求或点模板 */
+function switchAssistantMode(mode: AssistantMode) {
+  if (assistantMode.value === mode) return
+  assistantMode.value = mode
+  closeMention()
+  nextTick(() => composerRef.value?.querySelector('textarea')?.focus())
+}
+/** 点模板只填入输入框，不自动发送：教师可继续补充学情后再发 */
+function fillLessonTemplate(template: (typeof LESSON_PREP_TEMPLATES)[number]) {
+  input.value = template.prompt
+  closeMention()
+  nextTick(() => {
+    const textarea = composerRef.value?.querySelector('textarea')
+    textarea?.focus()
+    if (textarea instanceof HTMLTextAreaElement) {
+      textarea.selectionStart = textarea.value.length
+      textarea.selectionEnd = textarea.value.length
+    }
+  })
+}
 /** 有个别句子被扣住（等整轮校验）：静默超过短暂时间后在状态条里提示，别让文字停住看起来像卡死 */
 const reviewPending = ref(false)
 /** 扣住提示的防抖定时器：扣住后很快又有文字流出时不显示提示，避免状态条一闪一闪 */
@@ -162,6 +187,8 @@ const pendingAssistantBubble = computed(() => {
 })
 const messageViewport = ref<HTMLElement | null>(null)
 const copiedMessage = ref<number | null>(null)
+/** 正在导出 Word 的消息 id：同一时间只允许一个导出，按钮显示 loading */
+const exportingMessageId = ref<string | null>(null)
 /** 最后一条教师发言。进入模块时带给量表推荐用，让 AI 知道教师在说什么。 */
 const lastUserMessage = computed(() => {
   for (let i = timeline.value.length - 1; i >= 0; i--) {
@@ -723,8 +750,44 @@ async function copyMessage(text: string, index: number) {
   window.setTimeout(() => { if (copiedMessage.value === index) copiedMessage.value = null }, 1600)
 }
 
+/** 导出当前回答为 Word；只导出自己的、已落库的回答，文件名由服务端 Content-Disposition 提供。 */
+async function exportMessage(item: TimelineItem) {
+  if (!item.messageId || exportingMessageId.value) return
+  exportingMessageId.value = item.messageId
+  try {
+    const response = await fetch(`/api/v1/chat/messages/${item.messageId}/export?format=docx`)
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { message?: string } | null
+      throw new Error(payload?.message || '导出失败，请稍后重试。')
+    }
+    const blob = await response.blob()
+    const disposition = response.headers.get('content-disposition') || ''
+    const utf8Name = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+    const asciiName = disposition.match(/filename="([^"]+)"/i)?.[1]
+    let filename = asciiName || '备课方案.docx'
+    if (utf8Name) {
+      try { filename = decodeURIComponent(utf8Name) } catch { /* 保留 ASCII 回退名 */ }
+    }
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    toast.add({ title: '已导出 Word', description: filename, color: 'success' })
+  } catch (error) {
+    toast.add({ title: '导出失败', description: apiErrorMessage(error, '导出失败，请稍后重试。'), color: 'error' })
+  } finally {
+    exportingMessageId.value = null
+  }
+}
+
 function newConversation() {
   sessionId.value = undefined
+  // 新对话默认回到「对话」Tab；备课模式由教师显式切换
+  assistantMode.value = 'chat'
   // 换会话前停掉朗读、收起待确认删除、丢弃录音状态
   stopSpeech()
   resetDeleteMessageCandidate()
@@ -770,6 +833,7 @@ async function loadSession(id: string) {
         role: item.role,
         text: item.text,
         mode: item.metadata?.mode,
+        chatMode: item.metadata?.mode === 'lesson_prep' ? 'lesson_prep' : (item.metadata?.mode === 'chat' ? 'chat' : undefined),
         sources: item.metadata?.sources || [],
         planUpdateSuggestions: item.metadata?.planUpdateSuggestions || [],
         // 历史消息都是已完成的回答：工具/引用/量表块可以直接展示
@@ -833,6 +897,10 @@ async function loadSession(id: string) {
     }
     timeline.value = withDividers
 
+    // 恢复当前 Tab：以最近一条教师提问的模式为准；老会话没有模式字段时回到对话
+    const lastUserMessage = [...result.messages].reverse().find((item: any) => item.role === 'user')
+    assistantMode.value = lastUserMessage?.metadata?.mode === 'lesson_prep' ? 'lesson_prep' : 'chat'
+
     // 重建 selectedOptions：每个追问轮次后的第一条用户消息即为所选选项
     selectedOptions.value = {}
     let pendingClarificationRound: number | null = null
@@ -870,7 +938,7 @@ function isAbortError(error: unknown): boolean {
  * userMessageId 写回该气泡（用户消息据此才能删除）。-1 表示本轮没有新建用户消息。
  * 返回最终写入的助手气泡下标（-1 表示本轮没有产生气泡）。
  */
-async function readAssistantStream(response: Response, reuseIndex = -1, userMessageIndex = -1): Promise<number> {
+async function readAssistantStream(response: Response, reuseIndex = -1, userMessageIndex = -1, chatMode: AssistantMode = 'chat'): Promise<number> {
   let assistantIndex = reuseIndex
   const reader = response.body!.getReader()
   const decoder = new TextDecoder()
@@ -892,7 +960,10 @@ async function readAssistantStream(response: Response, reuseIndex = -1, userMess
           // 按「下标 + 角色 + 尚未赋值」三重条件写回，避免其他分支追加气泡后写错对象。
           if (typeof data.userMessageId === 'string' && userMessageIndex >= 0) {
             const target = timeline.value[userMessageIndex]
-            if (target && target.role === 'user' && !target.messageId) target.messageId = data.userMessageId
+            if (target && target.role === 'user' && !target.messageId) {
+              target.messageId = data.userMessageId
+              target.chatMode = data.mode === 'lesson_prep' ? 'lesson_prep' : chatMode
+            }
           }
           // 兼容：老服务端只回 context/turnObject/suggestedContext（单对象）
           const ackContexts: any[] = Array.isArray(data.contexts)
@@ -923,7 +994,7 @@ async function readAssistantStream(response: Response, reuseIndex = -1, userMess
           // Agent 模式：保持 pending 状态条（文案随 thinking 变化），气泡先建立供工具/引用/卡片挂载。
           // 重新生成时复用已有气泡（reuseIndex），不再新建。
           if (assistantIndex < 0) {
-            timeline.value.push({ role: 'assistant', text: '', mode: data.mode, sources: [] })
+            timeline.value.push({ role: 'assistant', text: '', mode: data.mode, chatMode, sources: [] })
             assistantIndex = timeline.value.length - 1
           }
           if (data.mode === 'agent') {
@@ -942,7 +1013,7 @@ async function readAssistantStream(response: Response, reuseIndex = -1, userMess
           if (assistantIndex >= 0 && timeline.value[assistantIndex]?.text === '') pending.value = false
           if (assistantIndex < 0) {
             pending.value = false
-            timeline.value.push({ role: 'assistant', text: '', sources: [] })
+            timeline.value.push({ role: 'assistant', text: '', chatMode, sources: [] })
             assistantIndex = timeline.value.length - 1
           }
           timeline.value[assistantIndex]!.text += data.text
@@ -962,9 +1033,10 @@ async function readAssistantStream(response: Response, reuseIndex = -1, userMess
             // 不一致说明服务端做了清理或证据复核重写，此时才需要整段替换。
             if (typeof data.text === 'string' && item.text !== data.text) item.text = data.text
             item.mode = data.mode
+            item.chatMode = item.chatMode ?? chatMode
             item.answerCompleted = true
           } else {
-            timeline.value.push({ messageId: data.messageId, role: 'assistant', text: data.text, mode: data.mode, sources: [], answerCompleted: true })
+            timeline.value.push({ messageId: data.messageId, role: 'assistant', text: data.text, mode: data.mode, chatMode, sources: [], answerCompleted: true })
             assistantIndex = timeline.value.length - 1
           }
           // 回答已定稿：撤下「正在核对回答依据…」状态条（本轮若无任何 delta，此前一直是挂起状态）
@@ -1083,15 +1155,17 @@ async function ask() {
   // 「语音对话」打开时先停掉上一条回答的自动朗读：新问题发出后，读的应该是新回答
   if (voiceMode.value) stopSpeech()
   const text = input.value.trim()
+  // 固定本轮模式：生成期间切 Tab 不改变已经发出的这一轮
+  const requestMode = assistantMode.value
   input.value = ''
   pending.value = true
-  pendingLabel.value = 'Agent 正在分析问题…'
+  pendingLabel.value = requestMode === 'lesson_prep' ? '备课助手正在生成教学设计…' : 'Agent 正在分析问题…'
   route.value = null
   turnObjects.value = []
   turnObjectCandidates.value = []
   suggestedContexts.value = []
   resetDeleteMessageCandidate()
-  timeline.value.push({ role: 'user', text })
+  timeline.value.push({ role: 'user', text, chatMode: requestMode })
   // 记下这条用户消息的位置：ack 事件带回 userMessageId 后写回同一气泡
   const userMessageIndex = timeline.value.length - 1
   await scrollToLatest()
@@ -1101,7 +1175,7 @@ async function ask() {
   try {
     const response = await fetch('/api/v1/chat/messages', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: sessionId.value, message: text, ...contextPayload.value }),
+      body: JSON.stringify({ sessionId: sessionId.value, message: text, mode: requestMode, ...contextPayload.value }),
       signal: controller.signal
     })
     if (response.status === 402) {
@@ -1115,7 +1189,7 @@ async function ask() {
       return
     }
     if (!response.ok || !response.body) throw new Error('助手暂时不可用')
-    assistantIndex = await readAssistantStream(response, -1, userMessageIndex)
+    assistantIndex = await readAssistantStream(response, -1, userMessageIndex, requestMode)
     await refreshSessions()
   } catch (error: any) {
     if (isAbortError(error)) markStopped(assistantIndex)
@@ -1166,7 +1240,7 @@ async function regenerateAnswer(item: TimelineItem, index: number) {
       return
     }
     if (!response.ok || !response.body) throw new Error('助手暂时不可用')
-    await readAssistantStream(response, index)
+    await readAssistantStream(response, index, -1, item.chatMode ?? assistantMode.value)
     await refreshSessions()
   } catch (error: any) {
     if (isAbortError(error)) markStopped(index)
@@ -1602,6 +1676,26 @@ watch(sessions, autoRestoreLatestSession, { once: true })
             <span v-else class="min-w-0 truncate text-xs text-slate-500 sm:text-sm"><span class="sm:hidden"><span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长</span><span class="hidden sm:inline">未指定对象 · 输入框输入 <span class="font-semibold text-emerald-700">@</span> 可关联学生、班级、家长（可多名）</span></span>
           </div>
         </div>
+        <!-- 对话 / 备课 模式切换：只影响后续消息；已生成的内容按各自模式保留 -->
+        <div class="flex items-center justify-center gap-2 border-b border-slate-100 bg-white/90 px-3 py-1.5">
+          <div class="inline-flex items-center rounded-full bg-slate-100 p-0.5 text-xs" aria-label="AI 助手模式">
+            <button
+              type="button"
+              :aria-pressed="assistantMode === 'chat'"
+              class="rounded-full px-4 py-1.5 font-medium transition"
+              :class="assistantMode === 'chat' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
+              @click="switchAssistantMode('chat')"
+            >对话</button>
+            <button
+              type="button"
+              :aria-pressed="assistantMode === 'lesson_prep'"
+              class="rounded-full px-4 py-1.5 font-medium transition"
+              :class="assistantMode === 'lesson_prep' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
+              @click="switchAssistantMode('lesson_prep')"
+            >备课</button>
+          </div>
+          <span v-if="assistantMode === 'lesson_prep'" class="hidden text-[11px] text-emerald-700 sm:inline">生成教案 / 班会 / 赛课设计</span>
+        </div>
         <!-- 本轮对象：服务端按本轮消息识别（可多名），不改变会话绑定；同名档案等无法确认时由教师点选，不替教师猜 -->
         <div
           v-if="!selectedContexts.length && (turnObjects.length || turnObjectCandidates.length)"
@@ -1643,7 +1737,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
         </div>
         <div v-if="governance?.needsConsent" class="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-900"><span>学校申请使用完整业务上下文。确认前将自动回退到严格脱敏模式；电话、邮箱、账号和系统标识永不发送。</span><UButton size="xs" color="warning" @click="acceptPrivacyNotice">阅读并确认 {{ governance.noticeVersion }}</UButton></div>
 
-        <div ref="messageViewport" class="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-slate-50/70 to-white px-3 pt-4 pb-40 sm:px-6 sm:pt-6 sm:pb-36" :class="{'opacity-60':loadingSession}">
+        <div ref="messageViewport" class="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-gradient-to-b from-slate-50/70 to-white px-3 pt-4 sm:px-6 sm:pt-6" :class="{'opacity-60':loadingSession, 'pb-40 sm:pb-36': assistantMode !== 'lesson_prep', 'pb-52 sm:pb-48': assistantMode === 'lesson_prep'}">
           <div v-if="timeline.length" class="mx-auto max-w-3xl space-y-5 sm:space-y-7">
             <template v-for="(item, index) in timeline" :key="index">
             <!-- 会话内换绑咨询对象：分隔条标明从这条起谈的是另一个对象（历史消息保留） -->
@@ -1658,10 +1752,10 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                 <div class="grid size-8 shrink-0 place-items-center rounded-xl text-xs font-semibold" :class="item.role === 'user' ? 'bg-emerald-800 text-white' : 'border border-emerald-100 bg-white text-emerald-700 shadow-sm'">
                   <UIcon v-if="item.role === 'assistant'" name="i-lucide-sparkles" class="size-4" /><span v-else>{{ user?.name?.slice(0, 1) }}</span>
                 </div>
-                <div v-if="item.role === 'assistant'" class="flex items-center gap-2 text-[11px] text-slate-400 sm:hidden"><span>赋能助手</span><span v-if="item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
+                <div v-if="item.role === 'assistant'" class="flex items-center gap-2 text-[11px] text-slate-400 sm:hidden"><span>赋能助手</span><span v-if="item.chatMode === 'lesson_prep'" class="rounded-full bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-700">备课</span><span v-if="item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
               </div>
               <div class="min-w-0" :class="item.role === 'user' ? 'max-w-[88%] sm:max-w-[82%]' : 'max-w-full sm:max-w-[82%]'">
-                <div class="mb-1.5 items-center gap-2 text-[11px] text-slate-400" :class="item.role === 'user' ? 'flex justify-end' : 'hidden sm:flex'"><span>{{ item.role === 'user' ? '我' : '赋能助手' }}</span><span v-if="item.role === 'assistant' && item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
+                <div class="mb-1.5 items-center gap-2 text-[11px] text-slate-400" :class="item.role === 'user' ? 'flex justify-end' : 'hidden sm:flex'"><span>{{ item.role === 'user' ? '我' : '赋能助手' }}</span><span v-if="item.chatMode === 'lesson_prep'" class="rounded-full bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-700">备课</span><span v-if="item.role === 'assistant' && item.mode === 'local_fallback'" class="text-amber-600">降级回答</span></div>
                 <div class="rounded-2xl px-4 py-3 text-sm leading-7 shadow-sm" :class="item.role === 'user' ? 'rounded-tr-md bg-emerald-800 text-white' : 'rounded-tl-md border border-slate-100 bg-white text-slate-700'">
                   <div v-if="item.role === 'user'" class="whitespace-pre-wrap" v-text="item.text" />
                   <!-- 空气泡内部动画：answer_start 已建立气泡但文本未流入时，动画显示在气泡内，避免与底部独立状态条重复 -->
@@ -1797,6 +1891,16 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                     <UDropdownMenu :items="transferMenuItems(item)">
                       <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-file-input" :disabled="pending" aria-label="转存到记录">转存</UButton>
                     </UDropdownMenu>
+                    <UButton
+                      v-if="item.chatMode === 'lesson_prep'"
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-download"
+                      :loading="exportingMessageId === item.messageId"
+                      :disabled="Boolean(exportingMessageId) && exportingMessageId !== item.messageId"
+                      @click="exportMessage(item)"
+                    >导出 Word</UButton>
                   </template>
                   <UButton
                     size="xs"
@@ -1915,6 +2019,19 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                 </button>
               </div>
             </div>
+            <!-- 备课提示词模板：点击只填入输入框，不自动发送；教师可继续补充学情 -->
+            <div v-if="assistantMode === 'lesson_prep'" class="mb-2 flex gap-2 overflow-x-auto pb-0.5" aria-label="备课提示词模板">
+              <button
+                v-for="template in LESSON_PREP_TEMPLATES"
+                :key="template.key"
+                type="button"
+                class="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-1.5 text-left transition hover:border-emerald-300 hover:bg-emerald-100/80"
+                @click="fillLessonTemplate(template)"
+              >
+                <span class="block whitespace-nowrap text-xs font-medium text-emerald-900">{{ template.label }}</span>
+                <span class="mt-0.5 block whitespace-nowrap text-[11px] text-emerald-700/70">{{ template.description }}</span>
+              </button>
+            </div>
             <div ref="composerRef" class="rounded-2xl border border-slate-300 bg-white/30 p-1.5 shadow-lg shadow-slate-900/5 backdrop-blur-xl [-webkit-backdrop-filter:blur(24px)] transition focus-within:border-emerald-400 focus-within:ring-3 focus-within:ring-emerald-100 sm:p-2">
               <!-- 录音/识别状态：录音中显示已录时长与音量条，识别中显示转写提示 -->
               <div v-if="recording || transcribing" class="mb-1 flex items-center gap-2 px-1 pt-0.5 text-[11px]">
@@ -1961,7 +2078,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
               </div>
               <!-- 输入框：电脑端恒显示；手机端只在键盘输入模式下显示 -->
               <div class="items-center gap-2" :class="asrEnabled && mobileVoiceInput ? 'hidden sm:flex' : 'flex'">
-                <UTextarea v-model="input" :rows="2" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" aria-label="向 AI 赋能助手提问" @input="handleMentionInput" @keydown.enter.exact.prevent="ask" @keydown.esc="closeMention" />
+                <UTextarea v-model="input" :rows="2" :maxrows="8" :maxlength="4000" autoresize class="min-w-0 flex-1" variant="none" :aria-label="assistantMode === 'lesson_prep' ? '描述备课需求' : '向 AI 赋能助手提问'" :placeholder="assistantMode === 'lesson_prep' ? '写清学段、学科、课题、课时，或点上面的模板填入' : ''" @input="handleMentionInput" @keydown.enter.exact.prevent="ask" @keydown.esc="closeMention" />
                 <!-- 手机端此按钮切回「按住说话」：只在键盘输入模式下出现；桌面端不渲染 -->
                 <UButton
                   v-if="asrEnabled && !mobileVoiceInput"
@@ -1994,7 +2111,7 @@ watch(sessions, autoRestoreLatestSession, { once: true })
                 <UButton v-if="pending" type="button" icon="i-lucide-square" size="lg" square color="neutral" variant="soft" aria-label="停止生成" @click="stopGeneration" />
                 <UButton v-else type="submit" icon="i-lucide-arrow-up" size="lg" square :disabled="!input.trim() || recording || transcribing" aria-label="发送消息" />
               </div>
-              <div class="mt-1 hidden items-center justify-between gap-2 px-1 text-[11px] sm:flex"><span class="text-slate-500">AI 辅助建议，需人工专业判断 · 输入 @ 关联对象</span><span class="shrink-0 text-slate-500">Enter 发送 · Shift + Enter 换行 {{ input.length }}/4000</span></div>
+              <div class="mt-1 hidden items-center justify-between gap-2 px-1 text-[11px] sm:flex"><span class="text-slate-500">{{ assistantMode === 'lesson_prep' ? '备课方案需教师复核后使用 · 输入 @ 可关联班级' : 'AI 辅助建议，需人工专业判断 · 输入 @ 关联对象' }}</span><span class="shrink-0 text-slate-500">Enter 发送 · Shift + Enter 换行 {{ input.length }}/4000</span></div>
             </div>
           </div>
         </form>

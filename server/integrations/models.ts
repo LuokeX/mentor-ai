@@ -19,13 +19,13 @@ import { getAiRuntimeConfig } from '../domain/ai-config'
  */
 export async function createAgentLlm(
   event: H3Event,
-  opts: { temperature?: number; maxTokens?: number; thinking?: 'disabled' } = {}
+  opts: { temperature?: number; maxTokens?: number; timeoutMs?: number; thinking?: 'disabled' } = {}
 ): Promise<ChatOpenAI> {
   const config = useRuntimeConfig(event)
   const rt = await getAiRuntimeConfig(event)
   const model = rt.generatorModel || String(config.deepseekGeneratorModel || '')
-  // 无库内覆盖时回落环境变量 DEEPSEEK_TIMEOUT_MS，仍为空给 45s。
-  const timeoutMs = rt.timeoutMs ?? (Number(config.deepseekTimeoutMs) || 45000)
+  // 超时优先级：调用点显式指定（备课长文） > 运行时覆盖 > 环境变量 DEEPSEEK_TIMEOUT_MS > 45s。
+  const timeoutMs = opts.timeoutMs ?? rt.timeoutMs ?? (Number(config.deepseekTimeoutMs) || 45000)
   // 输出上限：缺省取运行时配置 AI_AGENT_MAX_OUTPUT_TOKENS（默认 4096），防止长思考链无界计费。
   const maxTokens = opts.maxTokens ?? (Number(config.agentMaxOutputTokens) || 4096)
   return new ChatOpenAI({

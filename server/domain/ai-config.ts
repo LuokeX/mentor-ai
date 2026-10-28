@@ -60,6 +60,16 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
     ]
   },
   {
+    code: 'assistant_lesson_prep',
+    name: '备课助手系统提示词',
+    description: '首页 AI 助手「备课」模式：按学段/学科/课时产出完整教学设计；复用知识检索与安全边界，不改变会话与积分口径。',
+    placeholders: [
+      { key: 'formatInstruction', label: '输出结构指令', description: '由调用点注入的教案/赛课/班会/项目化结构要求与教师画像前缀。' },
+      { key: 'knowledgeContext', label: '已审核知识片段', description: '项目化教学理论、设计支架等已发布知识的检索说明；无命中时为降级提示句。' },
+      { key: 'businessContextText', label: '当前业务对象上下文', description: '班级/学生等咨询对象指针；未指定时为固定提示句。' }
+    ]
+  },
+  {
     code: 'assessment_report',
     name: '评估报告润色提示词',
     description: '确定性规则结果生成正式评估报告 JSON（AI 仅润色，约束字段不得改变）。facts 另含 termChunks（专业词白话解释片段），只用于把报告里的专业词解释成教师能懂的话，不得据此新增规则、等级、阈值或结论。报告正文不得出现内部标注（技术编号 T1-T12、流程编号 S0-S5、响应分级 L1-L3、维度字母、体系名），需引用时改写为中文名称。',

@@ -6,6 +6,7 @@ import { PROMPT_REGISTRY, getAiRuntimeConfig, getPromptTemplate, isPromptPublish
 const AI_CENTER_CODES = [
   'assistant_evidence_review',
   'assistant_chat',
+  'assistant_lesson_prep',
   'assessment_report',
   'tool_step_polish',
   'term_extraction',
@@ -20,7 +21,7 @@ const AI_CENTER_CODES = [
 const fakeEvent = {} as H3Event
 
 describe('PROMPT_REGISTRY 提示词注册表', () => {
-  it('覆盖全部 10 个 AI 调用点且 code 唯一', () => {
+  it('覆盖全部 11 个 AI 调用点且 code 唯一', () => {
     const codes = PROMPT_REGISTRY.map(item => item.code)
     expect(codes).toEqual(AI_CENTER_CODES)
     expect(new Set(codes).size).toBe(codes.length)
@@ -35,7 +36,7 @@ describe('PROMPT_REGISTRY 提示词注册表', () => {
 })
 
 describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () => {
-  it('10 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
+  it('11 条基线齐全、正文非空，且不与注册表多余/缺漏', () => {
     expect(Object.keys(AI_PROMPT_BASELINES).sort()).toEqual([...AI_CENTER_CODES].sort())
     for (const code of AI_CENTER_CODES) {
       const text = getPromptBaseline(code)
@@ -51,6 +52,18 @@ describe('代码提示词基线（server/domain/ai-prompt-baselines.ts）', () =
     expect(text).toContain('不强制每轮共情')
     expect(text).not.toContain('临床')
     expect(text).not.toContain('心理顾问')
+  })
+
+  it('assistant_lesson_prep 是备课助手，保留知识检索与安全边界', () => {
+    const text = getPromptBaseline('assistant_lesson_prep')!
+    expect(text).toContain('备课助手')
+    expect(text).toContain('教学设计')
+    expect(text).toContain('knowledge_search')
+    expect(text).toContain('不得编造')
+    expect(text).toContain('{{formatInstruction}}')
+    expect(text).toContain('{{knowledgeContext}}')
+    expect(text).toContain('{{businessContextText}}')
+    expect(text).not.toContain('临床')
   })
 
   it('未登记的编码返回 null（调用点据此降级）', () => {

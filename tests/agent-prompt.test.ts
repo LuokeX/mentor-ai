@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { buildFormatInstruction } from '../server/agent/prompts'
+import type { H3Event } from 'h3'
+import { buildAgentSystemPrompt, buildFormatInstruction, buildLessonPrepFormatInstruction } from '../server/agent/prompts'
+
+const fakeEvent = {} as H3Event
 
 describe('Agent 行为要点（formatInstruction）', () => {
   it('保留回答先行：基于现有信息直接给初步判断，不先发起多轮追问', () => {
@@ -105,5 +108,52 @@ describe('Agent 行为要点（formatInstruction）', () => {
     const text = buildFormatInstruction({ teacherProfileText: '班主任（5年）；语文学科教师' })
     expect(text.startsWith('您是班主任（5年）；语文学科教师。')).toBe(true)
     expect(text).toContain('回答先行')
+  })
+})
+
+describe('备课模式（formatInstruction 与 system 提示词）', () => {
+  it('输出完整教案结构，不套用聊天短答格式', () => {
+    const text = buildLessonPrepFormatInstruction({})
+    expect(text).toContain('教学设计而不是聊天回答')
+    expect(text).toContain('课题与课时')
+    expect(text).toContain('教学过程')
+    expect(text).toContain('板书设计')
+    expect(text).toContain('评价方式')
+    expect(text).toContain('需要确认的信息')
+    expect(text).toContain('Markdown 表格')
+    expect(text).not.toContain('回答先行')
+    expect(text).not.toContain('500 字以内')
+  })
+
+  it('支持赛课、班会与项目化三种变体', () => {
+    const text = buildLessonPrepFormatInstruction({})
+    expect(text).toContain('赛课设计')
+    expect(text).toContain('评委追问')
+    expect(text).toContain('班会课')
+    expect(text).toContain('项目化学习设计')
+    expect(text).toContain('驱动性问题')
+  })
+
+  it('有教师画像时并入身份前缀', () => {
+    const text = buildLessonPrepFormatInstruction({ teacherProfileText: '小学数学教师；任教年级：五年级' })
+    expect(text.startsWith('您是小学数学教师；任教年级：五年级。')).toBe(true)
+  })
+
+  it('lesson_prep 模式选用备课提示词，chat 模式仍用班主任提示词', async () => {
+    const lessonPrep = await buildAgentSystemPrompt(fakeEvent, {
+      knowledgeContext: '知识',
+      businessContextText: '未指定咨询对象。',
+      mode: 'lesson_prep'
+    })
+    expect(lessonPrep).toContain('备课助手')
+    expect(lessonPrep).toContain('教学设计而不是聊天回答')
+
+    const chat = await buildAgentSystemPrompt(fakeEvent, {
+      knowledgeContext: '知识',
+      businessContextText: '未指定咨询对象。',
+      mode: 'chat'
+    })
+    expect(chat).toContain('统一 AI 助手')
+    expect(chat).not.toContain('备课助手')
   })
 })

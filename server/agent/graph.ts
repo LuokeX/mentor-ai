@@ -57,6 +57,12 @@ export interface RunAgentGraphInput {
   systemPrompt: string
   /** SSE 事件采集器：转发给入口（入口再转发给前端）。 */
   onEvent: (event: string, data: unknown) => void
+  /** 本轮总时长上限；缺省取 DEEPSEEK_TIMEOUT_MS（30s）。备课长文需要显式放宽。 */
+  totalTimeoutMs?: number
+  /** 单次模型往返超时；缺省按运行时配置。 */
+  modelTimeoutMs?: number
+  /** 单次模型输出上限；缺省 AI_AGENT_MAX_OUTPUT_TOKENS（4096）。 */
+  maxOutputTokens?: number
 }
 
 export interface RunAgentGraphResult {
@@ -508,7 +514,7 @@ function detectToolOutcome(output: unknown): 'success' | 'empty' | 'error' | 'ti
 export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): Promise<RunAgentGraphResult> {
   const { messages, userCtx, systemPrompt, onEvent } = input
   const config = useRuntimeConfig(event)
-  const totalTimeoutMs = Number(config.deepseekTimeoutMs) || 60_000
+  const totalTimeoutMs = input.totalTimeoutMs ?? (Number(config.deepseekTimeoutMs) || 60_000)
   const deadline = Date.now() + totalTimeoutMs
   const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(totalTimeoutMs)]) : AbortSignal.timeout(totalTimeoutMs)
   /** 轮次上限与工具启用清单：来自 AI_AGENT_MAX_TOOL_ROUNDS / AI_AGENT_ENABLED_TOOLS（AI 中心只读展示）。 */
@@ -551,7 +557,10 @@ export async function runAgentGraph(event: H3Event, input: RunAgentGraphInput): 
 
   /** 执行一轮 Agent：内部只抛异常、不做兜底；累计变量由外层按轮次重置。 */
   const runOnce = async (attempt: number): Promise<void> => {
-    const llm = await createAgentLlm(event)
+    const llm = await createAgentLlm(event, {
+      maxTokens: input.maxOutputTokens,
+      timeoutMs: input.modelTimeoutMs
+    })
     const modelName = typeof llm.model === 'string' && llm.model ? llm.model : 'unknown'
     /** 本轮内每个模型调用的开始时间（run_id → 时间戳） */
     const modelCallStarts = new Map<string, number>()

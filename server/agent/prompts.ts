@@ -1,15 +1,17 @@
 /**
- * Agent（回答先行）系统提示词构建。
+ * Agent（回答先行 / 备课）系统提示词构建。
  *
- * 模板文本来自代码基线（server/domain/ai-prompt-baselines.ts 的 assistant_chat）：
- * 运行时替换 {{占位符}}，AI 中心仅做只读展示。
- * 正文缺失时直接抛错，由调用入口回退到澄清总结路径。
+ * 模板文本来自代码基线（server/domain/ai-prompt-baselines.ts）：
+ * - chat：assistant_chat（班主任工作问答）
+ * - lesson_prep：assistant_lesson_prep（完整教学设计）
+ * 运行时替换 {{占位符}}，AI 中心仅做只读展示；正文缺失时直接抛错，由调用入口统一转为错误事件。
  *
- * assistant_chat 模板的实际占位符只有三个：formatInstruction / knowledgeContext /
+ * 两个模板的实际占位符都只有三个：formatInstruction / knowledgeContext /
  * businessContextText（teacherProfileText 无独立占位符，按身份前缀并入 formatInstruction）。
  * 模板整体以 ###SYSTEM### 开头（无 ###USER### 段），渲染产物即 system 消息。
  */
 import type { H3Event } from 'h3'
+import type { ChatMode } from '../../shared/contracts'
 import { renderPrompt } from '../domain/ai-config'
 
 export interface AgentSystemPromptInput {
@@ -19,6 +21,8 @@ export interface AgentSystemPromptInput {
   businessContextText?: string | null
   /** 教师画像（班主任/学科/任教年级，不含 PII）；无画像可不传。 */
   teacherProfileText?: string
+  /** 本轮工作模式；缺省 chat，保持历史调用兼容。 */
+  mode?: ChatMode
 }
 
 /**
@@ -47,15 +51,39 @@ export function buildFormatInstruction(input: { teacherProfileText?: string }): 
 }
 
 /**
+ * 「备课」模式的输出结构：教案而不是聊天短答。
+ * 结构按方案类型给出，允许学科差异，但要求完整、可落地；
+ * 缺失信息先按合理假设补全，末尾最多列 3 条待确认项，不用多轮追问阻塞输出。
+ */
+export function buildLessonPrepFormatInstruction(input: { teacherProfileText?: string }): string {
+  const identityText = input.teacherProfileText?.trim() ? `您是${input.teacherProfileText}。` : ''
+  const guidance = [
+    '按教学设计而不是聊天回答来组织输出：方案要完整、可直接落地，篇幅以把课上清楚为准，不要压缩成三五条建议。',
+    '日常教案固定包含：课题与课时、学情分析、教学目标（可观察、可评价）、教学重难点、教学准备、教学过程（分环节写清时间、教师活动、学生活动、设计意图）、板书设计、作业设计、评价方式、教学反思与常见问题。',
+    '班会课用：班会主题、背景与学情、班会目标、重难点、课前准备、活动流程（分环节写清时间、教师引导、学生活动、设计意图）、课后延伸与跟进、效果评价。',
+    '赛课设计在上述结构上补充：设计亮点、可能的评委追问与答辩要点。',
+    '项目化学习设计补充：驱动性问题、入项/知识与能力建构/探究与制作/出项展示与评价的课时分配、评价量规。',
+    '需要时间分配、评价量规、任务单等结构化信息时用 Markdown 表格；其余用标题与短列表，便于教师直接复制。',
+    '信息不足时先按合理假设把方案写完整，并在末尾用「需要确认的信息」列出最多 3 条，不要用多轮追问阻塞输出。',
+    '正文不要写来源标注、内部字段名、模块英文 ID、工具名或平台内部编号；引用来源由界面单独展示。'
+  ].join('\n')
+  return identityText ? `${identityText}\n${guidance}` : guidance
+}
+
+/**
  * 构建 Agent 的 system 提示词。
- * 正文来自代码基线，缺失时抛错，由调用入口回退到澄清总结路径。
+ * 正文来自代码基线，缺失时抛错，由调用入口统一转换为错误事件。
  */
 export async function buildAgentSystemPrompt(event: H3Event, input: AgentSystemPromptInput): Promise<string> {
   const knowledgeContext = input.knowledgeContext.trim() || '没有检索到已发布知识。'
   const contextText = input.businessContextText?.trim() || '未指定咨询对象。'
-  const formatInstruction = buildFormatInstruction({ teacherProfileText: input.teacherProfileText })
+  const lessonPrep = input.mode === 'lesson_prep'
+  const promptCode = lessonPrep ? 'assistant_lesson_prep' : 'assistant_chat'
+  const formatInstruction = lessonPrep
+    ? buildLessonPrepFormatInstruction({ teacherProfileText: input.teacherProfileText })
+    : buildFormatInstruction({ teacherProfileText: input.teacherProfileText })
 
-  const prompt = await renderPrompt(event, 'assistant_chat', {
+  const prompt = await renderPrompt(event, promptCode, {
     formatInstruction,
     knowledgeContext,
     businessContextText: contextText
@@ -66,5 +94,5 @@ export async function buildAgentSystemPrompt(event: H3Event, input: AgentSystemP
   const userText = prompt.user?.trim()
   if (userText) return userText
 
-  throw new Error('AI 助手提示词正文缺失（assistant_chat）')
+  throw new Error(`AI 助手提示词正文缺失（${promptCode}）`)
 }
