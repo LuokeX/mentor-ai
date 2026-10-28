@@ -3,6 +3,7 @@ import type { H3Event } from 'h3'
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import type { AuthUser } from '../../app/composables/useAuth'
 import { CHAT_CONTEXT_MAX } from '../../shared/contracts'
+import { guardianDisplayLabel, type GuardianDisplayLink } from '../../shared/guardian-display'
 import { contextTypeLabel, isMessageAfterBindingSwitch, readContextSwitches } from './chat-context-switch'
 import { decryptSensitive } from '../utils/crypto'
 import { schema, useDb } from '../utils/db'
@@ -191,19 +192,24 @@ export async function buildAssistantBusinessContext(event: H3Event, user: AuthUs
     return { type: 'class', id: klass.id, label: klass.name, snapshot, prompt: compact(snapshot) }
   }
 
+  // 共享家长：只要关联到当前教师负责的学生就可读取；负责人是其他教师时也能 @。
   const [guardian] = await db.select().from(schema.guardians).where(and(
     eq(schema.guardians.id, contextId),
-    eq(schema.guardians.ownerUserId, user.id),
     eq(schema.guardians.schoolId, user.schoolId)
   )).limit(1)
   if (!guardian) throw createError({ statusCode: 404, message: '家长不存在或不属于当前负责范围' })
   const [relations, communications, plans] = await Promise.all([
-    db.select().from(schema.studentGuardians).where(eq(schema.studentGuardians.guardianId, guardian.id)),
+    db.select().from(schema.studentGuardians).where(and(
+      eq(schema.studentGuardians.guardianId, guardian.id),
+      eq(schema.studentGuardians.schoolId, user.schoolId),
+      eq(schema.studentGuardians.status, 'active'),
+    )),
     db.select().from(schema.communications).where(and(eq(schema.communications.guardianId, guardian.id), eq(schema.communications.schoolId, user.schoolId), eq(schema.communications.ownerUserId, user.id))).orderBy(desc(schema.communications.occurredAt)).limit(10),
     db.select().from(schema.plans).where(and(eq(schema.plans.guardianId, guardian.id), eq(schema.plans.schoolId, user.schoolId), eq(schema.plans.ownerUserId, user.id))).orderBy(desc(schema.plans.updatedAt)).limit(10)
   ])
   const studentIds = relations.map(row => row.studentId)
   const students = studentIds.length ? await db.select().from(schema.students).where(and(inArray(schema.students.id, studentIds), eq(schema.students.ownerUserId, user.id), eq(schema.students.schoolId, user.schoolId))) : []
+  if (guardian.ownerUserId !== user.id && !students.length) throw createError({ statusCode: 404, message: '家长不存在或不属于当前负责范围' })
   const classIds = [...new Set(students.map(row => row.classId).filter(Boolean))] as string[]
   const classes = classIds.length ? await db.select().from(schema.classes).where(inArray(schema.classes.id, classIds)) : []
   const classById = new Map(classes.map(row => [row.id, row]))
@@ -236,7 +242,13 @@ export async function buildAssistantBusinessContext(event: H3Event, user: AuthUs
     }),
     recentPlans: plans.map(row => ({ id: row.id, module: row.module, title: row.title, summary: decryptSensitive(row.summaryEnc, secret), updatedAt: row.updatedAt }))
   }
-  const label = `${decryptSensitive(guardian.nameEnc, secret)}${guardian.relation ? ` · ${guardian.relation}` : ''}`
+  const links: GuardianDisplayLink[] = relations.flatMap(relation => {
+    const student = studentById.get(relation.studentId)
+    return student
+      ? [{ studentName: decryptSensitive(student.nameEnc, secret), relation: relation.relation || guardian.relation }]
+      : []
+  })
+  const label = guardianDisplayLabel(links, decryptSensitive(guardian.nameEnc, secret), guardian.relation)
   return { type: 'guardian', id: guardian.id, label, snapshot, prompt: compact(snapshot) }
 }
 
@@ -288,12 +300,40 @@ export async function resolveAssistantContextRefs(
       )).limit(1)
       label = row?.name || null
     } else {
-      const [row] = await db.select({ nameEnc: schema.guardians.nameEnc, relation: schema.guardians.relation }).from(schema.guardians).where(and(
+      const [row] = await db.select({
+        nameEnc: schema.guardians.nameEnc,
+        relation: schema.guardians.relation,
+        ownerUserId: schema.guardians.ownerUserId,
+      }).from(schema.guardians).where(and(
         eq(schema.guardians.id, ref.id),
-        eq(schema.guardians.ownerUserId, user.id),
         eq(schema.guardians.schoolId, user.schoolId)
       )).limit(1)
-      label = row ? `${decryptSensitive(row.nameEnc, secret)}${row.relation ? ` · ${row.relation}` : ''}` : null
+      if (row) {
+        const links = await db.select({
+          relation: schema.studentGuardians.relation,
+          nameEnc: schema.students.nameEnc,
+        }).from(schema.studentGuardians)
+          .innerJoin(schema.students, and(
+            eq(schema.students.id, schema.studentGuardians.studentId),
+            eq(schema.students.ownerUserId, user.id),
+            eq(schema.students.schoolId, user.schoolId),
+          ))
+          .where(and(
+            eq(schema.studentGuardians.guardianId, ref.id),
+            eq(schema.studentGuardians.schoolId, user.schoolId),
+            eq(schema.studentGuardians.status, 'active'),
+          ))
+        if (links.length || row.ownerUserId === user.id) {
+          label = guardianDisplayLabel(
+            links.map(link => ({
+              studentName: decryptSensitive(link.nameEnc, secret),
+              relation: link.relation || row.relation,
+            })),
+            decryptSensitive(row.nameEnc, secret),
+            row.relation
+          )
+        }
+      }
     }
     if (!label) {
       throw createError({ statusCode: 404, message: `${contextTypeLabel(ref.type)}不存在或不属于当前负责范围` })
@@ -315,15 +355,18 @@ export async function listAssistantContextOptions(event: H3Event, user: AuthUser
   const [classes, students, guardians, relations, communications] = await Promise.all([
     db.select().from(schema.classes).where(and(eq(schema.classes.ownerUserId, user.id), eq(schema.classes.schoolId, user.schoolId))).orderBy(desc(schema.classes.updatedAt)),
     db.select().from(schema.students).where(and(eq(schema.students.ownerUserId, user.id), eq(schema.students.schoolId, user.schoolId))).orderBy(desc(schema.students.updatedAt)),
-    db.select().from(schema.guardians).where(and(eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId))).orderBy(desc(schema.guardians.updatedAt)),
-    db.select().from(schema.studentGuardians),
-    db.select().from(schema.communications).where(and(eq(schema.communications.ownerUserId, user.id), eq(schema.communications.schoolId, user.schoolId), eq(schema.communications.ownerUserId, user.id))).orderBy(desc(schema.communications.occurredAt)).limit(200)
+    db.select().from(schema.guardians).where(eq(schema.guardians.schoolId, user.schoolId)).orderBy(desc(schema.guardians.updatedAt)),
+    db.select().from(schema.studentGuardians).where(eq(schema.studentGuardians.schoolId, user.schoolId)),
+    db.select().from(schema.communications).where(and(eq(schema.communications.ownerUserId, user.id), eq(schema.communications.schoolId, user.schoolId))).orderBy(desc(schema.communications.occurredAt)).limit(200)
   ])
   const classById = new Map(classes.map(row => [row.id, row]))
   const communicationsByStudent = new Map<string, number>()
   const communicationsByGuardian = new Map<string, number>()
   const communicationsByClass = new Map<string, number>()
   const studentById = new Map(students.map(row => [row.id, row]))
+  const guardianById = new Map(guardians.map(row => [row.id, row]))
+  const ownedStudentIds = new Set(students.map(row => row.id))
+  const ownedRelations = relations.filter(relation => ownedStudentIds.has(relation.studentId) && relation.status === 'active')
   for (const item of communications) {
     if (item.studentId) communicationsByStudent.set(item.studentId, (communicationsByStudent.get(item.studentId) || 0) + 1)
     if (item.guardianId) communicationsByGuardian.set(item.guardianId, (communicationsByGuardian.get(item.guardianId) || 0) + 1)
@@ -331,7 +374,20 @@ export async function listAssistantContextOptions(event: H3Event, user: AuthUser
     if (student?.classId) communicationsByClass.set(student.classId, (communicationsByClass.get(student.classId) || 0) + 1)
   }
   const guardianByStudent = new Map<string, number>()
-  for (const relation of relations) guardianByStudent.set(relation.studentId, (guardianByStudent.get(relation.studentId) || 0) + 1)
+  const guardianLinksByGuardian = new Map<string, GuardianDisplayLink[]>()
+  for (const relation of ownedRelations) {
+    guardianByStudent.set(relation.studentId, (guardianByStudent.get(relation.studentId) || 0) + 1)
+    const student = studentById.get(relation.studentId)
+    const guardian = guardianById.get(relation.guardianId)
+    if (!student) continue
+    const links = guardianLinksByGuardian.get(relation.guardianId) ?? []
+    links.push({
+      studentName: decryptSensitive(student.nameEnc, secret),
+      relation: relation.relation || guardian?.relation,
+    })
+    guardianLinksByGuardian.set(relation.guardianId, links)
+  }
+  const eligibleGuardians = guardians.filter(row => row.ownerUserId === user.id || guardianLinksByGuardian.has(row.id))
   return {
     students: students.map(row => ({
       type: 'student' as const,
@@ -349,10 +405,14 @@ export async function listAssistantContextOptions(event: H3Event, user: AuthUser
       description: `${row.grade} 年级 · ${students.filter(student => student.classId === row.id).length} 名当前负责学生 · 沟通 ${communicationsByClass.get(row.id) || 0}`,
       communicationCount: communicationsByClass.get(row.id) || 0
     })),
-    guardians: guardians.map(row => ({
+    guardians: eligibleGuardians.map(row => ({
       type: 'guardian' as const,
       id: row.id,
-      label: decryptSensitive(row.nameEnc, secret),
+      label: guardianDisplayLabel(
+        guardianLinksByGuardian.get(row.id) ?? [],
+        decryptSensitive(row.nameEnc, secret),
+        row.relation
+      ),
       description: `${row.relation || '关系未填'} · 沟通 ${communicationsByGuardian.get(row.id) || 0}`,
       relation: row.relation,
       communicationCount: communicationsByGuardian.get(row.id) || 0

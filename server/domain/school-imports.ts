@@ -19,6 +19,14 @@ export type ImportError = { row: number, code: string, message: string }
 export const SCHOOL_IMPORT_TYPES = ['users', 'classes', 'students', 'guardians', 'communications', 'student_events'] as const
 export type SchoolImportRequestType = typeof SCHOOL_IMPORT_TYPES[number]
 
+/** 学校管理员导入管理可选类型（在原有 6 类基础上增加学生+家长合表 xlsx）。 */
+export const SCHOOL_ADMIN_IMPORT_TYPES = [...SCHOOL_IMPORT_TYPES, 'student_family'] as const
+export type SchoolAdminImportType = typeof SCHOOL_ADMIN_IMPORT_TYPES[number]
+
+export function isStudentFamilyImportType(value: string): value is 'student_family' {
+  return value === 'student_family'
+}
+
 export const importTemplates: Record<SchoolImportType, string> = {
   users: 'name,phone,role\n张老师,13800000001,teacher\n',
   classes: 'class_code,name,grade,teacher_phone\nG7-01,七年级一班,7,13800000001\n',

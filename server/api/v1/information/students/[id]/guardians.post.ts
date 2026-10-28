@@ -4,7 +4,10 @@ import { requireUser } from '../../../../../utils/auth'
 import { schema, useDb } from '../../../../../utils/db'
 import { writeAudit } from '../../../../../utils/audit'
 
-const bodySchema = z.object({ guardianId: z.string().uuid() })
+const bodySchema = z.object({
+  guardianId: z.string().uuid(),
+  relation: z.string().trim().max(40).optional(),
+})
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -13,13 +16,14 @@ export default defineEventHandler(async (event) => {
   const db = useDb(event)
   const [student] = await db.select({ id: schema.students.id }).from(schema.students).where(and(eq(schema.students.id, id), eq(schema.students.ownerUserId, user.id), eq(schema.students.schoolId, user.schoolId!))).limit(1)
   if (!student) throw createError({ statusCode: 404, message: '学生不存在' })
-  const [guardian] = await db.select({ id: schema.guardians.id }).from(schema.guardians).where(and(eq(schema.guardians.id, body.guardianId), eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId!))).limit(1)
+  const [guardian] = await db.select({ id: schema.guardians.id, relation: schema.guardians.relation }).from(schema.guardians).where(and(eq(schema.guardians.id, body.guardianId), eq(schema.guardians.ownerUserId, user.id), eq(schema.guardians.schoolId, user.schoolId!))).limit(1)
   if (!guardian) throw createError({ statusCode: 422, message: '家长不存在或不属于当前教师' })
+  const relation = body.relation || guardian.relation || null
   await db.insert(schema.studentGuardians)
-    .values({ studentId: id, guardianId: body.guardianId, schoolId: user.schoolId! })
+    .values({ studentId: id, guardianId: body.guardianId, schoolId: user.schoolId!, relation })
     .onConflictDoUpdate({
       target: [schema.studentGuardians.studentId, schema.studentGuardians.guardianId],
-      set: { status: 'active', schoolId: user.schoolId! },
+      set: { status: 'active', schoolId: user.schoolId!, relation },
     })
   await writeAudit(event, { schoolId: user.schoolId, actorId: user.id, action: 'information.student.guardian.link', targetType: 'student', targetId: id, metadata: { guardianId: body.guardianId } })
   return { ok: true }

@@ -4,6 +4,7 @@ import { requireUser } from '../../../../utils/auth'
 import { decryptSensitive } from '../../../../utils/crypto'
 import { schema, useDb } from '../../../../utils/db'
 import { canonicalCommunicationRiskLevel } from '../../../../../shared/dashboard'
+import { guardianDisplayLabel } from '../../../../../shared/guardian-display'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event, ['teacher'])
@@ -42,18 +43,39 @@ export default defineEventHandler(async (event) => {
         .limit(1).then(rows => rows[0] ?? null)
       : Promise.resolve(null),
     record.guardianId
-      ? db.select({ id: schema.guardians.id, nameEnc: schema.guardians.nameEnc }).from(schema.guardians)
+      ? db.select({ id: schema.guardians.id, nameEnc: schema.guardians.nameEnc, relation: schema.guardians.relation }).from(schema.guardians)
         .where(and(eq(schema.guardians.id, record.guardianId), eq(schema.guardians.schoolId, user.schoolId)))
         .limit(1).then(rows => rows[0] ?? null)
       : Promise.resolve(null)
   ])
+  const [primaryLink] = record.studentId && record.guardianId
+    ? await db.select({ relation: schema.studentGuardians.relation }).from(schema.studentGuardians).where(and(
+      eq(schema.studentGuardians.studentId, record.studentId),
+      eq(schema.studentGuardians.guardianId, record.guardianId),
+      eq(schema.studentGuardians.schoolId, user.schoolId),
+      eq(schema.studentGuardians.status, 'active'),
+    )).limit(1)
+    : []
+  const studentName = primaryStudent ? decryptSensitive(primaryStudent.nameEnc, secret) : null
+  const guardianName = primaryGuardian ? decryptSensitive(primaryGuardian.nameEnc, secret) : null
+  const guardianRelation = primaryLink?.relation || primaryGuardian?.relation || null
+  const guardianLabel = guardianName
+    ? guardianDisplayLabel(studentName ? [{ studentName, relation: guardianRelation }] : [], guardianName, guardianRelation)
+    : null
+  const guardianNames = guardianName
+    ? [guardianName, ...relatedGuardians.map(row => decryptSensitive(row.nameEnc, secret))]
+    : relatedGuardians.map(row => decryptSensitive(row.nameEnc, secret))
   const { summaryEnc, ...safeRecord } = record
   return {
     ...safeRecord,
     riskLevel: canonicalCommunicationRiskLevel(safeRecord.riskLevel) ?? safeRecord.riskLevel,
     summary: decryptSensitive(summaryEnc, secret),
-    studentName: primaryStudent ? decryptSensitive(primaryStudent.nameEnc, secret) : null,
-    guardianName: primaryGuardian ? decryptSensitive(primaryGuardian.nameEnc, secret) : null,
+    studentName,
+    guardianName,
+    guardianNames,
+    guardianRelation,
+    guardianLabel,
+    guardianLabels: guardianLabel ? [guardianLabel, ...relatedGuardians.map(row => decryptSensitive(row.nameEnc, secret))] : relatedGuardians.map(row => decryptSensitive(row.nameEnc, secret)),
     relatedStudentNames: relatedStudents.map(row => decryptSensitive(row.nameEnc, secret)),
     relatedGuardianNames: relatedGuardians.map(row => decryptSensitive(row.nameEnc, secret)),
     studentIds: [record.studentId, ...relatedStudents.map(row => row.id)].filter(Boolean),

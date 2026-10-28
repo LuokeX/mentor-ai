@@ -1,5 +1,5 @@
 {
-  "id": "d3ce6bc2-f9da-4a75-981a-98ae498d0d81",
+  "id": "0a4973eb-b0b6-430c-8c0a-4595293e9804",
   "prevId": "deee01f9-fc02-49ae-a720-9f0769a4ec83",
   "version": "7",
   "dialect": "postgresql",
@@ -2515,185 +2515,6 @@
             "id"
           ],
           "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.chat_sandbox_workspaces": {
-      "name": "chat_sandbox_workspaces",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "school_id": {
-          "name": "school_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "owner_user_id": {
-          "name": "owner_user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "session_id": {
-          "name": "session_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "provider_workspace_id": {
-          "name": "provider_workspace_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'active'"
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "chat_sandbox_workspaces_provider_uidx": {
-          "name": "chat_sandbox_workspaces_provider_uidx",
-          "columns": [
-            {
-              "expression": "provider_workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "chat_sandbox_workspaces_active_session_uidx": {
-          "name": "chat_sandbox_workspaces_active_session_uidx",
-          "columns": [
-            {
-              "expression": "session_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"chat_sandbox_workspaces\".\"status\" = 'active' AND \"chat_sandbox_workspaces\".\"session_id\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "chat_sandbox_workspaces_owner_idx": {
-          "name": "chat_sandbox_workspaces_owner_idx",
-          "columns": [
-            {
-              "expression": "owner_user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "chat_sandbox_workspaces_expiry_idx": {
-          "name": "chat_sandbox_workspaces_expiry_idx",
-          "columns": [
-            {
-              "expression": "expires_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "chat_sandbox_workspaces_school_id_schools_id_fk": {
-          "name": "chat_sandbox_workspaces_school_id_schools_id_fk",
-          "tableFrom": "chat_sandbox_workspaces",
-          "tableTo": "schools",
-          "columnsFrom": [
-            "school_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "chat_sandbox_workspaces_owner_user_id_users_id_fk": {
-          "name": "chat_sandbox_workspaces_owner_user_id_users_id_fk",
-          "tableFrom": "chat_sandbox_workspaces",
-          "tableTo": "users",
-          "columnsFrom": [
-            "owner_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "chat_sandbox_workspaces_session_id_chat_sessions_id_fk": {
-          "name": "chat_sandbox_workspaces_session_id_chat_sessions_id_fk",
-          "tableFrom": "chat_sandbox_workspaces",
-          "tableTo": "chat_sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -11023,6 +10844,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "id_card_enc": {
+          "name": "id_card_enc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id_card_search": {
+          "name": "id_card_search",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "ethnicity": {
           "name": "ethnicity",
           "type": "varchar(40)",
@@ -11043,6 +10876,12 @@
         },
         "address_enc": {
           "name": "address_enc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "extra_enc": {
+          "name": "extra_enc",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -11154,6 +10993,27 @@
             },
             {
               "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "students_school_id_card_idx": {
+          "name": "students_school_id_card_idx",
+          "columns": [
+            {
+              "expression": "school_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id_card_search",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

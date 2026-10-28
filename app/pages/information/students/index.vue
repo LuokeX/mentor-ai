@@ -41,6 +41,38 @@ const statusOptions = [
 
 const drawerOpen = ref(false)
 const batchImportOpen = ref(false)
+/**
+ * 「批量添加信息」里的模板选项：保留通用简易模板，同时把小学/初中学生+家长合表收进同一入口，
+ * 用户只需要在抽屉里切换模板，不再单独占一个创建菜单项。
+ */
+const studentImportTemplateOptions = [
+  {
+    label: '简易学生模板（通用）',
+    value: 'simple',
+    templateUrl: '/api/v1/information/students/import-template',
+    previewUrl: '/api/v1/information/students/import-preview',
+    commitUrl: '/api/v1/information/students/import-commit',
+    sampleFields: ['name', 'className'],
+  },
+  {
+    label: '小学部（学生+家长）',
+    value: 'family-primary',
+    templateUrl: '/templates/student-family-primary.xlsx',
+    previewUrl: '/api/v1/information/student-family/import-preview',
+    commitUrl: '/api/v1/information/student-family/import-commit',
+    sampleFields: ['studentName', 'className', 'guardians', 'action'],
+    section: 'primary',
+  },
+  {
+    label: '初中部（学生+家长）',
+    value: 'family-junior',
+    templateUrl: '/templates/student-family-junior.xlsx',
+    previewUrl: '/api/v1/information/student-family/import-preview',
+    commitUrl: '/api/v1/information/student-family/import-commit',
+    sampleFields: ['studentName', 'className', 'guardians', 'action'],
+    section: 'junior',
+  },
+]
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({ name: '', classId: '', gender: '', notes: '' })
@@ -182,10 +214,7 @@ function closeDrawer() {
     <BatchImportDrawer
       :open="batchImportOpen"
       title="批量添加学生"
-      templateUrl="/api/v1/information/students/import-template"
-      previewUrl="/api/v1/information/students/import-preview"
-      commitUrl="/api/v1/information/students/import-commit"
-      :sample-fields="['name', 'className']"
+      :template-options="studentImportTemplateOptions"
       @close="batchImportOpen = false"
       @imported="list.refresh"
     />

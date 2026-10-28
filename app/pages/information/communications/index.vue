@@ -16,6 +16,10 @@ interface CommunicationRow {
   /** 主对象在前的完整名单（支持多选学生 / 多选家长） */
   studentNames: string[]
   guardianNames: string[]
+  /** 「某生爸爸（真实姓名）」展示；无关联学生时回退 guardianNames */
+  guardianLabels?: string[]
+  guardianRelation?: string | null
+  guardianLabel?: string | null
   channel: string | null
   parentType: string | null
   riskLevel: string | null
@@ -282,7 +286,7 @@ function closeDrawer() {
       </template>
       <template #status-data="{ row }"><UBadge :color="row.status === 'active' ? 'success' : 'neutral'" variant="subtle">{{ row.status === 'active' ? '有效' : '已归档' }}</UBadge></template>
       <template #studentNames-data="{ row }">{{ namesColumnLabel(row.studentNames) }}</template>
-      <template #guardianNames-data="{ row }">{{ namesColumnLabel(row.guardianNames) }}</template>
+      <template #guardianNames-data="{ row }">{{ namesColumnLabel(row.guardianLabels?.length ? row.guardianLabels : row.guardianNames) }}</template>
       <template #channel-data="{ value }">{{ channelLabel(value) }}</template>
       <template #riskLevel-data="{ value }"><UBadge v-if="value" color="warning" variant="subtle">{{ riskLabel(value) }}</UBadge><span v-else>—</span></template>
       <template #occurredAt-data="{ value }">{{ formatDateTime(value) }}</template>

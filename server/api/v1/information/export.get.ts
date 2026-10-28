@@ -36,8 +36,47 @@ export default defineEventHandler(async (event) => {
     exportVersion: '1.0', exportedAt: new Date().toISOString(), owner: { id: user.id, name: user.name, phone: user.phone },
     ownershipNote: '班级、学生、家长、沟通和方案是学校业务档案；本导出仅包含当前由该教师负责或参与的记录。',
     classes,
-    students: students.map(item => ({ ...item, name: decryptSensitive(item.nameEnc, secret), notes: decryptSensitive(item.notesEnc, secret), nameEnc: undefined, notesEnc: undefined, nameSearch: undefined })),
-    guardians: guardians.map(item => ({ ...item, name: decryptSensitive(item.nameEnc, secret), phone: decryptSensitive(item.phoneEnc, secret), nameEnc: undefined, phoneEnc: undefined, nameSearch: undefined })),
+    students: students.map(item => ({
+      ...item,
+      name: decryptSensitive(item.nameEnc, secret),
+      notes: decryptSensitive(item.notesEnc, secret),
+      address: decryptSensitive(item.addressEnc, secret),
+      studentNo: decryptSensitive(item.studentNoEnc, secret),
+      externalRef: item.externalRefEnc ? decryptSensitive(item.externalRefEnc, secret) : null,
+      idCard: item.idCardEnc ? decryptSensitive(item.idCardEnc, secret) : null,
+      profile: item.profileEnc ? parseJsonSafe(decryptSensitive(item.profileEnc, secret)) : null,
+      extra: item.extraEnc ? parseJsonSafe(decryptSensitive(item.extraEnc, secret)) : null,
+      nameEnc: undefined,
+      notesEnc: undefined,
+      nameSearch: undefined,
+      addressEnc: undefined,
+      studentNoEnc: undefined,
+      studentNoSearch: undefined,
+      externalRefEnc: undefined,
+      externalRefSearch: undefined,
+      idCardEnc: undefined,
+      idCardSearch: undefined,
+      extraEnc: undefined,
+      profileEnc: undefined,
+    })),
+    guardians: guardians.map(item => ({
+      ...item,
+      name: decryptSensitive(item.nameEnc, secret),
+      phone: decryptSensitive(item.phoneEnc, secret),
+      idCard: item.idCardEnc ? decryptSensitive(item.idCardEnc, secret) : null,
+      externalRef: item.externalRefEnc ? decryptSensitive(item.externalRefEnc, secret) : null,
+      profile: item.profileEnc ? parseJsonSafe(decryptSensitive(item.profileEnc, secret)) : null,
+      nameEnc: undefined,
+      phoneEnc: undefined,
+      nameSearch: undefined,
+      idCardEnc: undefined,
+      idCardSearch: undefined,
+      externalRefEnc: undefined,
+      externalRefSearch: undefined,
+      contactEnc: undefined,
+      profileEnc: undefined,
+      notesEnc: undefined,
+    })),
     studentGuardianRelations: studentGuardianRelations.filter(relation => students.some(student => student.id === relation.studentId) || guardians.some(guardian => guardian.id === relation.guardianId)),
     communications: communications.map(item => ({ ...item, summary: decryptSensitive(item.summaryEnc, secret), summaryEnc: undefined })),
     plans: plans.map(item => ({ ...item, summary: decryptSensitive(item.summaryEnc, secret), summaryEnc: undefined })),
@@ -53,3 +92,11 @@ export default defineEventHandler(async (event) => {
   })
   return payload
 })
+
+function parseJsonSafe(value: string): unknown {
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}

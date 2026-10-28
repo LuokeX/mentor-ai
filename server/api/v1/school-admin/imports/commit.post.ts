@@ -1,16 +1,18 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { commitSchoolImport, parseImportFile, SCHOOL_IMPORT_TYPES } from '../../../../domain/school-imports'
+import { commitSchoolImport, parseImportFile, SCHOOL_ADMIN_IMPORT_TYPES, isStudentFamilyImportType } from '../../../../domain/school-imports'
 import { isBusinessImportType } from '../../../../domain/information-imports'
 import { commitBusinessImport, parseImportWorkbookOrThrow } from '../../../../domain/information-import-io'
+import { commitStudentFamilyImport, parseStudentFamilyWorkbookOrThrow } from '../../../../domain/student-family-import-io'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
 
 const bodySchema = z.object({
   previewId: z.string().uuid(),
-  type: z.enum(SCHOOL_IMPORT_TYPES),
+  type: z.enum(SCHOOL_ADMIN_IMPORT_TYPES),
   checksum: z.string().regex(/^[a-f0-9]{64}$/),
-  contentBase64: z.string().min(1).max(2_900_000)
+  contentBase64: z.string().min(1).max(2_900_000),
+  section: z.enum(['primary', 'junior']).optional(),
 })
 
 export default defineEventHandler(async (event) => {
@@ -24,13 +26,33 @@ export default defineEventHandler(async (event) => {
   )).limit(1)
   if (!preview) throw createError({ statusCode: 409, message: '预检记录不存在、已提交或文件校验值不一致' })
   let actualChecksum: string
-  if (isBusinessImportType(body.type)) {
+  if (isStudentFamilyImportType(body.type)) {
+    actualChecksum = parseStudentFamilyWorkbookOrThrow(event, body.contentBase64, body.section).checksum
+  } else if (isBusinessImportType(body.type)) {
     actualChecksum = parseImportWorkbookOrThrow(event, body.type, body.contentBase64).checksum
   } else {
     try { actualChecksum = parseImportFile(body.type, body.contentBase64).checksum }
     catch { throw createError({ statusCode: 422, message: '文件编码或格式不正确' }) }
   }
   if (actualChecksum !== body.checksum) throw createError({ statusCode: 409, message: '文件在预检后发生变化，请重新预检' })
+
+  if (isStudentFamilyImportType(body.type)) {
+    const result = await commitStudentFamilyImport(event, {
+      schoolId: admin.schoolId,
+      actorId: admin.id,
+      scope: { kind: 'school' },
+      contentBase64: body.contentBase64,
+      expectedSection: body.section,
+      previewId: preview.id,
+    })
+    if (!result.ok) throw createError({ statusCode: 422, message: '文件内容已不满足导入条件，请重新预检' })
+    return {
+      ok: true, importId: preview.id, totalRows: result.totalRows,
+      created: result.studentsCreated, updated: result.studentsUpdated, skipped: result.skipped,
+      invitations: [],
+      stats: result,
+    }
+  }
 
   if (isBusinessImportType(body.type)) {
     // 家校沟通 / 学生事件记录：只新增记录，归属学生的负责教师

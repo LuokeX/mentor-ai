@@ -40,13 +40,14 @@ export default defineEventHandler(async (event) => {
     if (teacher) classTeacherName = teacher.name
   }
   const guardianIds = relations.map(relation => relation.guardianId)
+  // 共享家长：只要关联到当前学生就读取（负责人可能是其他教师），前端按 canEdit 控制是否可跳转详情。
   const linkedGuardians = guardianIds.length
     ? await db.select().from(schema.guardians).where(and(
         inArray(schema.guardians.id, guardianIds),
         eq(schema.guardians.schoolId, user.schoolId!),
-        eq(schema.guardians.ownerUserId, user.id),
       ))
     : []
+  const linkByGuardianId = new Map(relations.map(link => [link.guardianId, link]))
   const guardianById = new Map([...linkedGuardians, ...guardianOptions].map(row => [row.id, row]))
   const profileText = decryptSensitive(student.profileEnc, secret)
   const profile = profileText ? JSON.parse(profileText) : {}
@@ -79,19 +80,61 @@ export default defineEventHandler(async (event) => {
       profileEnc: undefined,
       notesEnc: undefined,
       addressEnc: undefined,
-      nameSearch: undefined
+      nameSearch: undefined,
+      studentNoEnc: undefined,
+      studentNoSearch: undefined,
+      externalRefEnc: undefined,
+      externalRefSearch: undefined,
+      idCardEnc: undefined,
+      idCardSearch: undefined,
+      extraEnc: undefined,
     },
     class: klass[0] || null,
     classOptions,
-    guardianOptions: guardianOptions.map(row => ({ ...row, name: decryptSensitive(row.nameEnc, secret), phone: decryptSensitive(row.phoneEnc, secret), nameEnc: undefined, phoneEnc: undefined, nameSearch: undefined })),
-    guardians: linkedGuardians.map(row => ({ ...row, name: decryptSensitive(row.nameEnc, secret), phone: decryptSensitive(row.phoneEnc, secret), nameEnc: undefined, phoneEnc: undefined, nameSearch: undefined })),
+    guardianOptions: guardianOptions.map(row => ({
+      ...row,
+      name: decryptSensitive(row.nameEnc, secret),
+      phone: decryptSensitive(row.phoneEnc, secret),
+      nameEnc: undefined,
+      phoneEnc: undefined,
+      nameSearch: undefined,
+      idCardEnc: undefined,
+      idCardSearch: undefined,
+      externalRefEnc: undefined,
+      externalRefSearch: undefined,
+      contactEnc: undefined,
+      profileEnc: undefined,
+      notesEnc: undefined,
+    })),
+    guardians: linkedGuardians.map(row => {
+      const link = linkByGuardianId.get(row.id)
+      return {
+        ...row,
+        name: decryptSensitive(row.nameEnc, secret),
+        phone: decryptSensitive(row.phoneEnc, secret),
+        relation: link?.relation || row.relation || null,
+        linkRelation: link?.relation || null,
+        canEdit: row.ownerUserId === user.id,
+        nameEnc: undefined,
+        phoneEnc: undefined,
+        nameSearch: undefined,
+        idCardEnc: undefined,
+        idCardSearch: undefined,
+        externalRefEnc: undefined,
+        externalRefSearch: undefined,
+        contactEnc: undefined,
+        profileEnc: undefined,
+        notesEnc: undefined,
+      }
+    }),
     communications: communications.map(row => {
       const guardian = row.guardianId ? guardianById.get(row.guardianId) : null
+      const link = row.guardianId ? linkByGuardianId.get(row.guardianId) : null
       return {
         ...row,
         summary: decryptSensitive(row.summaryEnc, secret),
         guardianName: guardian ? decryptSensitive(guardian.nameEnc, secret) : null,
-        relation: guardian?.relation || null,
+        relation: link?.relation || guardian?.relation || null,
         summaryEnc: undefined
       }
     }),

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { COMMUNICATION_RISK_OPTIONS, communicationRiskLabel } from '~~/shared/dashboard'
+import { guardianDisplayLabel } from '~~/shared/guardian-display'
 const route = useRoute()
 const id = String(route.params.id)
 const { data, error, refresh } = await useFetch<any>(`/api/v1/information/students/${id}`)
@@ -108,6 +109,48 @@ async function unlinkGuardian(guardianId: string) {
   } finally { pending.value = false }
 }
 
+const addGuardianOpen = ref(false)
+const guardianForm = reactive({ name: '', relation: '父亲', phone: '', idCard: '' })
+const guardianFormError = ref('')
+const guardianRelationOptions = ['父亲', '母亲', '爷爷', '奶奶', '外公', '外婆', '其他监护人'].map(value => ({ label: value, value }))
+
+function guardianLabel(guardian: { name?: string | null, relation?: string | null, linkRelation?: string | null }) {
+  return guardianDisplayLabel(
+    [{ studentName: data.value?.student?.name || '', relation: guardian.linkRelation || guardian.relation || null }],
+    guardian.name,
+    guardian.relation
+  )
+}
+
+async function createGuardian() {
+  guardianFormError.value = ''
+  if (!guardianForm.name.trim()) {
+    guardianFormError.value = '请填写家长姓名'
+    return
+  }
+  pending.value = true
+  try {
+    await $fetch('/api/v1/information/entities', {
+      method: 'POST',
+      body: {
+        type: 'guardian',
+        name: guardianForm.name.trim(),
+        relation: guardianForm.relation || undefined,
+        phone: guardianForm.phone.trim() || undefined,
+        idCard: guardianForm.idCard.trim() || undefined,
+        studentIds: [id],
+      },
+    })
+    addGuardianOpen.value = false
+    Object.assign(guardianForm, { name: '', relation: '父亲', phone: '', idCard: '' })
+    await refresh()
+  } catch (error: unknown) {
+    guardianFormError.value = (error as { data?: { message?: string } }).data?.message || '添加家长失败'
+  } finally {
+    pending.value = false
+  }
+}
+
 async function createCommunication() {
   if (communication.summary.trim().length < 5) return
   pending.value = true
@@ -152,9 +195,31 @@ async function createCommunication() {
         <div class="rounded-3xl border border-slate-100 p-5"><h3 class="font-semibold">家庭与支持画像</h3><div class="mt-4 space-y-4"><UFormField label="家庭结构"><UInput v-model="form.profile.familyStructure" class="w-full" placeholder="如双亲、单亲、隔代照护等" /></UFormField><UFormField label="主要照护人"><UInput v-model="form.profile.primaryCaregiver" class="w-full" placeholder="日常主要沟通对象" /></UFormField><UFormField label="关注等级"><USelect v-model="form.profile.riskAttentionLevel" :items="attentionOptions" class="w-full" /></UFormField><UFormField label="优势资源"><UTextarea v-model="form.profile.strengths" :rows="3" class="w-full" placeholder="兴趣、能力、支持关系、积极经验" /></UFormField><UFormField label="主要困难"><UTextarea v-model="form.profile.mainDifficulties" :rows="3" class="w-full" placeholder="当前最需要老师关注的问题" /></UFormField><UFormField label="支持需求"><UTextarea v-model="form.profile.supportNeeds" :rows="3" class="w-full" placeholder="后续需要的班级、家校或专业支持" /></UFormField></div></div>
         <div class="rounded-3xl border border-slate-100 p-5 xl:col-span-3"><UFormField label="综合备注"><UTextarea v-model="form.notes" :rows="4" class="w-full" placeholder="记录不适合拆字段的背景信息、移交说明或阶段性观察" /></UFormField></div>
       </div></section>
-      <section class="panel p-6"><h2 class="text-xl font-semibold">关联家长</h2><div class="mt-5 space-y-3"><div v-for="guardian in data?.guardians" :key="guardian.id" class="rounded-2xl border border-slate-100 p-4"><div class="flex items-start justify-between gap-3"><div><NuxtLink :to="`/information/guardians/${guardian.id}`" class="font-semibold hover:text-emerald-700">{{ guardian.name }}</NuxtLink><p class="mt-1 text-xs text-slate-500">{{ guardian.relation || '关系未填' }} · {{ guardian.phone || '电话未填' }}</p></div><UButton size="xs" color="neutral" variant="ghost" :loading="pending" @click="unlinkGuardian(guardian.id)">解除</UButton></div></div><p v-if="!data?.guardians?.length" class="rounded-2xl bg-slate-50 p-4 text-center text-sm text-slate-400">暂无关联家长</p></div><div class="mt-5 flex gap-2"><USelect v-model="linkGuardianId" :items="(data?.guardianOptions || []).filter((item:any)=>!(data?.guardians || []).some((g:any)=>g.id===item.id)).map((item:any)=>({label:`${item.name}${item.relation ? ` · ${item.relation}` : ''}`,value:item.id}))" placeholder="选择已有家长" class="min-w-0 flex-1" /><UButton :disabled="!linkGuardianId" :loading="pending" @click="linkGuardian">关联</UButton></div></section>
+      <section class="panel p-6">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-xl font-semibold">关联家长</h2>
+          <UButton size="xs" icon="i-lucide-user-plus" color="neutral" variant="soft" @click="addGuardianOpen = true">添加家长</UButton>
+        </div>
+        <div class="mt-5 space-y-3">
+          <div v-for="guardian in data?.guardians" :key="guardian.id" class="rounded-2xl border border-slate-100 p-4">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <NuxtLink v-if="guardian.canEdit" :to="`/information/guardians/${guardian.id}`" class="font-semibold hover:text-emerald-700">{{ guardianLabel(guardian) }}</NuxtLink>
+                <span v-else class="font-semibold">{{ guardianLabel(guardian) }} <UBadge color="neutral" variant="subtle" size="sm">只读</UBadge></span>
+                <p class="mt-1 text-xs text-slate-500">{{ guardian.linkRelation || guardian.relation || '关系未填' }} · {{ guardian.phone || '电话未填' }}</p>
+              </div>
+              <UButton v-if="guardian.canEdit" size="xs" color="neutral" variant="ghost" :loading="pending" @click="unlinkGuardian(guardian.id)">解除</UButton>
+            </div>
+          </div>
+          <p v-if="!data?.guardians?.length" class="rounded-2xl bg-slate-50 p-4 text-center text-sm text-slate-400">暂无关联家长</p>
+        </div>
+        <div class="mt-5 flex gap-2">
+          <USelect v-model="linkGuardianId" :items="(data?.guardianOptions || []).filter((item:any)=>!(data?.guardians || []).some((g:any)=>g.id===item.id)).map((item:any)=>({label:guardianLabel(item),value:item.id}))" placeholder="选择已有家长" class="min-w-0 flex-1" />
+          <UButton :disabled="!linkGuardianId" :loading="pending" @click="linkGuardian">关联</UButton>
+        </div>
+      </section>
     </div>
-    <section class="panel mt-6 p-6"><div class="flex items-center justify-between"><h2 class="text-xl font-semibold">家校沟通时间线</h2><UBadge color="neutral" variant="soft">{{ data?.communications?.length || 0 }} 条</UBadge></div><div class="mt-5 grid gap-4 lg:grid-cols-[1fr_.9fr]"><div class="space-y-4"><div v-for="item in data?.communications" :key="item.id" class="rounded-2xl border border-amber-100 bg-amber-50/50 p-4"><div class="flex flex-wrap gap-2"><UBadge v-if="item.guardianName" color="neutral" variant="soft">{{ item.relation || '家长' }}：{{ item.guardianName }}</UBadge><UBadge v-if="item.riskLevel" color="error" variant="soft">{{ communicationRiskLabel(item.riskLevel) }}</UBadge></div><p class="mt-3 text-sm leading-7">{{ item.summary }}</p><p class="mt-2 text-xs text-slate-400">{{ formatDateTime(item.occurredAt) }}</p></div><p v-if="!data?.communications?.length" class="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-400">暂无沟通记录</p></div><div class="rounded-2xl border border-slate-100 p-4"><h3 class="font-semibold">新增沟通记录</h3><div class="mt-4 space-y-3"><USelect v-model="communicationGuardianSelect" :items="[{label:'不指定家长',value:NONE_VALUE}, ...(data?.guardians || []).map((item:any)=>({label:item.name,value:item.id}))]" class="w-full" /><div class="grid gap-3 md:grid-cols-3"><UInput v-model="communication.parentType" placeholder="家长类型" /><UInput v-model="communication.attitudeType" placeholder="态度类型" /><USelect v-model="communication.riskLevel" :items="riskLevelOptions" placeholder="未标注" /></div><UTextarea v-model="communication.summary" :rows="6" class="w-full" placeholder="记录沟通背景、家长诉求、教师回应和后续动作" /><button type="button" class="w-full rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="communication.summary.trim().length < 5" @click="createCommunication">保存沟通记录</button></div></div></div></section>
+    <section class="panel mt-6 p-6"><div class="flex items-center justify-between"><h2 class="text-xl font-semibold">家校沟通时间线</h2><UBadge color="neutral" variant="soft">{{ data?.communications?.length || 0 }} 条</UBadge></div><div class="mt-5 grid gap-4 lg:grid-cols-[1fr_.9fr]"><div class="space-y-4"><div v-for="item in data?.communications" :key="item.id" class="rounded-2xl border border-amber-100 bg-amber-50/50 p-4"><div class="flex flex-wrap gap-2"><UBadge v-if="item.guardianName" color="neutral" variant="soft">{{ guardianDisplayLabel([{ studentName: data?.student?.name || '', relation: item.relation }], item.guardianName, item.relation) }}</UBadge><UBadge v-if="item.riskLevel" color="error" variant="soft">{{ communicationRiskLabel(item.riskLevel) }}</UBadge></div><p class="mt-3 text-sm leading-7">{{ item.summary }}</p><p class="mt-2 text-xs text-slate-400">{{ formatDateTime(item.occurredAt) }}</p></div><p v-if="!data?.communications?.length" class="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-400">暂无沟通记录</p></div><div class="rounded-2xl border border-slate-100 p-4"><h3 class="font-semibold">新增沟通记录</h3><div class="mt-4 space-y-3"><USelect v-model="communicationGuardianSelect" :items="[{label:'不指定家长',value:NONE_VALUE}, ...(data?.guardians || []).map((item:any)=>({label:guardianLabel(item),value:item.id}))]" class="w-full" /><div class="grid gap-3 md:grid-cols-3"><UInput v-model="communication.parentType" placeholder="家长类型" /><UInput v-model="communication.attitudeType" placeholder="态度类型" /><USelect v-model="communication.riskLevel" :items="riskLevelOptions" placeholder="未标注" /></div><UTextarea v-model="communication.summary" :rows="6" class="w-full" placeholder="记录沟通背景、家长诉求、教师回应和后续动作" /><button type="button" class="w-full rounded-lg bg-[var(--ui-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="communication.summary.trim().length < 5" @click="createCommunication">保存沟通记录</button></div></div></div></section>
     <section v-if="learningSnapshot" class="panel mt-6 p-6">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div><h2 class="text-xl font-semibold">学习问题档案</h2><p class="mt-2 text-sm text-slate-500">来自学习问题三层诊断评估的投影与干预追踪；不构成学习障碍诊断。</p></div>
@@ -212,6 +277,31 @@ async function createCommunication() {
       </div>
     </section>
     <section class="panel mt-6 p-6"><div class="flex items-center justify-between"><h2 class="text-xl font-semibold">相关方案记录</h2><UBadge color="neutral" variant="soft">{{ data?.plans?.length || 0 }} 个</UBadge></div><div class="mt-5 grid gap-4 md:grid-cols-2"><NuxtLink v-for="plan in data?.plans" :key="plan.id" :to="`/plans/${plan.id}`" class="block rounded-2xl border border-slate-100 p-4 transition hover:border-emerald-300 hover:bg-emerald-50/40"><div class="flex items-start justify-between gap-3"><div><strong>{{ plan.title }}</strong><p class="mt-1 text-xs text-slate-400">{{ plan.sourceLabel }} · {{ plan.riskLabel || moduleLabel(plan.module) }}</p></div><UBadge :color="planStatusColor(plan.status)" variant="soft">{{ planStatusLabel(plan.status) }}</UBadge></div><p class="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">{{ plan.summary }}</p></NuxtLink><p v-if="!data?.plans?.length" class="rounded-2xl bg-slate-50 p-6 text-center text-sm text-slate-400 md:col-span-2">暂无与该学生关联的方案</p></div></section>
+    <UModal v-model:open="addGuardianOpen" title="添加家长">
+      <template #body>
+        <div class="space-y-4">
+          <UFormField label="家长姓名" required>
+            <UInput v-model="guardianForm.name" class="w-full" placeholder="如 王强" />
+          </UFormField>
+          <UFormField label="与学生关系">
+            <USelect v-model="guardianForm.relation" :items="guardianRelationOptions" class="w-full" />
+          </UFormField>
+          <UFormField label="电话">
+            <UInput v-model="guardianForm.phone" class="w-full" placeholder="选填" />
+          </UFormField>
+          <UFormField label="身份证号" help="选填；填写后会优先匹配学校已有家长，避免重复建档">
+            <UInput v-model="guardianForm.idCard" class="w-full" placeholder="选填" />
+          </UFormField>
+          <p v-if="guardianFormError" class="rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ guardianFormError }}</p>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton color="neutral" variant="soft" @click="addGuardianOpen = false">取消</UButton>
+          <UButton :loading="pending" @click="createGuardian">保存并关联</UButton>
+        </div>
+      </template>
+    </UModal>
     </template>
   </div>
 </template>

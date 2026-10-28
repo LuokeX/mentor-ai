@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useManagedList } from '~/composables/useManagedList'
 
-type ImportType = 'users' | 'classes' | 'students' | 'guardians' | 'communications' | 'student_events'
+type ImportType = 'users' | 'classes' | 'students' | 'guardians' | 'communications' | 'student_events' | 'student_family'
 interface ImportRow {
   id: string
   importType: ImportType
@@ -20,12 +20,14 @@ interface PreviewResult {
   validRows: number
   errors: Array<{ row: number; code: string; message: string }>
   sample: Array<Record<string, string>>
+  stats?: Record<string, number>
 }
 interface CommitResult {
   created: number
   updated: number
   skipped: number
   invitations: Array<{ phone: string; name: string; activationToken: string; expiresAt: string }>
+  stats?: Record<string, number>
 }
 
 const list = useManagedList<ImportRow>('/api/v1/school-admin/imports')
@@ -46,13 +48,23 @@ const typeOptions = [
   { label: '家长', value: 'guardians' },
   { label: '家校沟通', value: 'communications' },
   { label: '学生事件记录', value: 'student_events' },
+  { label: '学生信息（小学/初中）', value: 'student_family' },
 ]
 const typeLabels = Object.fromEntries(typeOptions.map(item => [item.value, item.label]))
-/** 家校沟通 / 学生事件记录走信息中心的 xlsx 模板与校验，其余四类仍是 CSV 链路 */
+/** 家校沟通 / 学生事件记录 / 学生+家长合表走信息中心的 xlsx 模板与校验，其余四类仍是 CSV 链路 */
 const isBusinessImport = computed(() => importType.value === 'communications' || importType.value === 'student_events')
-const fileAccept = computed(() => (isBusinessImport.value ? '.xlsx' : '.csv,text/csv'))
-const fileFieldLabel = computed(() => (isBusinessImport.value ? 'Excel 文件' : 'CSV 文件'))
-const templateLabel = computed(() => (isBusinessImport.value ? '下载对应 Excel 模板' : '下载对应 CSV 模板'))
+const isXlsxImport = computed(() => isBusinessImport.value || importType.value === 'student_family')
+const fileAccept = computed(() => (isXlsxImport.value ? '.xlsx' : '.csv,text/csv'))
+const fileFieldLabel = computed(() => (isXlsxImport.value ? 'Excel 文件' : 'CSV 文件'))
+const templateLabel = computed(() => (isXlsxImport.value ? '下载对应 Excel 模板' : '下载对应 CSV 模板'))
+const sectionOptions = [
+  { label: '小学部', value: 'primary' },
+  { label: '初中部', value: 'junior' },
+]
+const section = ref('primary')
+const templateUrl = computed(() => importType.value === 'student_family'
+  ? `/templates/student-family-${section.value}.xlsx`
+  : `/api/v1/school-admin/imports/templates/${importType.value}`)
 const drawerOpen = ref(false)
 const saving = ref(false)
 const formError = ref('')
@@ -64,6 +76,7 @@ const committed = ref<CommitResult | null>(null)
 
 function openImport() {
   importType.value = 'users'
+  section.value = 'primary'
   contentBase64.value = ''
   filename.value = ''
   preview.value = null
@@ -79,6 +92,11 @@ function closeDrawer() {
 async function onFileChange(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
+  const expectedExtension = isXlsxImport.value ? '.xlsx' : '.csv'
+  if (!file.name.toLowerCase().endsWith(expectedExtension)) {
+    formError.value = `请选择 ${expectedExtension} 格式的文件`
+    return
+  }
   if (file.size > 2 * 1024 * 1024) {
     formError.value = '文件不能超过 2 MB'
     return
@@ -105,7 +123,11 @@ async function previewImport() {
   try {
     preview.value = await $fetch<PreviewResult>('/api/v1/school-admin/imports/preview', {
       method: 'POST',
-      body: { type: importType.value, contentBase64: contentBase64.value },
+      body: {
+        type: importType.value,
+        contentBase64: contentBase64.value,
+        ...(importType.value === 'student_family' ? { section: section.value } : {}),
+      },
     })
     await list.refresh()
   } catch (error: unknown) {
@@ -127,6 +149,7 @@ async function commitImport() {
         type: importType.value,
         checksum: preview.value.checksum,
         contentBase64: contentBase64.value,
+        ...(importType.value === 'student_family' ? { section: section.value } : {}),
       },
     })
     await list.refresh()
@@ -143,7 +166,7 @@ function activationLink(token: string) {
 </script>
 
 <template>
-  <ManagementPage title="导入管理" description="使用标准模板预检后导入（账号/班级/学生/家长用 CSV，家校沟通/学生事件记录用 Excel）；账号导入统一生成 72 小时激活邀请。" :can-create="list.pageCapabilities.value.includes('create')" create-label="新建导入" @create="openImport">
+  <ManagementPage title="导入管理" description="使用标准模板预检后导入（账号/班级/学生/家长用 CSV，家校沟通/学生事件记录/学生+家长合表用 Excel）；账号导入统一生成 72 小时激活邀请。" :can-create="list.pageCapabilities.value.includes('create')" create-label="新建导入" @create="openImport">
     <TableToolbar :loading="list.loading.value" @refresh="list.refresh" />
     <ManagedDataTable :columns="columns" :rows="list.rows.value" :loading="list.loading.value">
       <template #importType-data="{ value }">{{ typeLabels[String(value)] || value }}</template>
@@ -156,7 +179,10 @@ function activationLink(token: string) {
     <EntityFormDrawer :open="drawerOpen" title="新建数据导入" @close="drawerOpen = false">
       <div class="space-y-4">
         <UFormField label="导入类型" required><USelect v-model="importType" :items="typeOptions" :disabled="Boolean(preview)" class="w-full" /></UFormField>
-        <a :href="`/api/v1/school-admin/imports/templates/${importType}`" class="inline-flex items-center gap-1 text-sm text-primary-600 hover:underline"><UIcon name="i-lucide-download" />{{ templateLabel }}</a>
+        <UFormField v-if="importType === 'student_family'" label="学部" required>
+          <USelect v-model="section" :items="sectionOptions" class="w-full" :disabled="Boolean(contentBase64) || Boolean(preview) || Boolean(committed)" />
+        </UFormField>
+        <a :href="templateUrl" class="inline-flex items-center gap-1 text-sm text-primary-600 hover:underline"><UIcon name="i-lucide-download" />{{ templateLabel }}</a>
         <UFormField :label="fileFieldLabel" required>
           <input type="file" :accept="fileAccept" class="block w-full rounded-lg border border-gray-200 p-3 text-sm" :disabled="Boolean(committed)" @change="onFileChange">
           <p v-if="filename" class="mt-1 text-xs text-gray-500">{{ filename }}</p>
@@ -165,6 +191,14 @@ function activationLink(token: string) {
 
         <div v-if="preview" class="space-y-3 rounded-lg border border-gray-200 p-4">
           <div class="flex gap-4 text-sm"><span>总行数：{{ preview.totalRows }}</span><span class="text-emerald-700">有效：{{ preview.validRows }}</span><span :class="preview.errors.length ? 'text-red-700' : 'text-gray-500'">错误：{{ preview.errors.length }}</span></div>
+          <div v-if="preview.stats" class="flex flex-wrap gap-3 rounded bg-slate-50 p-2 text-xs text-slate-600">
+            <span v-if="preview.stats.studentsToCreate !== undefined">学生新建 {{ preview.stats.studentsToCreate }}</span>
+            <span v-if="preview.stats.studentsToUpdate !== undefined">学生更新 {{ preview.stats.studentsToUpdate }}</span>
+            <span v-if="preview.stats.guardiansToCreate !== undefined">家长新建 {{ preview.stats.guardiansToCreate }}</span>
+            <span v-if="preview.stats.guardiansToReuse !== undefined">家长复用 {{ preview.stats.guardiansToReuse }}</span>
+            <span v-if="preview.stats.linksToCreate !== undefined">关联新建 {{ preview.stats.linksToCreate }}</span>
+            <span v-if="preview.stats.linksToReactivate !== undefined">关联恢复 {{ preview.stats.linksToReactivate }}</span>
+          </div>
           <div v-if="preview.errors.length" class="max-h-48 overflow-auto rounded bg-red-50 p-3 text-xs text-red-700">
             <p v-for="error in preview.errors" :key="`${error.row}-${error.code}`">第 {{ error.row }} 行：{{ error.message }}（{{ error.code }}）</p>
           </div>
@@ -173,6 +207,7 @@ function activationLink(token: string) {
 
         <div v-if="committed" class="space-y-3 rounded-lg bg-emerald-50 p-4 text-sm">
           <p class="font-medium text-emerald-800">导入完成：新增 {{ committed.created }}，更新 {{ committed.updated }}，跳过 {{ committed.skipped }}</p>
+          <p v-if="committed.stats" class="text-xs text-emerald-700">学生新建 {{ committed.stats.studentsCreated ?? 0 }}、更新 {{ committed.stats.studentsUpdated ?? 0 }}；家长新建 {{ committed.stats.guardiansCreated ?? 0 }}、复用 {{ committed.stats.guardiansReused ?? 0 }}；关联新建 {{ committed.stats.linksCreated ?? 0 }}、恢复 {{ committed.stats.linksReactivated ?? 0 }}。</p>
           <div v-if="committed.invitations.length" class="space-y-2">
             <p class="text-amber-800">以下激活链接仅本次展示，请通过安全渠道发送：</p>
             <div v-for="item in committed.invitations" :key="item.phone" class="rounded bg-white p-2">

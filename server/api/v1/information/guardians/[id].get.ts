@@ -40,7 +40,16 @@ export default defineEventHandler(async (event) => {
     className: row.classId ? classById.get(row.classId)?.name : null,
     nameEnc: undefined,
     notesEnc: undefined,
-    nameSearch: undefined
+    nameSearch: undefined,
+    profileEnc: undefined,
+    addressEnc: undefined,
+    studentNoEnc: undefined,
+    studentNoSearch: undefined,
+    externalRefEnc: undefined,
+    externalRefSearch: undefined,
+    idCardEnc: undefined,
+    idCardSearch: undefined,
+    extraEnc: undefined,
   })
   return {
     guardian: {

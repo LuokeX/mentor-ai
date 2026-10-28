@@ -1,13 +1,16 @@
 import { z } from 'zod'
 import { requireUser } from '../../../../utils/auth'
 import { schema, useDb } from '../../../../utils/db'
-import { SCHOOL_IMPORT_TYPES, validateSchoolImport } from '../../../../domain/school-imports'
+import { SCHOOL_ADMIN_IMPORT_TYPES, isStudentFamilyImportType, validateSchoolImport } from '../../../../domain/school-imports'
 import { isBusinessImportType, type ImportRowError } from '../../../../domain/information-imports'
 import { parseImportWorkbookOrThrow, previewBusinessImport } from '../../../../domain/information-import-io'
+import { parseStudentFamilyWorkbookOrThrow, previewStudentFamilyImport } from '../../../../domain/student-family-import-io'
+import type { StudentFamilyStats } from '../../../../domain/student-family-imports'
 
 const bodySchema = z.object({
-  type: z.enum(SCHOOL_IMPORT_TYPES),
-  contentBase64: z.string().min(1).max(2_900_000)
+  type: z.enum(SCHOOL_ADMIN_IMPORT_TYPES),
+  contentBase64: z.string().min(1).max(2_900_000),
+  section: z.enum(['primary', 'junior']).optional(),
 })
 
 type PreviewPayload = {
@@ -17,6 +20,7 @@ type PreviewPayload = {
   validRows: number
   errors: ImportRowError[]
   sample: Array<Record<string, unknown>>
+  stats?: StudentFamilyStats
 }
 
 export default defineEventHandler(async (event) => {
@@ -24,7 +28,24 @@ export default defineEventHandler(async (event) => {
   if (!admin.schoolId) throw createError({ statusCode: 400, message: '管理员未关联学校' })
   const body = bodySchema.parse(await readBody(event))
   let preview: PreviewPayload
-  if (isBusinessImportType(body.type)) {
+  if (isStudentFamilyImportType(body.type)) {
+    // 学生+家长合表：走 xlsx 校验，范围是全校；学段由表头签名推断
+    const parsed = parseStudentFamilyWorkbookOrThrow(event, body.contentBase64, body.section)
+    const result = await previewStudentFamilyImport(event, {
+      schoolId: admin.schoolId,
+      scope: { kind: 'school' },
+      parsed,
+    })
+    preview = {
+      checksum: result.checksum,
+      encoding: 'xlsx',
+      totalRows: result.totalRows,
+      validRows: result.validRows,
+      errors: result.errors,
+      sample: result.sample,
+      stats: result.stats,
+    }
+  } else if (isBusinessImportType(body.type)) {
     // 家校沟通 / 学生事件记录：走信息中心的 xlsx 校验，范围是全校在册学生
     const parsed = parseImportWorkbookOrThrow(event, body.type, body.contentBase64)
     const result = await previewBusinessImport(event, {
@@ -60,6 +81,7 @@ export default defineEventHandler(async (event) => {
   return {
     previewId: record!.id, checksum: preview.checksum, encoding: preview.encoding,
     totalRows: preview.totalRows, validRows: preview.validRows,
-    errors: preview.errors, sample: preview.sample
+    errors: preview.errors, sample: preview.sample,
+    stats: preview.stats,
   }
 })
