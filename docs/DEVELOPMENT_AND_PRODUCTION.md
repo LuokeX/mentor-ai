@@ -212,6 +212,25 @@ docker compose logs --tail=100 app nginx
 
 最后通过校内访问地址验证 HTTPS、登录、四角色权限、DeepSeek 降级和真实短信。正式环境禁止执行 `pnpm db:seed`。
 
+### 6.3 文档工作区沙箱（可选，Phase 1 默认关闭）
+
+设计与威胁模型见 [AI_AGENT_SANDBOX.md](AI_AGENT_SANDBOX.md)。默认 `SANDBOX_ENABLED=false`，`docker compose up -d` 不会启动 `sandbox-runner`（profile `sandbox`）。
+
+启用步骤：
+
+```bash
+openssl rand -hex 32          # 写入 .env 的 SANDBOX_RUNNER_TOKEN，禁止复用其他密钥
+# .env: SANDBOX_ENABLED=true
+IMAGE_TAG=vX.Y.Z docker compose --profile sandbox build sandbox-runner
+docker tag mentor-ai-sandbox:vX.Y.Z mentor-ai-sandbox:latest
+IMAGE_TAG=vX.Y.Z docker compose --profile sandbox up -d
+```
+
+- 网络：`sandbox-internal` 为 `internal: true`，runner 无外网；只有 app 同时挂默认网络与内部网络。不要给 runner 加 `ports`，不要挂载应用代码或密钥。
+- 验证：`docker compose --profile sandbox ps` 中 runner healthy；`docker compose exec app wget -qO- http://sandbox-runner:3200/health` 返回 200；从宿主机或其他网络访问 3200 应失败。
+- 回滚：`.env` 设 `SANDBOX_ENABLED=false`，再 `docker compose --profile sandbox stop sandbox-runner`；app 不依赖 runner 即可启动。
+- 范围：Phase 1 runner 只支持 txt/md/docx 文本抽取，不执行 shell、不接模型；Agent 工具与上传 UI 在 Phase 2 接入。启用沙箱时，发布构建需额外重建 `sandbox-runner` 镜像；未启用时不需要。
+
 ## 7. 正式环境版本更新
 
 每次发布按以下顺序执行：

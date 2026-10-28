@@ -134,6 +134,18 @@ DASHSCOPE_API_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 - 数据边界：录音原声无法脱敏，因此语音输入与朗读都只在 `redacted` / `full_context` 模式开放；朗读文本按既有外发口径走 `redactOutboundText`（`redacted` 模式下「X 老师」会被念成「PERSON 老师」，这是与其它外发链路一致的取舍）。
 - 浏览器限制：`getUserMedia` 只在安全上下文可用，**录音仅在 HTTPS 或 `localhost` 下工作**。测试环境的明文 3400 会把浏览器 307 跳到 `https://<主机>:3401`（见 `docs/DEVELOPMENT_AND_PRODUCTION.md` 第 8.5 节），但自签证书需要把 `infra/certs-test/ca.pem` 装到设备信任列表，否则浏览器会先提示证书不受信；`/health/*` 仍可用明文探活。正式环境走 Nginx + TLS（3300 明文 307 跳 3301 HTTPS，见第 8.6 节），当前同样用 `infra/certs/` 的本地自签证书，教师设备不信任 `infra/certs/ca.pem` 时录音可能被浏览器拒绝（换成学校或公网 CA 证书后不再需要安装）；Nginx 已为 `/api/v1/chat/transcriptions` 单独放宽 `client_max_body_size`（全局仍为 2m）。
 
+## 3.3 备课模式（lesson_prep）
+
+首页 AI 助手在「对话」之外提供「备课」Tab（第一块 MVP，2026-10-27）：
+
+- **模式传递**：`POST /api/v1/chat/messages` 的 `mode` 取 `chat`（默认）或 `lesson_prep`；模式随教师提问写入消息 `metadata`，重新生成按原模式重跑，历史消息据此回看。
+- **提示词**：`assistant_lesson_prep`（`server/domain/ai-prompt-baselines.ts` + `ai-config.ts` 注册表），输出结构由 `server/agent/prompts.ts` 的 `buildLessonPrepFormatInstruction` 注入：日常教案、赛课、班会、项目化四种结构；缺失信息先按合理假设补全，末尾最多列 3 条待确认项。
+- **前端模板**：`app/utils/lesson-prep.ts` 的 `LESSON_PREP_TEMPLATES` 提供学情/班情信息表、赛课设计、班会课设计三个模板；点击只填入输入框，不自动发送。
+- **Word 导出**：助手消息的「导出 Word」按钮调用 `GET /api/v1/chat/messages/{id}/export?format=docx`。服务端按 OOXML 最小结构生成 `.docx`（`server/domain/lesson-plan-docx.ts`，只用 Node 内置 zlib，不新增依赖、不落盘），支持标题、段落、粗斜体、行内代码、列表、引用、代码块、分隔线与 Markdown 表格；只允许导出本人未删除的助手消息，写审计 `chat.message.export` 与产品事件 `assistant_answer_exported`，响应 `no-store`。
+- **工作区沙箱（Phase 1）**：独立 `sandbox-runner` 容器提供每任务工作区与 txt/md/docx 文本抽取，默认关闭；设计、威胁模型与启用步骤见 [AI_AGENT_SANDBOX.md](AI_AGENT_SANDBOX.md)。Agent 工作区工具与上传 UI 在 Phase 2 接入。
+- **不变的部分**：会话、安全规则（本地关键词 + 语义复核、后台预警）、数据模式脱敏、知识检索工具与 C 端积分口径都不变；备课消息与普通问答同样扣 100 积分（会员免扣）。
+- **本期未做**：文件上传/解析、PPT/Excel/图片导出、案例/视频推荐、学习中心与付费链路；这些仍按 `临时文件/备课产品设计(1)/班主任助力智能体-备课功能PRD.docx` 分块推进。
+
 ## 4. 三库运营台
 
 平台后台“三库运营台”按 `module + libraryType + scope` 管理模块资源库。`libraryType` 固定为：
