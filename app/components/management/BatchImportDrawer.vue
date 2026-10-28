@@ -28,10 +28,23 @@ interface CommitResult {
   linksReactivated?: number
 }
 
+interface ImportTemplateOption {
+  label: string
+  value: string
+  templateUrl: string
+  previewUrl: string
+  commitUrl: string
+  /** 预检示例行的展示字段（如 ['name', 'className']），保持列顺序 */
+  sampleFields: string[]
+  /** 合表模板的学段；普通模板不传 */
+  section?: string
+}
+
 const emit = defineEmits<{ close: []; imported: [] }>()
 const contentBase64 = ref('')
 const filename = ref('')
-const selectedSection = ref('')
+const selectedTemplate = ref('')
+const fileInputRef = ref<HTMLInputElement | null>(null)
 const preview = ref<PreviewResult | null>(null)
 const committed = ref<CommitResult | null>(null)
 const saving = ref(false)
@@ -39,29 +52,43 @@ const formError = ref('')
 const props = defineProps<{
   open: boolean
   title: string
-  templateUrl: string
-  previewUrl: string
-  commitUrl: string
+  /** 单模板导入（家长/沟通/事件）的固定地址；使用 templateOptions 时可省略 */
+  templateUrl?: string
+  previewUrl?: string
+  commitUrl?: string
   /** 预检示例行的展示字段（如 ['name', 'className']），保持列顺序 */
-  sampleFields: string[]
-  /** 合表导入的学部选项；不传表示单模板导入（学生/家长/沟通/事件） */
-  sectionOptions?: Array<{ label: string, value: string }>
-  /** 按学部区分的模板地址；未传时使用 templateUrl */
-  templateUrlBySection?: Record<string, string>
+  sampleFields?: string[]
+  /** 多模板选择：在同一「批量添加信息」入口里切换简易模板/小学部/初中部模板 */
+  templateOptions?: ImportTemplateOption[]
 }>()
 
-const resolvedTemplateUrl = computed(() => {
-  if (!props.sectionOptions?.length) return props.templateUrl
-  return props.templateUrlBySection?.[selectedSection.value] || props.templateUrl
-})
+const activeTemplate = computed(() => props.templateOptions?.find(item => item.value === selectedTemplate.value)
+  ?? props.templateOptions?.[0]
+  ?? null)
+const templateSelectItems = computed(() => (props.templateOptions || []).map(item => ({ label: item.label, value: item.value })))
+const resolvedTemplateUrl = computed(() => activeTemplate.value?.templateUrl || props.templateUrl || '')
+const resolvedPreviewUrl = computed(() => activeTemplate.value?.previewUrl || props.previewUrl || '')
+const resolvedCommitUrl = computed(() => activeTemplate.value?.commitUrl || props.commitUrl || '')
+const resolvedSampleFields = computed(() => activeTemplate.value?.sampleFields || props.sampleFields || [])
+const resolvedSection = computed(() => activeTemplate.value?.section || '')
 
-function reset() {
+function resetFileState() {
   contentBase64.value = ''
   filename.value = ''
-  selectedSection.value = props.sectionOptions?.[0]?.value || ''
   preview.value = null
   committed.value = null
   formError.value = ''
+  if (fileInputRef.value) fileInputRef.value.value = ''
+}
+
+function reset() {
+  selectedTemplate.value = props.templateOptions?.[0]?.value || ''
+  resetFileState()
+}
+
+function onTemplateChange() {
+  // 换模板后旧文件和预检结果不再适用，清空后让用户重新选择文件。
+  resetFileState()
 }
 
 watch(() => props.open, (value) => {
@@ -99,12 +126,11 @@ async function previewImport() {
   saving.value = true
   formError.value = ''
   try {
-    preview.value = await $fetch<PreviewResult>(props.previewUrl, {
+    const body: Record<string, unknown> = { contentBase64: contentBase64.value }
+    if (resolvedSection.value) body.section = resolvedSection.value
+    preview.value = await $fetch<PreviewResult>(resolvedPreviewUrl.value, {
       method: 'POST',
-      body: {
-        contentBase64: contentBase64.value,
-        ...(props.sectionOptions?.length ? { section: selectedSection.value } : {}),
-      },
+      body,
     })
   } catch (error: unknown) {
     formError.value = (error as { data?: { message?: string } }).data?.message || '预检失败'
@@ -118,13 +144,14 @@ async function commitImport() {
   saving.value = true
   formError.value = ''
   try {
-    committed.value = await $fetch<CommitResult>(props.commitUrl, {
+    const body: Record<string, unknown> = {
+      checksum: preview.value.checksum,
+      contentBase64: contentBase64.value,
+    }
+    if (resolvedSection.value) body.section = resolvedSection.value
+    committed.value = await $fetch<CommitResult>(resolvedCommitUrl.value, {
       method: 'POST',
-      body: {
-        checksum: preview.value.checksum,
-        contentBase64: contentBase64.value,
-        ...(props.sectionOptions?.length ? { section: selectedSection.value } : {}),
-      },
+      body,
     })
     emit('imported')
   } catch (error: unknown) {
@@ -138,14 +165,20 @@ async function commitImport() {
 <template>
   <EntityFormDrawer :open="open" :title="title" @close="emit('close')">
     <div class="space-y-4">
-      <UFormField v-if="sectionOptions?.length" label="学部" required>
-        <USelect v-model="selectedSection" :items="sectionOptions" class="w-full" :disabled="Boolean(contentBase64) || Boolean(preview) || Boolean(committed)" />
+      <UFormField v-if="templateOptions?.length" label="导入模板" required>
+        <USelect
+          v-model="selectedTemplate"
+          :items="templateSelectItems"
+          class="w-full"
+          :disabled="Boolean(committed)"
+          @update:model-value="onTemplateChange"
+        />
       </UFormField>
       <a :href="resolvedTemplateUrl" class="inline-flex items-center gap-1 text-sm text-primary-600 hover:underline">
         <UIcon name="i-lucide-download" />下载 Excel 导入模板
       </a>
       <UFormField label="Excel 文件" required>
-        <input type="file" accept=".xlsx" class="block w-full rounded-lg border border-gray-200 p-3 text-sm" :disabled="Boolean(committed)" @change="onFileChange">
+        <input ref="fileInputRef" type="file" accept=".xlsx" class="block w-full rounded-lg border border-gray-200 p-3 text-sm" :disabled="Boolean(committed)" @change="onFileChange">
         <p v-if="filename" class="mt-1 text-xs text-gray-500">{{ filename }}</p>
       </UFormField>
       <UButton v-if="!preview" :loading="saving" :disabled="!contentBase64" @click="previewImport">执行预检</UButton>
@@ -171,7 +204,7 @@ async function commitImport() {
         <div v-else-if="!committed" class="space-y-3">
           <div class="rounded bg-slate-50 p-3 text-xs text-slate-600">
             <p class="font-medium">预检通过，将导入以下记录（示例）：</p>
-            <p v-for="item in preview.sample" :key="item.row" class="mt-1">第 {{ item.row }} 行：{{ sampleFields.map(field => item[field] || '').join(' · ') }}</p>
+            <p v-for="item in preview.sample" :key="item.row" class="mt-1">第 {{ item.row }} 行：{{ resolvedSampleFields.map(field => item[field] || '').join(' · ') }}</p>
           </div>
           <UButton :loading="saving" @click="commitImport">确认提交导入</UButton>
         </div>
