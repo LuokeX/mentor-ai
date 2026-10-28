@@ -14,15 +14,24 @@ interface PreviewResult {
   validRows: number
   errors: ImportRowError[]
   sample: Array<Record<string, string>>
+  stats?: Record<string, number>
 }
 interface CommitResult {
   created: number
   totalRows: number
+  updated?: number
+  studentsCreated?: number
+  studentsUpdated?: number
+  guardiansCreated?: number
+  guardiansReused?: number
+  linksCreated?: number
+  linksReactivated?: number
 }
 
 const emit = defineEmits<{ close: []; imported: [] }>()
 const contentBase64 = ref('')
 const filename = ref('')
+const selectedSection = ref('')
 const preview = ref<PreviewResult | null>(null)
 const committed = ref<CommitResult | null>(null)
 const saving = ref(false)
@@ -35,11 +44,21 @@ const props = defineProps<{
   commitUrl: string
   /** 预检示例行的展示字段（如 ['name', 'className']），保持列顺序 */
   sampleFields: string[]
+  /** 合表导入的学部选项；不传表示单模板导入（学生/家长/沟通/事件） */
+  sectionOptions?: Array<{ label: string, value: string }>
+  /** 按学部区分的模板地址；未传时使用 templateUrl */
+  templateUrlBySection?: Record<string, string>
 }>()
+
+const resolvedTemplateUrl = computed(() => {
+  if (!props.sectionOptions?.length) return props.templateUrl
+  return props.templateUrlBySection?.[selectedSection.value] || props.templateUrl
+})
 
 function reset() {
   contentBase64.value = ''
   filename.value = ''
+  selectedSection.value = props.sectionOptions?.[0]?.value || ''
   preview.value = null
   committed.value = null
   formError.value = ''
@@ -52,6 +71,10 @@ watch(() => props.open, (value) => {
 async function onFileChange(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
+  if (!file.name.toLowerCase().endsWith('.xlsx')) {
+    formError.value = '请选择 .xlsx 格式的 Excel 文件'
+    return
+  }
   if (file.size > 2 * 1024 * 1024) {
     formError.value = '文件不能超过 2 MB'
     return
@@ -78,7 +101,10 @@ async function previewImport() {
   try {
     preview.value = await $fetch<PreviewResult>(props.previewUrl, {
       method: 'POST',
-      body: { contentBase64: contentBase64.value },
+      body: {
+        contentBase64: contentBase64.value,
+        ...(props.sectionOptions?.length ? { section: selectedSection.value } : {}),
+      },
     })
   } catch (error: unknown) {
     formError.value = (error as { data?: { message?: string } }).data?.message || '预检失败'
@@ -94,7 +120,11 @@ async function commitImport() {
   try {
     committed.value = await $fetch<CommitResult>(props.commitUrl, {
       method: 'POST',
-      body: { checksum: preview.value.checksum, contentBase64: contentBase64.value },
+      body: {
+        checksum: preview.value.checksum,
+        contentBase64: contentBase64.value,
+        ...(props.sectionOptions?.length ? { section: selectedSection.value } : {}),
+      },
     })
     emit('imported')
   } catch (error: unknown) {
@@ -108,7 +138,10 @@ async function commitImport() {
 <template>
   <EntityFormDrawer :open="open" :title="title" @close="emit('close')">
     <div class="space-y-4">
-      <a :href="templateUrl" class="inline-flex items-center gap-1 text-sm text-primary-600 hover:underline">
+      <UFormField v-if="sectionOptions?.length" label="学部" required>
+        <USelect v-model="selectedSection" :items="sectionOptions" class="w-full" :disabled="Boolean(contentBase64) || Boolean(preview) || Boolean(committed)" />
+      </UFormField>
+      <a :href="resolvedTemplateUrl" class="inline-flex items-center gap-1 text-sm text-primary-600 hover:underline">
         <UIcon name="i-lucide-download" />下载 Excel 导入模板
       </a>
       <UFormField label="Excel 文件" required>
@@ -122,6 +155,14 @@ async function commitImport() {
           <span>总行数：{{ preview.totalRows }}</span>
           <span class="text-emerald-700">有效：{{ preview.validRows }}</span>
           <span :class="preview.errors.length ? 'text-red-700' : 'text-gray-500'">错误：{{ preview.errors.length }}</span>
+        </div>
+        <div v-if="preview.stats" class="flex flex-wrap gap-3 rounded bg-slate-50 p-3 text-xs text-slate-600">
+          <span v-if="preview.stats.studentsToCreate !== undefined">学生新建 {{ preview.stats.studentsToCreate }}</span>
+          <span v-if="preview.stats.studentsToUpdate !== undefined">学生更新 {{ preview.stats.studentsToUpdate }}</span>
+          <span v-if="preview.stats.guardiansToCreate !== undefined">家长新建 {{ preview.stats.guardiansToCreate }}</span>
+          <span v-if="preview.stats.guardiansToReuse !== undefined">家长复用 {{ preview.stats.guardiansToReuse }}</span>
+          <span v-if="preview.stats.linksToCreate !== undefined">关联新建 {{ preview.stats.linksToCreate }}</span>
+          <span v-if="preview.stats.linksToReactivate !== undefined">关联恢复 {{ preview.stats.linksToReactivate }}</span>
         </div>
         <div v-if="preview.errors.length" class="max-h-48 overflow-auto rounded bg-red-50 p-3 text-xs text-red-700">
           <p v-for="error in preview.errors" :key="`${error.row}-${error.code}`">第 {{ error.row }} 行：{{ error.message }}（{{ error.code }}）</p>
@@ -138,6 +179,7 @@ async function commitImport() {
 
       <div v-if="committed" class="space-y-3 rounded-lg bg-emerald-50 p-4 text-sm">
         <p class="font-medium text-emerald-800">导入完成：新增 {{ committed.created }} 条记录，全部共 {{ committed.totalRows }} 行。</p>
+        <p v-if="committed.updated !== undefined" class="text-xs text-emerald-700">学生新建 {{ committed.studentsCreated ?? 0 }}、更新 {{ committed.studentsUpdated ?? 0 }}；家长新建 {{ committed.guardiansCreated ?? 0 }}、复用 {{ committed.guardiansReused ?? 0 }}；关联新建 {{ committed.linksCreated ?? 0 }}、恢复 {{ committed.linksReactivated ?? 0 }}。</p>
       </div>
       <p v-if="formError" class="text-sm text-red-600">{{ formError }}</p>
       <div class="flex justify-end"><UButton variant="outline" @click="emit('close')">{{ committed ? '完成' : '关闭' }}</UButton></div>

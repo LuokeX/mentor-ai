@@ -41,6 +41,15 @@ const statusOptions = [
 
 const drawerOpen = ref(false)
 const batchImportOpen = ref(false)
+const familyImportOpen = ref(false)
+const familySectionOptions = [
+  { label: '小学部', value: 'primary' },
+  { label: '初中部', value: 'junior' },
+]
+const familyTemplateUrls: Record<string, string> = {
+  primary: '/templates/student-family-primary.xlsx',
+  junior: '/templates/student-family-junior.xlsx',
+}
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({ name: '', classId: '', gender: '', notes: '' })
@@ -57,6 +66,10 @@ function openCreate() {
 
 function openBatchImport() {
   batchImportOpen.value = true
+}
+
+function openFamilyImport() {
+  familyImportOpen.value = true
 }
 
 async function createStudent() {
@@ -108,6 +121,7 @@ function closeDrawer() {
     :create-actions="[
       { label: '添加信息', icon: 'i-lucide-user-round-plus', handle: openCreate },
       { label: '批量添加信息', icon: 'i-lucide-file-spreadsheet', handle: openBatchImport },
+      { label: '小学/初中模板导入', icon: 'i-lucide-users', handle: openFamilyImport },
     ]"
   >
     <TableToolbar
@@ -187,6 +201,19 @@ function closeDrawer() {
       commitUrl="/api/v1/information/students/import-commit"
       :sample-fields="['name', 'className']"
       @close="batchImportOpen = false"
+      @imported="list.refresh"
+    />
+
+    <BatchImportDrawer
+      :open="familyImportOpen"
+      title="批量导入学生信息（小学/初中）"
+      templateUrl="/templates/student-family-primary.xlsx"
+      previewUrl="/api/v1/information/student-family/import-preview"
+      commitUrl="/api/v1/information/student-family/import-commit"
+      :section-options="familySectionOptions"
+      :template-url-by-section="familyTemplateUrls"
+      :sample-fields="['studentName', 'className', 'guardians', 'action']"
+      @close="familyImportOpen = false"
       @imported="list.refresh"
     />
   </ManagementPage>

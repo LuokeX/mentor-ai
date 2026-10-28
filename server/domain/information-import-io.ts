@@ -359,12 +359,12 @@ export async function commitBusinessImport(event: H3Event, input: {
 }
 
 /** 把预检记录置为已提交；状态或 checksum 不一致说明重复提交或文件被替换，抛 409 */
-async function markSchoolImportCommitted(tx: DbTx, input: { previewId: string, schoolId: string, checksum: string, created: number }) {
+export async function markSchoolImportCommitted(tx: DbTx, input: { previewId: string, schoolId: string, checksum: string, created: number, updated?: number, skipped?: number }) {
   const [committed] = await tx.update(schema.schoolImports).set({
     status: 'committed',
     createdRows: input.created,
-    updatedRows: 0,
-    skippedRows: 0,
+    updatedRows: input.updated ?? 0,
+    skippedRows: input.skipped ?? 0,
     errorCount: 0,
   }).where(and(
     eq(schema.schoolImports.id, input.previewId),

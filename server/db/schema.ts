@@ -317,10 +317,15 @@ export const students = pgTable('students', {
   birthDate: timestamp('birth_date', { withTimezone: true }),
   studentNoEnc: text('student_no_enc'),
   studentNoSearch: varchar('student_no_search', { length: 64 }),
+  /** 学生身份证号（AES-256-GCM 加密）；idCardSearch 用于校内匹配/查重 */
+  idCardEnc: text('id_card_enc'),
+  idCardSearch: varchar('id_card_search', { length: 64 }),
   ethnicity: varchar('ethnicity', { length: 40 }),
   enrolledAt: timestamp('enrolled_at', { withTimezone: true }),
   boardingType: varchar('boarding_type', { length: 20 }),
   addressEnc: text('address_enc'),
+  /** 批量导入扩展信息（AES-256-GCM 加密 JSON），保存模板未映射列，按学段命名空间合并 */
+  extraEnc: text('extra_enc'),
   // ---- 学生个体/学习问题模块业务状态（评估提交时快照回写）----
   /** 最近一次个体支持等级：L3 专业会商/L2 年级协同/L1 教师关注 */
   caseLevel: varchar('case_level', { length: 40 }),
@@ -337,6 +342,7 @@ export const students = pgTable('students', {
   index('students_owner_idx').on(table.ownerUserId),
   index('students_name_search_idx').on(table.nameSearch),
   index('students_school_owner_status_updated_idx').on(table.schoolId, table.ownerUserId, table.status, table.updatedAt),
+  index('students_school_id_card_idx').on(table.schoolId, table.idCardSearch),
   uniqueIndex('students_school_external_ref_uidx').on(table.schoolId, table.externalRefSearch)
 ])
 

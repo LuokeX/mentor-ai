@@ -30,7 +30,16 @@ export default defineEventHandler(async (event) => {
     ownerName: teacherById.get(row.ownerUserId)?.name || '未分配教师',
     className: row.classId ? classById.get(row.classId)?.name : null,
     nameEnc: undefined,
-    notesEnc: undefined
+    notesEnc: undefined,
+    profileEnc: undefined,
+    addressEnc: undefined,
+    studentNoEnc: undefined,
+    studentNoSearch: undefined,
+    externalRefEnc: undefined,
+    externalRefSearch: undefined,
+    idCardEnc: undefined,
+    idCardSearch: undefined,
+    extraEnc: undefined,
   }))
   const studentById = new Map(students.map(student => [student.id, student]))
   const guardians = guardiansRaw.map(row => ({
@@ -40,7 +49,14 @@ export default defineEventHandler(async (event) => {
     ownerName: teacherById.get(row.ownerUserId)?.name || '未分配教师',
     linkedStudents: relations.filter(relation => relation.guardianId === row.id).map(relation => studentById.get(relation.studentId)).filter(Boolean).map(student => ({ id: student!.id, name: student!.name, className: student!.className })),
     nameEnc: undefined,
-    phoneEnc: undefined
+    phoneEnc: undefined,
+    idCardEnc: undefined,
+    idCardSearch: undefined,
+    externalRefEnc: undefined,
+    externalRefSearch: undefined,
+    contactEnc: undefined,
+    profileEnc: undefined,
+    notesEnc: undefined,
   }))
   const guardianById = new Map(guardians.map(guardian => [guardian.id, guardian]))
   const communications = communicationsRaw.map(row => ({

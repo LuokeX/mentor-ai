@@ -200,14 +200,14 @@ const GUIDE_SHEET_PATTERN = /说明|填写|示例|模板/i
  * 模板生成时必填列为「*姓名」这类前缀写法，用户也可能手动把星号放到名称后面，
  * 两种写法都要能落到同一列键上。
  */
-function normalizeHeaderCell(value: unknown): string {
+export function normalizeHeaderCell(value: unknown): string {
   return String(value ?? '')
     .replace(/[*＊]/g, '')
     .replace(/[\s\u3000]/g, '')
     .toLowerCase()
 }
 
-function addError(errors: ImportRowError[], row: number, code: string, message: string) {
+export function addError(errors: ImportRowError[], row: number, code: string, message: string) {
   // 错误明细最多收集 200 条，防止超大文件撑爆响应
   if (errors.length < 200) errors.push({ row, code, message })
 }
@@ -246,8 +246,17 @@ export function parseGrade(value: string): number | null {
   return null
 }
 
-/** 解析数据 sheet：返回「行对象数组（表头键已按别名归一化）」；纯结构错误以 throws 表达 */
-export function parseWorkbookRows(type: InformationImportType, contentBase64: string): { rows: Array<Record<string, string>>, checksum: string } {
+export interface WorkbookMatrix {
+  header: unknown[]
+  /** 表头所在的 Excel 行号（1-based） */
+  headerRowNumber: number
+  rows: Array<{ rowNumber: number, cells: unknown[] }>
+  checksum: string
+  merges: number
+}
+
+/** 解析 xlsx 数据 sheet 为原始矩阵：选第一个非说明 sheet、第一行非空行为表头、过滤全空行；纯结构错误以 throws 表达。 */
+export function parseWorkbookMatrix(contentBase64: string): WorkbookMatrix {
   const bytes = Buffer.from(contentBase64, 'base64')
   if (!bytes.length) throw new Error('EMPTY_FILE')
   if (bytes.length > 2 * 1024 * 1024) throw new Error('FILE_TOO_LARGE')
@@ -271,25 +280,41 @@ export function parseWorkbookRows(type: InformationImportType, contentBase64: st
     }
   }
   if (headerIndex < 0) throw new Error('EMPTY_FILE')
-  // 模板里的必填列表头带 * 标记（如「*姓名」「*班级」），这里统一去掉星号与空白再匹配别名，
-  // 否则教师下载模板填写后，必填列会被当成无法识别的列而整批报「必填字段为空」。
-  const headerCells = raw[headerIndex]!.map(value => normalizeHeaderCell(value))
-  const aliasMap = HEADER_ALIASES[type]
-  const columnKey: Array<string | null> = headerCells.map(cell => aliasMap[cell] || null)
-  const rows: Array<Record<string, string>> = []
+  const rows: Array<{ rowNumber: number, cells: unknown[] }> = []
   for (let index = headerIndex + 1; index < raw.length; index++) {
     const row = raw[index]
     if (!row || row.every(value => value === undefined || value === null || String(value).trim() === '')) continue
+    rows.push({ rowNumber: index + 1, cells: row })
+  }
+  if (!rows.length) throw new Error('EMPTY_FILE')
+  if (rows.length > 2000) throw new Error('TOO_MANY_ROWS')
+  return {
+    header: raw[headerIndex]!,
+    headerRowNumber: headerIndex + 1,
+    rows,
+    checksum: createHash('sha256').update(bytes).digest('hex'),
+    merges: Array.isArray(sheet['!merges']) ? sheet['!merges'].length : 0,
+  }
+}
+
+/** 解析数据 sheet：返回「行对象数组（表头键已按别名归一化）」；纯结构错误以 throws 表达 */
+export function parseWorkbookRows(type: InformationImportType, contentBase64: string): { rows: Array<Record<string, string>>, checksum: string } {
+  const matrix = parseWorkbookMatrix(contentBase64)
+  // 模板里的必填列表头带 * 标记（如「*姓名」「*班级」），这里统一去掉星号与空白再匹配别名，
+  // 否则教师下载模板填写后，必填列会被当成无法识别的列而整批报「必填字段为空」。
+  const headerCells = matrix.header.map(value => normalizeHeaderCell(value))
+  const aliasMap = HEADER_ALIASES[type]
+  const columnKey: Array<string | null> = headerCells.map(cell => aliasMap[cell] || null)
+  const rows: Array<Record<string, string>> = []
+  for (const { cells } of matrix.rows) {
     const item: Record<string, string> = {}
     for (let col = 0; col < columnKey.length; col++) {
-      const value = row[col]
+      const value = cells[col]
       item[columnKey[col] || `_col${col}`] = value === undefined || value === null ? '' : String(value).trim()
     }
     rows.push(item)
   }
-  if (!rows.length) throw new Error('EMPTY_FILE')
-  if (rows.length > 2000) throw new Error('TOO_MANY_ROWS')
-  return { rows, checksum: createHash('sha256').update(bytes).digest('hex') }
+  return { rows, checksum: matrix.checksum }
 }
 
 /** 年级 + 班级列匹配候选班级；多个候选或无法匹配返回 null（由调用方给出错误文案） */
@@ -487,10 +512,10 @@ function beijingWallClock(date: Date): BeijingParts {
 }
 
 /** 时间列文本 → 墙上时间分量；Excel 日期单元格返回的数字按序列号处理 */
-function textToBeijingParts(text: string): BeijingParts | null {
+function textToBeijingParts(text: string, serialMin = EXCEL_SERIAL_MIN, serialMax = EXCEL_SERIAL_MAX): BeijingParts | null {
   if (/^\d+(\.\d+)?$/.test(text)) {
     const serial = Number(text)
-    if (serial < EXCEL_SERIAL_MIN || serial > EXCEL_SERIAL_MAX) return null
+    if (serial < serialMin || serial > serialMax) return null
     const utc = new Date(Math.round((serial - EXCEL_EPOCH_OFFSET) * MS_PER_DAY))
     if (Number.isNaN(utc.getTime())) return null
     return {
@@ -528,6 +553,34 @@ export function parseImportDateTime(value: string, now = new Date()): Date | nul
     || wall.hour !== parts.hour || wall.minute !== parts.minute || wall.second !== parts.second) return null
   if (instant.getTime() < IMPORT_TIME_EARLIEST.getTime()) return null
   if (instant.getTime() > now.getTime() + MS_PER_DAY) return null
+  return instant
+}
+
+/** 出生日期允许的最早值；4 位纯数字更可能是年份，不作为 Excel 序列号解析 */
+const IMPORT_DATE_EARLIEST = new Date('1900-03-01T00:00:00+08:00')
+const EXCEL_SERIAL_MIN_DATE = 10_000
+
+/**
+ * 解析导入的日期列（不含时间）：支持与 parseImportDateTime 相同的日期写法及 Excel 日期序列号。
+ * 出生日期允许 1900-03-01 至今；入学日期允许 1990-01-01 至 2100-12-31。
+ * `serialMin` 默认 10000（1927-05-18），避免把「2026」这类 4 位年份误当成序列号。
+ */
+export function parseImportDate(
+  value: string,
+  opts: { earliest?: Date, latest?: Date, serialMin?: number } = {}
+): Date | null {
+  const text = String(value ?? '').trim()
+  if (!text) return null
+  const parts = textToBeijingParts(text, opts.serialMin ?? EXCEL_SERIAL_MIN_DATE, EXCEL_SERIAL_MAX)
+  if (!parts) return null
+  const instant = beijingInstant(parts)
+  if (Number.isNaN(instant.getTime())) return null
+  const wall = beijingWallClock(instant)
+  if (wall.year !== parts.year || wall.month !== parts.month || wall.day !== parts.day) return null
+  const earliest = opts.earliest ?? IMPORT_DATE_EARLIEST
+  const latest = opts.latest ?? new Date()
+  if (instant.getTime() < earliest.getTime()) return null
+  if (instant.getTime() > latest.getTime() + MS_PER_DAY) return null
   return instant
 }
 
