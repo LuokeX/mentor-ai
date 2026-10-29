@@ -58,7 +58,7 @@ const props = defineProps<{
   commitUrl?: string
   /** 预检示例行的展示字段（如 ['name', 'className']），保持列顺序 */
   sampleFields?: string[]
-  /** 多模板选择：在同一「批量添加信息」入口里切换简易模板/小学部/初中部模板 */
+  /** 模板选择：学生页按当前组织下发单个「学生模板」，保留下拉以展示模板名称 */
   templateOptions?: ImportTemplateOption[]
 }>()
 

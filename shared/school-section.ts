@@ -42,6 +42,31 @@ export function schoolSectionsOfGrades(grades: readonly number[] | null | undefi
   return [...sections]
 }
 
+/**
+ * 按组织（学部即学校）的名称/代码识别学部。
+ *
+ * 组织模型里每个学部是一所独立学校（如「六力学校-小学部」/ `llschool-primary`、
+ * 「六力学校-初中部」/ `liuli-junior`）。教师端「学生模板」据此自动匹配对应学部的
+ * 信息表模板，不再让教师手选学部。识别不出时返回 null，由调用方回退通用模板。
+ */
+export function schoolSectionOfOrganization(input: {
+  name?: string | null
+  code?: string | null
+}): SchoolSection | null {
+  const code = (input.code ?? '').trim().toLowerCase()
+  if (code) {
+    for (const section of ['primary', 'junior', 'senior', 'repeat'] as const) {
+      if (code === section || code.endsWith(`-${section}`) || code.endsWith(`_${section}`)) return section
+    }
+  }
+  const name = (input.name ?? '').trim()
+  if (name.includes('复读部')) return 'repeat'
+  if (name.includes('小学部')) return 'primary'
+  if (name.includes('初中部')) return 'junior'
+  if (name.includes('高中部')) return 'senior'
+  return null
+}
+
 /** 归一化资源上的学段标签：非法值或缺省一律视为 all（所有人可见）。 */
 export function normalizeSchoolSection(value: unknown): SchoolSection {
   const normalized = typeof value === 'string' ? value.trim() : ''

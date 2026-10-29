@@ -41,38 +41,41 @@ const statusOptions = [
 
 const drawerOpen = ref(false)
 const batchImportOpen = ref(false)
+
+interface StudentImportProfile {
+  /** 当前学校（学部即学校）对应的合表模板学段；普通学校为 null（通用简易模板） */
+  section: 'primary' | 'junior' | null
+  templateUrl: string
+  previewUrl: string
+  commitUrl: string
+  sampleFields: string[]
+}
+
+const STUDENT_IMPORT_FALLBACK: StudentImportProfile = {
+  section: null,
+  templateUrl: '/api/v1/information/students/import-template',
+  previewUrl: '/api/v1/information/students/import-preview',
+  commitUrl: '/api/v1/information/students/import-commit',
+  sampleFields: ['name', 'className'],
+}
+
 /**
- * 「批量添加信息」里的模板选项：保留通用简易模板，同时把小学/初中学生+家长合表收进同一入口，
- * 用户只需要在抽屉里切换模板，不再单独占一个创建菜单项。
+ * 「批量添加信息」只保留一个「学生模板」：小学部/初中部学校由服务端按当前组织下发
+ * 对应学部的学生（+家长）信息表模板，其它学校仍是通用简易模板，无需教师手选学部。
  */
-const studentImportTemplateOptions = [
-  {
-    label: '简易学生模板（通用）',
-    value: 'simple',
-    templateUrl: '/api/v1/information/students/import-template',
-    previewUrl: '/api/v1/information/students/import-preview',
-    commitUrl: '/api/v1/information/students/import-commit',
-    sampleFields: ['name', 'className'],
-  },
-  {
-    label: '小学部（学生+家长）',
-    value: 'family-primary',
-    templateUrl: '/templates/student-family-primary.xlsx',
-    previewUrl: '/api/v1/information/student-family/import-preview',
-    commitUrl: '/api/v1/information/student-family/import-commit',
-    sampleFields: ['studentName', 'className', 'guardians', 'action'],
-    section: 'primary',
-  },
-  {
-    label: '初中部（学生+家长）',
-    value: 'family-junior',
-    templateUrl: '/templates/student-family-junior.xlsx',
-    previewUrl: '/api/v1/information/student-family/import-preview',
-    commitUrl: '/api/v1/information/student-family/import-commit',
-    sampleFields: ['studentName', 'className', 'guardians', 'action'],
-    section: 'junior',
-  },
-]
+const { data: importProfile } = await useFetch<StudentImportProfile>('/api/v1/information/students/import-profile')
+const studentImportTemplateOptions = computed(() => {
+  const profile = importProfile.value ?? STUDENT_IMPORT_FALLBACK
+  return [{
+    label: '学生模板',
+    value: profile.section ?? 'simple',
+    templateUrl: profile.templateUrl,
+    previewUrl: profile.previewUrl,
+    commitUrl: profile.commitUrl,
+    sampleFields: profile.sampleFields,
+    ...(profile.section ? { section: profile.section } : {}),
+  }]
+})
 const saving = ref(false)
 const formError = ref('')
 const form = reactive({ name: '', classId: '', gender: '', notes: '' })

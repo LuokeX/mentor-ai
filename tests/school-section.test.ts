@@ -6,6 +6,7 @@ import {
   normalizeSchoolSection,
   resourceRowsOfVersion,
   schoolSectionOfGrade,
+  schoolSectionOfOrganization,
   schoolSectionOfResourceRows,
   schoolSectionsOfGrades
 } from '../shared/school-section'
@@ -54,6 +55,31 @@ describe('学段标签：年级折算与可见性', () => {
     expect(filterBySchoolSection(rows, r => r.section, ['junior'])).toEqual({ rows: [{ section: 'junior' }], fallback: false })
     expect(filterBySchoolSection(rows, r => r.section, ['junior', 'senior']).rows).toHaveLength(2)
     expect(filterBySchoolSection([], r => r.section, ['primary'])).toEqual({ rows: [], fallback: false })
+  })
+})
+
+describe('组织（学部即学校）→ 学部识别', () => {
+  it('按学校代码后缀识别学部（测试库 llschool-* 与正式库 liuli-* 都覆盖）', () => {
+    expect(schoolSectionOfOrganization({ code: 'llschool-primary' })).toBe('primary')
+    expect(schoolSectionOfOrganization({ code: 'liuli-primary' })).toBe('primary')
+    expect(schoolSectionOfOrganization({ code: 'llschool-junior' })).toBe('junior')
+    expect(schoolSectionOfOrganization({ code: 'liuli-junior' })).toBe('junior')
+    expect(schoolSectionOfOrganization({ code: 'liuli-senior' })).toBe('senior')
+    expect(schoolSectionOfOrganization({ code: 'junior' })).toBe('junior')
+  })
+
+  it('代码识别不出时按学校名称里的学部字样识别', () => {
+    expect(schoolSectionOfOrganization({ name: '六力学校-小学部' })).toBe('primary')
+    expect(schoolSectionOfOrganization({ name: '六力学校-初中部' })).toBe('junior')
+    expect(schoolSectionOfOrganization({ name: '六力学校-高中部' })).toBe('senior')
+    expect(schoolSectionOfOrganization({ name: '六力学校-复读部' })).toBe('repeat')
+  })
+
+  it('代码优先于名称；识别不出时返回 null（调用方回退通用模板）', () => {
+    expect(schoolSectionOfOrganization({ name: '六力学校-小学部', code: 'liuli-junior' })).toBe('junior')
+    expect(schoolSectionOfOrganization({ name: '六力学校', code: 'liuli' })).toBeNull()
+    expect(schoolSectionOfOrganization({ name: '', code: '' })).toBeNull()
+    expect(schoolSectionOfOrganization({})).toBeNull()
   })
 })
 
